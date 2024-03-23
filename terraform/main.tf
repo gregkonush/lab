@@ -2,7 +2,7 @@ terraform {
   required_providers {
     harvester = {
       source  = "harvester/harvester"
-      version = "0.6.4"
+      version = ">= 0.6.4"
     }
   }
   backend "pg" {
@@ -20,4 +20,14 @@ resource "harvester_image" "ubuntu" {
   source_type  = "download"
   namespace    = "harvester-public"
   url          = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
+}
+
+data "harvester_clusternetwork" "mgmt" {
+  name = "mgmt"
+}
+
+resource "harvester_network" "cluster_network" {
+  cluster_network_name = data.harvester_clusternetwork.mgmt.name
+  name                 = "cluster-network"
+  vlan_id              = 1
 }
