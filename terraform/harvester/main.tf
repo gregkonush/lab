@@ -31,3 +31,35 @@ resource "harvester_network" "cluster_network" {
   name                 = "cluster-network"
   vlan_id              = 1
 }
+
+resource "harvester_virtualmachine" "rancher2" {
+  name   = "rancher2"
+  cpu    = 2
+  memory = "2Gi"
+
+  efi          = true
+  secure_boot  = true
+  hostname     = "rancher2"
+  run_strategy = "RerunOnFailure"
+
+  disk {
+    name        = "root"
+    type        = "disk"
+    size        = "20Gi"
+    bus         = "virtio"
+    auto_delete = true
+    boot_order  = 1
+    image       = harvester_image.ubuntu.id
+  }
+
+
+  network_interface {
+    name           = "bridge"
+    model          = "virtio"
+    type           = "bridge"
+    network_name   = harvester_network.cluster_network.name
+    wait_for_lease = true
+  }
+}
+
+
