@@ -38,7 +38,6 @@ resource "harvester_virtualmachine" "rancher2" {
   memory = "2Gi"
 
   efi          = true
-  secure_boot  = true
   hostname     = "rancher2"
   run_strategy = "RerunOnFailure"
 
