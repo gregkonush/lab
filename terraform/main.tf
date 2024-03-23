@@ -21,3 +21,15 @@ resource "harvester_image" "ubuntu" {
   namespace    = "harvester-public"
   url          = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
 }
+
+resource "harvester_clusternetwork" "kube_network" {
+  name = "kube-network"
+}
+
+resource "harvester_vlanconfig" "kube_vlan_config" {
+  cluster_network_name = harvester_clusternetwork.kube_network.name
+  name                 = "kube-vlan"
+  uplink {
+    nics = ["eth0", "eth1"]
+  }
+}
