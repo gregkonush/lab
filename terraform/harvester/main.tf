@@ -111,6 +111,8 @@ users:
     no_ssh_fingerprints: false
     ssh:
       emit_keys_to_console: false
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
 EOF
   network_data = ""
 }
