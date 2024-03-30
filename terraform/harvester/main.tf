@@ -14,12 +14,20 @@ provider "harvester" {
   kubeconfig = "~/.kube/altra.yaml"
 }
 
-resource "harvester_image" "ubuntu" {
-  name         = "ubuntu"
-  display_name = "Ubuntu Server Image"
+resource "harvester_image" "ubuntu-focal" {
+  name         = "ubuntu-focal"
+  display_name = "Ubuntu 20 Focal LTS"
   source_type  = "download"
   namespace    = "harvester-public"
   url          = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
+}
+
+resource "harvester_image" "ubuntu-jammy" {
+  name         = "ubuntu-jammy"
+  display_name = "Ubuntu 22 Jammy LTS"
+  source_type  = "download"
+  namespace    = "harvester-public"
+  url          = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
 }
 
 data "harvester_clusternetwork" "mgmt" {
@@ -48,7 +56,7 @@ resource "harvester_virtualmachine" "rancher2" {
     bus         = "virtio"
     auto_delete = true
     boot_order  = 1
-    image       = harvester_image.ubuntu.id
+    image       = harvester_image.ubuntu-jammy.id
   }
 
   network_interface {
