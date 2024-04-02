@@ -1,0 +1,14 @@
+---
+- name: Disable firewall
+  hosts: rancher2-bootstrap
+  become: true
+  tasks:
+    - name: Stop UFW service
+      systemd:
+        name: ufw
+        state: stopped
+      ignore_errors: true
+    - name: Disable UFW service at boot
+      systemd:
+        name: ufw
+        enabled: false
