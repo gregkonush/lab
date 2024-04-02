@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "HashiCorp.terraform",
+    "redhat.ansible",
+    "ms-kubernetes-tools.vscode-kubernetes-tools"
+  ]
+}
