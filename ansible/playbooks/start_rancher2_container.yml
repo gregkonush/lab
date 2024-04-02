@@ -1,10 +1,9 @@
----
 - name: Install Rancher
-  hosts: rancher2-bootstrap
+  hosts: rancher_bootstrap
   tasks:
     - name: Start a docker container
       docker_container:
-        name: rancher
+        name: rancher2
         image: rancher/rancher
         state: started
         ports:
