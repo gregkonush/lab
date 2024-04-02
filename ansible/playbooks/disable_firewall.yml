@@ -1,6 +1,6 @@
 ---
 - name: Disable firewall
-  hosts: all
+  hosts: rancher_bootstrap
   become: true
   tasks:
     - name: Stop UFW service

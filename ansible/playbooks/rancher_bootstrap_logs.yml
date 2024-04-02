@@ -1,6 +1,6 @@
 ---
 - name: Grab rancher bootstrap logs
-  hosts: all
+  hosts: rancher_bootstrap
   tasks:
     - name: Grab rancher bootstrap logs
       ansible.builtin.shell:
