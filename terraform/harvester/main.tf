@@ -6,7 +6,7 @@ terraform {
     }
   }
   backend "pg" {
-    conn_str = "postgres://localhost:5433/altra?sslmode=disable"
+    conn_str = "postgres://altra:@nuc.lan:5432/altra?sslmode=disable"
   }
 }
 
