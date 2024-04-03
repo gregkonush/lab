@@ -61,7 +61,7 @@ host    all             all             192.168.1.0/24          trust
 
 Modify access in postgresql.conf
 
-````text
+```text
 listen_addresses = '*'
 ```
 
@@ -75,6 +75,12 @@ Create database
 
 ```bash
 create database altra with owner altra;
+```
+
+Give user proper permissions
+
+```sql
+grant create on database altra to altra;
 ```
 
 #### Devtools
