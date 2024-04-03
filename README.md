@@ -90,3 +90,9 @@ Autocomplete
 ```bash
 brew install --cask codewhisperer
 ```
+
+Github
+
+```bash
+brew install gh
+```
