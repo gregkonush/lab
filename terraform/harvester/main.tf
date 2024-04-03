@@ -113,6 +113,16 @@ users:
       emit_keys_to_console: false
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
+  - name: xueyingxia
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo, docker]
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    no_ssh_fingerprints: false
+    ssh:
+      emit_keys_to_console: false
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILWfFMdjfvEs7lXmrGiE++QDNve9M+Lg/uoGBW8C/+kT
 EOF
   network_data = ""
 }
