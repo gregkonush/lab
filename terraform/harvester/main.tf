@@ -63,6 +63,7 @@ resource "harvester_virtualmachine" "rancher2" {
     name           = "bridge"
     model          = "virtio"
     type           = "bridge"
+    mac_address    = "00:16:3E:3C:0E:FC"
     network_name   = harvester_network.cluster_network.name
     wait_for_lease = true
   }
