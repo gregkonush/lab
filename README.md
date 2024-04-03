@@ -45,20 +45,36 @@ Install postgres cli
 brew install postgresql
 ```
 
+### PostgreSQL remote host installation
+
 Install [database](https://postgresapp.com/)
 
-Create terraform database manually
+```bash
+sudo apt update && sudo apt install posgresql
+```
 
-Login to database:
+Update pg_hba.conf to allow any remote connection
+
+```text
+host    all             all             192.168.1.0/24          trust
+```
+
+Modify access in postgresql.conf
+
+````text
+listen_addresses = '*'
+```
+
+Create user with login
 
 ```bash
-psql -p 5433
+create role altra with login;
 ```
 
 Create database
 
 ```bash
-create database altra;
+create database altra with owner altra;
 ```
 
 #### Devtools
