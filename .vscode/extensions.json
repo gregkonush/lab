@@ -2,6 +2,7 @@
   "recommendations": [
     "HashiCorp.terraform",
     "redhat.ansible",
-    "ms-kubernetes-tools.vscode-kubernetes-tools"
+    "ms-kubernetes-tools.vscode-kubernetes-tools",
+    "github.vscode-pull-request-github"
   ]
 }
