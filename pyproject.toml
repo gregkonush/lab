@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "lab"
+version = "0.0.1"
+description = "Designing Data-Intensive Applications in Practice"
+authors = ["Greg Konush <12027037+gregkonush@users.noreply.github.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.3.0"
+pre-commit = "^3.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
