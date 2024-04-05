@@ -10,8 +10,14 @@ terraform {
     conn_str = "postgres://altra:@nuc.lan:5432/altra?sslmode=disable"
   }
 }
+
 provider "rancher2" {
   api_url   = "https://rancher.lan"
   bootstrap = true
   insecure = true
+}
+
+resource "rancher2_cluster_v2" "harvester" {
+  name = "altra"
+  kubernetes_version = "rke2-/k3s-version"
 }
