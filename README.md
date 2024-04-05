@@ -83,6 +83,32 @@ Give user proper permissions
 grant create on database altra to altra;
 ```
 
+### Python tools
+
+Install pyenv to manage python versions
+
+```bash
+brew install pyenv
+```
+
+Install python 3.12
+
+```bash
+pyenv install 3.12
+```
+
+Install pipx
+
+```bash
+brew install pipx
+```
+
+Install with poetry for package management with pipx
+
+```bash
+pipx install poetry
+```
+
 #### Devtools
 
 Autocomplete
@@ -95,4 +121,10 @@ Github
 
 ```bash
 brew install gh
+```
+
+Install pre-commit hooks
+
+```bash
+pre-commit install
 ```
