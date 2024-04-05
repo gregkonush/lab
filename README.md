@@ -123,6 +123,12 @@ Github
 brew install gh
 ```
 
+Install pre-commit
+
+```bash
+brew install pre-commit
+```
+
 Install pre-commit hooks
 
 ```bash
