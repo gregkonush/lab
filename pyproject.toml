@@ -8,6 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.12"
+ansible-creator = "^24.4.0"
 
 
 [tool.poetry.group.dev.dependencies]

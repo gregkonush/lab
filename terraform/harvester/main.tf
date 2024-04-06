@@ -14,6 +14,38 @@ provider "harvester" {
   kubeconfig = "~/.kube/altra.yaml"
 }
 
+locals {
+  vms = {
+    "kube-master-00" = {
+      mac_address = "00:16:3E:3C:0E:FC"
+    }
+    "kube-master-01" = {
+      mac_address = "00:16:3E:3C:0E:FD"
+    }
+    "kube-master-02" = {
+      mac_address = "00:16:3E:3C:0E:FE"
+    }
+    "kube-worker-00" = {
+      mac_address = "00:16:3E:3C:0E:FF"
+    }
+    "kube-worker-01" = {
+      mac_address = "00:16:3E:3C:0E:00"
+    }
+    "kube-worker-02" = {
+      mac_address = "00:16:3E:3C:0E:01"
+    }
+    "kube-worker-03" = {
+      mac_address = "00:16:3E:3C:0E:02"
+    }
+    "kube-worker-04" = {
+      mac_address = "00:16:3E:3C:0E:03"
+    }
+    "kube-worker-05" = {
+      mac_address = "00:16:3E:3C:0E:04"
+    }
+  }
+}
+
 resource "harvester_image" "ubuntu-focal" {
   name         = "ubuntu-focal"
   display_name = "Ubuntu 20 Focal LTS"
@@ -40,19 +72,20 @@ resource "harvester_network" "cluster_network" {
   vlan_id              = 1
 }
 
-resource "harvester_virtualmachine" "rancher2" {
-  name   = "rancher2"
-  cpu    = 2
-  memory = "2Gi"
+resource "harvester_virtualmachine" "kube-cluster" {
+  for_each = local.vms
+  name     = each.key
+  cpu      = 4
+  memory   = "8Gi"
 
   efi          = true
-  hostname     = "rancher2"
+  hostname     = each.key
   run_strategy = "RerunOnFailure"
 
   disk {
     name        = "root"
     type        = "disk"
-    size        = "20Gi"
+    size        = "40Gi"
     bus         = "virtio"
     auto_delete = true
     boot_order  = 1
@@ -63,18 +96,55 @@ resource "harvester_virtualmachine" "rancher2" {
     name           = "bridge"
     model          = "virtio"
     type           = "bridge"
-    mac_address    = "00:16:3E:3C:0E:FC"
+    mac_address    = each.value.mac_address
     network_name   = harvester_network.cluster_network.name
     wait_for_lease = true
   }
 
   cloudinit {
-    user_data_secret_name    = harvester_cloudinit_secret.ubuntu-cloud-config.name
-    network_data_secret_name = harvester_cloudinit_secret.ubuntu-cloud-config.name
+    user_data_secret_name    = harvester_cloudinit_secret.ubuntu-plain.name
+    network_data_secret_name = harvester_cloudinit_secret.ubuntu-plain.name
   }
 }
 
-resource "harvester_cloudinit_secret" "ubuntu-cloud-config" {
+resource "harvester_cloudinit_secret" "ubuntu-plain" {
+  name = "ubuntu-plain"
+
+  user_data    = <<-EOF
+#cloud-config
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+packages:
+  - qemu-guest-agent
+runcmd:
+  - systemctl enable --now qemu-guest-agent
+users:
+  - name: kalmyk
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo]
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    no_ssh_fingerprints: false
+    ssh:
+      emit_keys_to_console: false
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
+  - name: xueyingxia
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo]
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    no_ssh_fingerprints: false
+    ssh:
+      emit_keys_to_console: false
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILWfFMdjfvEs7lXmrGiE++QDNve9M+Lg/uoGBW8C/+kT
+EOF
+  network_data = ""
+}
+
+resource "harvester_cloudinit_secret" "ubuntu-docker" {
   name = "ubuntu-cloud-config"
 
   user_data    = <<-EOF
