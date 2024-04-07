@@ -1,0 +1,38 @@
+[
+  {
+    "hostname": "kube-master-00",
+    "ip": "192.168.1.150"
+  },
+  {
+    "hostname": "kube-master-01",
+    "ip": "192.168.1.151"
+  },
+  {
+    "hostname": "kube-master-02",
+    "ip": "192.168.1.152"
+  },
+  {
+    "hostname": "kube-worker-00",
+    "ip": "192.168.1.160"
+  },
+  {
+    "hostname": "kube-worker-01",
+    "ip": "192.168.1.161"
+  },
+  {
+    "hostname": "kube-worker-02",
+    "ip": "192.168.1.162"
+  },
+  {
+    "hostname": "kube-worker-03",
+    "ip": "192.168.1.163"
+  },
+  {
+    "hostname": "kube-worker-04",
+    "ip": "192.168.1.164"
+  },
+  {
+    "hostname": "kube-worker-05",
+    "ip": "192.168.1.165"
+  }
+]
