@@ -17,31 +17,49 @@ provider "harvester" {
 locals {
   vms = {
     "kube-master-00" = {
-      mac_address = "00:16:3E:3C:0E:FC"
+      mac_address = "00:16:3E:3C:0E:FC" // 192.168.1.150
     }
     "kube-master-01" = {
-      mac_address = "00:16:3E:3C:0E:FD"
+      mac_address = "00:16:3E:3C:0E:FD" // 192.168.1.151
     }
     "kube-master-02" = {
-      mac_address = "00:16:3E:3C:0E:FE"
+      mac_address = "00:16:3E:3C:0E:FE" // 192.168.1.152
+    }
+    "kube-master-03" = {
+      mac_address = "00:16:3E:3C:0E:FB" // 192.168.1.153
+    }
+    "kube-master-04" = {
+      mac_address = "00:16:3E:3C:0E:FA" // 192.168.1.154
     }
     "kube-worker-00" = {
-      mac_address = "00:16:3E:3C:0E:FF"
+      mac_address = "00:16:3E:3C:0E:FF" // 192.168.1.160
     }
     "kube-worker-01" = {
-      mac_address = "00:16:3E:3C:0E:00"
+      mac_address = "00:16:3E:3C:0E:00" // 192.168.1.161
     }
     "kube-worker-02" = {
-      mac_address = "00:16:3E:3C:0E:01"
+      mac_address = "00:16:3E:3C:0E:01" // 192.168.1.162
     }
     "kube-worker-03" = {
-      mac_address = "00:16:3E:3C:0E:02"
+      mac_address = "00:16:3E:3C:0E:02" // 192.168.1.163
     }
     "kube-worker-04" = {
-      mac_address = "00:16:3E:3C:0E:03"
+      mac_address = "00:16:3E:3C:0E:03" // 192.168.1.164
     }
     "kube-worker-05" = {
-      mac_address = "00:16:3E:3C:0E:04"
+      mac_address = "00:16:3E:3C:0E:04" // 192.168.1.165
+    }
+    "kube-worker-06" = {
+      mac_address = "00:16:3E:3C:0E:05" // 192.168.1.166
+    }
+    "kube-worker-07" = {
+      mac_address = "00:16:3E:3C:0E:06" // 192.168.1.167
+    }
+    "kube-worker-08" = {
+      mac_address = "00:16:3E:3C:0E:07" // 192.168.1.168
+    }
+    "kube-worker-09" = {
+      mac_address = "00:16:3E:3C:0E:08" // 192.168.1.169
     }
   }
 }
