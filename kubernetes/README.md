@@ -9,7 +9,7 @@ brew install k3sup
 Generate a script to install a new cluster
 
 ```bash
-k3sup plan hosts.json --user kalmyk > install.sh
+k3sup plan hosts.json --servers 5 --user kalmyk > install.sh
 ```
 
 Make install script executable

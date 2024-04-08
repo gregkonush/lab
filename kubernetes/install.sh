@@ -27,84 +27,86 @@ k3sup join \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 1"
+echo "Setting up additional server: 4"
 k3sup join \
 --host 192.168.1.153 \
 --server-host 192.168.1.150 \
+--server \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 2"
+echo "Setting up additional server: 5"
 k3sup join \
 --host 192.168.1.154 \
 --server-host 192.168.1.150 \
+--server \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 3"
+echo "Setting up worker: 1"
 k3sup join \
 --host 192.168.1.160 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 4"
+echo "Setting up worker: 2"
 k3sup join \
 --host 192.168.1.161 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 5"
+echo "Setting up worker: 3"
 k3sup join \
 --host 192.168.1.162 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 6"
+echo "Setting up worker: 4"
 k3sup join \
 --host 192.168.1.163 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 7"
+echo "Setting up worker: 5"
 k3sup join \
 --host 192.168.1.164 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 8"
+echo "Setting up worker: 6"
 k3sup join \
 --host 192.168.1.165 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 9"
+echo "Setting up worker: 7"
 k3sup join \
 --host 192.168.1.166 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 10"
+echo "Setting up worker: 8"
 k3sup join \
 --host 192.168.1.167 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 11"
+echo "Setting up worker: 9"
 k3sup join \
 --host 192.168.1.168 \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk
 
-echo "Setting up worker: 12"
+echo "Setting up worker: 10"
 k3sup join \
 --host 192.168.1.169 \
 --server-host 192.168.1.150 \
