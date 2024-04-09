@@ -1,6 +1,6 @@
 # Kubernetes installation
 
-## Install k3sup
+## First time installation
 
 ```bash
 brew install k3sup
@@ -18,7 +18,7 @@ Make install script executable
 chmod +x install.sh
 ```
 
-Install a new cluster
+## Install a cluster
 
 ```bash
 ./install.sh
@@ -33,7 +33,7 @@ cp kubeconfig ~/.kube/kubeconfig
 Set KUBECONFIG environment variable
 
 ```bash
-echo "export KUBECONFIG=~/.kube/kubeconfig" >> ~/.zshrc
+`echo "export KUBECONFIG=~/.kube/kubeconfig" >> ~/.zshrc`
 ```
 
 Check if cluster is running
@@ -51,3 +51,24 @@ kube-worker-03   Ready    <none>                      4m56s   v1.28.8+k3s1
 kube-worker-04   Ready    <none>                      4m45s   v1.28.8+k3s1
 kube-worker-05   Ready    <none>                      4m35s   v1.28.8+k3s1
 ```
+
+## Get a token from a running cluster
+
+Choose a server ip from hosts.json and ssh
+
+```
+sudo su`
+cat /etc/rancher/k3s/k3s.yaml`
+```
+
+Copy the content of the output to a new file in ~/.kube/kubeconfig
+
+Change the server ip address in the kubeconfig to 192.168.1.150:6443 from 127.0.0.1:6443
+
+Test that configuration works
+
+```bash
+kubectl get pods
+```
+
+Expected output `No resources found in default namespace.`
