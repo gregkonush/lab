@@ -12,10 +12,10 @@ spec:
     namespace: argocd
     server: https://kubernetes.default.svc
   ignoreDifferences:
-  - group: argoproj.io
-    jsonPointers:
-    - /status
-    kind: Application
+    - group: argoproj.io
+      jsonPointers:
+        - /status
+      kind: Application
   project: default
   source:
     path: bootstrap/argo-cd
@@ -26,7 +26,7 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-    - allowEmpty=true
+      - allowEmpty=true
 status:
   health: {}
   summary: {}

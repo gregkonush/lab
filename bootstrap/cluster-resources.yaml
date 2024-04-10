@@ -8,17 +8,17 @@ metadata:
   namespace: argocd
 spec:
   generators:
-  - git:
-      files:
-      - path: bootstrap/cluster-resources/*.json
-      repoURL: https://github.com/gregkonush/lab.git
-      requeueAfterSeconds: 20
-      revision: ""
-      template:
-        metadata: {}
-        spec:
-          destination: {}
-          project: ""
+    - git:
+        files:
+          - path: bootstrap/cluster-resources/*.json
+        repoURL: https://github.com/gregkonush/lab.git
+        requeueAfterSeconds: 20
+        revision: ""
+        template:
+          metadata: {}
+          spec:
+            destination: {}
+            project: ""
   syncPolicy:
     preserveResourcesOnDeletion: true
   template:
@@ -30,12 +30,12 @@ spec:
       namespace: argocd
     spec:
       destination:
-        server: '{{server}}'
+        server: "{{server}}"
       ignoreDifferences:
-      - group: argoproj.io
-        jsonPointers:
-        - /status
-        kind: Application
+        - group: argoproj.io
+          jsonPointers:
+            - /status
+          kind: Application
       project: default
       source:
         path: bootstrap/cluster-resources/{{name}}

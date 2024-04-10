@@ -3,7 +3,7 @@ kind: Application
 metadata:
   creationTimestamp: null
   finalizers:
-  - resources-finalizer.argocd.argoproj.io
+    - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/managed-by: argocd-autopilot
     app.kubernetes.io/name: root
@@ -14,10 +14,10 @@ spec:
     namespace: argocd
     server: https://kubernetes.default.svc
   ignoreDifferences:
-  - group: argoproj.io
-    jsonPointers:
-    - /status
-    kind: Application
+    - group: argoproj.io
+      jsonPointers:
+        - /status
+      kind: Application
   project: default
   source:
     path: projects
@@ -28,7 +28,7 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-    - allowEmpty=true
+      - allowEmpty=true
 status:
   health: {}
   summary: {}
