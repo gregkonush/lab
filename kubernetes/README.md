@@ -56,7 +56,7 @@ kube-worker-05   Ready    <none>                      4m35s   v1.28.8+k3s1
 
 Choose a server ip from hosts.json and ssh
 
-```
+```bash
 sudo su`
 cat /etc/rancher/k3s/k3s.yaml`
 ```
@@ -72,3 +72,9 @@ kubectl get pods
 ```
 
 Expected output `No resources found in default namespace.`
+
+### Recover argocd installation
+
+```bash
+argocd-autopilot repo bootstrap --recover
+```
