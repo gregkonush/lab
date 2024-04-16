@@ -1,0 +1,25 @@
+apiVersion: loadbalancer.harvesterhci.io/v1beta1
+kind: LoadBalancer
+metadata:
+  name: kube-lb
+  namespace: default
+spec:
+  ipam: dhcp
+  listeners:
+    - name: https
+      port: 443
+      protocol: TCP
+      backendPort: 443
+    - name: http
+      port: 80
+      protocol: TCP
+      backendPort: 80
+  workloadType: vm
+  backendServerSelector:
+    harvesterhci.io/vmName:
+      - kube-master-00
+      - kube-master-01
+      - kube-master-02
+      - kube-master-03
+      - kube-master-04
+      - kube-master-05
