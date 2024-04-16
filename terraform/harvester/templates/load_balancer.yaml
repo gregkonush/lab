@@ -4,7 +4,8 @@ metadata:
   name: kube-lb
   namespace: default
 spec:
-  ipam: dhcp
+  ipam: pool
+  ipPool: kube-lb-pool-external
   listeners:
     - name: https
       port: 443
