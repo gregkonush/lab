@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://github.com/gregkonush/lab.git
     targetRevision: HEAD
-    path: apps/gitea/kustomize
+    path: apps/gitea
   destination:
     server: https://kubernetes.default.svc
     namespace: gitea
