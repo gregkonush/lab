@@ -4,7 +4,7 @@ metadata:
   name: argocd
   namespace: argocd
   finalizers:
-  - resources-finalizer.argocd.argoproj.io
+    - resources-finalizer.argocd.argoproj.io
 spec:
   destination:
     namespace: argocd
@@ -18,4 +18,6 @@ spec:
     automated:
       prune: true
       selfHeal: true
-      allowEmpty: false
+      allowEmpty: true
+    syncOptions:
+      - allowEmpty=true
