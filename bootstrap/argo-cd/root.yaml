@@ -13,7 +13,7 @@ spec:
     server: https://kubernetes.default.svc
   project: default
   source:
-    path: apps
+    path: apps/*
     repoURL: https://github.com/gregkonush/lab.git
   syncPolicy:
     automated:
