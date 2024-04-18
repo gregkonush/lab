@@ -13,7 +13,7 @@ spec:
   source:
     path: apps/gitea
     repoURL: https://github.com/gregkonush/lab.git
-    targetRevision: HEAD
+    targetRevision: master
     kustomize:
       resources:
         - namespace.yaml
