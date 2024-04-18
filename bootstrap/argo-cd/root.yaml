@@ -8,17 +8,18 @@ metadata:
   name: root
   namespace: argocd
 spec:
-  destination:
-    namespace: argocd
-    server: https://kubernetes.default.svc
   project: default
   source:
-    path: apps/*
     repoURL: https://github.com/gregkonush/lab.git
+    targetRevision: HEAD
+    path: apps
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
   syncPolicy:
     automated:
-      allowEmpty: true
       prune: true
       selfHeal: true
-    syncOptions:
-      - allowEmpty=true
+      allowEmpty: false
