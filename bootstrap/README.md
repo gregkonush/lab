@@ -15,3 +15,9 @@ argocd account update-password --account admin --server argocd.proompteng.ai
 ```bash
 argocd repo add https://github.com/gregkonush/lab
 ```
+
+## Bootstrap root
+
+```bash
+argocd app create root --file bootstrap/root.yaml
+```
