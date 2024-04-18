@@ -11,7 +11,6 @@ spec:
   project: default
   source:
     repoURL: https://github.com/gregkonush/lab.git
-    targetRevision: HEAD
     path: apps
   destination:
     server: https://kubernetes.default.svc
@@ -20,4 +19,4 @@ spec:
     automated:
       prune: true
       selfHeal: true
-      allowEmpty: false
+      allowEmpty: true
