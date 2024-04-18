@@ -14,10 +14,6 @@ spec:
     path: bootstrap/argo-cd
     repoURL: https://github.com/gregkonush/lab
     targetRevision: HEAD
-    kustomize:
-      components:
-        - namespace.yaml
-        - ingress.yaml
   syncPolicy:
     automated:
       prune: true

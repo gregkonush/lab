@@ -6,7 +6,6 @@ resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v2.8.16/manifests/install.yaml
   - ingress.yaml
   - argo-cd.yaml
-  - root.yaml
 configMapGenerator:
   - name: argocd-cmd-params-cm
     behavior: merge
