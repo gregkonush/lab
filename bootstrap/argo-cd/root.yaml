@@ -14,7 +14,7 @@ spec:
   project: default
   source:
     path: apps
-    repoURL: https://github.com/gregkonush/lab
+    repoURL: https://github.com/gregkonush/lab.git
   syncPolicy:
     automated:
       allowEmpty: true
