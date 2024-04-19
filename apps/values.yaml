@@ -4,3 +4,5 @@ spec:
   source:
     repoURL: https://github.com/gregkonush/lab
     targetRevision: main
+applications:
+  - name: gitea
