@@ -12,5 +12,5 @@ configMapGenerator:
       - "server.insecure=true"
   - name: argocd-cm
     behavior: merge
-    files:
-      - argocd-cm.yaml
+    literals:
+      - "kustomize.buildOptions=--enable-helm"
