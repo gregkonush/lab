@@ -12,6 +12,7 @@ helmCharts:
     valuesMerge: override
     valuesInline:
       ingress:
+        apiVersion: v1
         enabled: true
         className: traefik-lb
         hosts:
