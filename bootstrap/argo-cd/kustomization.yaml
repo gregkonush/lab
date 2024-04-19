@@ -10,3 +10,7 @@ configMapGenerator:
     behavior: merge
     literals:
       - "server.insecure=true"
+  - name: argocd-cm
+    behavior: merge
+    files:
+      - argocd-cm.yaml
