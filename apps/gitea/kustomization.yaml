@@ -9,7 +9,7 @@ helmCharts:
     repo: https://dl.gitea.com/charts/
     releaseName: gitea
     namespace: gitea
-    valuesMerge: override
+    valuesMerge: merge
     valuesInline:
       ingress:
         apiVersion: v1
