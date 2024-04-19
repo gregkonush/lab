@@ -9,3 +9,13 @@ helmCharts:
     repo: https://dl.gitea.com/charts/
     releaseName: gitea
     namespace: gitea
+    valuesMerge: override
+    valuesInline:
+      ingress:
+        enabled: true
+        className: traefik-lb
+        hosts:
+          - host: gitea.proompteng.ai
+            paths:
+              - path: /
+                pathType: Prefix
