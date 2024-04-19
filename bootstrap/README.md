@@ -21,5 +21,4 @@ argocd repo add https://github.com/gregkonush/lab
 ```bash
 argocd app create argocd --file bootstrap/argocd.yaml
 argocd app create root --file bootstrap/root.yaml
-
 ```
