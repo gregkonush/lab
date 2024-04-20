@@ -18,12 +18,3 @@ helmCharts:
             DOMAIN: gitea.proompteng.ai
             ROOT_URL: https://gitea.proompteng.ai
             SSH_DOMAIN: gitea.proompteng.ai
-      ingress:
-        apiVersion: networking.k8s.io/v1
-        enabled: true
-        className: traefik-lb
-        hosts:
-          - host: gitea.proompteng.ai
-            paths:
-              - path: /
-                pathType: Prefix
