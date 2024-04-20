@@ -10,14 +10,14 @@ helmCharts:
     releaseName: gitea
     namespace: gitea
     valuesMerge: merge
+    # https://gitea.com/gitea/helm-chart/src/branch/main/templates/_helpers.tpl
     valuesInline:
-      additionalConfigFromEnvs:
-        - name: GITEA__SERVER__DOMAIN
-          value: gitea.proompteng.ai
-        - name: GITEA__SERVER__ROOT_URL
-          value: http://gitea.proompteng.ai
-        - name: GITEA__SERVER__SSH_DOMAIN
-          value: gitea.proompteng.ai
+      gitea:
+        config:
+          server:
+            DOMAIN: gitea.proompteng.ai
+            ROOT_URL: http://gitea.proompteng.ai
+            SSH_DOMAIN: gitea.proompteng.ai
       ingress:
         apiVersion: networking.k8s.io/v1
         enabled: true
