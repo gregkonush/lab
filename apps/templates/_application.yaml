@@ -16,7 +16,7 @@ spec:
   source:
     repoURL: {{ $root.Values.spec.source.repoURL }}
     targetRevision: {{ $root.Values.spec.source.targetRevision }}
-    path: apps/{{  $application.name }}
+    path: apps/{{  $application.path }}
   syncPolicy:
     automated:
       prune: true
