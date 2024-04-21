@@ -22,6 +22,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: apps/ecran
+          context: ./apps/ecran
+          file: ./apps/ecran/Dockerfile
           push: true
           tags: gregkonush/lab/ecran:latest
