@@ -18,7 +18,7 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: gitea.proompteng.ai
+          registry: ${{ env.REGISTRY }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
       - name: Build and push
@@ -27,4 +27,4 @@ jobs:
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
           push: true
-          tags: gregkonush/lab/ecran:latest
+          tags: gitea.proompteng.ai/gitbot/lab/ecran:latest
