@@ -6,3 +6,6 @@ spec:
     targetRevision: main
 applications:
   - name: gitea
+    path: gitea
+  - name: ecran
+    path: ecran/customize
