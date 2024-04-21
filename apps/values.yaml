@@ -8,4 +8,4 @@ applications:
   - name: gitea
     path: gitea
   - name: ecran
-    path: ecran/customize
+    path: ecran/kustomize
