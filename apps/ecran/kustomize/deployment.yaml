@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecran-deployment
+  labels:
+    app: ecran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ecran
+  template:
+    metadata:
+      labels:
+        app: ecran
+    spec:
+      containers:
+      - name: ecran
+        image: gitea.proompteng.ai/gitbot/lab/ecran:latest
+        ports:
+        - containerPort: 3000
