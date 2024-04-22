@@ -3,3 +3,4 @@ kind: Kustomization
 namespace: ecran
 resources:
   - namespace.yaml
+  - deployment.yaml
