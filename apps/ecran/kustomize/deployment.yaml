@@ -4,19 +4,26 @@ metadata:
   name: ecran-deployment
   namespace: ecran
   labels:
-    app: ecran
+    app.kubernetes.io/name: ecran
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ecran
+      app.kubernetes.io/name: ecran
   template:
     metadata:
       labels:
-        app: ecran
+        app.kubernetes.io/name: ecran
     spec:
       containers:
-      - name: ecran
-        image: gitea.proompteng.ai/gitbot/lab/ecran:latest
-        ports:
-        - containerPort: 3000
+        - name: ecran
+          image: gitea.proompteng.ai/gitbot/lab/ecran:latest
+          ports:
+            - containerPort: 3000
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "100m"
+              memory: "100Mi"
