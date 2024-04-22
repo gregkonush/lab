@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ecran-deployment
+  namespace: ecran
   labels:
     app: ecran
 spec:
