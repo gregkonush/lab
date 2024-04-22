@@ -4,16 +4,16 @@ metadata:
   name: ecran-deployment
   namespace: ecran
   labels:
-    app.kubernetes.io/name: ecran
+    app: ecran
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: ecran
+      app: ecran
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: ecran
+        app: ecran
     spec:
       containers:
         - name: ecran
