@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kube-system
+helmCharts:
+  - name: sealed-secrets
+    namespace: kube-system
+    repo: https://bitnami-labs.github.io/sealed-secrets
+    version: 2.15.3
+    releaseName: sealed-secrets

@@ -6,6 +6,8 @@ spec:
     targetRevision: main
 applications:
   - name: gitea
-    path: gitea
+    path: apps/gitea
   - name: ecran
-    path: ecran/kustomize
+    path: apps/ecran/kustomize
+  - name: sealed-secrets
+    path: apps/sealed-secrets
