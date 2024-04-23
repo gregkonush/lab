@@ -1,7 +1,11 @@
 import type { Metadata } from "next"
 import { JetBrains_Mono } from "next/font/google"
 import "./globals.css"
+import LogRocket from "logrocket"
 
+if (typeof window !== "undefined") {
+  LogRocket.init("c7fjts/proomptengai")
+}
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains-mono" })
 
 export const metadata: Metadata = {
