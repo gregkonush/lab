@@ -1,9 +1,9 @@
-FROM oven/bun:1.1.4-alpine AS base
+FROM node:20-alpine AS base
 
 FROM base AS deps
 WORKDIR /app
 COPY package.json ./
-RUN bun install
+RUN corepack enable pnpm && pnpm install
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN bun run build
+RUN corepack enable pnpm && pnpm run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
@@ -33,4 +33,4 @@ ENV PORT 3000
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/next-config-js/output
-CMD HOSTNAME="0.0.0.0" bun server.js
+CMD HOSTNAME="0.0.0.0" node server.js
