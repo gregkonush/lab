@@ -6,7 +6,8 @@ resources:
   - ingress.yaml
 helmCharts:
   - name: gitea
-    repo: https://dl.gitea.com/charts/
+    repo: https://dl.gitea.com/charts
+    version: 10.1.4
     releaseName: gitea
     namespace: gitea
     valuesMerge: merge
