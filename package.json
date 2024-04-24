@@ -1,8 +1,5 @@
 {
   "name": "lab",
-  "workspaces": [
-    "apps/*"
-  ],
   "private": true,
   "scripts": {
     "tf:plan": "terraform -chdir='./terraform/harvester' plan",
@@ -12,5 +9,8 @@
     "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./terraform/harvester/templates",
     "k:apply": "kubectl apply -k ./bootstrap/argo-cd",
     "ecran:dev": "bun run --cwd apps/ecran dev"
-  }
+  },
+  "workspaces": [
+    "apps/*"
+  ]
 }
