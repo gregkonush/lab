@@ -30,4 +30,4 @@ jobs:
           push: true
           tags: gitea.proompteng.ai/gitbot/lab/ecran:latest
           cache-from: type=registry,ref=gitea.proompteng.ai/gitbot/lab/ecran:latest
-          cache-to: type=registry,ref=gitea.proompteng.ai/gitbot/lab/ecran:latest,mode=max
+          cache-to: type=inline
