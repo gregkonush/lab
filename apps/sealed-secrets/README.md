@@ -29,3 +29,16 @@ data:
 ```bash
 echo -n 'YmFy' | base64 --decode
 ```
+
+## Check controller
+
+````bash
+kubectl get pods -n kube-system | grep sealed-secrets
+kubectl get sealedsecrets
+## Check controller
+
+```bash
+kubectl get pods -n kube-system | grep sealed-secrets
+kubectl get sealedsecrets
+kubectl logs deployments/sealed-secrets -n kube-system
+````
