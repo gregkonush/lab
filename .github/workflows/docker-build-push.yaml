@@ -24,10 +24,10 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          platforms: linux/amd64
+          platforms: linux/arm64
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
           push: true
           tags: gitea.proompteng.ai/gitbot/lab/ecran:latest
           cache-from: type=registry,ref=gitea.proompteng.ai/gitbot/lab/ecran:latest
-          cache-to: type=inline
+          cache-to: type=registry,ref=gitea.proompteng.ai/gitbot/lab/ecran:latest,mode=max
