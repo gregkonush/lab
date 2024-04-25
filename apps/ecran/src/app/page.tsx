@@ -1,6 +1,11 @@
 'use client'
 
 import * as React from 'react'
+import LogRocket from 'logrocket'
+
+if (typeof window !== 'undefined') {
+  LogRocket.init('c7fjts/proomptengai')
+}
 
 export default function Home() {
   const [email, setEmail] = React.useState('')
