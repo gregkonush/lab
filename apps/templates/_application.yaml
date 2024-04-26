@@ -1,6 +1,15 @@
 {{- define "application" -}}
 {{- $root:= . }}
 {{- range $application := .Values.applications}}
+{{- if hasKey $application "namespace" }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $application.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+{{- end }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
