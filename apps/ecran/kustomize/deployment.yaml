@@ -14,12 +14,12 @@ spec:
       labels:
         app.kubernetes.io/name: ecran
     spec:
-      imagePullPolicy: Always
       imagePullSecrets:
         - name: gitea-registry-credentials
       containers:
         - name: ecran
           image: gitea.proompteng.ai/gitbot/lab/ecran:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 3000
           env:
