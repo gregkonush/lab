@@ -18,6 +18,8 @@ spec:
         - name: ecran
           image: gitea.proompteng.ai/gitbot/lab/ecran:latest
           imagePullPolicy: Always
+          imagePullSecrets:
+            - name: gitea-registry-credentials
           ports:
             - containerPort: 3000
           env:
@@ -28,8 +30,8 @@ spec:
                   key: resend-api-key
           resources:
             limits:
-              cpu: "1"
-              memory: "1Gi"
+              cpu: '1'
+              memory: '1Gi'
             requests:
-              cpu: "100m"
-              memory: "100Mi"
+              cpu: '100m'
+              memory: '100Mi'
