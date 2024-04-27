@@ -7,4 +7,7 @@ helmCharts:
     repo: https://charts.jetstack.io
     releaseName: cert-manager
     version: v1.14.5
-    includeCRDs: true
+    valuesMerge: merge
+    # https://artifacthub.io/packages/helm/cert-manager/cert-manager#installcrds-~-bool
+    valuesInline:
+      installCRDs: true
