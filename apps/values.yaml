@@ -13,3 +13,6 @@ applications:
     namespace: ecran
   - name: sealed-secrets
     path: apps/sealed-secrets
+  - name: cert-manager
+    path: apps/cert-manager
+    namespace: cert-manager
