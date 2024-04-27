@@ -11,3 +11,7 @@ helmCharts:
     # https://artifacthub.io/packages/helm/cert-manager/cert-manager#installcrds-~-bool
     valuesInline:
       installCRDs: true
+      global:
+        leaderElection:
+          # https://github.com/cert-manager/cert-manager/issues/6716
+          namespace: cert-manager
