@@ -22,3 +22,12 @@ argocd repo add https://github.com/gregkonush/lab
 argocd app create argocd --file bootstrap/argocd.yaml
 argocd app create root --file bootstrap/root.yaml
 ```
+
+### Delete apps that got stuck in deleting phase
+
+```bash
+kubectl get application -n argocd
+kubectl edit application
+```
+
+Remove finalizers from spec
