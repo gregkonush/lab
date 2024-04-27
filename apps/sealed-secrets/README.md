@@ -2,10 +2,6 @@
 
 [docs](https://github.com/bitnami-labs/sealed-secrets?tab=readme-ov-file#usage)
 
-```bash
-kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed-secret.yaml
-```
-
 ## Encode
 
 ```bash
@@ -19,6 +15,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: foo
+  namespace: foonamespace
 type: Opaque
 data:
   password: YmFy
@@ -28,6 +25,12 @@ data:
 
 ```bash
 echo -n 'YmFy' | base64 --decode
+```
+
+## Create sealed secret from secret
+
+```bash
+kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed-secret.yaml
 ```
 
 ## Check controller
