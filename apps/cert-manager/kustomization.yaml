@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: cert-manager
+# https://github.com/cert-manager/cert-manager/issues/5293
+# https://github.com/kubernetes-sigs/kustomize/issues/5566
 helmCharts:
   - name: cert-manager
     namespace: cert-manager
@@ -11,7 +12,7 @@ helmCharts:
     # https://artifacthub.io/packages/helm/cert-manager/cert-manager#installcrds-~-bool
     valuesInline:
       installCRDs: true
-      global:
-        leaderElection:
-          # https://github.com/cert-manager/cert-manager/issues/6716
-          namespace: "cert-manager"
+      # https://github.com/cert-manager/cert-manager/issues/6716
+      # global:
+      #   leaderElection:
+      #     namespace: "cert-manager"
