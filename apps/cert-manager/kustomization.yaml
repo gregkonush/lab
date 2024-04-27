@@ -14,4 +14,4 @@ helmCharts:
       global:
         leaderElection:
           # https://github.com/cert-manager/cert-manager/issues/6716
-          namespace: cert-manager
+          namespace: "cert-manager"
