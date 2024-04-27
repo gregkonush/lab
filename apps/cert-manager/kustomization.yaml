@@ -15,10 +15,3 @@ helmCharts:
         leaderElection:
           # https://github.com/cert-manager/cert-manager/issues/6716
           namespace: cert-manager
-      config:
-        leaderElectionConfig:
-          namespace: cert-manager
-      cainjector:
-        config:
-          leaderElectionConfig:
-            namespace: cert-manager
