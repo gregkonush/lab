@@ -16,4 +16,4 @@ applications:
   - name: cert-manager
     path: apps/cert-manager
     namespace: cert-manager
-  - applicationPath: apps/arc/action-runner-controller.yaml
+  
