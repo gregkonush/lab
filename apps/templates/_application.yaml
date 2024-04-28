@@ -1,15 +1,17 @@
-{{- define "application" -}}
+{{- define "application" }}
 {{- $root:= . }}
-{{- range $application := .Values.applications}}
+{{- range $application := .Values.applications }}
 {{- if hasKey $application "namespace" }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ $application.name }}
+  name: {{ $application.namespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 {{- end }}
+
+{{- if hasKey $application "path" }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -31,5 +33,12 @@ spec:
       prune: true
       selfHeal: true
       allowEmpty: true
-{{- end -}}
-{{- end -}}
+{{- end }}
+
+{{- if hasKey $application "applicationPath" }}
+---
+{{- include $application.applicationPath $root | nindent 2 }}
+{{- end }}
+
+{{- end }}
+{{- end }}
