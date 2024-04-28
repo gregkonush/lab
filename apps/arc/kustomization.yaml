@@ -2,13 +2,22 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - arc-github-token.yaml
+# https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/quickstart-for-actions-runner-controller
 helmCharts:
-  - name: arc
-    namespace: arc
+  - name: arc-controller
+    namespace: arc-controller
+    repo: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+    releaseName: arc-controller
+    version: 0.9.1
+    valuesMerge: merge
+    includeCRDs: true
+  - name: arc-runners
+    namespace: arc-runners
     repo: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
-    releaseName: arc
-    version: v0.9.1
+    releaseName: arc-runners
+    version: 0.9.1
     valuesMerge: merge
     includeCRDs: true
     valuesInline:
+      githubConfigUrl: https://github.com/gregkonush/lab
       githubConfigSecret: arc-github-token
