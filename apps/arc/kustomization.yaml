@@ -5,9 +5,9 @@ resources:
 helmCharts:
   - name: arc
     namespace: arc
-    repo: https://actions-runner-controller.github.io/actions-runner-controller
+    repo: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
     releaseName: arc
-    version: v0.27.6
+    version: v0.9.1
     valuesMerge: merge
     includeCRDs: true
     valuesInline:
