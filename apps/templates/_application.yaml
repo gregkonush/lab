@@ -37,7 +37,7 @@ spec:
 
 {{- if hasKey $application "applicationPath" }}
 ---
-{{- include $application.applicationPath $root | nindent 2 }}
+{{- tpl (include $application.applicationPath .) . | indent 2 }}
 {{- end }}
 
 {{- end }}
