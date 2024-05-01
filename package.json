@@ -7,7 +7,9 @@
     "tf:destroy": "terraform -chdir='./terraform/harvester' destroy --target harvester_virtualmachine.kube-cluster -auto-approve",
     "ansible": "ansible-playbook -vvvv -i ./ansible/inventory/hosts.ini ./ansible/playbooks/rancher2.yml",
     "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./terraform/harvester/templates",
-    "k:apply": "kubectl apply -k ./bootstrap/argo-cd",
+    "k:install": "./kubernetes/install.sh",
+    "helm:dep": "helm dependency build ./bootstrap/argo-cd",
+    "helm:install": "helm upgrade --install argocd bootstrap/argo-cd --namespace argocd --create-namespace",
     "ecran:dev": "bun run --cwd apps/ecran dev"
   },
   "workspaces": [

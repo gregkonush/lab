@@ -1,6 +1,7 @@
 # Bootstrap
 
 kubectl apply -k ./bootstrap/argo-cd
+helm upgrade --install argocd bootstrap/argo-cd --namespace argocd --create-namespace
 
 ## Get initial password, login and update password
 
