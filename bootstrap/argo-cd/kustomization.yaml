@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: argocd
 resources:
   - namespace.yaml
-  - https://raw.githubusercontent.com/argoproj/argo-cd/v2.8.16/manifests/install.yaml
+  - application.yaml
   - ingress.yaml
 configMapGenerator:
   - name: argocd-cmd-params-cm
