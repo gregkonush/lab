@@ -1,0 +1,12 @@
+argo-cd:
+  configs:
+    cm:
+      kustomize.buildOptions: --enable-helm
+    params:
+      server.insecure: true
+    repositories:
+      github-actions-oci:
+        name: gha-runner-scale-set-controller
+        url: ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+        type: helm
+        enableOCI: "true"

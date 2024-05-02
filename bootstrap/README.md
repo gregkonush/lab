@@ -1,6 +1,6 @@
 # Bootstrap
 
-kubectl apply -k ./bootstrap/argo-cd
+helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -
 
 ## Get initial password, login and update password
 

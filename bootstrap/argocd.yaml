@@ -14,6 +14,8 @@ spec:
     path: bootstrap/argo-cd
     repoURL: https://github.com/gregkonush/lab
     targetRevision: main
+    helm:
+      releaseName: argocd
   syncPolicy:
     automated:
       prune: true
