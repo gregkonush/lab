@@ -30,21 +30,16 @@ echo -n 'YmFy' | base64 --decode
 ## Create sealed secret from secret
 
 ```bash
-kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed-secret.yaml
+kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed-password.yaml
 ```
 
-## Check controller
-
-````bash
-kubectl get pods -n kube-system | grep sealed-secrets
-kubectl get sealedsecrets
 ## Check controller
 
 ```bash
 kubectl get pods -n kube-system | grep sealed-secrets
 kubectl get sealedsecrets
 kubectl logs deployments/sealed-secrets -n kube-system
-````
+```
 
 ### Create dockerconfig.json
 
@@ -71,7 +66,7 @@ Place output into secret yaml
 ```yaml
 apiVersion: v1
 kind: Secret
-type: kubernetes.io.dockerconfigjson
+type: kubernetes.io/dockerconfigjson
 metadata:
   name: gitea-registry
   namespace: ecran
@@ -82,5 +77,5 @@ data:
 Finally create a sealed-secret from plain text secret
 
 ```bash
-kubeseal --controller-name sealed-secrets -f secret.yaml -w registry.yaml
+kubeseal --controller-name sealed-secrets -f secret.yaml -w sealed-registry.yaml
 ```
