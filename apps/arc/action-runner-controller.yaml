@@ -3,7 +3,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: arc-controller
-  namespace: argocd
+  namespace: arc-controller
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
