@@ -35,10 +35,5 @@ spec:
       allowEmpty: true
 {{- end }}
 
-{{- if hasKey $application "applicationPath" }}
----
-{{- tpl (include $application.applicationPath .) . | indent 2 }}
-{{- end }}
-
 {{- end }}
 {{- end }}
