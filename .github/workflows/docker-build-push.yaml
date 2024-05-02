@@ -28,6 +28,6 @@ jobs:
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
           push: true
-          tags: gitea.proompteng.ai/gitbot/lab/ecran:latest
-          cache-from: type=registry,ref=gitea.proompteng.ai/gitbot/lab/ecran:latest
+          tags: gitea.proompteng.ai/d/lab/ecran:latest
+          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:latest
           cache-to: type=inline
