@@ -18,7 +18,7 @@ spec:
         - name: gitea-registry
       containers:
         - name: ecran
-          image: gitea.proompteng.ai/gitbot/lab/ecran:latest
+          image: gitea.proompteng.ai/d/lab/ecran:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
