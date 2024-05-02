@@ -8,6 +8,8 @@
     "ansible": "ansible-playbook -vvvv -i ./ansible/inventory/hosts.ini ./ansible/playbooks/rancher2.yml",
     "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./terraform/harvester/templates",
     "k:install": "./kubernetes/install.sh",
+    "k:config": "cp kubeconfig ~/.kube/kubeconfig",
+    "k:bootstrap": "helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -",
     "helm:dep": "helm dependency build ./bootstrap/argo-cd",
     "helm:install": "helm upgrade --install argocd bootstrap/argo-cd --namespace argocd --create-namespace",
     "ecran:dev": "bun run --cwd apps/ecran dev"
