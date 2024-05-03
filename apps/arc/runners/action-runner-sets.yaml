@@ -1,8 +1,7 @@
-# https://github.com/argoproj/argo-cd/issues/10823#issuecomment-1796164963
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: arc-controller
+  name: arc-runners
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -10,13 +9,15 @@ spec:
   project: default
   sources:
     - repoURL: ghcr.io
-      chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.9.1
   destination:
-    namespace: argocd
+    namespace: arc-runners
     server: https://kubernetes.default.svc
   syncPolicy:
     automated:
       selfHeal: true
       prune: true
       allowEmpty: true
+    syncOptions:
+      - ServerSideApply=true
