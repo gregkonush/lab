@@ -16,5 +16,9 @@ applications:
   - name: cert-manager
     path: apps/cert-manager
     namespace: cert-manager
-  - name: arc
-    path: apps/arc
+  - name: arc-controller
+    path: apps/arc/controller
+    namespace: arc-controller
+  - name: arc-runners
+    path: apps/arc/runners
+    namespace: arc-runners
