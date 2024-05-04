@@ -19,13 +19,11 @@ applications:
   - name: arc
     path: apps/arc
   - name: arc-controller
-    namespace: arc-controller
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
       targetRevision: 0.9.1
   - name: arc-runners
-    namespace: arc-runners
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
