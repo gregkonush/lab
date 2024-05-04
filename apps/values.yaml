@@ -16,6 +16,8 @@ applications:
   - name: cert-manager
     path: apps/cert-manager
     namespace: cert-manager
+  - name: arc
+    path: apps/arc
   - name: arc-controller
     helm:
       repoURL: ghcr.io
@@ -28,8 +30,9 @@ applications:
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.9.1
       namespace: arc-runners
-      valuesObject: | 
+      valuesObject: |
         githubConfigUrl: https://github.com/gregkonush/lab
+        githubConfigSecret: github_token
         controllerServiceAccount:
           name: arc-controller-gha-rs-controller
           namespace: arc-controller
