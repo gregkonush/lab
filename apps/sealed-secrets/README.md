@@ -8,6 +8,12 @@
 echo -n 'bar' | base64
 ```
 
+## Decode
+
+```bash
+echo -n 'YmFy' | base64 --decode
+```
+
 Example of `secret.yaml`
 
 ```yaml
@@ -19,12 +25,6 @@ metadata:
 type: Opaque
 data:
   password: YmFy
-```
-
-## Decode
-
-```bash
-echo -n 'YmFy' | base64 --decode
 ```
 
 ## Create sealed secret from secret
