@@ -36,6 +36,7 @@ spec:
 {{- end }}
 
 {{- if hasKey $application "helm" }}
+---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -50,7 +51,7 @@ spec:
       chart: {{ $application.helm.chart }}
       targetRevision: {{ $application.helm.targetRevision }}
   destination:
-    namespace: {{ $application.helm.namespace }}
+    namespace: {{ $application.namespace }}
     server: {{ $root.Values.spec.destination.server }}
   syncPolicy:
     automated:
