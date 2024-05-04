@@ -10,8 +10,6 @@
     "k:install": "./kubernetes/install.sh",
     "k:config": "cp kubeconfig ~/.kube/kubeconfig",
     "k:bootstrap": "helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -",
-    "helm:dep": "helm dependency build ./bootstrap/argo-cd",
-    "helm:install": "helm upgrade --install argocd bootstrap/argo-cd --namespace argocd --create-namespace",
     "ecran:dev": "bun run --cwd apps/ecran dev"
   },
   "workspaces": [
