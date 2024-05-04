@@ -28,3 +28,8 @@ applications:
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.9.1
       namespace: arc-runners
+      values: |
+        githubConfigUrl: https://github.com/gregkonush/lab
+        controllerServiceAccount:
+          name: arc-controller-gha-rs-controller
+          namespace: arc-controller
