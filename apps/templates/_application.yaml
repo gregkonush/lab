@@ -50,6 +50,12 @@ spec:
     - repoURL: {{ $application.helm.repoURL }}
       chart: {{ $application.helm.chart }}
       targetRevision: {{ $application.helm.targetRevision }}
+      helm:
+        releaseName: {{ $application.name }}
+        {{- if hasKey $application.helm "values" }}
+        values:
+          {{- $application.helm.values | nindent 10 }}
+        {{- end }}
   destination:
     namespace: {{ $application.namespace }}
     server: {{ $root.Values.spec.destination.server }}
