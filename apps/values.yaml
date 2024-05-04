@@ -31,8 +31,12 @@ applications:
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.9.1
       valuesObject: |
+        containerMode:
+          type: "dind"
+        minRunners: 1
         githubConfigUrl: https://github.com/gregkonush/lab
         githubConfigSecret: github-token
+        runnerScaleSetName: arc-arm64
         controllerServiceAccount:
           name: arc-controller-gha-rs-controller
           namespace: arc-controller
