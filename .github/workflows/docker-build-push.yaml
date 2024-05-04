@@ -7,7 +7,7 @@ on:
 
 jobs:
   docker:
-    runs-on: arc-runners
+    runs-on: arc-amd64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
