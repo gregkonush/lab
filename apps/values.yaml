@@ -30,7 +30,7 @@ applications:
       targetRevision: 0.9.1
       valuesObject: |
         githubConfigUrl: https://github.com/gregkonush/lab
-        githubConfigSecret: github_token
+        githubConfigSecret: github-token
         controllerServiceAccount:
           name: arc-controller-gha-rs-controller
           namespace: arc-controller
