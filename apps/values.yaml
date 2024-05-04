@@ -17,8 +17,14 @@ applications:
     path: apps/cert-manager
     namespace: cert-manager
   - name: arc-controller
-    path: apps/arc/controller
-    namespace: arc-controller
+    helm:
+      repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+      targetRevision: 0.9.1
+      namespace: arc-controller
   - name: arc-runners
-    path: apps/arc/runners
-    namespace: arc-runners
+    helm:
+      repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.9.1
+      namespace: arc-runners
