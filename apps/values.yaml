@@ -19,17 +19,17 @@ applications:
   - name: arc
     path: apps/arc
   - name: arc-controller
+    namespace: arc-controller
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
       targetRevision: 0.9.1
-      namespace: arc-controller
   - name: arc-runners
+    namespace: arc-runners
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.9.1
-      namespace: arc-runners
       valuesObject: |
         githubConfigUrl: https://github.com/gregkonush/lab
         githubConfigSecret: github_token
