@@ -35,5 +35,32 @@ spec:
       allowEmpty: true
 {{- end }}
 
+{{- if hasKey $application "helm" }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $application.name }}
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: {{ $application.helm.repoURL }}
+      chart: {{ $application.helm.chart }}
+      targetRevision: {{ $application.helm.targetRevision }}
+  destination:
+    namespace: {{ $application.helm.namespace }}
+    server: {{ $root.Values.spec.destination.server }}
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+      allowEmpty: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+{{- end }}
+
 {{- end }}
 {{- end }}
