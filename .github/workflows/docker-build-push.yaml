@@ -21,7 +21,7 @@ jobs:
           registry: gitea.proompteng.ai
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
-      - name: Build and push
+      - name: Build and push ecran
         uses: docker/build-push-action@v5
         with:
           platforms: linux/arm64
@@ -30,4 +30,14 @@ jobs:
           push: true
           tags: gitea.proompteng.ai/d/lab/ecran:latest
           cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:latest
+          cache-to: type=inline
+      - name: Build and push ledos
+        uses: docker/build-push-action@v5
+        with:
+          platforms: linux/arm64
+          context: ./apps/ledos
+          file: ./apps/ledos/Dockerfile
+          push: true
+          tags: gitea.proompteng.ai/d/lab/ledos:latest
+          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ledos:latest
           cache-to: type=inline

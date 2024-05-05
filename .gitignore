@@ -38,3 +38,4 @@ node_modules/
 kubernetes/kubeconfig
 kubeconfig
 **/charts/*.tgz
+**/generated/*
