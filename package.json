@@ -13,6 +13,7 @@
     "ecran:dev": "bun run --cwd apps/ecran dev"
   },
   "workspaces": [
-    "apps/*"
+    "apps/ecran",
+    "apps/ledos"
   ]
 }
