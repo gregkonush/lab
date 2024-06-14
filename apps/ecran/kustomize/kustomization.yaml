@@ -6,3 +6,9 @@ resources:
   - service.yaml
   - ingress.yaml
   - sealed-secret.yaml
+helmCharts:
+  - name: postgresql
+    repo: oci://registry-1.docker.io/bitnamicharts/postgresql-ha
+    version: v16.3.0
+    releaseName: postgresql
+    namespace: ecran
