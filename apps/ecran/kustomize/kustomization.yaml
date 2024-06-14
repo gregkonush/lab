@@ -9,6 +9,6 @@ resources:
 helmCharts:
   - name: postgresql
     repo: oci://registry-1.docker.io/bitnamicharts/postgresql-ha
-    version: v16.3.0
+    version: v14.2.5
     releaseName: postgresql
     namespace: ecran
