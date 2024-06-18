@@ -46,3 +46,9 @@ applications:
       repoURL: https://cloudnative-pg.io/charts/
       chart: cloudnative-pg
       targetRevision: 0.21.5
+  - name: prometheus
+    namespace: prometheus
+    helm:
+      repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus-community
+      targetRevision: 60.2.0
