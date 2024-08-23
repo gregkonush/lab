@@ -23,13 +23,13 @@ applications:
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.9.3
+      targetRevision: 0.9.1
   - name: arc-runners
     namespace: arc-runners
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.9.3
+      targetRevision: 0.9.1
       valuesObject: |
         containerMode:
           type: "dind"
