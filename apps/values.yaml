@@ -50,5 +50,5 @@ applications:
     namespace: prometheus
     helm:
       repoURL: https://prometheus-community.github.io/helm-charts
-      chart: prometheus-community
-      targetRevision: 62.2.0
+      chart: kube-prometheus-stack
+      targetRevision: 62.2.1
