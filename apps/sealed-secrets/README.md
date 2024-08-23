@@ -2,6 +2,12 @@
 
 [docs](https://github.com/bitnami-labs/sealed-secrets?tab=readme-ov-file#usage)
 
+## Install kubeseal cli
+
+```bash
+brew install kubeseal
+```
+
 ## Encode
 
 ```bash
