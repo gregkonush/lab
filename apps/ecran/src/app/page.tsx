@@ -38,10 +38,7 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col">
-      <header className="flex items-center text-2xl px-5 py-4 border-b border-gray-800 uppercase">
-        proompteng<span className="text-indigo-400">▪</span>ai
-      </header>
+    <div className="flex min-h-screen flex-col">
       <div className="mt-40 flex flex-col items-center justify-center space-y-2">
         {signedUp ? (
           <div>Thanks, we will let you when app is available</div>
@@ -63,6 +60,6 @@ export default function Home() {
           </>
         )}
       </div>
-    </main>
+    </div>
   )
 }
