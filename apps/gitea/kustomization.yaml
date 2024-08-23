@@ -6,7 +6,7 @@ resources:
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts
-    version: v10.1.4
+    version: v10.4.0
     releaseName: gitea
     namespace: gitea
     valuesMerge: merge
