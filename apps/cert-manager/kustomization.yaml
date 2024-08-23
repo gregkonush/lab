@@ -7,7 +7,7 @@ helmCharts:
     namespace: cert-manager
     repo: https://charts.jetstack.io
     releaseName: cert-manager
-    version: v1.14.5
+    version: v1.15.3
     valuesMerge: merge
     # https://artifacthub.io/packages/helm/cert-manager/cert-manager#installcrds-~-bool
     valuesInline:

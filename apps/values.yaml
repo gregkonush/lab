@@ -23,13 +23,13 @@ applications:
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.9.1
+      targetRevision: 0.9.3
   - name: arc-runners
     namespace: arc-runners
     helm:
       repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.9.1
+      targetRevision: 0.9.3
       valuesObject: |
         containerMode:
           type: "dind"
@@ -45,10 +45,10 @@ applications:
     helm:
       repoURL: https://cloudnative-pg.io/charts/
       chart: cloudnative-pg
-      targetRevision: 0.21.5
+      targetRevision: 0.24.0
   - name: prometheus
     namespace: prometheus
     helm:
       repoURL: https://prometheus-community.github.io/helm-charts
       chart: prometheus-community
-      targetRevision: 60.2.0
+      targetRevision: 62.2.0
