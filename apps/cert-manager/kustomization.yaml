@@ -11,7 +11,9 @@ helmCharts:
     valuesMerge: merge
     # https://artifacthub.io/packages/helm/cert-manager/cert-manager#installcrds-~-bool
     valuesInline:
-      installCRDs: true
+      crds:
+        enabled: true
+        keep: true
       # https://github.com/cert-manager/cert-manager/issues/6716
       # global:
       #   leaderElection:
