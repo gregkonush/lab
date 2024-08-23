@@ -148,6 +148,7 @@ users:
       emit_keys_to_console: false
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOE//lpGZI2015yMUjHwhWJjgarTLIsqQBIFXlAanPvS
   - name: xueyingxia
     groups: [adm, cdrom, dip, plugdev, lxd, sudo]
     lock_passwd: false
