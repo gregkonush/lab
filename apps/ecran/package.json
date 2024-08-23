@@ -17,8 +17,10 @@
     "@types/mdx": "^2.0.13",
     "logrocket": "^8.1.0",
     "next": "14.2.2",
+    "next-mdx-remote": "^5.0.0",
     "react": "^18",
     "react-dom": "^18",
+    "rehype-highlight": "^7.0.0",
     "resend": "^3.2.0"
   },
   "devDependencies": {
