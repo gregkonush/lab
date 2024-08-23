@@ -1,7 +1,3 @@
-## Next Permutation
-
-<div className="bg-violet-500 rounded p-2">
-
 ```python
 class Solution:
     def nextPermutation(self, nums: List[int]) -> None:
@@ -29,5 +25,3 @@ class Solution:
             left += 1
             right -= 1
 ```
-
-</div>
