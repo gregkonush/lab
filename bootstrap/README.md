@@ -1,5 +1,11 @@
 # Bootstrap
 
+Install argo-cd CLI
+
+```bash
+brew install argocd
+```
+
 Add argo-cd helm charts
 
 ```bash
