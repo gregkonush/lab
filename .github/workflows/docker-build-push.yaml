@@ -6,9 +6,6 @@ on:
       - "main"
     tags:
       - "v*"
-  pull_request:
-    branches:
-      - "main"
 
 jobs:
   docker:
@@ -39,7 +36,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=sha
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
