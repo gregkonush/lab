@@ -15,5 +15,6 @@ helmCharts:
         registries:
           - name: gitea
             prefix: gitea.proompteng.ai
+            api_url: https://gitea.proompteng.ai
             credentials: pullsecret:argocd/gitea-registry
             default: true
