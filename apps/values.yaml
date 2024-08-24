@@ -57,4 +57,4 @@ applications:
     helm:
       repoURL: https://argoproj.github.io/argo-helm
       chart: argocd-image-updater
-      targetRevision: 0.14.0
+      targetRevision: 0.11.0
