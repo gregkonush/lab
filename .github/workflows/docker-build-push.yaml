@@ -3,7 +3,9 @@ name: Docker Build and Push
 on:
   push:
     branches:
-      - "main"
+      - main
+    tags:
+      - 'v*.*.*'
 
 jobs:
   docker:
@@ -11,6 +13,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create a GitHub release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.tag_version.outputs.new_tag }}
+          name: Release ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -43,7 +56,8 @@ jobs:
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
           push: true
-          tags: gitea.proompteng.ai/d/lab/ecran:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:latest
           cache-to: type=inline
       - name: Build and push ledos
