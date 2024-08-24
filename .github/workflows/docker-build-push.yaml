@@ -5,7 +5,10 @@ on:
     branches:
       - "main"
     tags:
-      - "v*.*.*"
+      - "v*"
+  pull_request:
+    branches:
+      - "main"
 
 jobs:
   docker:
@@ -33,13 +36,10 @@ jobs:
             gitea.proompteng.ai/d/lab/ecran
             gitea.proompteng.ai/d/lab/ledos
           tags: |
-            type=schedule
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -56,10 +56,10 @@ jobs:
           platforms: linux/arm64
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:latest
+          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:main
           cache-to: type=inline
       - name: Build and push ledos
         uses: docker/build-push-action@v5
@@ -67,8 +67,8 @@ jobs:
           platforms: linux/arm64
           context: ./apps/ledos
           file: ./apps/ledos/Dockerfile
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ledos:latest
+          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ledos:main
           cache-to: type=inline
