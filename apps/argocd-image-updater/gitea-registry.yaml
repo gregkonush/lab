@@ -1,0 +1,16 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: gitea-registry
+  namespace: argocd
+spec:
+  encryptedData:
+    .dockerconfigjson: AgAdUPXH069PMx0kszUJC8JIP5TAoc1MfXuognME2Of7Ts9XOAek2TfhNvPsmjrEM6TwEKG23P2Bdpo4qk/q0wKP7gPDagG+Rm1DM+6W6DAXyYYeQxrrUH7/tZp6I81IB4rQBEswAJFPzl2dPL6zDD4DAfsiAnKbxbsXsSp9Td83PjcD67x5B4C+5/NQDJX3Djej+SyE9KhD5AKAXEgCWjV6Tj1ZbWezd7Nix7y5O7myuV7NFSuLHArWprAIcJagK866JjVtbhVA2Ha1UZVjZci7ktB3uxlgb5eN0vpL9+N12XT4arA9bIAEGWEXEoDo17wBaa/x6teM2yooLKQCDiS23pzV5H3x3f4WGLzMpHyT9f4OySnjQ3yT0UAdgAnzdR+1y/qMHAfZOsG6wPIyzdELR04D/DnFErnBTF984/sR/Uuj9yBs62lVa5dqFZ6q70vQb6e1oQ63XCEgUX8v5CUA7AnaiiAQWOCwDfd0on8f6/AuffHRfYgTZz71nEhLlwxSygtQam/HGh+/CjuaWGcXlJ7i0f6GDkyig677VsE9wVubjMIncx9Ij4EWwUFi9PiOb6+zM7ZB9/8kXxXfnoCi/NPrzMNEbMq7dJhvO+ASrpWmmO/AiM+84SjMHV6YIbMEuzmsQgoe/s+SJsHIxlyBQqzLt1JIYexMySGLJ0WfzLP3So1TjsMEEGOIFAfS3EWkxXfnetiqIfAa2UEUjFuXhDMIvdoIUmrA6yb3Z8nnrw3/jrz08REVjlDrfNxIbdYDgU6CkDf8DelRILjEhbF+rhCCcLFiQFRXE5lP6m20DyXY3p0eTFpUD0sPa+DlGhDbjZUz2e8=
+  template:
+    metadata:
+      creationTimestamp: null
+      name: gitea-registry
+      namespace: argocd
+    type: kubernetes.io/dockerconfigjson
