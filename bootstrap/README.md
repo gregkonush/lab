@@ -23,6 +23,7 @@ helm dep up
 Apply argo-cd helm charts
 
 ```bash
+# from root directory
 helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -
 ```
 

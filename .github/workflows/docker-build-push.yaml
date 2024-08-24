@@ -31,6 +31,7 @@ jobs:
           # list of Docker images to use as base name for tags
           images: |
             gitea.proompteng.ai/d/lab/ecran
+            gitea.proompteng.ai/d/lab/ledos
           tags: |
             type=schedule
             type=ref,event=branch
@@ -67,6 +68,7 @@ jobs:
           context: ./apps/ledos
           file: ./apps/ledos/Dockerfile
           push: true
-          tags: gitea.proompteng.ai/d/lab/ledos:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ledos:latest
           cache-to: type=inline
