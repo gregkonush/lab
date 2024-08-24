@@ -52,9 +52,3 @@ applications:
       repoURL: https://prometheus-community.github.io/helm-charts
       chart: kube-prometheus-stack
       targetRevision: 62.2.1
-  - name: argocd-image-updater
-    namespace: argocd-image-updater
-    helm:
-      repoURL: https://argoproj.github.io/argo-helm
-      chart: argocd-image-updater
-      targetRevision: 0.11.0
