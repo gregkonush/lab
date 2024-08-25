@@ -23,6 +23,7 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/src/db ./src/db
+RUN pnpm add drizzle-orm postgres
 
 # Set the correct permission for prerender cache
 RUN mkdir .next
