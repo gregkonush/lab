@@ -19,7 +19,7 @@ spec:
       initContainers:
         - name: run-migrations
           image: gitea.proompteng.ai/d/lab/ecran:main
-          command: ['pnpm', 'run', 'migrations']
+          command: ['npm', 'run', 'migrations']
           env:
             - name: DB_URI
               valueFrom:
