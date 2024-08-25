@@ -3,7 +3,7 @@ FROM node:20-alpine AS base
 FROM base AS deps
 WORKDIR /app
 COPY package.json ./
-RUN corepack enable pnpm && corepack pnpm install
+RUN corepack enable && corepack enable pnpm && pnpm install
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN corepack enable pnpm && corepack pnpm run build
+RUN corepack enable && corepack enable pnpm && pnpm run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
@@ -23,7 +23,7 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/src/db ./src/db
-RUN pnpm add drizzle-orm postgres
+RUN corepack enable && corepack enable pnpm && pnpm install drizzle-orm postgres
 
 # Set the correct permission for prerender cache
 RUN mkdir .next
