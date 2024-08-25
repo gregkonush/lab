@@ -19,7 +19,7 @@ spec:
       initContainers:
         - name: run-migrations
           image: gitea.proompteng.ai/d/lab/ecran:main
-          command: ['pnpm', 'run', 'migrations']
+          command: ['npx', 'tsx', 'src/db/migrate.ts']
           env:
             - name: DB_URI
               valueFrom:
