@@ -19,6 +19,7 @@ spec:
       initContainers:
         - name: run-migrations
           image: gitea.proompteng.ai/d/lab/ecran:main
+          imagePullPolicy: Always
           command: ['npx', 'tsx', './src/db/migrate.ts']
           env:
             - name: DB_URI
