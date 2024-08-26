@@ -11,6 +11,9 @@ applications:
   - name: ecran
     path: apps/ecran/kustomize
     namespace: ecran
+    annotations:
+      argocd-image-updater.argoproj.io/image-list: ecran=gitea.proompteng.ai/d/lab/ecran:main
+      argocd-image-updater.argoproj.io/ecran.update-strategy: digest
   - name: sealed-secrets
     path: apps/sealed-secrets
   - name: cert-manager
