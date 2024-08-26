@@ -1,6 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: argocd-image-updater
+resources:
+  - secrets.yaml
 helmCharts:
   - name: argocd-image-updater
     namespace: argocd-image-updater
@@ -14,3 +16,8 @@ helmCharts:
           serverAddress: argocd-server.argocd.svc.cluster.local
       serviceAccount:
         create: true
+      registries:
+        - name: gitea-registry
+          prefix: gitea.proompteng.ai
+          api_url: https://gitea.proompteng.ai
+          credentials: pullsecret:argocd-image-updater/gitea-registry
