@@ -20,9 +20,11 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
-  {{- if hasKey $application.metadata "annotations" }}
+  {{- if hasKey $application "annotations" }}
   annotations:
-    {{- $application.metadata.annotations | nindent 4 }}
+    {{- range $key, $value := $application.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
   {{- end }}
 spec:
   project: default
