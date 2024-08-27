@@ -2,6 +2,8 @@ argo-cd:
   configs:
     cm:
       kustomize.buildOptions: --enable-helm
+      accounts.imageUpdater: apiKey, login
+      accounts.imageUpdater.enabled: true
     params:
       server.insecure: true
     repositories:
