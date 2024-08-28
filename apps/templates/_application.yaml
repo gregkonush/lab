@@ -31,7 +31,6 @@ spec:
   destination:
     server: {{ $root.Values.spec.destination.server }}
   {{- if hasKey $application "namespace" }}
-  destination:
     namespace: {{ $application.namespace }}
   {{- end }}
   source:
