@@ -2,6 +2,8 @@ config:
   applicationsAPIKind: "argocd"
   argocd:
     serverAddress: "argocd-server.argocd.svc.cluster.local"
+    insecure: true
+    plaintext: true
   logLevel: debug
   registries:
     - name: gitea-registry
