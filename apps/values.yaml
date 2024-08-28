@@ -14,6 +14,8 @@ applications:
     annotations:
       argocd-image-updater.argoproj.io/image-list: ecran=gitea.proompteng.ai/d/lab/ecran:main
       argocd-image-updater.argoproj.io/ecran.update-strategy: newest-build
+      argocd-image-updater.argoproj.io/ecran.helm.image-name: gitea.proompteng.ai/d/lab/ecran:main
+      argocd-image-updater.argoproj.io/ecran.helm.image-tag: main
   - name: sealed-secrets
     path: apps/sealed-secrets
   - name: cert-manager
