@@ -12,6 +12,7 @@ helmCharts:
     valuesMerge: merge
     valuesInline:
       config:
+        logLevel: debug
         argocd:
           serverAddress: argocd-server.argocd.svc.cluster.local
         registries:
