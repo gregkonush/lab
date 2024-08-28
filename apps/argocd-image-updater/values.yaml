@@ -1,4 +1,5 @@
 config:
+  applicationsAPIKind: "argocd"
   argocd:
     serverAddress: "argocd-server.argocd.svc.cluster.local"
   logLevel: debug
