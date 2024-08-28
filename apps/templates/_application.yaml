@@ -30,13 +30,13 @@ spec:
   project: default
   destination:
     server: {{ $root.Values.spec.destination.server }}
-  {{- if hasKey $application "namespace" }}
+    {{- if hasKey $application "namespace" }}
     namespace: {{ $application.namespace }}
-  {{- end }}
+    {{- end }}
   source:
     repoURL: {{ $root.Values.spec.source.repoURL }}
     targetRevision: {{ $root.Values.spec.source.targetRevision }}
-    path: {{  $application.path }}
+    path: {{ $application.path }}
   syncPolicy:
     automated:
       prune: true
