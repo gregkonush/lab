@@ -4,6 +4,12 @@ argo-cd:
       kustomize.buildOptions: --enable-helm
       accounts.imageUpdater: apiKey, login
       accounts.imageUpdater.enabled: true
+    rbac:
+      policy.csv: |
+        p, role:imageUpdater, applications, get, */*, allow
+        p, role:imageUpdater, applications, update, */*, allow
+        g, imageUpdater, role:imageUpdater
+
     params:
       server.insecure: true
     repositories:
