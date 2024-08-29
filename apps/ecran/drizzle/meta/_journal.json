@@ -8,6 +8,13 @@
       "when": 1724909719803,
       "tag": "0000_rapid_toad",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1724912202798,
+      "tag": "0001_solid_pete_wisdom",
+      "breakpoints": true
     }
   ]
 }

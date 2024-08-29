@@ -4,8 +4,6 @@ export const difficultyEnum = pgEnum('difficulty', ['easy', 'medium', 'hard'])
 
 export const tags = pgEnum('tags', [
   'array',
-  'binary',
-  'bitwise',
   'dynamic-programming',
   'graph',
   'greedy',
@@ -34,6 +32,15 @@ export const tags = pgEnum('tags', [
   'djikstra',
   'bellman-ford',
   'floyd-warshall',
+  'recursion',
+  'sliding-window',
+  'linked-list',
+  'stack',
+  'queue',
+  'doubly-linked-list',
+  'priority-queue',
+  'matrix',
+  'bit-manipulation',
 ])
 
 export const problems = pgTable('problems', {
