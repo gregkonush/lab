@@ -10,5 +10,10 @@ EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
 --> statement-breakpoint
-ALTER TABLE "problems" ALTER COLUMN "difficulty" SET DATA TYPE difficulty;--> statement-breakpoint
-ALTER TABLE "problems" ADD COLUMN "tags" tags[] DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS "problems" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"title" varchar(256) NOT NULL,
+	"description" text NOT NULL,
+	"difficulty" "difficulty" NOT NULL,
+	"tags" tags[] DEFAULT '{}'
+);

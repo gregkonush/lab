@@ -1,5 +1,5 @@
 {
-  "id": "ef20bd9e-4fdf-47d1-a77a-efca9812ba40",
+  "id": "407264ff-29a0-455c-8d59-4730d3ec2c71",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -29,9 +29,17 @@
         },
         "difficulty": {
           "name": "difficulty",
-          "type": "varchar(256)",
+          "type": "difficulty",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "tags": {
+          "name": "tags",
+          "type": "tags[]",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'"
         }
       },
       "indexes": {},
@@ -40,7 +48,54 @@
       "uniqueConstraints": {}
     }
   },
-  "enums": {},
+  "enums": {
+    "public.difficulty": {
+      "name": "difficulty",
+      "schema": "public",
+      "values": [
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "public.tags": {
+      "name": "tags",
+      "schema": "public",
+      "values": [
+        "array",
+        "binary",
+        "bitwise",
+        "dynamic-programming",
+        "graph",
+        "greedy",
+        "hash-table",
+        "heap",
+        "math",
+        "number-theory",
+        "parsing",
+        "simulation",
+        "sorting",
+        "string",
+        "tree",
+        "two-pointers",
+        "binary-search",
+        "divide-and-conquer",
+        "depth-first-search",
+        "breadth-first-search",
+        "union-find",
+        "topological-sort",
+        "binary-tree",
+        "binary-search-tree",
+        "segment-tree",
+        "binary-indexed-tree",
+        "tree-decomposition",
+        "trie",
+        "djikstra",
+        "bellman-ford",
+        "floyd-warshall"
+      ]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "_meta": {
