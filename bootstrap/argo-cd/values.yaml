@@ -9,7 +9,6 @@ argo-cd:
         p, role:imageUpdater, applications, get, */*, allow
         p, role:imageUpdater, applications, update, */*, allow
         g, imageUpdater, role:imageUpdater
-
     params:
       server.insecure: true
     repositories:

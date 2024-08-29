@@ -1,0 +1,106 @@
+{
+  "id": "2d510675-e701-4aa4-bbdf-96ee78127c90",
+  "prevId": "ef20bd9e-4fdf-47d1-a77a-efca9812ba40",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.problems": {
+      "name": "problems",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "title": {
+          "name": "title",
+          "type": "varchar(256)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "difficulty": {
+          "name": "difficulty",
+          "type": "difficulty",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tags": {
+          "name": "tags",
+          "type": "tags[]",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {}
+    }
+  },
+  "enums": {
+    "public.difficulty": {
+      "name": "difficulty",
+      "schema": "public",
+      "values": [
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "public.tags": {
+      "name": "tags",
+      "schema": "public",
+      "values": [
+        "array",
+        "binary",
+        "bitwise",
+        "dynamic-programming",
+        "graph",
+        "greedy",
+        "hash-table",
+        "heap",
+        "math",
+        "number-theory",
+        "parsing",
+        "simulation",
+        "sorting",
+        "string",
+        "tree",
+        "two-pointers",
+        "binary-search",
+        "divide-and-conquer",
+        "depth-first-search",
+        "breadth-first-search",
+        "union-find",
+        "topological-sort",
+        "binary-tree",
+        "binary-search-tree",
+        "segment-tree",
+        "binary-indexed-tree",
+        "tree-decomposition",
+        "trie",
+        "djikstra",
+        "bellman-ford",
+        "floyd-warshall"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
