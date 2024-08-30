@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { DataTable } from './data-table'
 import { columns } from './columns'
 
+export const dynamic = 'force-dynamic'
+
 export default async function Problems() {
   const fetchedProblems = await db.select().from(problems)
   return (
