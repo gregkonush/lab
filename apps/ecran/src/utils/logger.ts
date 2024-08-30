@@ -1,3 +1,4 @@
+import 'pino-pretty'
 import pino from 'pino'
 import { Logger } from 'pino'
 
