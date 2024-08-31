@@ -17,7 +17,11 @@ export const columns: ColumnDef<Problem>[] = [
       row: {
         original: { id, title },
       },
-    }) => <Link href={`/problems/${id}`}>{title}</Link>,
+    }) => (
+      <Link href={`/problems/${id}`} className="hover:text-sky-500">
+        {title}
+      </Link>
+    ),
   },
   {
     accessorKey: 'difficulty',
