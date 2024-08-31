@@ -7,6 +7,14 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ComboSelect } from '@/components/combo-select'
 import { Button } from '@/components/ui/button'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb'
 import { eq } from 'drizzle-orm'
 
 export default async function Problem({ params: { id } }: { params: { id: string } }) {
@@ -36,14 +44,30 @@ export default async function Problem({ params: { id } }: { params: { id: string
   const problem = await db.select().from(problems).where(eq(problems.id, id))
 
   return (
-    <div className="prose dark:prose-invert -m-10">
+    <div className="-m-10">
+      <Breadcrumb className="mb-5">
+        <BreadcrumbList>
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/">/</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbLink href="/problems">Problems</BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem>
+            <BreadcrumbPage>{problem[0].title}</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
       {problem.map((p) => (
         <div key={p.id} className="flex flex-col gap-2">
           <h2 className="text-2xl font-bold">{p.title}</h2>
-          <div className="text-sm text-zinc-400">
-            Difficulty: <span className="bg-zinc-800 text-zinc-300 rounded-full py-1 px-2">{p.difficulty}</span>
+          <div className="text-sm text-zinc-400 mb-1">
+            Difficulty:{' '}
+            <span className="bg-zinc-800 text-zinc-300 rounded-full py-0.5 px-2 text-xs">{p.difficulty}</span>
           </div>
-          <p className="text-zinc-300">{p.description}</p>
+          <div className="space-y-3 text-sm whitespace-break-spaces">{p.description}</div>
         </div>
       ))}
     </div>
