@@ -50,5 +50,6 @@ jobs:
           file: ./apps/ecran/Dockerfile
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          push: true
           cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:main
           cache-to: type=inline
