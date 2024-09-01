@@ -1,7 +1,8 @@
 {
   "name": "ecran",
   "version": "0.1.0",
-  "private": true,
+  "author": "Greg Konush",
+  "license": "MIT",
   "packageManager": "pnpm@9.8.0",
   "scripts": {
     "dev": "next dev",
