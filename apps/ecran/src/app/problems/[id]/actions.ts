@@ -8,7 +8,6 @@ import { InferSelectModel } from 'drizzle-orm'
 type Problem = InferSelectModel<typeof problems>
 
 export async function createProblem(data: FormData) {
-  console.log(data)
   const result = await db
     .insert(problems)
     .values({
