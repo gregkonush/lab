@@ -4,6 +4,7 @@
   "main": "server.ts",
   "author": "Greg Konush",
   "license": "MIT",
+  "packageManager": "pnpm@9.8.0",
   "scripts": {
     "server": "tsx watch server.ts",
     "server:watch": "tsx watch server.ts",

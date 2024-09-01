@@ -1,6 +1,6 @@
 {
   "name": "lab",
-  "private": true,
+  "license": "MIT",
   "scripts": {
     "tf:plan": "terraform -chdir='./terraform/harvester' plan",
     "tf:apply": "terraform -chdir='./terraform/harvester' apply -auto-approve",
@@ -10,11 +10,12 @@
     "k:install": "./kubernetes/install.sh",
     "k:config": "cp kubeconfig ~/.kube/kubeconfig",
     "k:bootstrap": "helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -",
-    "ecran:dev": "bun run --cwd apps/ecran dev"
+    "ecran:dev": "bun run --cwd apps/ecran dev",
+    "prepare": "husky"
   },
-  "workspaces": [
-    "apps/ecran",
-    "apps/ledos"
-  ],
-  "packageManager": "pnpm@9.8.0+sha512.8e4c3550fb500e808dbc30bb0ce4dd1eb614e30b1c55245f211591ec2cdf9c611cabd34e1364b42f564bd54b3945ed0f49d61d1bbf2ec9bd74b866fcdc723276"
+  "packageManager": "pnpm@9.8.0",
+  "devDependencies": {
+    "husky": "^9.1.5",
+    "prettier": "^3.3.3"
+  }
 }
