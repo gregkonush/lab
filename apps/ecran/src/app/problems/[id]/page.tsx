@@ -44,7 +44,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
   const problem = await db.select().from(problems).where(eq(problems.id, id))
 
   return (
-    <div className="-m-10">
+    <div>
       <Breadcrumb className="mb-5">
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -63,10 +63,21 @@ export default async function Problem({ params: { id } }: { params: { id: string
       {problem.map((p) => (
         <div key={p.id} className="flex flex-col gap-2">
           <h2 className="text-2xl font-bold">{p.title}</h2>
-          <div className="text-sm text-zinc-400 mb-1">
-            Difficulty:{' '}
-            <span className="bg-zinc-800 text-zinc-300 rounded-full py-0.5 px-2 text-xs">{p.difficulty}</span>
+          <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-1 text-center">
+            <div>
+              Difficulty:{' '}
+              <span className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{p.difficulty}</span>
+            </div>
+            <div>
+              <span>Topics: </span>
+              {p.tags?.map((tag) => (
+                <span key={tag} className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">
+                  {tag}
+                </span>
+              ))}
+            </div>
           </div>
+
           <div className="space-y-3 text-sm whitespace-break-spaces">{p.description}</div>
         </div>
       ))}

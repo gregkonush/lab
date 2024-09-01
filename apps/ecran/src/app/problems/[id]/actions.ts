@@ -3,14 +3,19 @@
 import { problems } from '@/db/schema'
 import { db } from '@/db'
 import { redirect } from 'next/navigation'
+import { InferSelectModel } from 'drizzle-orm'
+
+type Problem = InferSelectModel<typeof problems>
 
 export async function createProblem(data: FormData) {
+  console.log(data)
   const result = await db
     .insert(problems)
     .values({
       title: data.get('title') as string,
-      difficulty: data.get('difficulty') as 'easy' | 'medium' | 'hard',
+      difficulty: data.get('difficulty') as Problem['difficulty'],
       description: data.get('description') as string,
+      tags: [data.get('tags')] as Problem['tags'],
     })
     .returning({ insertedId: problems.id })
 
