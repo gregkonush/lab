@@ -25,9 +25,7 @@ jobs:
           images: |
             gitea.proompteng.ai/d/lab/ecran
           tags: |
-            type=ref,event=branch
-            type=semver,pattern=${{ steps.tag_version.outputs.new_tag }}
-            type=sha
+            type=semver,value=${{ steps.tag_version.outputs.new_tag }}
       - name: Build and push
         run: |
           echo ${{ steps.meta.outputs.tags }}
