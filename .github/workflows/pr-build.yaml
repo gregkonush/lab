@@ -1,4 +1,4 @@
-name: Create a tag and release
+name: Check versions
 
 on:
   pull_request:
