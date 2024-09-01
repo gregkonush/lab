@@ -22,7 +22,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${jetbrains.variable} font-mono`} suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          <header className="flex items-center space-x-10 px-5 py-4 border-b border-gray-800">
+          <header className="flex items-center space-x-10 px-10 py-4 border-b border-gray-800">
             <div className="text-2xl uppercase">
               <Link href="/">
                 proompteng<span className="text-indigo-400">▪</span>ai
