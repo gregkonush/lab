@@ -19,4 +19,4 @@ jobs:
             type=sha
       - name: Build and push
         run: |
-          ${{ meta.outputs.tags }}
+          ${{ steps.meta.outputs.tags }}
