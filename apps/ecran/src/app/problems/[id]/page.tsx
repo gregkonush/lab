@@ -18,7 +18,7 @@ import {
 import { eq } from 'drizzle-orm'
 
 export default async function Problem({ params: { id } }: { params: { id: string } }) {
-  logger.info('Loading problem', { id })
+  logger.info(`Loading problem ${id}`)
   if (id === 'create') {
     return (
       <form action={createProblem} className="space-y-4 min-w-full">
