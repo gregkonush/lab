@@ -38,28 +38,9 @@ export default function Home() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <div className="mt-40 flex flex-col items-center justify-center space-y-2">
-        {signedUp ? (
-          <div>Thanks, we will let you when app is available</div>
-        ) : (
-          <>
-            <div>sign up for waitlist</div>
-            <form onSubmit={handleSubmit}>
-              <input
-                className="mx-2 rounded px-2 py-0.5 text-indigo-800/80"
-                type="email"
-                placeholder="your email"
-                value={email}
-                onChange={handleOnChange}
-              />
-              <button className="bg-indigo-500 text-white px-2 py-0.5 rounded" type="submit">
-                sign up
-              </button>
-            </form>
-          </>
-        )}
-      </div>
+    <div className="flex min-w-full min-h-[calc(100vh-10rem)] flex-col items-center justify-center prose dark:prose-invert">
+      <h1 className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-sky-500">AI Leetcode Coach</h1>
+      <p className="text-left">Tech interview practice made easy.</p>
     </div>
   )
 }
