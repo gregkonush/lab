@@ -16,9 +16,15 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { eq } from 'drizzle-orm'
+import { validate } from 'uuid'
+import { notFound } from 'next/navigation'
 
 export default async function Problem({ params: { id } }: { params: { id: string } }) {
+  if (!validate(id) && id !== 'create') {
+    notFound()
+  }
   logger.info(`Loading problem ${id}`)
+
   if (id === 'create') {
     return (
       <form action={createProblem} className="space-y-4 min-w-full">
@@ -42,6 +48,10 @@ export default async function Problem({ params: { id } }: { params: { id: string
     )
   }
   const problem = await db.select().from(problems).where(eq(problems.id, id))
+
+  if (problem.length === 0) {
+    notFound()
+  }
 
   return (
     <div>
