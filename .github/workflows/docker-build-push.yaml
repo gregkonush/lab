@@ -2,8 +2,6 @@ name: Docker Build and Push
 
 on:
   push:
-    branches:
-      - "main"
     tags:
       - "v*"
 
@@ -13,27 +11,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Bump version and push tag
-        id: tag_version
-        uses: mathieudutour/github-tag-action@v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Create a GitHub release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ steps.tag_version.outputs.new_tag }}
-          name: Release ${{ steps.tag_version.outputs.new_tag }}
-          body: ${{ steps.tag_version.outputs.changelog }}
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # list of Docker images to use as base name for tags
           images: |
             gitea.proompteng.ai/d/lab/ecran
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha
       - name: Set up QEMU
@@ -52,7 +37,6 @@ jobs:
           platforms: linux/arm64
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:main
