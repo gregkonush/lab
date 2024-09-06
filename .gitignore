@@ -39,3 +39,5 @@ kubernetes/kubeconfig
 kubeconfig
 **/charts/*.tgz
 **/generated/*
+
+**/temporal/lib
