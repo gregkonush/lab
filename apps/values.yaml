@@ -57,3 +57,14 @@ applications:
   - name: argocd-image-updater
     path: apps/argocd-image-updater
     namespace: argocd-image-updater
+  - name: temporal
+    namespace: temporal
+    helm:
+      repoURL: https://go.temporal.io/helm-charts
+      chart: temporal
+      targetRevision: 0.44.0
+      valuesObject: |
+        prometheus:
+          enabled: false
+        grafana:
+          enabled: false
