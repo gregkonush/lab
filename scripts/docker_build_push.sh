@@ -1,4 +1,3 @@
 #!/usr/bin/env bash
 
-docker buildx build -t gitea.proompteng.ai/d/lab/ecran:latest ./apps/ecran --file ./apps/ecran/Dockerfile
-docker push gitea.proompteng.ai/d/lab/ecran:latest
+docker buildx build --platform linux/amd64 -t gitea.proompteng.ai/lab/ecran:latest ./apps/ecran --file ./apps/ecran/Dockerfile --push

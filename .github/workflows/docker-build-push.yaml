@@ -27,7 +27,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            gitea.proompteng.ai/d/lab/ecran
+            gitea.proompteng.ai/lab/ecran
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ steps.tag_version.outputs.new_tag }}
@@ -51,5 +51,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: true
-          cache-from: type=registry,ref=gitea.proompteng.ai/d/lab/ecran:main
+          cache-from: type=registry,ref=gitea.proompteng.ai/lab/ecran:latest
           cache-to: type=inline
