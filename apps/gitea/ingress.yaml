@@ -19,5 +19,7 @@ spec:
       services:
         - name: gitea-http
           port: 3000
+      middlewares:
+        - name: limit-upload-size
   tls:
     certResolver: default
