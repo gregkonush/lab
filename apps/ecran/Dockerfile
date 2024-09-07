@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable && corepack enable pnpm && pnpm run next:build
+RUN corepack enable && corepack enable pnpm && pnpm run build:next
 
 # Production image, copy all the files and run next
 FROM base AS runner

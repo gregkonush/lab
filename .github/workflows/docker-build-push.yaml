@@ -32,8 +32,6 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ steps.tag_version.outputs.new_tag }}
             type=sha
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
