@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kaniko-build
+  namespace: ecran
+spec:
+  template:
+    spec:
+      containers:
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:latest
+          args:
+            - '--dockerfile=/apps/ecran/Dockerfile'
+            - '--context=git://github.com/gregkonush/lab.git'
+            - '--destination=gitea.lan/lab/ecran:latest'
+            - '--insecure'
+            - '--insecure-registry'
+          volumeMounts:
+            - name: docker-config
+              mountPath: /kaniko/.docker
+      restartPolicy: Never
+      volumes:
+        - name: docker-config
+          secret:
+            secretName: gitea-registry
+            items:
+              - key: .dockerconfigjson
+                path: config.json
