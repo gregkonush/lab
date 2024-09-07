@@ -14,7 +14,7 @@ spec:
             - '--context=git://github.com/gregkonush/lab.git'
             - '--destination=gitea.lan/lab/ecran:latest'
             - '--insecure'
-            - '--insecure-registry'
+            - '--insecure-pull'
           volumeMounts:
             - name: docker-config
               mountPath: /kaniko/.docker
