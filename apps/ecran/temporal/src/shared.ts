@@ -1,1 +1,1 @@
-export const TASK_QUEUE_NAME = 'ecommerce-oneclick';
+export const TASK_QUEUE_NAME = 'ecommerce-oneclick'
