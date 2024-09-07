@@ -73,3 +73,10 @@ applications:
             repository: temporalio/admin-tools
             tag: 1.24.2-tctl-1.18.1-cli-1.0.0
             pullPolicy: IfNotPresent
+        web:
+          ingress:
+            enabled: true
+            annotations:
+              traefik.frontend.rule.type: PathPrefix
+            hosts:
+              - "temporal.lan"
