@@ -18,7 +18,7 @@ spec:
         - name: gitea-registry
       initContainers:
         - name: run-migrations
-          image: gitea.proompteng.ai/lab/ecran:latest
+          image: gitea.proompteng.ai/lab/ecran:0.0.1
           imagePullPolicy: Always
           command: ['pnpm', 'run', 'migrations']
           env:
@@ -29,7 +29,7 @@ spec:
                   key: uri
       containers:
         - name: ecran
-          image: gitea.proompteng.ai/lab/ecran:latest
+          image: gitea.proompteng.ai/lab/ecran:0.0.1
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
