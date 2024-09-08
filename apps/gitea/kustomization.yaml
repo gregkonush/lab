@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: gitea
 resources:
   - ingress.yaml
-  - cluster-issuer.yaml
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts
