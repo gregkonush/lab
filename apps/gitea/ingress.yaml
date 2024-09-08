@@ -10,7 +10,6 @@ spec:
   tls:
     - hosts:
         - gitea.grisha.cloud
-        - gitea.lan
         - gitea.proompteng.ai
       secretName: gitea-tls
   rules:
