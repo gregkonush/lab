@@ -8,6 +8,10 @@ config:
       prefix: gitea.grisha.cloud
       api_url: https://gitea.grisha.cloud
       credentials: pullsecret:argocd-image-updater/gitea-registry
+    - name: proompteng-registry
+      prefix: gitea.proompteng.ai
+      api_url: https://gitea.proompteng.ai
+      credentials: pullsecret:argocd-image-updater/proompteng-registry
       default: true
 serviceAccount:
   create: true
