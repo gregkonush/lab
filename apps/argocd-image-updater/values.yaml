@@ -5,8 +5,8 @@ config:
   logLevel: debug
   registries:
     - name: gitea-registry
-      prefix: gitea.proompteng.ai
-      api_url: https://gitea.proompteng.ai
+      prefix: gitea.grisha.cloud
+      api_url: https://gitea.grisha.cloud
       credentials: pullsecret:argocd-image-updater/gitea-registry
       default: true
 serviceAccount:
