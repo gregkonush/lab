@@ -1,8 +1,0 @@
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: limit-upload-size
-  namespace: gitea
-spec:
-  buffering:
-    maxRequestBodyBytes: 2000000000
