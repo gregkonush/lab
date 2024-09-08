@@ -12,7 +12,6 @@ helmCharts:
     releaseName: gitea
     namespace: gitea
     valuesMerge: merge
-    # https://gitea.com/gitea/helm-chart/src/branch/main/templates/_helpers.tpl
     valuesInline:
       gitea:
         config:
