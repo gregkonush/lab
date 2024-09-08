@@ -5,7 +5,7 @@ metadata:
   namespace: gitea
 spec:
   entryPoints:
-    - websecure
+    - web
   routes:
     - kind: Rule
       match: Host(`gitea.lan`)
@@ -22,5 +22,3 @@ spec:
       services:
         - name: gitea-http
           port: 3000
-  tls:
-    certResolver: default
