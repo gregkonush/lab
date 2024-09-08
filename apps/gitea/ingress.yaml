@@ -26,4 +26,4 @@ spec:
         - name: gitea-http
           port: 3000
   tls:
-    certResolver: default
+    secretName: gitea-tls
