@@ -21,5 +21,11 @@ spec:
           port: 3000
       middlewares:
         - name: limit-upload-size
+    - kind: Rule
+      match: Host(`gitea.grisha.cloud`)
+      priority: 10
+      services:
+        - name: gitea-http
+          port: 3000
   tls:
     secretName: gitea-tls
