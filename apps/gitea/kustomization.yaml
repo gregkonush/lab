@@ -5,6 +5,7 @@ resources:
   - ingress.yaml
   - cluster-issuer.yaml
   - certificate.yaml
+  - acme-solver.yaml
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts
