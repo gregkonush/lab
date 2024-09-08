@@ -19,5 +19,11 @@ spec:
       services:
         - name: ecran
           port: 80
+    - kind: Rule
+      match: Host(`grisha.cloud`)
+      priority: 10
+      services:
+        - name: ecran
+          port: 80
   tls:
     certResolver: default
