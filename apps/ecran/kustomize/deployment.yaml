@@ -15,10 +15,10 @@ spec:
         app.kubernetes.io/name: ecran
     spec:
       imagePullSecrets:
-        - name: gitea-registry
+        - name: proompteng-registry
       initContainers:
         - name: run-migrations
-          image: gitea.grisha.cloud/lab/ecran:0.0.1
+          image: gitea.proompteng.ai/lab/ecran:0.0.1
           imagePullPolicy: Always
           command: ['npm', 'run', 'migrations']
           env:
@@ -29,7 +29,7 @@ spec:
                   key: uri
       containers:
         - name: ecran
-          image: gitea.grisha.cloud/lab/ecran:0.0.1
+          image: gitea.proompteng.ai/lab/ecran:0.0.1
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
@@ -92,7 +92,7 @@ spec:
               cpu: '100m'
               memory: '100Mi'
         - name: temporal-worker
-          image: gitea.grisha.cloud/lab/ecran:0.0.1
+          image: gitea.proompteng.ai/lab/ecran:0.0.1
           imagePullPolicy: Always
           command: ['npm', 'run', 'start:worker']
           env:
