@@ -5,7 +5,7 @@ import { TASK_QUEUE_NAME } from './shared'
 run().catch((err) => console.log(err))
 
 async function run() {
-  console.log('Starting worker')
+  console.log('Starting worker, address:', process.env.TEMPORAL_ADDRESS)
   const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233'
   const connection = await NativeConnection.connect({
     address,
