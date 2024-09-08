@@ -9,6 +9,6 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-http01-account-key
     solvers:
-    - http01:
-        ingress:
-          class: traefik
+      - http01:
+          ingress:
+            class: traefik

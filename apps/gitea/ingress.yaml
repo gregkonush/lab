@@ -19,7 +19,7 @@ spec:
       match: Host(`gitea.grisha.cloud`) && PathPrefix(`/.well-known/acme-challenge/`)
       priority: 20
       services:
-        - name: acme-http-solver
+        - name: nginx-acme-solver
           port: 80
   tls:
     secretName: gitea-tls

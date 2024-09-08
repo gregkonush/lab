@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-acme-solver
+  namespace: gitea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-acme-solver
+  template:
+    metadata:
+      labels:
+        app: nginx-acme-solver
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            limits:
+              cpu: "0.5"
+              memory: "128Mi"
+            requests:
+              cpu: "0.1"
+              memory: "64Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        - name: config
+          configMap:
+            name: nginx-acme-solver-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-acme-solver-config
+  namespace: gitea
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+
+        location ~ /.well-known/acme-challenge/ {
+            default_type text/plain;
+            add_header Content-Type text/plain;
+            return 200 "OK";
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-acme-solver
+  namespace: gitea
+spec:
+  selector:
+    app: nginx-acme-solver
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
