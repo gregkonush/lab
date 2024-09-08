@@ -3,10 +3,11 @@ kind: IngressRoute
 metadata:
   name: gitea-http
   namespace: gitea
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-http01"
 spec:
   entryPoints:
     - websecure
-    - web
   routes:
     - kind: Rule
       match: Host(`gitea.lan`) || Host(`gitea.proompteng.ai`) || Host(`gitea.grisha.cloud`)
@@ -14,12 +15,7 @@ spec:
       services:
         - name: gitea-http
           port: 3000
-    # ACME challenge route
-    - kind: Rule
-      match: Host(`gitea.grisha.cloud`) && PathPrefix(`/.well-known/acme-challenge/`)
-      priority: 20
-      services:
-        - name: nginx-acme-solver
-          port: 80
   tls:
     secretName: gitea-tls
+    domains:
+      - main: gitea.grisha.cloud
