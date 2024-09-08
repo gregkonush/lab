@@ -3,19 +3,14 @@ kind: IngressRoute
 metadata:
   name: gitea-http
   namespace: gitea
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-http01"
 spec:
   entryPoints:
     - websecure
   routes:
     - kind: Rule
       match: Host(`gitea.lan`) || Host(`gitea.proompteng.ai`) || Host(`gitea.grisha.cloud`)
-      priority: 10
       services:
         - name: gitea-http
           port: 3000
   tls:
     secretName: gitea-tls
-    domains:
-      - main: gitea.grisha.cloud

@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gitea-cert
+  namespace: gitea
+spec:
+  secretName: gitea-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: grisha.cloud
+  dnsNames:
+    - grisha.cloud
+    - gitea.grisha.cloud
