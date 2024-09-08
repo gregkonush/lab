@@ -14,6 +14,6 @@ helmCharts:
       gitea:
         config:
           server:
-            DOMAIN: gitea.proompteng.ai
-            ROOT_URL: https://gitea.proompteng.ai
-            SSH_DOMAIN: gitea.proompteng.ai
+            DOMAIN: gitea.grisha.cloud
+            ROOT_URL: https://gitea.grisha.cloud
+            SSH_DOMAIN: gitea.grisha.cloud
