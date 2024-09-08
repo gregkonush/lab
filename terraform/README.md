@@ -3,7 +3,7 @@
 Force delete virtual machine:
 
 ```bash
-ssh rancher@192.168.1.246
+ssh rancher@192.168.1.56
 sudo su
 kubectl get virtualmachineinstances.kubevirt.io
 kubectl delete virtualmachineinstances.kubevirt.io rancher2
