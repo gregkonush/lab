@@ -7,4 +7,3 @@ resources:
   - ingress.yaml
   - sealed-secret.yaml
   - postgresql.yaml
-  - kaniko.yaml
