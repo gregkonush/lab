@@ -4,6 +4,7 @@ namespace: gitea
 resources:
   - ingress.yaml
   - middleware.yaml
+  - certificate.yaml
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts

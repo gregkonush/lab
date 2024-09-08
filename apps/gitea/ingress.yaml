@@ -22,4 +22,4 @@ spec:
       middlewares:
         - name: limit-upload-size
   tls:
-    certResolver: default
+    secretName: gitea-tls
