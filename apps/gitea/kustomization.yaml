@@ -1,6 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: gitea
+resources:
+  - ingress.yaml
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts
@@ -9,30 +11,9 @@ helmCharts:
     namespace: gitea
     valuesMerge: merge
     valuesInline:
-      ingress:
-        enabled: true
-        className: traefik
-        hosts:
-          - host: gitea.grisha.cloud
-            paths:
-              - path: /
-                pathType: Prefix
-          - host: gitea.lan
-            paths:
-              - path: /
-                pathType: Prefix
-          - host: gitea.proompteng.ai
-            paths:
-              - path: /
-                pathType: Prefix
       gitea:
         config:
           server:
-            PROTOCOL: https
             DOMAIN: gitea.grisha.cloud
             ROOT_URL: https://gitea.grisha.cloud
             SSH_DOMAIN: gitea.grisha.cloud
-            ENABLE_ACME: true
-            ACME_ACCEPTTOS: true
-            ACME_DIRECTORY: https://acme-v02.api.letsencrypt.org/directory
-            ACME_EMAIL: gkonushev@outlook.com
