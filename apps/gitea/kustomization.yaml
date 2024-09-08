@@ -12,13 +12,6 @@ helmCharts:
       ingress:
         enabled: true
         className: traefik
-        annotations:
-          kubernetes.io/ingress.class: traefik
-          cert-manager.io/issue-temporary-certificate: "true"
-          acme.cert-manager.io/http01-edit-in-place: "true"
-          cert-manager.io/cluster-issuer: "letsencrypt-prod"
-          traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-          traefik.ingress.kubernetes.io/router.tls: "true"
         hosts:
           - host: gitea.grisha.cloud
             paths:
@@ -32,10 +25,6 @@ helmCharts:
             paths:
               - path: /
                 pathType: Prefix
-        tls:
-          - secretName: gitea-tls
-            hosts:
-              - gitea.grisha.cloud
       gitea:
         config:
           server:
