@@ -12,7 +12,7 @@ spec:
           args:
             - '--dockerfile=/apps/ecran/Dockerfile'
             - '--context=git://github.com/gregkonush/lab.git'
-            - '--context-subpath=apps/ecran'
+            - '--context-sub-path=apps/ecran'
             - '--destination=gitea.grisha.cloud/lab/ecran:latest'
           volumeMounts:
             - name: docker-config
