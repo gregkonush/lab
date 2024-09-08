@@ -12,11 +12,7 @@ spec:
           args:
             - '--dockerfile=/apps/ecran/Dockerfile'
             - '--context=git://github.com/gregkonush/lab.git'
-            - '--destination=gitea.lan/lab/ecran:latest'
-            - '--insecure'
-            - '--insecure-pull'
-            - '--skip-tls-verify'
-            - '--skip-tls-verify-pull'
+            - '--destination=gitea.grisha.cloud/lab/ecran:latest'
           volumeMounts:
             - name: docker-config
               mountPath: /kaniko/.docker
