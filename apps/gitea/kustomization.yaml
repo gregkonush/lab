@@ -3,8 +3,6 @@ kind: Kustomization
 namespace: gitea
 resources:
   - ingress.yaml
-  - middleware.yaml
-  - certificate.yaml
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts
@@ -20,7 +18,3 @@ helmCharts:
             DOMAIN: gitea.proompteng.ai
             ROOT_URL: https://gitea.proompteng.ai
             SSH_DOMAIN: gitea.proompteng.ai
-          repository:
-            upload:
-              FILE_MAX_SIZE: 2048
-              MAX_FILES: 20
