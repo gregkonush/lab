@@ -1,0 +1,26 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: gitea-http
+  namespace: gitea
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`gitea.lan`)
+      services:
+        - name: gitea-http
+          port: 3000
+    - kind: Rule
+      match: Host(`gitea.proompteng.ai`)
+      services:
+        - name: gitea-http
+          port: 3000
+    - kind: Rule
+      match: Host(`gitea.grisha.cloud`)
+      services:
+        - name: gitea-http
+          port: 3000
+  tls:
+    certResolver: default
