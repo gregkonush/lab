@@ -1,16 +1,46 @@
-apiVersion: traefik.containo.us/v1alpha1
-kind: IngressRoute
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: gitea-http
+  name: gitea-ingress
   namespace: gitea
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
-  entryPoints:
-    - websecure
-  routes:
-    - kind: Rule
-      match: Host(`gitea.lan`) || Host(`gitea.proompteng.ai`) || Host(`gitea.grisha.cloud`)
-      services:
-        - name: gitea-http
-          port: 3000
   tls:
-    secretName: gitea-tls
+    - hosts:
+        - gitea.grisha.cloud
+        - gitea.lan
+        - gitea.proompteng.ai
+      secretName: gitea-tls
+  rules:
+    - host: gitea.grisha.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitea-http
+                port:
+                  number: 3000
+    - host: gitea.lan
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitea-http
+                port:
+                  number: 3000
+    - host: gitea.proompteng.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gitea-http
+                port:
+                  number: 3000
