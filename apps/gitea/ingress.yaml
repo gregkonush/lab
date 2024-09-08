@@ -6,22 +6,18 @@ metadata:
 spec:
   entryPoints:
     - websecure
+    - web
   routes:
     - kind: Rule
-      match: Host(`gitea.lan`)
+      match: Host(`gitea.lan`) || Host(`gitea.proompteng.ai`) || Host(`gitea.grisha.cloud`)
       priority: 10
       services:
         - name: gitea-http
           port: 3000
+    # ACME challenge route
     - kind: Rule
-      match: Host(`gitea.proompteng.ai`)
-      priority: 10
-      services:
-        - name: gitea-http
-          port: 3000
-    - kind: Rule
-      match: Host(`gitea.grisha.cloud`)
-      priority: 10
+      match: Host(`gitea.grisha.cloud`) && PathPrefix(`/.well-known/acme-challenge/`)
+      priority: 20
       services:
         - name: gitea-http
           port: 3000
