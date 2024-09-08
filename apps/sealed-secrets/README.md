@@ -58,13 +58,13 @@ echo -n 'user:password' | base64
 Create `dockerconfig.json`
 
 ```json
-{ "auths": { "gitea.proompteng.ai": { "auth": "dXNlcjpwYXNzd29yZA==" } } }
+{ "auths": { "gitea.grisha.cloud": { "auth": "dXNlcjpwYXNzd29yZA==" } } }
 ```
 
 Encode json with `base64`
 
 ```bash
-echo -n '{"auths":{"gitea.proompteng.ai":{"auth":"dXNlcjpwYXNzd29yZA=="}}}' | base64
+echo -n '{"auths":{"gitea.grisha.cloud":{"auth":"dXNlcjpwYXNzd29yZA=="}}}' | base64
 ```
 
 Place output into secret yaml
