@@ -5,11 +5,13 @@
   "license": "MIT",
   "packageManager": "pnpm@9.8.0",
   "scripts": {
-    "dev": "npm-run-all --parallel dev:temporal dev:next",
+    "dev": "npm-run-all --parallel dev:temporal dev:next dev:temporal-server",
     "dev:next": "next dev",
-    "dev:temporal": "tsx watch ./temporal/src/worker.ts",
+    "dev:temporal": "dotenvx run -f .env.local -- tsx watch ./src/temporal/worker.ts",
+    "dev:temporal-server": "temporal server start-dev --ui-port 8080",
+    "dev:temporal-port-forward": "kubectl port-forward -n temporal svc/temporal-frontend-headless 7233:7233",
     "build": "next build",
-    "start:worker": "tsx ./temporal/src/worker.ts",
+    "start:worker": "tsx ./src/temporal/worker.ts",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
@@ -20,6 +22,8 @@
     "migrations": "tsx ./src/db/migrate.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.2",
+    "@dotenvx/dotenvx": "^1.14.0",
     "@headlessui/react": "^2.1.3",
     "@heroicons/react": "^2.1.5",
     "@mdx-js/loader": "^3.0.1",
