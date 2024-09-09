@@ -23,7 +23,7 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/src/db ./src/db
-COPY --from=builder /app/temporal ./temporal
+COPY --from=builder /app/src/temporal ./src/temporal
 
 RUN npm install \
   tsx \
