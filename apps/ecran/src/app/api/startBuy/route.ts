@@ -9,7 +9,6 @@ export async function POST(req: Request) {
   }
 
   let body: RequestBody
-  console.log('Starting buy, address:', process.env.TEMPORAL_ADDRESS)
 
   try {
     body = (await req.json()) as RequestBody
