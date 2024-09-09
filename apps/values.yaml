@@ -76,6 +76,7 @@ applications:
         web:
           ingress:
             enabled: true
+            className: traefik
             annotations:
               traefik.frontend.rule.type: PathPrefix
             hosts:

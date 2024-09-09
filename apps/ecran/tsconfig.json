@@ -24,9 +24,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@temporal/*": [
-        "./temporal/src/*"
       ]
     },
     "forceConsistentCasingInFileNames": true

@@ -15,6 +15,13 @@
       "when": 1724912202798,
       "tag": "0001_solid_pete_wisdom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1725857741861,
+      "tag": "0002_aberrant_psynapse",
+      "breakpoints": true
     }
   ]
 }

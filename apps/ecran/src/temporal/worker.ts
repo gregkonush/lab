@@ -1,6 +1,6 @@
 import { NativeConnection, Worker } from '@temporalio/worker'
 import * as activities from './activities'
-import { TASK_QUEUE_NAME } from './shared'
+import { PROBLEMS_QUEUE_NAME } from './shared'
 import './workflows'
 
 run().catch((err) => console.log(err))
@@ -16,7 +16,7 @@ async function run() {
       connection,
       workflowsPath: require.resolve('./workflows'),
       activities,
-      taskQueue: TASK_QUEUE_NAME,
+      taskQueue: PROBLEMS_QUEUE_NAME,
     })
     await worker.run()
   } finally {

@@ -1,4 +1,5 @@
-import { pgTable, varchar, text, uuid, pgEnum } from 'drizzle-orm/pg-core'
+import { relations } from 'drizzle-orm'
+import { pgTable, varchar, text, uuid, pgEnum, timestamp } from 'drizzle-orm/pg-core'
 
 export const difficultyEnum = pgEnum('difficulty', ['easy', 'medium', 'hard'])
 
@@ -50,3 +51,23 @@ export const problems = pgTable('problems', {
   difficulty: difficultyEnum('difficulty').notNull(),
   tags: tags('tags').array().default([]),
 })
+
+export const problemsToSolutions = relations(problems, ({ many }) => ({
+  solutions: many(solutions),
+}))
+
+export const solutions = pgTable('solutions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  problemId: uuid('problem_id')
+    .references(() => problems.id)
+    .notNull(),
+  solution: text('solution').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const solutionsToProblems = relations(solutions, ({ one }) => ({
+  problem: one(problems, {
+    fields: [solutions.problemId],
+    references: [problems.id],
+  }),
+}))
