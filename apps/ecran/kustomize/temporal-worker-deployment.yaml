@@ -77,8 +77,8 @@ spec:
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: anthropic_api_key
-                  key: anthropic_api_key
+                  name: anthropic-api-key
+                  key: data
           resources:
             limits:
               cpu: '1'
