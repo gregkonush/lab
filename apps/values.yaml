@@ -81,3 +81,14 @@ applications:
               traefik.frontend.rule.type: PathPrefix
             hosts:
               - "temporal.lan"
+  - name: harbor
+    helm:
+      repoURL: https://helm.goharbor.io
+      chart: harbor
+      targetRevision: 1.15.1
+      valuesObject: |
+        externalURL: https://harbor.grisha.cloud
+        expose:
+          ingress:
+            hosts:
+              core: "harbor.grisha.cloud"
