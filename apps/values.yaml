@@ -82,6 +82,7 @@ applications:
             hosts:
               - "temporal.lan"
   - name: harbor
+    namespace: harbor
     helm:
       repoURL: https://helm.goharbor.io
       chart: harbor
