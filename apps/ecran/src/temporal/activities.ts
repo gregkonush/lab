@@ -2,8 +2,7 @@ import '@anthropic-ai/sdk/shims/node'
 import { activityInfo } from '@temporalio/activity'
 import anthropic from './anthropic'
 import { db } from '@/db'
-import { problems, solutions } from '@/db/schema'
-import { eq } from 'drizzle-orm'
+import { solutions } from '@/db/schema'
 
 export async function purchase(id: string): Promise<string> {
   console.log(`Purchased ${id}!`)
