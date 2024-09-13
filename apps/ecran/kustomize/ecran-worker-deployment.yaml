@@ -23,7 +23,23 @@ spec:
           imagePullPolicy: Always
           command: ['npm', 'run', 'start:worker']
           env:
-            # ... (keep the existing env variables)
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-secrets
+                  key: resend-api-key
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-cluster-app
+                  key: uri
+            - name: TEMPORAL_ADDRESS
+              value: 'temporal-frontend.temporal.svc.cluster.local:7233'
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: data
           resources:
             limits:
               cpu: '1'

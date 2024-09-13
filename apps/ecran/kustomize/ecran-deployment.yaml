@@ -18,7 +18,7 @@ spec:
         - name: proompteng-registry
       initContainers:
         - name: run-migrations
-          image: gitea.grisha.cloud/lab/ecran-migrator:latest
+          image: gitea.proompteng.ai/lab/ecran-migrator:latest
           env:
             - name: DB_URI
               valueFrom:
@@ -37,51 +37,11 @@ spec:
                 secretKeyRef:
                   name: ecran-secrets
                   key: resend-api-key
-            - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: dbname
-            - name: DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: host
-            - name: DB_JDBC_URI
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: jdbc-uri
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: password
-            - name: DB_PGPASS
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: pgpass
-            - name: DB_PORT
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: port
             - name: DB_URI
               valueFrom:
                 secretKeyRef:
                   name: ecran-cluster-app
                   key: uri
-            - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: user
-            - name: DB_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: ecran-cluster-app
-                  key: username
             - name: TEMPORAL_ADDRESS
               value: 'temporal-frontend.temporal.svc.cluster.local:7233'
             - name: ANTHROPIC_API_KEY
