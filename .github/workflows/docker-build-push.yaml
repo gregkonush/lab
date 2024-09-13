@@ -5,9 +5,15 @@ on:
     branches:
       - "main"
 
+env:
+  DOCKER_BUILDKIT: 1
+
 jobs:
-  docker:
+  version:
     runs-on: arc-arm64
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      changelog: ${{ steps.tag_version.outputs.changelog }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,15 +28,22 @@ jobs:
           tag: ${{ steps.tag_version.outputs.new_tag }}
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: ${{ steps.tag_version.outputs.changelog }}
-      - name: Docker meta
-        id: meta
+
+  build-ecran:
+    needs: version
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker meta for ecran
+        id: meta_ecran
         uses: docker/metadata-action@v5
         with:
           images: |
             gitea.grisha.cloud/lab/ecran
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}},value=${{ steps.tag_version.outputs.new_tag }}
+            type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
             type=sha
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -48,8 +61,90 @@ jobs:
           platforms: linux/arm64
           context: ./apps/ecran
           file: ./apps/ecran/Dockerfile
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_ecran.outputs.tags }}
+          labels: ${{ steps.meta_ecran.outputs.labels }}
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran:latest
           cache-to: type=inline
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  build-ecran-worker:
+    needs: version
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker meta for ecran-worker
+        id: meta_ecran_worker
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            gitea.grisha.cloud/lab/ecran-worker
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
+            type=sha
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.grisha.cloud
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+      - name: Build and push ecran-worker
+        uses: docker/build-push-action@v5
+        with:
+          platforms: linux/arm64
+          context: ./apps/ecran
+          file: ./apps/ecran/Dockerfile.worker
+          tags: ${{ steps.meta_ecran_worker.outputs.tags }}
+          labels: ${{ steps.meta_ecran_worker.outputs.labels }}
+          push: true
+          cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran-worker:latest
+          cache-to: type=inline
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  build-ecran-migrator:
+    needs: version
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker meta for ecran-migrator
+        id: meta_ecran_migrator
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            gitea.grisha.cloud/lab/ecran-migrator
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
+            type=sha
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: gitea.grisha.cloud
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+      - name: Build and push ecran-migrator
+        uses: docker/build-push-action@v5
+        with:
+          platforms: linux/arm64
+          context: ./apps/ecran
+          file: ./apps/ecran/Dockerfile.migrator
+          tags: ${{ steps.meta_ecran_migrator.outputs.tags }}
+          labels: ${{ steps.meta_ecran_migrator.outputs.labels }}
+          push: true
+          cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran-migrator:latest
+          cache-to: type=inline
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1

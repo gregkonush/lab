@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: ecran-worker
+  name: ecran-worker
+  namespace: ecran
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ecran-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ecran-worker
+    spec:
+      imagePullSecrets:
+        - name: proompteng-registry
+      containers:
+        - name: ecran-worker
+          image: gitea.proompteng.ai/lab/ecran-worker:0.0.1
+          imagePullPolicy: Always
+          command: ['npm', 'run', 'start:worker']
+          env:
+            # ... (keep the existing env variables)
+          resources:
+            limits:
+              cpu: '1'
+              memory: '1Gi'
+            requests:
+              cpu: '100m'
+              memory: '100Mi'

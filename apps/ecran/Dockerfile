@@ -1,4 +1,4 @@
-FROM node:lts-slim AS base
+FROM node:lts-alpine AS base
 
 FROM base AS deps
 WORKDIR /app
@@ -21,28 +21,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/drizzle ./drizzle
-COPY --from=builder /app/src/db ./src/db
-COPY --from=builder /app/src/temporal ./src/temporal
-
-RUN npm install \
-  tsx \
-  drizzle-orm \
-  postgres \
-  @temporalio/client \
-  @temporalio/worker \
-  @temporalio/workflow \
-  @temporalio/activity
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 # Set the correct permission for prerender cache
-RUN mkdir .next
-RUN chown nextjs:nodejs .next
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+RUN chown -R nextjs:nodejs .next
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 
-# server.js is created by next build from the standalone output
-# https://nextjs.org/docs/pages/api-reference/next-config-js/output
-CMD HOSTNAME="0.0.0.0" node server.js
+CMD ["node", "server.js"]

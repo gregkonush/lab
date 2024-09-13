@@ -18,9 +18,7 @@ spec:
         - name: proompteng-registry
       initContainers:
         - name: run-migrations
-          image: gitea.proompteng.ai/lab/ecran:0.0.1
-          imagePullPolicy: Always
-          command: ['npm', 'run', 'migrations']
+          image: gitea.grisha.cloud/lab/ecran-migrator:latest
           env:
             - name: DB_URI
               valueFrom:
