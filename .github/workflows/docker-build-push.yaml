@@ -5,9 +5,6 @@ on:
     branches:
       - "main"
 
-env:
-  DOCKER_BUILDKIT: 1
-
 jobs:
   version:
     runs-on: arc-arm64
@@ -66,8 +63,6 @@ jobs:
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran:latest
           cache-to: type=inline
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
 
   build-ecran-worker:
     needs: version
@@ -106,8 +101,6 @@ jobs:
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran-worker:latest
           cache-to: type=inline
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
 
   build-ecran-migrator:
     needs: version
@@ -146,5 +139,3 @@ jobs:
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran-migrator:latest
           cache-to: type=inline
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
