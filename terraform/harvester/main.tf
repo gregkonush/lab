@@ -25,12 +25,6 @@ locals {
     "kube-master-02" = {
       mac_address = "00:16:3E:3C:0E:FE" // 192.168.1.152
     }
-    "kube-master-03" = {
-      mac_address = "00:16:3E:3C:0E:FB" // 192.168.1.153
-    }
-    "kube-master-04" = {
-      mac_address = "00:16:3E:3C:0E:FA" // 192.168.1.154
-    }
     "kube-worker-00" = {
       mac_address = "00:16:3E:3C:0E:FF" // 192.168.1.160
     }
@@ -57,9 +51,6 @@ locals {
     }
     "kube-worker-08" = {
       mac_address = "00:16:3E:3C:0E:07" // 192.168.1.168
-    }
-    "kube-worker-09" = {
-      mac_address = "00:16:3E:3C:0E:08" // 192.168.1.169
     }
   }
 }

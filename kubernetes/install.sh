@@ -31,100 +31,14 @@ k3sup join \
   --ssh-key ~/.ssh/id_ed25519 \
   --user kalmyk
 
-echo "Setting up additional server: 4"
-k3sup join \
-  --host 192.168.1.153 \
-  --server-host 192.168.1.150 \
-  --server \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up additional server: 5"
-k3sup join \
-  --host 192.168.1.154 \
-  --server-host 192.168.1.150 \
-  --server \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 1"
-k3sup join \
-  --host 192.168.1.160 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 2"
-k3sup join \
-  --host 192.168.1.161 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 3"
-k3sup join \
-  --host 192.168.1.162 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 4"
-k3sup join \
-  --host 192.168.1.163 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 5"
-k3sup join \
-  --host 192.168.1.164 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 6"
-k3sup join \
-  --host 192.168.1.165 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 7"
-k3sup join \
-  --host 192.168.1.166 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 8"
-k3sup join \
-  --host 192.168.1.167 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 9"
-k3sup join \
-  --host 192.168.1.168 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
-
-echo "Setting up worker: 10"
-k3sup join \
-  --host 192.168.1.169 \
-  --server-host 192.168.1.150 \
-  --node-token "$NODE_TOKEN" \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --user kalmyk
+# Worker nodes setup
+for i in {0..8}
+do
+  echo "Setting up worker: $((i+1))"
+  k3sup join \
+    --host "192.168.1.$((160+i))" \
+    --server-host 192.168.1.150 \
+    --node-token "$NODE_TOKEN" \
+    --ssh-key ~/.ssh/id_ed25519 \
+    --user kalmyk
+done

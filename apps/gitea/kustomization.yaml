@@ -17,3 +17,11 @@ helmCharts:
             DOMAIN: gitea.grisha.cloud
             ROOT_URL: https://gitea.grisha.cloud
             SSH_DOMAIN: gitea.grisha.cloud
+      redis-cluster:
+        enabled: false
+      redis:
+        enabled: true
+      postgresql-ha:
+        enabled: false
+      postgresql:
+        enabled: true

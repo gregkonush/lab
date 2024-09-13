@@ -12,14 +12,6 @@
     "ip": "192.168.1.152"
   },
   {
-    "hostname": "kube-master-03",
-    "ip": "192.168.1.153"
-  },
-  {
-    "hostname": "kube-master-04",
-    "ip": "192.168.1.154"
-  },
-  {
     "hostname": "kube-worker-00",
     "ip": "192.168.1.160"
   },
@@ -54,9 +46,5 @@
   {
     "hostname": "kube-worker-08",
     "ip": "192.168.1.168"
-  },
-  {
-    "hostname": "kube-worker-09",
-    "ip": "192.168.1.169"
   }
 ]
