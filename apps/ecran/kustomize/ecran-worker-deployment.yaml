@@ -21,7 +21,6 @@ spec:
         - name: ecran-worker
           image: gitea.proompteng.ai/lab/ecran-worker:0.0.1
           imagePullPolicy: Always
-          command: ['npm', 'run', 'start:worker']
           env:
             - name: RESEND_API_KEY
               valueFrom:
