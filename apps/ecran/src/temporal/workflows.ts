@@ -1,12 +1,8 @@
-import { proxyActivities, sleep } from '@temporalio/workflow'
+import { proxyActivities } from '@temporalio/workflow'
 import type * as activities from './activities'
 
-const { askClaude } = proxyActivities<typeof activities>({
+const { askClaude, persistSolution } = proxyActivities<typeof activities>({
   startToCloseTimeout: '5 minutes',
-})
-
-const { persistSolution } = proxyActivities<typeof activities>({
-  startToCloseTimeout: '1 minute',
 })
 
 export async function solveProblem(problemId: string, problemStatement: string): Promise<string> {
