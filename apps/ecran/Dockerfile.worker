@@ -3,8 +3,8 @@ FROM node:lts-slim
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --only=production
+RUN npm install
 
-COPY src ./src
+COPY . .
 
 CMD ["npm", "run", "start:worker"]
