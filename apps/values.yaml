@@ -5,6 +5,9 @@ spec:
     repoURL: https://github.com/gregkonush/lab
     targetRevision: main
 applications:
+  - name: gitea
+    path: apps/gitea
+    namespace: gitea
   - name: ecran
     path: apps/ecran/kustomize
     namespace: ecran
