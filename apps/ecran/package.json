@@ -11,6 +11,7 @@
     "dev:temporal-server": "temporal server start-dev --ui-port 8080",
     "dev:temporal-port-forward": "kubectl port-forward -n temporal svc/temporal-frontend-headless 7233:7233",
     "build": "next build",
+    "build:workflow": "tsx ./src/temporal/build-workflow-bundle.ts",
     "start:worker": "tsx ./src/temporal/worker.ts",
     "start": "next start",
     "lint": "next lint",

@@ -4,6 +4,14 @@ import { PROBLEMS_QUEUE_NAME } from './shared'
 import './workflows'
 
 run().catch((err) => console.log(err))
+const workflowOption = () =>
+  process.env.NODE_ENV === 'production'
+    ? {
+        workflowBundle: {
+          codePath: require.resolve('./workflow-bundle.js'),
+        },
+      }
+    : { workflowsPath: require.resolve('./workflows') }
 
 async function run() {
   const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233'
@@ -14,7 +22,7 @@ async function run() {
   try {
     const worker = await Worker.create({
       connection,
-      workflowsPath: require.resolve('./workflows'),
+      ...workflowOption(),
       activities,
       taskQueue: PROBLEMS_QUEUE_NAME,
     })

@@ -89,12 +89,12 @@ resource "harvester_virtualmachine" "kube-cluster" {
 
   efi          = true
   hostname     = each.key
-  run_strategy = "RerunOnFailure"
+  run_strategy = "Always"
 
   disk {
     name        = "root"
     type        = "disk"
-    size        = "40Gi"
+    size        = "100Gi"
     bus         = "virtio"
     auto_delete = true
     boot_order  = 1
