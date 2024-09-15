@@ -18,7 +18,7 @@ export async function createProblem(data: FormData) {
     })
     .returning({ insertedId: problems.id })
 
-  if (result.length > 0) {
-    redirect(`/problems/${result[0].insertedId}`)
+  if (result.length > 0 && result?.[0]?.insertedId) {
+    redirect(`/problems/${result?.[0]?.insertedId}`)
   }
 }

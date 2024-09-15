@@ -8,6 +8,9 @@ if (process.env.NODE_ENV !== 'production') {
 
 async function main() {
   console.log('Connecting to database...')
+  if (!process.env.DB_URI) {
+    throw new Error('DB_URI is not set')
+  }
   const client = postgres(process.env.DB_URI, { max: 1 })
 
   console.log('Initializing Drizzle...')
