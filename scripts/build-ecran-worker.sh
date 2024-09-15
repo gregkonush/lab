@@ -18,7 +18,7 @@ FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
 
 # Build the Docker image
 echo "Building Docker image: ${FULL_IMAGE_NAME}"
-docker buildx build --platform linux/arm64 -t ${FULL_IMAGE_NAME} -f ${DOCKERFILE} ${CONTEXT_PATH} --push
+docker buildx build --platform linux/arm64 -t ${FULL_IMAGE_NAME} -f ${DOCKERFILE} ${CONTEXT_PATH}
 
 # Check if the build was successful
 if [ $? -eq 0 ]; then

@@ -4,6 +4,8 @@ import { getTemporalClient } from '@/temporal/client'
 import { PROBLEMS_QUEUE_NAME } from '@/temporal/shared'
 import { solveProblem } from '@/temporal/workflows'
 
+type Problem = typeof problems.$inferInsert
+
 export async function POST(request: Request) {
   interface RequestBody {
     problemStatement: string
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
       title: 'Problem',
       description: problemStatement,
       difficulty: 'easy',
-      tags: [],
+      tags: ['array'],
     })
     .returning()
   const problemId = problem.at(0)?.id
