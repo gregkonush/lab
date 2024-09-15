@@ -1,8 +1,20 @@
-FROM node:lts-slim
-
+# Stage 1: Install dependencies
+FROM node:lts-slim AS deps
 WORKDIR /app
+COPY package.json ./
+RUN npm install
 
+# Stage 2: Build the bundle
+FROM node:lts-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm install && npm run build:workflow
+RUN npm run build:workflow
+
+# Stage 3: Final image
+FROM node:lts-slim
+WORKDIR /app
+RUN npm install esbuild-loader
+COPY --from=builder /app .
 
 CMD ["npm", "run", "start:worker"]
