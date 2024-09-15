@@ -66,7 +66,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>{problem[0].title}</BreadcrumbPage>
+            <BreadcrumbPage>{problem?.[0]?.title}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
