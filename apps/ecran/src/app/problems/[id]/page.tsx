@@ -1,6 +1,7 @@
+import { Suspense } from 'react'
 import { logger } from '@/utils/logger'
 import { db } from '@/db'
-import { problems } from '@/db/schema'
+import { problems, solutions } from '@/db/schema'
 import { Textarea } from '@/components/ui/textarea'
 import { createProblem } from './actions'
 import { Input } from '@/components/ui/input'
@@ -18,6 +19,7 @@ import {
 import { eq } from 'drizzle-orm'
 import { validate } from 'uuid'
 import { notFound } from 'next/navigation'
+import { RefreshCache } from '@/components/refresh-cache'
 
 export default async function Problem({ params: { id } }: { params: { id: string } }) {
   if (!validate(id) && id !== 'create') {
@@ -47,11 +49,17 @@ export default async function Problem({ params: { id } }: { params: { id: string
       </form>
     )
   }
-  const problem = await db.select().from(problems).where(eq(problems.id, id))
+  const problemsWithSolutions = await db
+    .select()
+    .from(problems)
+    .leftJoin(solutions, eq(solutions.problemId, problems.id))
+    .where(eq(problems.id, id))
 
-  if (problem.length === 0) {
+  if (problemsWithSolutions.length === 0) {
     notFound()
   }
+  const problem = problemsWithSolutions.at(0)?.problems
+  const solution = problemsWithSolutions.at(0)?.solutions
 
   return (
     <div>
@@ -66,21 +74,27 @@ export default async function Problem({ params: { id } }: { params: { id: string
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbPage>{problem?.[0]?.title}</BreadcrumbPage>
+            <BreadcrumbPage>{problem?.title}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
-      {problem.map((p) => (
-        <div key={p.id} className="flex flex-col gap-2">
-          <h2 className="text-2xl font-bold">{p.title}</h2>
+      <RefreshCache
+        check={async () => {
+          'use server'
+          return Promise.resolve()
+        }}
+      />
+      <div key={problem?.id} className="flex flex-row divide-x">
+        <div className="pr-10 basis-1/2">
+          <h2 className="text-2xl font-bold">{problem?.title}</h2>
           <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-1 text-center">
             <div>
               Difficulty:{' '}
-              <span className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{p.difficulty}</span>
+              <span className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{problem?.difficulty}</span>
             </div>
             <div>
               <span>Topics: </span>
-              {p.tags?.map((tag) => (
+              {problem?.tags?.map((tag) => (
                 <span key={tag} className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">
                   {tag}
                 </span>
@@ -88,9 +102,17 @@ export default async function Problem({ params: { id } }: { params: { id: string
             </div>
           </div>
 
-          <div className="space-y-3 text-sm whitespace-break-spaces">{p.description}</div>
+          <div className="prose dark:prose-invert whitespace-break-spaces prose-sm">{problem?.description}</div>
         </div>
-      ))}
+        <div className="pl-10 basis-1/2">
+          <h2 className="text-2xl">Solution</h2>
+          <Suspense fallback={<div className="bg-red-300 animate-pulse rounded h-64">Loading...</div>}>
+            {solution ? (
+              <div className="prose dark:prose-invert whitespace-break-spaces prose-sm">{solution?.solution}</div>
+            ) : null}
+          </Suspense>
+        </div>
+      </div>
     </div>
   )
 }

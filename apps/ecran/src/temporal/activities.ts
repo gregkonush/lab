@@ -28,7 +28,7 @@ export async function askClaude(problemStatement: string): Promise<string> {
 }
 
 export async function persistSolution(problemId: string, solution: string): Promise<string> {
-  console.log(`Persisting solution: ${solution}`)
+  console.log(`Persisting solution with problemId: ${problemId} and solution: ${solution}`)
   const solutionRow = await db
     .insert(solutions)
     .values({
