@@ -50,9 +50,19 @@ const tags = [
   { id: 36, name: 'Priority Queue', value: 'priority-queue' },
 ]
 
-export function ComboSelect() {
+export function ComboSelect({
+  value,
+  onChange,
+  onBlur,
+  name,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onBlur: () => void
+  name: string
+}) {
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<string>()
+  const [selected, setSelected] = useState<string>(value)
 
   const filteredtags =
     query === ''
@@ -62,46 +72,50 @@ export function ComboSelect() {
         })
 
   return (
-    <Combobox
-      value={selected ?? ''}
-      name="tags"
-      onChange={(value: string) => setSelected(value)}
-      onClose={() => setQuery('')}
-    >
-      <div className="relative">
-        <ComboboxInput
-          className={clsx(
-            'w-full rounded-lg bg-zinc-950 border py-1.5 pr-8 pl-3 text-sm/6 text-gray-200',
-            'data-[focus]:outline-none data-[focus]:ring-2 data-[focus]:ring-white/80 ring-offset-background ring-offset-2'
-          )}
-          displayValue={(tag: string) => tags.find((t) => t.value === tag)?.name || 'Select a Topic'}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <ComboboxButton className="group absolute inset-y-0 right-0 px-2.5">
-          <ChevronDownIcon className="size-4 fill-white/60 group-data-[hover]:fill-white" />
-        </ComboboxButton>
-      </div>
-
-      <ComboboxOptions
-        anchor="bottom"
-        transition
-        className={clsx(
-          'h-64 w-[var(--input-width)] rounded-xl border border-white/5',
-          'bg-zinc-950 p-1 [--anchor-gap:var(--spacing-1)] empty:invisible',
-          'transition duration-100 ease-in data-[leave]:data-[closed]:opacity-0'
-        )}
+    <div onBlur={onBlur}>
+      <Combobox
+        value={selected}
+        name={name}
+        onChange={(value: string) => {
+          setSelected(value)
+          onChange(value)
+        }}
       >
-        {filteredtags.map(({ id, name, value }) => (
-          <ComboboxOption
-            key={id}
-            value={value}
-            className="group flex cursor-default items-center gap-2 rounded-lg py-1.5 px-2 select-none data-[focus]:bg-white/10"
-          >
-            <CheckIcon className="invisible size-4 fill-white group-data-[selected]:visible" />
-            <div className="text-sm/6 text-white">{name}</div>
-          </ComboboxOption>
-        ))}
-      </ComboboxOptions>
-    </Combobox>
+        <div className="relative">
+          <ComboboxInput
+            className={clsx(
+              'w-full rounded-lg bg-zinc-950 border py-1.5 pr-8 pl-3 text-sm/6 text-gray-200',
+              'data-[focus]:outline-none data-[focus]:ring-2 data-[focus]:ring-white/80 ring-offset-background ring-offset-2',
+            )}
+            displayValue={(tag: string) => tags.find((t) => t.value === tag)?.name || 'Select a Topic'}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <ComboboxButton className="group absolute inset-y-0 right-0 px-2.5">
+            <ChevronDownIcon className="size-4 fill-white/60 group-data-[hover]:fill-white" />
+          </ComboboxButton>
+        </div>
+
+        <ComboboxOptions
+          anchor="bottom"
+          transition
+          className={clsx(
+            'h-64 w-[var(--input-width)] rounded-xl border border-white/5',
+            'bg-zinc-950 p-1 [--anchor-gap:var(--spacing-1)] empty:invisible',
+            'transition duration-100 ease-in data-[leave]:data-[closed]:opacity-0',
+          )}
+        >
+          {filteredtags.map(({ id, name, value }) => (
+            <ComboboxOption
+              key={id}
+              value={value}
+              className="group flex cursor-default items-center gap-2 rounded-lg py-1.5 px-2 select-none data-[focus]:bg-white/10"
+            >
+              <CheckIcon className="invisible size-4 fill-white group-data-[selected]:visible" />
+              <div className="text-sm/6 text-white">{name}</div>
+            </ComboboxOption>
+          ))}
+        </ComboboxOptions>
+      </Combobox>
+    </div>
   )
 }

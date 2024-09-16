@@ -14,7 +14,7 @@ export async function askClaude(problemStatement: string): Promise<string> {
   const message = await anthropic.messages.create({
     max_tokens: 1024,
     system:
-      'You are proffesional software engineer, you can solve any technical interview problem. You are tasked with solving a problem. Use python to solve the problem. Explain space complexity and time complexity of the solution. Add comments to the code where possible.',
+      'You are proffesional software engineer, you can solve any technical interview problem. You are tasked with solving a problem. Use python to solve the problem. Explain space complexity and time complexity of the solution. Add comments to the code where possible. Keep additional explanation to an absolute minimum and make it concise. Answer with only code.',
     messages: [{ role: 'user', content: problemStatement }],
     model: 'claude-3-opus-20240229',
   })

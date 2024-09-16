@@ -18,7 +18,7 @@ export const columns: ColumnDef<Problem>[] = [
         original: { id, title },
       },
     }) => (
-      <Link href={`/problems/${id}`} className="hover:text-sky-500">
+      <Link href={`/problems/${id}`} className="hover:text-indigo-400">
         {title}
       </Link>
     ),

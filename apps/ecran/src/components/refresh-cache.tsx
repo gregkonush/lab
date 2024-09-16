@@ -1,7 +1,7 @@
 'use client'
 
-import { useInterval } from 'interval-hooks'
 import { useEffect, useState } from 'react'
+import { useInterval } from 'usehooks-ts'
 
 export function RefreshCache({ check }: { check: () => Promise<void> }) {
   const [shouldRun, setShouldRun] = useState(typeof document !== 'undefined' && document.hasFocus())

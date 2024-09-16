@@ -1,41 +1,72 @@
 'use server'
 
-import { problems } from '@/db/schema'
+import { problems, solutions } from '@/db/schema'
 import { db } from '@/db'
 import { redirect } from 'next/navigation'
-import { InferSelectModel } from 'drizzle-orm'
+import { eq, InferSelectModel } from 'drizzle-orm'
 import { getTemporalClient } from '@/temporal/client'
 import { PROBLEMS_QUEUE_NAME } from '@/temporal/shared'
 import { solveProblem } from '@/temporal/workflows'
 import { logger } from '@/utils/logger'
+import { revalidatePath } from 'next/cache'
 
 type Problem = InferSelectModel<typeof problems>
 
-export async function createProblem(data: FormData) {
-  const result = await db
-    .insert(problems)
-    .values({
-      title: data.get('title') as string,
-      difficulty: data.get('difficulty') as Problem['difficulty'],
-      description: data.get('description') as string,
-      tags: [data.get('tags')] as Problem['tags'],
-    })
-    .returning({ id: problems.id, description: problems.description })
+export async function createProblem(formData: FormData) {
+  const title = formData.get('title') as string
+  const difficulty = formData.get('difficulty') as Problem['difficulty']
+  const description = formData.get('description') as string
+  const tags = formData.get('tags') as string
 
-  const problemId = result.at(0)?.id
-  const description = result.at(0)?.description
-
-  if (!problemId || !description) {
-    return { error: 'Failed to create problem' }
+  // Validation
+  if (!title || !difficulty || !description || !tags) {
+    return { error: 'All fields are required' }
   }
-  logger.info(`Created problem ${problemId} with description ${description}`)
 
-  await getTemporalClient().workflow.start<typeof solveProblem>('solveProblem', {
-    taskQueue: PROBLEMS_QUEUE_NAME,
-    workflowId: problemId,
-    args: [problemId, description],
-  })
-  logger.info(`Started solving problem ${problemId}`)
+  try {
+    const result = await db
+      .insert(problems)
+      .values({
+        title,
+        difficulty,
+        description,
+        tags: [tags] as Problem['tags'],
+      })
+      .returning({ id: problems.id, description: problems.description })
 
-  redirect(`/problems/${problemId}`)
+    const problemId = result.at(0)?.id
+
+    if (!problemId) {
+      return { error: 'Failed to create problem' }
+    }
+
+    logger.info(`Created problem ${problemId} with description ${description}`)
+
+    await getTemporalClient().workflow.start<typeof solveProblem>('solveProblem', {
+      taskQueue: PROBLEMS_QUEUE_NAME,
+      workflowId: problemId,
+      args: [problemId, description],
+    })
+    logger.info(`Started solving problem ${problemId}`)
+
+    redirect(`/problems/${problemId}`)
+  } catch (error) {
+    logger.error('Error creating problem:', error)
+    return { error: 'An error occurred while creating the problem' }
+  }
+}
+
+export async function checkIfSolutionExists(problemId: string | undefined) {
+  if (!problemId) {
+    logger.error('No problemId provided')
+    return
+  }
+  logger.info(`Checking if solution exists for problem ${problemId}`)
+  const solution = await db.select().from(solutions).where(eq(solutions.problemId, problemId))
+  if (solution.length > 0) {
+    logger.info(`Revalidating problem ${problemId}`)
+    revalidatePath(`/problems/${problemId}`)
+  } else {
+    logger.info(`No solution found for problem ${problemId}`)
+  }
 }

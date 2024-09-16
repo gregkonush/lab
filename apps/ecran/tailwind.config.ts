@@ -1,4 +1,5 @@
 import type { Config } from 'tailwindcss'
+import plugin from 'tailwindcss/plugin'
 
 const config = {
   darkMode: ['class'],
@@ -83,7 +84,13 @@ const config = {
       },
     },
   },
-  plugins: [require('@tailwindcss/typography'), require('tailwindcss-animate')],
+  plugins: [
+    require('@tailwindcss/typography'),
+    require('tailwindcss-animate'),
+    plugin(function ({ addVariant }) {
+      addVariant('prose-inline-code', '& :where(:not(pre) > code)')
+    }),
+  ],
 } satisfies Config
 
 export default config
