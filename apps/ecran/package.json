@@ -47,6 +47,7 @@
     "drizzle-orm": "^0.33.0",
     "esbuild": "^0.23.1",
     "esbuild-loader": "^4.2.2",
+    "interval-hooks": "^0.2.0",
     "logrocket": "^9.0.0",
     "lucide-react": "^0.441.0",
     "next": "14.2.11",
