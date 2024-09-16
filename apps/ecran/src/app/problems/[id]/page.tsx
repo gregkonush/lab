@@ -1,13 +1,8 @@
-import { Suspense } from 'react'
+import 'highlight.js/styles/github-dark.css' // Add this import at the top of the file
 import { logger } from '@/utils/logger'
 import { db } from '@/db'
 import { problems, solutions } from '@/db/schema'
-import { Textarea } from '@/components/ui/textarea'
-import { createProblem } from './actions'
-import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ComboSelect } from '@/components/combo-select'
-import { Button } from '@/components/ui/button'
+import { checkIfSolutionExists } from './actions'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -20,6 +15,8 @@ import { eq } from 'drizzle-orm'
 import { validate } from 'uuid'
 import { notFound } from 'next/navigation'
 import { RefreshCache } from '@/components/refresh-cache'
+import { CreateProblemForm } from '@/components/problem-form'
+import { MarkdownContent } from '@/components/markdown-content'
 
 export default async function Problem({ params: { id } }: { params: { id: string } }) {
   if (!validate(id) && id !== 'create') {
@@ -28,27 +25,9 @@ export default async function Problem({ params: { id } }: { params: { id: string
   logger.info(`Loading problem ${id}`)
 
   if (id === 'create') {
-    return (
-      <form action={createProblem} className="space-y-4 min-w-full">
-        <Button size="sm">Save</Button>
-        <Input name="title" placeholder="Problem Name..." />
-        <div className="flex flex-row space-x-4">
-          <Select name="difficulty">
-            <SelectTrigger className="w-36">
-              <SelectValue placeholder="Difficulty" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="easy">Easy</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="hard">Hard</SelectItem>
-            </SelectContent>
-          </Select>
-          <ComboSelect />
-        </div>
-        <Textarea name="description" placeholder="Paste your description here..." className="min-h-96" />
-      </form>
-    )
+    return <CreateProblemForm />
   }
+
   const problemsWithSolutions = await db
     .select()
     .from(problems)
@@ -61,8 +40,10 @@ export default async function Problem({ params: { id } }: { params: { id: string
   const problem = problemsWithSolutions.at(0)?.problems
   const solution = problemsWithSolutions.at(0)?.solutions
 
+  logger.info(`Solution for problem ${problem?.id}`)
+
   return (
-    <div>
+    <div className="text-base text-zinc-200">
       <Breadcrumb className="mb-5">
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -81,13 +62,13 @@ export default async function Problem({ params: { id } }: { params: { id: string
       <RefreshCache
         check={async () => {
           'use server'
-          return Promise.resolve()
+          await checkIfSolutionExists(problem?.id)
         }}
       />
-      <div key={problem?.id} className="flex flex-row divide-x">
-        <div className="pr-10 basis-1/2">
-          <h2 className="text-2xl font-bold">{problem?.title}</h2>
-          <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-1 text-center">
+      <div key={problem?.id} className="flex flex-row divide-x divide-zinc-700">
+        <div className="pr-10 basis-1/2 flex-shrink-0">
+          <h2 className="text-2xl font-bold mb-5">{problem?.title}</h2>
+          <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-5 text-center">
             <div>
               Difficulty:{' '}
               <span className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{problem?.difficulty}</span>
@@ -102,15 +83,22 @@ export default async function Problem({ params: { id } }: { params: { id: string
             </div>
           </div>
 
-          <div className="prose dark:prose-invert whitespace-break-spaces prose-sm">{problem?.description}</div>
+          <MarkdownContent content={problem?.description || ''} useMDX={false} className="whitespace-break-spaces" />
         </div>
-        <div className="pl-10 basis-1/2">
-          <h2 className="text-2xl">Solution</h2>
-          <Suspense fallback={<div className="bg-red-300 animate-pulse rounded h-64">Loading...</div>}>
-            {solution ? (
-              <div className="prose dark:prose-invert whitespace-break-spaces prose-sm">{solution?.solution}</div>
-            ) : null}
-          </Suspense>
+        <div className="pl-10 basis-1/2 prose dark:prose-invert max-w-none overflow-x-auto text-zinc-200">
+          <h2 className="text-2xl font-bold mb-5">Solution</h2>
+
+          {solution ? (
+            <div className="overflow-x-auto pr-4">
+              <MarkdownContent content={solution.solution} useMDX={true} />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 10 }).map((_, index) => (
+                <div key={index} className="bg-zinc-300 dark:bg-zinc-900 animate-pulse rounded h-5" />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
