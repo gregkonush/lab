@@ -1,0 +1,23 @@
+@keyframes cuteBob {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-5px) rotate(-5deg);
+  }
+  75% {
+    transform: translateY(-5px) rotate(5deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(0deg);
+  }
+}
+
+.wiggle {
+  animation: cuteBob 3s ease-in-out infinite;
+  display: inline-block;
+}
+
+.wiggle:hover {
+  animation-play-state: paused;
+}
