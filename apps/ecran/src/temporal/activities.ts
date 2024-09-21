@@ -3,6 +3,7 @@ import { activityInfo } from '@temporalio/activity'
 import anthropic from './anthropic'
 import { db } from '@/db'
 import { solutions } from '@/db/schema'
+import { SYSTEM_SOLVER_PROMPT } from '@/temporal/prompts/solver'
 
 export async function purchase(id: string): Promise<string> {
   console.log(`Purchased ${id}!`)
@@ -13,10 +14,10 @@ export async function askClaude(problemStatement: string): Promise<string> {
   console.log(`Solving problem: ${problemStatement}`)
   const message = await anthropic.messages.create({
     max_tokens: 1024,
-    system:
-      'You are proffesional software engineer, you can solve any technical interview problem. You are tasked with solving a problem. Use python to solve the problem. Explain space complexity and time complexity of the solution. Add comments to the code where possible. Keep additional explanation to an absolute minimum and make it concise. Answer with only code.',
+    temperature: 0.1,
+    system: SYSTEM_SOLVER_PROMPT,
     messages: [{ role: 'user', content: problemStatement }],
-    model: 'claude-3-opus-20240229',
+    model: 'claude-3-5-sonnet-20240620',
   })
 
   const result = message.content.map((c) => {
