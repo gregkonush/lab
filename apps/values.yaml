@@ -85,6 +85,7 @@ applications:
     namespace: sealed-secrets-web
     helm:
       repoURL: https://charts.bakito.net
+      chart: sealed-secrets-web
       targetRevision: 3.1.4
       valuesObject: |
         ingress:
@@ -93,5 +94,5 @@ applications:
           hosts:
           - host: sealed-secrets.lan
             paths:
-            - path: / 
+            - path: /
               pathType: Prefix
