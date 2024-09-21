@@ -81,3 +81,17 @@ applications:
               traefik.frontend.rule.type: PathPrefix
             hosts:
               - "temporal.lan"
+  - name: sealed-secrets-web
+    namespace: sealed-secrets-web
+    helm:
+      repoURL: https://charts.bakito.net
+      targetRevision: 3.1.4
+      valuesObject: |
+        ingress:
+          enabled: true
+          className: traefik
+          hosts:
+          - host: sealed-secrets.lan
+            paths:
+            - path: / 
+              pathType: Prefix
