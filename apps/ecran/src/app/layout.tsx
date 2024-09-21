@@ -34,6 +34,9 @@ export default function RootLayout({
             <Link href="/solutions" className="hover:underline">
               Solutions
             </Link>
+            <Link href="/practice" className="hover:underline">
+              Practice
+            </Link>
           </header>
           {children}
         </ThemeProvider>
