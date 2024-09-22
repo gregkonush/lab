@@ -99,3 +99,18 @@ applications:
             paths:
             - path: /
               pathType: Prefix
+  - name: flowise
+    namespace: flowise
+    helm:
+      repoURL: https://cowboysysop.github.io/charts
+      chart: flowise
+      targetRevision: 3.8.0
+      valuesObject: |
+        ingress:
+          enabled: true
+          ingressClassName: traefik
+          hosts:
+          - host: flowise.lan
+            paths:
+            - path: /
+              pathType: Prefix
