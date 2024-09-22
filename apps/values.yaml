@@ -88,9 +88,9 @@ applications:
       chart: sealed-secrets-web
       targetRevision: 3.1.4
       valuesObject: |
-        sealed-secrets:
+        sealedSecrets:
           namespace: kube-system
-          service-name: sealed-secrets
+          serviceName: sealed-secrets
         ingress:
           enabled: true
           className: traefik
