@@ -58,8 +58,8 @@ applications:
             resources:
               requests:
                 storage: 1Gi
-        minRunners: 1
-        maxRunners: 5
+        minRunners: 3
+        maxRunners: 9
         githubConfigUrl: https://github.com/gregkonush/lab
         githubConfigSecret: github-token
         runnerScaleSetName: arc-arm64
