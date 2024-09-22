@@ -8,4 +8,4 @@ RUN pnpm install drizzle-orm postgres dotenv tsx
 COPY src/db ./src/db
 COPY drizzle ./drizzle
 
-CMD ["pnpm", "run", "migrations"]
+CMD ["npx", "tsx", "./src/db/migrate.ts"]
