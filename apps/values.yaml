@@ -43,6 +43,11 @@ applications:
       valuesObject: |
         containerMode:
           type: "kubernetes"
+          kubernetesModeWorkVolumeClaim:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: "dynamic-blob-storage"
+            requests:
+              storage: 1Gi
         minRunners: 1
         maxRunners: 5
         githubConfigUrl: https://github.com/gregkonush/lab
@@ -72,7 +77,7 @@ applications:
                     fieldRef:
                       fieldPath: metadata.name
                 - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
-                  value: "true"
+                  value: "false"
               volumeMounts:
                 - name: work
                   mountPath: /home/runner/_work
