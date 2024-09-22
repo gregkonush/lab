@@ -109,7 +109,7 @@ applications:
                 volumeClaimTemplate:
                   spec:
                     accessModes: [ "ReadWriteOnce" ]
-                    storageClassName: "dynamic-blob-storage"
+                    storageClassName: "local-path"
                     resources:
                       requests:
                         storage: 1Gi
