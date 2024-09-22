@@ -24,6 +24,9 @@ applications:
       repoURL: https://charts.longhorn.io
       chart: longhorn
       targetRevision: 1.7.1
+      valuesObject: |
+        preUpgradeChecker:
+          jobEnabled: false
   - name: arc
     path: apps/arc
   - name: arc-controller
