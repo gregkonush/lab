@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: gitea
 resources:
   - ingress.yaml
+  - gitea-secrets.yaml
 helmCharts:
   - name: gitea
     repo: https://dl.gitea.com/charts
@@ -12,6 +13,8 @@ helmCharts:
     valuesMerge: merge
     valuesInline:
       gitea:
+        admin:
+          existingSecret: gitea-secrets
         config:
           database:
             DB_TYPE: postgres
