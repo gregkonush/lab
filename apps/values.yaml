@@ -19,7 +19,7 @@ applications:
     path: apps/cert-manager
     namespace: cert-manager
   - name: longhorn
-    namespace: longhorn
+    namespace: longhorn-system
     helm:
       repoURL: https://charts.longhorn.io
       chart: longhorn
