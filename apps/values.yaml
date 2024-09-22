@@ -18,6 +18,12 @@ applications:
   - name: cert-manager
     path: apps/cert-manager
     namespace: cert-manager
+  - name: longhorn
+    namespace: longhorn
+    helm:
+      repoURL: https://charts.longhorn.io
+      chart: longhorn
+      targetRevision: 1.7.1
   - name: arc
     path: apps/arc
   - name: arc-controller
@@ -45,7 +51,7 @@ applications:
           type: "kubernetes"
           kubernetesModeWorkVolumeClaim:
             accessModes: ["ReadWriteOnce"]
-            storageClassName: "dynamic-blob-storage"
+            storageClassName: "longhorn"
             requests:
               storage: 1Gi
         minRunners: 1
@@ -109,7 +115,7 @@ applications:
                 volumeClaimTemplate:
                   spec:
                     accessModes: [ "ReadWriteOnce" ]
-                    storageClassName: "local-path"
+                    storageClassName: "longhorn"
                     resources:
                       requests:
                         storage: 1Gi
