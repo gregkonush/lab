@@ -18,15 +18,15 @@ applications:
   - name: cert-manager
     path: apps/cert-manager
     namespace: cert-manager
-  # - name: longhorn
-  #   namespace: longhorn-system
-  #   helm:
-  #     repoURL: https://charts.longhorn.io
-  #     chart: longhorn
-  #     targetRevision: 1.7.1
-  #     valuesObject: |
-  #       preUpgradeChecker:
-  #         jobEnabled: false
+  - name: longhorn
+    namespace: longhorn-system
+    helm:
+      repoURL: https://charts.longhorn.io
+      chart: longhorn
+      targetRevision: 1.7.1
+      valuesObject: |
+        preUpgradeChecker:
+          jobEnabled: false
   - name: arc
     path: apps/arc
   - name: arc-controller
