@@ -55,8 +55,9 @@ applications:
           kubernetesModeWorkVolumeClaim:
             accessModes: ["ReadWriteOnce"]
             storageClassName: "longhorn"
-            requests:
-              storage: 1Gi
+            resources:
+              requests:
+                storage: 1Gi
         minRunners: 1
         maxRunners: 5
         githubConfigUrl: https://github.com/gregkonush/lab
