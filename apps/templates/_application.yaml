@@ -65,6 +65,7 @@ spec:
         valuesObject:
           {{- $application.helm.valuesObject | nindent 10 }}
         {{- end }}
+        skipCrds: false
   destination:
     namespace: {{ $application.namespace }}
     server: {{ $root.Values.spec.destination.server }}
