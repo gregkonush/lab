@@ -3,7 +3,7 @@ FROM node:lts-slim
 WORKDIR /app
 
 RUN npm install -g pnpm
-RUN pnpm add drizzle-orm postgres dotenv tsx
+RUN pnpm install drizzle-orm postgres dotenv tsx
 
 COPY src/db ./src/db
 COPY drizzle ./drizzle

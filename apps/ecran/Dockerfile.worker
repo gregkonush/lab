@@ -1,28 +1,20 @@
-# Stage 1: Install dependencies
 FROM node:lts-slim AS deps
 WORKDIR /app
-# Install pnpm
-RUN npm install -g pnpm
-COPY package.json pnpm-lock.yaml ./
-# Use pnpm to install dependencies
-RUN pnpm install --frozen-lockfile
 
-# Stage 2: Build the bundle
+RUN npm install -g pnpm
+COPY package.json ./
+RUN pnpm install
+
 FROM node:lts-slim AS builder
 WORKDIR /app
-# Install pnpm
 RUN npm install -g pnpm
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Use pnpm to run the build script
 RUN pnpm run build:workflow
 
-# Stage 3: Final image
 FROM node:lts-slim
 WORKDIR /app
-# Install pnpm and esbuild-loader
 RUN npm install -g pnpm && pnpm install esbuild-loader
 COPY --from=builder /app .
 
-# Use pnpm to start the worker
 CMD ["pnpm", "run", "start:worker"]
