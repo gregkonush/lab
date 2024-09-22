@@ -205,3 +205,15 @@ applications:
   - name: registry
     path: apps/registry
     namespace: registry
+  - name: jupyterhub
+    namespace: jupyterhub
+    helm:
+      repoURL: https://charts.bitnami.com/bitnami
+      chart: jupyterhub
+      targetRevision: 7.2.17
+      valuesObject: |
+        ingress:
+          enabled: true
+          ingressClassName: traefik
+          pathType: Prefix
+          hostname: jupyterhub.lan
