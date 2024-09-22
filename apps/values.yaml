@@ -34,14 +34,26 @@ applications:
       targetRevision: 0.9.1
       valuesObject: |
         containerMode:
-          type: "dind"
+          type: "kubernetes"
         minRunners: 1
+        maxRunners: 5
         githubConfigUrl: https://github.com/gregkonush/lab
         githubConfigSecret: github-token
         runnerScaleSetName: arc-arm64
         controllerServiceAccount:
           name: arc-controller-gha-rs-controller
           namespace: arc-controller
+        template:
+          spec:
+            containers:
+            - name: runner
+              resources:
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+                requests:
+                  cpu: "0.5"
+                  memory: 512Mi
   - name: cloudnative-pg
     namespace: cloudnative-pg
     helm:
@@ -117,3 +129,6 @@ applications:
   - name: judge0
     path: apps/judge0
     namespace: judge0
+  - name: registry
+    path: apps/registry
+    namespace: registry
