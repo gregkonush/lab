@@ -58,39 +58,58 @@ applications:
           namespace: arc-controller
         template:
           spec:
+            initContainers:
+              - name: init-dind-externals
+                image: ghcr.io/actions/actions-runner:latest
+                command:
+                  - ["cp", "-r", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                volumeMounts:
+                  - name: dind-externals
+                    mountPath: /home/runner/tmpDir
             containers:
-            - name: runner
-              resources:
-                requests:
-                  cpu: 1000m
-                  memory: 1Gi
-                limits:
-                  cpu: 2000m
-                  memory: 2Gi
-              image: ghcr.io/actions/actions-runner:latest
-              command: ["/home/runner/run.sh"]
-              env:
-                - name: ACTIONS_RUNNER_CONTAINER_HOOKS
-                  value: /home/runner/k8s/index.js
-                - name: ACTIONS_RUNNER_POD_NAME
-                  valueFrom:
-                    fieldRef:
-                      fieldPath: metadata.name
-                - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
-                  value: "false"
-              volumeMounts:
-                - name: work
-                  mountPath: /home/runner/_work
+              - name: runner
+                image: ghcr.io/actions/actions-runner:latest
+                command: ["/home/runner/run.sh"]
+                resources:
+                  requests:
+                    cpu: "1"
+                    memory: 1Gi
+                  limits:
+                    cpu: "2"
+                    memory: 2Gi
+                env:
+                  - name: DOCKER_HOST
+                    value: unix:///var/run/docker.sock
+                volumeMounts:
+                  - name: work
+                    mountPath: /home/runner/_work
+                  - name: dind-sock
+                    mountPath: /var/run
+              - name: dind
+                image: docker:dind
+                args:
+                  - dockerd
+                  - --host=unix:///var/run/docker.sock
+                  - --group=$(DOCKER_GROUP_GID)
+                env:
+                  - name: DOCKER_GROUP_GID
+                    value: "123"
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                  - name: work
+                    mountPath: /home/runner/_work
+                  - name: dind-sock
+                    mountPath: /var/run
+                  - name: dind-externals
+                    mountPath: /home/runner/externals
             volumes:
               - name: work
-                ephemeral:
-                  volumeClaimTemplate:
-                    spec:
-                      accessModes: [ "ReadWriteOnce" ]
-                      storageClassName: "local-path"
-                      resources:
-                        requests:
-                          storage: 1Gi
+                emptyDir: {}
+              - name: dind-sock
+                emptyDir: {}
+              - name: dind-externals
+                emptyDir: {}
   - name: cloudnative-pg
     namespace: cloudnative-pg
     helm:
