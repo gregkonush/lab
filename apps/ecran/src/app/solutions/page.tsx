@@ -1,5 +1,7 @@
 import Link from 'next/link'
 
+export const dynamic = 'force-dynamic'
+
 export default async function Solutions() {
   return (
     <div className="prose dark:prose-invert py-16">

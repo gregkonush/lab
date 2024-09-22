@@ -18,6 +18,8 @@ import { RefreshCache } from '@/components/refresh-cache'
 import { CreateProblemForm } from '@/components/problem-form'
 import { MarkdownContent } from '@/components/markdown-content'
 
+export const dynamic = 'force-dynamic'
+
 export default async function Problem({ params: { id } }: { params: { id: string } }) {
   if (!validate(id) && id !== 'create') {
     notFound()

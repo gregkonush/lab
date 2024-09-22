@@ -1,6 +1,8 @@
 import Editor from '@/components/editor'
 
-export default function Practice() {
+export const dynamic = 'force-dynamic'
+
+export default async function Practice() {
   return (
     <div className="flex flex-row h-[calc(100vh-70px)] w-full p-4">
       <div className="basis-1/2">
