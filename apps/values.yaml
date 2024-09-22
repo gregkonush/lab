@@ -69,16 +69,17 @@ applications:
             - name: runner
               image: ghcr.io/actions/actions-runner:latest
               command: ["/home/runner/run.sh"]
-              resources:
-                requests:
-                  cpu: "1"
-                  memory: 1Gi
-                limits:
-                  cpu: "2"
-                  memory: 2Gi
               env:
+                - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                  value: /home/runner/k8s/index.js
+                - name: ACTIONS_RUNNER_POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
                 - name: DOCKER_HOST
                   value: unix:///var/run/docker.sock
+                - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                  value: "false"
               volumeMounts:
                 - name: work
                   mountPath: /home/runner/_work
@@ -104,7 +105,14 @@ applications:
                   mountPath: /home/runner/externals
             volumes:
             - name: work
-              emptyDir: {}
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ "ReadWriteOnce" ]
+                    storageClassName: "dynamic-blob-storage"
+                    resources:
+                      requests:
+                        storage: 1Gi
             - name: dind-sock
               emptyDir: {}
             - name: dind-externals
