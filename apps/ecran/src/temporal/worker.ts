@@ -1,17 +1,13 @@
 import { NativeConnection, Worker } from '@temporalio/worker'
 import * as activities from './activities'
 import { PROBLEMS_QUEUE_NAME } from './shared'
-import './workflows'
-
-run().catch((err) => console.log(err))
 
 async function run() {
   const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233'
   console.log('Starting worker, address:', address)
 
-  // Add this check
   if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+    throw new Error('ANTHROPIC_API_KEY environment variable is not set')
   }
 
   const connection = await NativeConnection.connect({
@@ -34,10 +30,11 @@ async function run() {
       namespace: 'default',
       activities,
       taskQueue: PROBLEMS_QUEUE_NAME,
-      debugMode: true,
     })
     await worker.run()
   } finally {
     connection.close()
   }
 }
+
+run().catch((err) => console.log(err))
