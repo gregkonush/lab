@@ -109,8 +109,11 @@ applications:
         ingress:
           enabled: true
           ingressClassName: traefik
+          pathType: Prefix
           hosts:
           - host: flowise.lan
             paths:
-            - path: /
-              pathType: Prefix
+            - /
+  - name: judge0
+    path: apps/judge0
+    namespace: judge0

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: judge0-env
+data:
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "judge0"
+  POSTGRES_USER: "judge0"
+  JUDGE0_HOST: "judge0-server"
+  JUDGE0_PORT: "2358"
+  JUDGE0_WORKERS: "4"
+  JUDGE0_MAX_QUEUE_SIZE: "100"
