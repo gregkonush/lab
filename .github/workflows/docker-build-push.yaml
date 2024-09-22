@@ -14,11 +14,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Bump version and push tag
         id: tag_version
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create a GitHub release
         uses: ncipollo/release-action@v1
         with:
@@ -32,6 +34,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Docker meta for ecran
         id: meta_ecran
         uses: docker/metadata-action@v5
@@ -42,18 +45,22 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
             type=sha
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           registry: gitea.grisha.cloud
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
+
       - name: Build and push ecran
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           platforms: linux/arm64
           context: ./apps/ecran
@@ -62,7 +69,7 @@ jobs:
           labels: ${{ steps.meta_ecran.outputs.labels }}
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran:latest
-          cache-to: type=inline
+          cache-to: type=registry,ref=gitea.grisha.cloud/lab/ecran:latest,mode=max,compression=zstd
 
   build-ecran-worker:
     needs: version
@@ -70,6 +77,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Docker meta for ecran-worker
         id: meta_ecran_worker
         uses: docker/metadata-action@v5
@@ -80,18 +88,22 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
             type=sha
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           registry: gitea.grisha.cloud
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
+
       - name: Build and push ecran-worker
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           platforms: linux/arm64
           context: ./apps/ecran
@@ -100,7 +112,7 @@ jobs:
           labels: ${{ steps.meta_ecran_worker.outputs.labels }}
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran-worker:latest
-          cache-to: type=inline
+          cache-to: type=registry,ref=gitea.grisha.cloud/lab/ecran-worker:latest,mode=max,compression=zstd
 
   build-ecran-migrator:
     needs: version
@@ -108,6 +120,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Docker meta for ecran-migrator
         id: meta_ecran_migrator
         uses: docker/metadata-action@v5
@@ -118,18 +131,22 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
             type=sha
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           registry: gitea.grisha.cloud
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
+
       - name: Build and push ecran-migrator
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           platforms: linux/arm64
           context: ./apps/ecran
@@ -138,4 +155,4 @@ jobs:
           labels: ${{ steps.meta_ecran_migrator.outputs.labels }}
           push: true
           cache-from: type=registry,ref=gitea.grisha.cloud/lab/ecran-migrator:latest
-          cache-to: type=inline
+          cache-to: type=registry,ref=gitea.grisha.cloud/lab/ecran-migrator:latest,mode=max,compression=zstd
