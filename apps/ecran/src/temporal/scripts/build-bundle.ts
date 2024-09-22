@@ -1,7 +1,5 @@
 import * as esbuild from 'esbuild'
-import { createRequire } from 'module'
-const require = createRequire(import.meta.url)
-const packageJson = require('../../../package.json')
+import packageJson from '../../../package.json' assert { type: 'json' }
 
 async function buildBundle() {
   try {

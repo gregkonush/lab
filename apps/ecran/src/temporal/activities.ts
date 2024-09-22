@@ -5,11 +5,6 @@ import { db } from '@/db'
 import { solutions } from '@/db/schema'
 import { SYSTEM_SOLVER_PROMPT } from '@/temporal/prompts/solver'
 
-export async function purchase(id: string): Promise<string> {
-  console.log(`Purchased ${id}!`)
-  return activityInfo().activityId
-}
-
 export async function askClaude(problemStatement: string): Promise<string> {
   console.log(`Solving problem: ${problemStatement}`)
   const message = await anthropic.messages.create({
