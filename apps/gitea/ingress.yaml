@@ -8,6 +8,10 @@ metadata:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: traefik
+  tls:
+    - hosts:
+        - kalmyk.duckdns.org
+      secretName: gitea-tls
   rules:
     - host: kalmyk.duckdns.org
       http:
