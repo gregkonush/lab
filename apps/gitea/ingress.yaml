@@ -5,10 +5,6 @@ metadata:
   namespace: gitea
 spec:
   ingressClassName: traefik
-  tls:
-    - hosts:
-        - kalmyk.duckdns.org
-      secretName: gitea-tls
   rules:
     - host: kalmyk.duckdns.org
       http:
