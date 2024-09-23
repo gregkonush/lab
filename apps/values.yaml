@@ -122,7 +122,7 @@ applications:
                     storageClassName: "local-path"
                     resources:
                       requests:
-                        storage: 1Gi
+                        storage: 5Gi
             - name: dind-sock
               emptyDir: {}
             - name: dind-externals
