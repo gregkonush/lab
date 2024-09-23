@@ -25,11 +25,3 @@ helmCharts:
             DOMAIN: kalmyk.duckdns.org
             ROOT_URL: https://kalmyk.duckdns.org
             SSH_DOMAIN: kalmyk.duckdns.org
-      redis-cluster:
-        enabled: false
-      redis:
-        enabled: true
-      postgresql-ha:
-        enabled: false
-      postgresql:
-        enabled: true

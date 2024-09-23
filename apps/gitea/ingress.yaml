@@ -3,16 +3,12 @@ kind: Ingress
 metadata:
   name: gitea-ingress
   namespace: gitea
-  annotations:
-    acme.cert-manager.io/http01-edit-in-place: "true"
-    acme.cert-manager.io/http01-ingress-class: "traefik"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: traefik
   tls:
     - hosts:
         - kalmyk.duckdns.org
-      secretName: kalmyk-tls
+      secretName: gitea-tls
   rules:
     - host: kalmyk.duckdns.org
       http:
