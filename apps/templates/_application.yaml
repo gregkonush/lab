@@ -1,8 +1,8 @@
 {{- define "application" }}
 {{- $root:= . }}
 {{- range $application := .Values.applications }}
-{{- if hasKey $application "namespace" }}
 {{- if $application.enabled }}
+{{- if hasKey $application "namespace" }}
 ---
 apiVersion: v1
 kind: Namespace
