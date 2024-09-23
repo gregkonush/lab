@@ -33,47 +33,47 @@ locals {
     }
     "kube-worker-00" = {
       mac_address = "00:16:3E:3C:0E:FF" // 192.168.1.160
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-01" = {
       mac_address = "00:16:3E:3C:0E:00" // 192.168.1.161
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-02" = {
       mac_address = "00:16:3E:3C:0E:01" // 192.168.1.162
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-03" = {
       mac_address = "00:16:3E:3C:0E:02" // 192.168.1.163
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-04" = {
       mac_address = "00:16:3E:3C:0E:03" // 192.168.1.164
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-05" = {
       mac_address = "00:16:3E:3C:0E:04" // 192.168.1.165
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-06" = {
       mac_address = "00:16:3E:3C:0E:05" // 192.168.1.166
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-07" = {
       mac_address = "00:16:3E:3C:0E:06" // 192.168.1.167
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
     "kube-worker-08" = {
       mac_address = "00:16:3E:3C:0E:07" // 192.168.1.168
-      cpu         = 10
+      cpu         = 8
       memory      = "8Gi"
     }
   }
@@ -139,12 +139,13 @@ resource "harvester_virtualmachine" "kube-cluster" {
   run_strategy = "Always"
 
   disk {
-    name       = "root"
-    type       = "disk"
-    size       = "200Gi"
-    bus        = "virtio"
-    boot_order = 1
-    image      = harvester_image.ubuntu-jammy.id
+    name        = "root"
+    type        = "disk"
+    size        = "200Gi"
+    bus         = "virtio"
+    boot_order  = 1
+    image       = harvester_image.ubuntu-jammy.id
+    auto_delete = true
   }
 
   network_interface {
@@ -186,13 +187,25 @@ write-files:
     content: |
       # Set I/O scheduler to 'none' for NVMe devices
       ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/scheduler}="none"
+  - path: /etc/systemd/system/fstrim.timer.d/override.conf
+    content: |
+      [Timer]
+      OnCalendar=
+  - path: /etc/systemd/system/fstrim.service.d/override.conf
+    content: |
+      [Service]
+      ExecStart=
 runcmd:
   - systemctl enable --now qemu-guest-agent
   - systemctl mask fstrim.timer
   - systemctl stop fstrim.timer
+  - systemctl mask fstrim.service
+  - systemctl stop fstrim.service
   - sysctl -p /etc/sysctl.d/60-nvme-optimizations.conf
   - udevadm control --reload-rules
   - udevadm trigger
+bootcmd:
+  - systemctl daemon-reload
 users:
   - name: kalmyk
     groups: [adm, cdrom, dip, plugdev, lxd, sudo]
