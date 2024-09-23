@@ -4,7 +4,7 @@ echo "Setting up primary server 1"
 k3sup install --host 192.168.1.150 \
   --user kalmyk \
   --cluster \
-  --local-path kubeconfig \
+  --local-path $HOME/.kube/config \
   --ssh-key ~/.ssh/id_ed25519 \
   --context default
 
