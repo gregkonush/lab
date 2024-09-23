@@ -1,7 +1,9 @@
 {{- define "application" }}
-{{- $root:= . }}
+{{- $root := . }}
 {{- range $application := .Values.applications }}
-{{- if $application.enabled }}
+{{- $enabled := default false $application.enabled }}
+{{- if $enabled }}
+
 {{- if hasKey $application "namespace" }}
 ---
 apiVersion: v1
@@ -17,7 +19,7 @@ metadata:
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: {{  $application.name }}
+  name: {{ $application.name }}
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
