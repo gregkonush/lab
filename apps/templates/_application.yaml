@@ -2,6 +2,7 @@
 {{- $root:= . }}
 {{- range $application := .Values.applications }}
 {{- if hasKey $application "namespace" }}
+{{- if $application.enabled }}
 ---
 apiVersion: v1
 kind: Namespace
@@ -78,5 +79,6 @@ spec:
       - ServerSideApply=true
 {{- end }}
 
+{{- end }}
 {{- end }}
 {{- end }}

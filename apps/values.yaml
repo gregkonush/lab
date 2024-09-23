@@ -6,19 +6,24 @@ spec:
     targetRevision: main
 applications:
   - name: gitea
+    enabled: true
     path: apps/gitea
     namespace: gitea
   - name: ecran
+    enabled: true
     path: apps/ecran/kustomize
     namespace: ecran
     annotations:
       argocd-image-updater.argoproj.io/image-list: ecran=gitea.proompteng.ai/lab/ecran:0.x, ecran-worker=gitea.proompteng.ai/lab/ecran-worker:0.x
   - name: sealed-secrets
+    enabled: true
     path: apps/sealed-secrets
   - name: cert-manager
+    enabled: true
     path: apps/cert-manager
     namespace: cert-manager
   - name: longhorn
+    enabled: false
     namespace: longhorn-system
     helm:
       repoURL: https://charts.longhorn.io
@@ -28,8 +33,10 @@ applications:
         preUpgradeChecker:
           jobEnabled: false
   - name: arc
+    enabled: true
     path: apps/arc
   - name: arc-controller
+    enabled: true
     namespace: arc-controller
     helm:
       repoURL: ghcr.io
@@ -44,6 +51,7 @@ applications:
             cpu: 100m
             memory: 128Mi
   - name: arc-runners
+    enabled: true
     namespace: arc-runners
     helm:
       repoURL: ghcr.io
@@ -128,21 +136,25 @@ applications:
             - name: dind-externals
               emptyDir: {}
   - name: cloudnative-pg
+    enabled: true
     namespace: cloudnative-pg
     helm:
       repoURL: https://cloudnative-pg.io/charts/
       chart: cloudnative-pg
       targetRevision: 0.22.0
   - name: prometheus
+    enabled: false
     namespace: prometheus
     helm:
       repoURL: https://prometheus-community.github.io/helm-charts
       chart: kube-prometheus-stack
       targetRevision: 62.4.0
   - name: argocd-image-updater
+    enabled: true
     path: apps/argocd-image-updater
     namespace: argocd-image-updater
   - name: temporal
+    enabled: false
     namespace: temporal
     helm:
       repoURL: https://go.temporal.io/helm-charts
@@ -167,6 +179,7 @@ applications:
             hosts:
               - "temporal.lan"
   - name: sealed-secrets-web
+    enabled: true
     namespace: sealed-secrets-web
     helm:
       repoURL: https://charts.bakito.net
@@ -185,6 +198,7 @@ applications:
             - path: /
               pathType: Prefix
   - name: flowise
+    enabled: false
     namespace: flowise
     helm:
       repoURL: https://cowboysysop.github.io/charts
@@ -200,12 +214,15 @@ applications:
             paths:
             - /
   - name: judge0
+    enabled: false
     path: apps/judge0
     namespace: judge0
   - name: registry
+    enabled: false
     path: apps/registry
     namespace: registry
   - name: jupyterhub
+    enabled: false
     namespace: jupyterhub
     helm:
       repoURL: https://charts.bitnami.com/bitnami
