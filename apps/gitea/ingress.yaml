@@ -5,13 +5,14 @@ metadata:
   namespace: gitea
   annotations:
     acme.cert-manager.io/http01-edit-in-place: "true"
+    acme.cert-manager.io/http01-ingress-class: "traefik"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: traefik
   tls:
     - hosts:
         - kalmyk.duckdns.org
-      secretName: gitea-tls
+      secretName: kalmyk-tls
   rules:
     - host: kalmyk.duckdns.org
       http:
