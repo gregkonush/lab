@@ -22,9 +22,9 @@ helmCharts:
             INDEXER_TYPE: bleve
             REPO_INDEXER_ENABLED: true
           server:
-            DOMAIN: gitea.grisha.cloud
-            ROOT_URL: https://gitea.grisha.cloud
-            SSH_DOMAIN: gitea.grisha.cloud
+            DOMAIN: kalmyk.duckdns.org
+            ROOT_URL: https://kalmyk.duckdns.org
+            SSH_DOMAIN: kalmyk.duckdns.org
       redis-cluster:
         enabled: false
       redis:

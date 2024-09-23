@@ -8,12 +8,8 @@ metadata:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: traefik
-  tls:
-    - hosts:
-        - gitea.grisha.cloud
-      secretName: gitea-tls
   rules:
-    - host: gitea.grisha.cloud
+    - host: kalmyk.duckdns.org
       http:
         paths:
           - path: /

@@ -33,7 +33,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            gitea.grisha.cloud/lab/${{ inputs.image_name }}
+            kalmyk.duckdns.org/lab/${{ inputs.image_name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ inputs.new_tag }}
@@ -48,7 +48,7 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: gitea.grisha.cloud
+          registry: kalmyk.duckdns.org
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
@@ -61,5 +61,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: true
-          cache-from: type=registry,ref=gitea.grisha.cloud/lab/${{ inputs.image_name }}:buildcache
-          cache-to: type=registry,ref=gitea.grisha.cloud/lab/${{ inputs.image_name }}:buildcache,mode=max
+          cache-from: type=registry,ref=kalmyk.duckdns.org/lab/${{ inputs.image_name }}:buildcache
+          cache-to: type=registry,ref=kalmyk.duckdns.org/lab/${{ inputs.image_name }}:buildcache,mode=max
