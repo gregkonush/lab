@@ -154,28 +154,25 @@ applications:
     path: apps/argocd-image-updater
     namespace: argocd-image-updater
   - name: temporal
-    enabled: false
+    enabled: true
     namespace: temporal
     helm:
       repoURL: https://go.temporal.io/helm-charts
       chart: temporal
-      targetRevision: 0.44.0
+      targetRevision: 0.45.1
       valuesObject: |
         prometheus:
           enabled: false
         grafana:
           enabled: false
-        admintools:
-          image:
-            repository: temporalio/admin-tools
-            tag: 1.24.2-tctl-1.18.1-cli-1.0.0
-            pullPolicy: IfNotPresent
         web:
           ingress:
             enabled: true
             className: traefik
             annotations:
               traefik.frontend.rule.type: PathPrefix
+              kubernetes.io/ingress.class: traefik
+              ingress.kubernetes.io/ssl-redirect: "false"
             hosts:
               - "temporal.lan"
   - name: sealed-secrets-web
