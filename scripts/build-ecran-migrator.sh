@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="gitea.proompteng.ai/lab/ecran-migrator"
+IMAGE_NAME="kalmyk.duckdns.org/lab/ecran-migrator"
 DOCKERFILE="apps/ecran/Dockerfile.migrator"
 CONTEXT_PATH="apps/ecran"
 
