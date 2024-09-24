@@ -30,13 +30,3 @@ spec:
                 name: gitea-http
                 port:
                   number: 3000
-    - host: gitea.proompteng.ai
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: gitea-http
-                port:
-                  number: 3000

@@ -16,10 +16,10 @@ spec:
         app.kubernetes.io/name: temporal-worker
     spec:
       imagePullSecrets:
-        - name: proompteng-registry
+        - name: kalmyk-registry
       containers:
         - name: temporal-worker
-          image: gitea.proompteng.ai/lab/ecran-worker:0.0.1
+          image: kalmyk.duckdns.org/lab/ecran-worker:0.0.1
           imagePullPolicy: Always
           command: ['npm', 'run', 'start:worker']
           env:

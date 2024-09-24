@@ -16,10 +16,10 @@ spec:
         app.kubernetes.io/name: ecran-worker
     spec:
       imagePullSecrets:
-        - name: proompteng-registry
+        - name: kalmyk-registry
       containers:
         - name: ecran-worker
-          image: gitea.proompteng.ai/lab/ecran-worker:0.0.1
+          image: kalmyk.duckdns.org/lab/ecran-worker:0.0.1
           imagePullPolicy: Always
           env:
             - name: RESEND_API_KEY

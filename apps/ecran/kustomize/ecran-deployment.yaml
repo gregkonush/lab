@@ -16,10 +16,10 @@ spec:
         app.kubernetes.io/name: ecran
     spec:
       imagePullSecrets:
-        - name: proompteng-registry
+        - name: kalmyk-registry
       initContainers:
         - name: run-migrations
-          image: gitea.proompteng.ai/lab/ecran-migrator:latest
+          image: kalmyk.duckdns.org/lab/ecran-migrator:latest
           env:
             - name: DB_URI
               valueFrom:
@@ -28,7 +28,7 @@ spec:
                   key: uri
       containers:
         - name: ecran
-          image: gitea.proompteng.ai/lab/ecran:0.0.1
+          image: kalmyk.duckdns.org/lab/ecran:0.0.1
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
