@@ -2,10 +2,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: judge0
 resources:
-  - postgres-deployment.yaml
-  - redis-deployment.yaml
-  - judge0-server-deployment.yaml
-  - judge0-worker-deployment.yaml
-  - judge0-configmap.yaml
-  - redis-secret.yaml
-  - postgres-secret.yaml
+  - kaniko-build.yaml
+  - judge0-secrets.yaml

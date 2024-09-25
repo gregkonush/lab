@@ -42,3 +42,17 @@ The `kubectl cnpg psql` command provides direct access to the PostgreSQL shell o
 
 Remember to source your `.zshrc` file or restart your terminal session after updating it with the new PATH:
 
+### Temporal
+
+
+Create a default namespace
+
+```bash
+kubectl port-forward -n temporal svc/temporal-frontend-headless 7233:7233
+```
+
+Create a namespace
+
+```bash
+temporal operator namespace create default
+```
