@@ -11,7 +11,7 @@ spec:
         args:
         - "--dockerfile=Dockerfile"
         - "--context=git://github.com/judge0/judge0.git"
-        - "--destination=your-registry/judge0:latest"
+        - "--destination=kalmyk.duckdns.org/lab/judge0:latest"
         volumeMounts:
         - name: docker-config
           mountPath: /kaniko/.docker
