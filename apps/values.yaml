@@ -211,7 +211,7 @@ applications:
             paths:
             - /
   - name: judge0
-    enabled: false
+    enabled: true
     path: apps/judge0
     namespace: judge0
   - name: registry
