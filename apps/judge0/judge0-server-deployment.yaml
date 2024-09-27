@@ -12,6 +12,8 @@ spec:
       labels:
         app: judge0-server
     spec:
+      imagePullSecrets:
+        - name: kalmyk-registry
       containers:
         - name: judge0-server
           image: kalmyk.duckdns.org/lab/judge0:latest
