@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "main"
+  pull_request:
 
 jobs:
   version:
@@ -60,6 +61,19 @@ jobs:
       dockerfile: ./apps/ecran/Dockerfile.migrator
       context: ./apps/ecran
       new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-judge0:
+    needs: version
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: judge0
+      dockerfile: Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+      external_repository: judge0/judge0
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
