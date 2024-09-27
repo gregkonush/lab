@@ -10,18 +10,13 @@ helmCharts:
     version: v10.4.1
     releaseName: gitea
     namespace: gitea
-    valuesMerge: merge
+    valuesMerge: replace
     valuesInline:
       replicaCount: 3
       gitea:
         admin:
           existingSecret: gitea-admin-secret
         config:
-          database:
-            DB_TYPE: postgres
-          indexer:
-            INDEXER_TYPE: bleve
-            REPO_INDEXER_ENABLED: true
           server:
             DOMAIN: kalmyk.duckdns.org
             ROOT_URL: https://kalmyk.duckdns.org
