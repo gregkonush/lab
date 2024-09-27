@@ -10,7 +10,7 @@ helmCharts:
     version: v10.4.1
     releaseName: gitea
     namespace: gitea
-    valuesMerge: replace
+    valuesMerge: merge
     valuesInline:
       replicaCount: 3
       gitea:
