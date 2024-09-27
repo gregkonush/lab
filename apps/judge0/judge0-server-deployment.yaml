@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: judge0-server
-          image: judge0/judge0:latest
+          image: kalmyk.duckdns.org/lab/judge0:latest
           resources:
             limits:
               cpu: "1"

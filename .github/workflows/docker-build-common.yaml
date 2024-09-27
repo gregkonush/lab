@@ -19,6 +19,10 @@ on:
         required: false
         type: string
         default: ''
+      platforms:
+        required: false
+        type: string
+        default: 'linux/arm64'
     secrets:
       REGISTRY_USERNAME:
         required: true
@@ -62,7 +66,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          platforms: linux/arm64
+          platforms: ${{ inputs.platforms }}
           context: ${{ inputs.external_repository && 'external_repo' || inputs.context }}
           file: ${{ inputs.external_repository && 'external_repo/' || '' }}${{ inputs.dockerfile }}
           tags: ${{ steps.meta.outputs.tags }}
