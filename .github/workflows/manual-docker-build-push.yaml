@@ -1,0 +1,52 @@
+name: Manual Docker Pull and Push
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: 'Docker image name (e.g., nginx)'
+        required: true
+      image_tag:
+        description: 'Docker image tag'
+        required: true
+        default: 'latest'
+
+env:
+  SOURCE_REGISTRY: docker.io
+  TARGET_REGISTRY: kalmyk.duckdns.org/lab
+
+jobs:
+  pull-and-push:
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.SOURCE_REGISTRY }}
+
+      - name: Login to Custom Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.TARGET_REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Pull and push Docker image
+        run: |
+          SOURCE_IMAGE="${{ env.SOURCE_REGISTRY }}/${{ github.event.inputs.image_name }}:${{ github.event.inputs.image_tag }}"
+          TARGET_IMAGE="${{ env.TARGET_REGISTRY }}/${{ github.event.inputs.image_name }}:${{ github.event.inputs.image_tag }}"
+
+          echo "Pulling image: $SOURCE_IMAGE"
+          docker pull $SOURCE_IMAGE
+
+          echo "Tagging image for target registry"
+          docker tag $SOURCE_IMAGE $TARGET_IMAGE
+
+          echo "Pushing image to target registry: $TARGET_IMAGE"
+          docker push $TARGET_IMAGE
