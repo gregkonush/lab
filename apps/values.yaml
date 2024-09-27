@@ -210,10 +210,6 @@ applications:
           - host: flowise.lan
             paths:
             - /
-  - name: judge0
-    enabled: true
-    path: apps/judge0
-    namespace: judge0
   - name: registry
     enabled: false
     path: apps/registry
@@ -231,3 +227,15 @@ applications:
           ingressClassName: traefik
           pathType: Prefix
           hostname: jupyterhub.lan
+  - name: coder
+    enabled: true
+    namespace: coder
+    helm:
+      repoURL: https://helm.coder.com/v2
+      chart: coder
+      targetRevision: 2.14.3
+      valuesObject: |
+        ingress:
+          enabled: true
+          className: traefik
+          host: coder.lan
