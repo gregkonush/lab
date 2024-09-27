@@ -12,9 +12,10 @@ helmCharts:
     namespace: gitea
     valuesMerge: merge
     valuesInline:
+      replicaCount: 3
       gitea:
         admin:
-          existingSecret: gitea-secrets
+          existingSecret: gitea-admin
         config:
           database:
             DB_TYPE: postgres
