@@ -10,14 +10,14 @@ spec:
           # Choose your image here - this one has the Argo CD Vault plugin in it. See https://github.com/crumbhole/argocd-lovely-plugin/blob/main/doc/variations.md
           image: ghcr.io/crumbhole/lovely-hera-vault-plugin-ver:1.1.1
           # Here we are configuring default environment for every app - in this case vault
-          envFrom:
-            - secretRef:
-                name: vault-env
+          # envFrom:
+          #   - secretRef:
+          #       name: vault-env
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
           volumeMounts:
-              # Import the repo-server's plugin binary
+            # Import the repo-server's plugin binary
             - mountPath: /var/run/argocd
               name: var-files
             - mountPath: /home/argocd/cmp-server/plugins
@@ -28,11 +28,11 @@ spec:
               name: lovely-tmp
           resources:
             limits:
-              cpu: "500m"
-              memory: "256Mi"
-            requests:
-              cpu: "250m"
+              cpu: "200m"
               memory: "128Mi"
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
       volumes:
         # A temporary directory for the tool to work in.
         - emptyDir: {}
