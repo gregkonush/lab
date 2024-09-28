@@ -41,6 +41,8 @@ spec:
     repoURL: {{ $root.Values.spec.source.repoURL }}
     targetRevision: {{ $root.Values.spec.source.targetRevision }}
     path: {{ $application.path }}
+    plugin:
+      name: argocd-lovely-plugin-v1.1.1
   syncPolicy:
     automated:
       prune: true
@@ -59,6 +61,9 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
+  source:
+    plugin:
+      name: argocd-lovely-plugin-v1.1.1
   sources:
     - repoURL: {{ $application.helm.repoURL }}
       chart: {{ $application.helm.chart }}
