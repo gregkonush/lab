@@ -56,3 +56,9 @@ kubectl edit application
 ```
 
 Remove finalizers from spec
+
+## Kustomization bootstrap
+
+```bash
+kubectl apply -k bootstrap/argo-cd
+```
