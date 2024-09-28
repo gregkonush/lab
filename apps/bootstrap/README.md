@@ -15,8 +15,9 @@ kubectl apply -k bootstrap/argo-cd
 ## Get initial password, login and update password
 
 ```bash
+# Passing --grpc-web will make grpc calls afterwards
 argocd admin initial-password -n argocd
-argocd login argocd.proompteng.ai
+argocd login argocd.proompteng.ai --grpc-web
 argocd account update-password --account admin --server argocd.proompteng.ai
 ```
 
