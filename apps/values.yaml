@@ -230,25 +230,4 @@ applications:
   - name: coder
     enabled: true
     namespace: coder
-    helm:
-      repoURL: https://helm.coder.com/v2
-      chart: coder
-      targetRevision: 2.14.3
-      valuesObject: |
-        ingress:
-          enabled: true
-          className: traefik
-          host: coder.lan
-        env:
-          - name: CODER_ACCESS_URL
-            value: https://coder.lan
-          - name: CODER_PG_CONNECTION_URL
-            valueFrom:
-              secretKeyRef:
-                name: coder-cluster-app
-                key: uri
-
-  - name: cloudnative-pg-clusters
-    enabled: true
-    path: apps/cloudnative-pg-clusters
-    namespace: cloudnative-pg-clusters
+    path: apps/coder
