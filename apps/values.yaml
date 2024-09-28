@@ -5,6 +5,9 @@ spec:
     repoURL: https://github.com/gregkonush/lab
     targetRevision: main
 applications:
+  - name: argocd
+    enabled: true
+    path: apps/argocd
   - name: sealed-secrets
     enabled: true
     path: apps/sealed-secrets

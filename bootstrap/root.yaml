@@ -11,8 +11,6 @@ spec:
     repoURL: https://github.com/gregkonush/lab.git
     path: apps
     targetRevision: HEAD
-    plugin:
-      name: lovely-hera-vault-plugin-ver
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
