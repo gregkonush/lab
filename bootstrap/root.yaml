@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   finalizers:
-    - resources-finalizer.argocd.argoproj.io
+    - resources-finalizer.argocd.argoproj.io/background
   name: root
   namespace: argocd
 spec:
@@ -13,9 +13,6 @@ spec:
     targetRevision: HEAD
     plugin:
       name: argocd-lovely-hera-vault-plugin-ver-v1.1.1
-    directory:
-      recurse: true
-      exclude: "{argocd/*,bootstrap/*}"
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
