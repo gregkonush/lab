@@ -12,7 +12,7 @@ spec:
     path: apps
     targetRevision: HEAD
     plugin:
-      name: argocd-lovely-hera-vault-plugin-ver-v1.1.1
+      name: lovely-hera-vault-plugin-ver
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
