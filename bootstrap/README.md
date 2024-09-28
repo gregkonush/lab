@@ -33,6 +33,12 @@ argocd app create argocd --file bootstrap/argocd.yaml
 argocd app create root --file bootstrap/root.yaml
 ```
 
+## Upsert application
+
+```bash
+argocd app create --upsert root --file bootstrap/root.yaml
+```
+
 ### Delete apps that got stuck in deleting phase
 
 ```bash

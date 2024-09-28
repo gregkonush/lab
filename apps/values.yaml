@@ -1,0 +1,10 @@
+spec:
+  destination:
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: https://github.com/gregkonush/lab
+    targetRevision: main
+applications:
+  - name: sealed-secrets
+    enabled: true
+    path: apps/sealed-secrets

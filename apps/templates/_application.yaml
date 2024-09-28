@@ -50,43 +50,6 @@ spec:
       allowEmpty: true
 {{- end }}
 
-{{- if hasKey $application "helm" }}
----
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: {{ $application.name }}
-  namespace: argocd
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
-spec:
-  project: default
-  source:
-    plugin:
-      name: argocd-lovely-plugin-v1.1.1
-  sources:
-    - repoURL: {{ $application.helm.repoURL }}
-      chart: {{ $application.helm.chart }}
-      targetRevision: {{ $application.helm.targetRevision }}
-      helm:
-        releaseName: {{ $application.name }}
-        {{- if hasKey $application.helm "valuesObject" }}
-        valuesObject:
-          {{- $application.helm.valuesObject | nindent 10 }}
-        {{- end }}
-        skipCrds: false
-  destination:
-    namespace: {{ $application.namespace }}
-    server: {{ $root.Values.spec.destination.server }}
-  syncPolicy:
-    automated:
-      selfHeal: true
-      prune: true
-      allowEmpty: true
-    syncOptions:
-      - ServerSideApply=true
-{{- end }}
-
 {{- end }}
 {{- end }}
 {{- end }}
