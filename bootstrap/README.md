@@ -6,25 +6,10 @@ Install argo-cd CLI
 brew install argocd
 ```
 
-Add argo-cd helm charts
+## Kustomization bootstrap
 
 ```bash
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
-```
-
-Pull charts
-
-```bash
-cd bootstrap/argo-cd
-helm dep up
-```
-
-Apply argo-cd helm charts
-
-```bash
-# from root directory
-helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -
+kubectl apply -k bootstrap/argo-cd
 ```
 
 ## Get initial password, login and update password
@@ -57,8 +42,3 @@ kubectl edit application
 
 Remove finalizers from spec
 
-## Kustomization bootstrap
-
-```bash
-kubectl apply -k bootstrap/argo-cd
-```

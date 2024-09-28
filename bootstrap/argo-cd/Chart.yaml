@@ -1,9 +1,0 @@
-apiVersion: v2
-name: bootstrap
-description: ArgoCD bootstrap chart
-type: application
-version: 0.0.1
-dependencies:
-  - name: argo-cd
-    version: v7.6.5
-    repository: https://argoproj.github.io/argo-helm

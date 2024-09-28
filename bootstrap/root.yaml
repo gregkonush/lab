@@ -10,7 +10,10 @@ spec:
   source:
     repoURL: https://github.com/gregkonush/lab.git
     path: apps
-    targetRevision: main
+    targetRevision: HEAD
+    directory:
+      recurse: true
+      exclude: argocd
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
