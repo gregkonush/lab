@@ -11,6 +11,8 @@ spec:
     repoURL: https://github.com/gregkonush/lab.git
     path: apps
     targetRevision: HEAD
+    plugin:
+      name: argocd-lovely-hera-vault-plugin-ver-v1.1.1
     directory:
       recurse: true
       exclude: "{argocd/*,bootstrap/*}"

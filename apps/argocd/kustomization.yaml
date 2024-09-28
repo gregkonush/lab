@@ -15,4 +15,4 @@ patches:
   - path: overlays/argocd-lovely-plugin.yaml
     target:
       kind: Deployment
-      name: argocd-cd-server
+      name: argocd-repo-server

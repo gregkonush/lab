@@ -42,7 +42,7 @@ spec:
     targetRevision: {{ $root.Values.spec.source.targetRevision }}
     path: {{ $application.path }}
     plugin:
-      name: argocd-lovely-plugin-v1.1.1
+      name: argocd-lovely-hera-vault-plugin-ver-v1.1.1
   syncPolicy:
     automated:
       prune: true

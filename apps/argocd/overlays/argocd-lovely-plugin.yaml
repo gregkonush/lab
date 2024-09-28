@@ -27,7 +27,7 @@ spec:
             runAsNonRoot: true
             runAsUser: 999
           volumeMounts:
-              # Import the repo-server's plugin binary
+            # Import the repo-server's plugin binary
             - mountPath: /var/run/argocd
               name: var-files
             - mountPath: /home/argocd/cmp-server/plugins
