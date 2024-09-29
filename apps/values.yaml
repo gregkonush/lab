@@ -8,7 +8,6 @@ spec:
 applications:
   - name: argocd
     enabled: true
-    namespace: argocd
     path: apps/argocd
 
   - name: sealed-secrets
