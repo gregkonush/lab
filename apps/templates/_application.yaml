@@ -42,7 +42,7 @@ spec:
     targetRevision: {{ $root.Values.spec.source.targetRevision }}
     path: {{ $application.path }}
     plugin:
-      name: lovely-hera-vault-plugin-ver
+      name: lovely
   syncPolicy:
     automated:
       prune: true
