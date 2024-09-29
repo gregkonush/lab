@@ -3,7 +3,7 @@ kind: Application
 metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io/background
-  name: root
+  name: apps
   namespace: argocd
 spec:
   project: default
@@ -11,6 +11,8 @@ spec:
     repoURL: https://github.com/gregkonush/lab.git
     path: apps
     targetRevision: HEAD
+    plugin:
+      name: lovely
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
@@ -18,4 +20,3 @@ spec:
     automated:
       prune: true
       selfHeal: true
-      allowEmpty: true
