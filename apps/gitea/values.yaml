@@ -3,6 +3,8 @@ gitea:
     config:
       server:
         DOMAIN: kalmyk.duckdns.org
+        ROOT_URL: https://kalmyk.duckdns.org
+        SSH_DOMAIN: kalmyk.duckdns.org
   replicaCount: 3
   persistence:
     size: 50Gi
