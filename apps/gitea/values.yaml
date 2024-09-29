@@ -1,2 +1,18 @@
 gitea:
+  gitea:
+    config:
+      server:
+        DOMAIN: kalmyk.duckdns.org
   replicaCount: 3
+  persistence:
+    size: 50Gi
+    accessModes:
+      - ReadWriteMany
+  ingress:
+    enabled: true
+    className: gitea-ingress
+    hosts:
+      - host: kalmyk.duckdns.org
+        paths:
+          - path: /
+            pathType: Prefix
