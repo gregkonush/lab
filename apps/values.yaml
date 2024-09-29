@@ -8,6 +8,7 @@ spec:
 applications:
   - name: argocd
     enabled: true
+    namespace: argocd
     path: apps/argocd
 
   - name: sealed-secrets
@@ -24,3 +25,8 @@ applications:
     enabled: true
     namespace: cert-manager
     path: apps/cert-manager
+
+  - name: arc
+    enabled: true
+    namespace: arc
+    path: apps/arc
