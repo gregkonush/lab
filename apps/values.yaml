@@ -14,3 +14,9 @@ applications:
     enabled: true
     namespace: kube-system
     path: apps/sealed-secrets
+
+  - name: gitea
+    enabled: true
+    namespace: gitea
+    path: apps/gitea
+
