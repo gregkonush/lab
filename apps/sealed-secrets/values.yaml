@@ -1,0 +1,12 @@
+sealed-secret-web:
+  sealedSecrets:
+    namespace: kube-system
+    serviceName: sealed-secrets
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: sealed-secrets.lan
+        paths:
+          - path: /
+            pathType: Prefix
