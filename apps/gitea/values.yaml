@@ -1,5 +1,7 @@
 gitea:
   gitea:
+    admin:
+      existingSecret: gitea-admin-secret
     config:
       server:
         DOMAIN: kalmyk.duckdns.org
@@ -12,7 +14,7 @@ gitea:
       - ReadWriteMany
   ingress:
     enabled: true
-    className: gitea-ingress
+    className: traefik
     hosts:
       - host: kalmyk.duckdns.org
         paths:
