@@ -16,7 +16,7 @@ applications:
     path: apps/sealed-secrets
 
   - name: gitea
-    enabled: true
+    enabled: false
     namespace: gitea
     path: apps/gitea
 
