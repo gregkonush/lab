@@ -20,3 +20,7 @@ applications:
     namespace: gitea
     path: apps/gitea
 
+  - name: cert-manager
+    enabled: true
+    namespace: cert-manager
+    path: apps/cert-manager
