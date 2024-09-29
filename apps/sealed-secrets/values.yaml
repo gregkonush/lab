@@ -1,4 +1,4 @@
-sealed-secret-web:
+sealed-secrets-web:
   sealedSecrets:
     namespace: kube-system
     serviceName: sealed-secrets
@@ -6,7 +6,7 @@ sealed-secret-web:
     enabled: true
     className: traefik
     hosts:
-      - host: sealed-secrets.lan
-        paths:
+      - paths:
           - path: /
             pathType: Prefix
+        host: sealed-secrets.lan
