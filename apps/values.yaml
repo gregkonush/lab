@@ -11,7 +11,7 @@ applications:
     path: apps/argocd
 
   - name: sealed-secrets
-    enabled: false
+    enabled: true
     namespace: kube-system
     path: apps/sealed-secrets
 
