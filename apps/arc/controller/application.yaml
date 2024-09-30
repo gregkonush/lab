@@ -5,10 +5,11 @@ metadata:
 kind: Application
 spec:
   project: default
-  source:
+  helm:
     repoURL: ghcr.io
     chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
     targetRevision: 0.9.1
+    skipCrds: false
   destination:
     server: https://kubernetes.default.svc
     namespace: arc
