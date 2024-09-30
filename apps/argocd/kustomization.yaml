@@ -7,8 +7,6 @@ resources:
   - base/namespace.yaml
   - base/ingress.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/master/manifests/install.yaml
-  - base/gha-runner-scale-set-controller.yaml
-  - base/gha-runner-scale-set.yaml
 
 patches:
   - path: overlays/argocd-cm.yaml
