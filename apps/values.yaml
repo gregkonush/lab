@@ -11,22 +11,22 @@ applications:
     path: apps/argocd
 
   - name: sealed-secrets
-    enabled: true
+    enabled: false
     namespace: kube-system
     path: apps/sealed-secrets
 
   - name: gitea
-    enabled: true
+    enabled: false
     namespace: gitea
     path: apps/gitea
 
   - name: cert-manager
-    enabled: true
+    enabled: false
     namespace: cert-manager
     path: apps/cert-manager
 
   - name: arc
-    enabled: true
+    enabled: false
     namespace: arc
     sources:
       - path: apps/arc/controller
@@ -38,6 +38,6 @@ applications:
     path: apps/cloudnative-pg
 
   - name: temporal
-    enabled: true
+    enabled: false
     namespace: temporal
     path: apps/temporal
