@@ -35,8 +35,6 @@ spec:
       namespace: argocd
       finalizers:
         - resources-finalizer.argocd.argoproj.io
-      annotations:
-        "helm.sh/resource-policy": keep
     spec:
       project: default
       {{- if hasKey . "sources" }}
