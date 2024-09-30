@@ -1,22 +1,58 @@
 apiVersion: argoproj.io/v1alpha1
-kind: Application
+kind: ApplicationSet
 metadata:
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io/background
   name: apps
   namespace: argocd
 spec:
-  project: default
-  source:
-    repoURL: https://github.com/gregkonush/lab.git
-    path: apps
-    targetRevision: HEAD
-    plugin:
-      name: lovely
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: argocd
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: argocd
+            namespace: argocd
+            enabled: true
+            sources:
+              - repoURL: https://github.com/gregkonush/lab.git
+                targetRevision: HEAD
+                path: apps/argocd
+          - name: sealed-secrets
+            namespace: kube-system
+            enabled: false
+            sources:
+              - repoURL: https://github.com/gregkonush/lab.git
+                targetRevision: HEAD
+                path: apps/sealed-secrets
+          - name: arc
+            namespace: arc
+            enabled: false
+            sources:
+              - repoURL: https://github.com/gregkonush/lab.git
+                targetRevision: HEAD
+                path: apps/arc/controller
+              - repoURL: https://github.com/gregkonush/lab.git
+                targetRevision: HEAD
+                path: apps/arc/runner-set
+  template:
+    {{- if .enabled }}
+    metadata:
+      name: '{{ .name }}'
+      namespace: argocd
+    spec:
+      project: default
+      sources:
+        {{- range .sources }}
+        - repoURL: {{ .repoURL }}
+          targetRevision: {{ .targetRevision }}
+          path: {{ .path }}
+          plugin:
+            name: lovely
+        {{- end }}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}
