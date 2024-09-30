@@ -1,9 +1,0 @@
-apiVersion: v2
-name: cloudnative-pg
-description: CloudNativePG is a database cluster manager for PostgreSQL, built on Kubernetes.
-version: 0.0.3
-type: application
-dependencies:
-  - name: cloudnative-pg
-    version: 0.22.0
-    repository: https://cloudnative-pg.io/charts
