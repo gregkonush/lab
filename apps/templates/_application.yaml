@@ -41,8 +41,6 @@ spec:
     repoURL: {{ $root.Values.spec.source.repoURL }}
     targetRevision: {{ $root.Values.spec.source.targetRevision }}
     path: {{ $application.path }}
-    helm:
-      passCredentials: true
     plugin:
       name: lovely
   syncPolicy:
