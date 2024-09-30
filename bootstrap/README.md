@@ -30,8 +30,7 @@ argocd repo add https://github.com/gregkonush/lab
 ## Bootstrap root
 
 ```bash
-argocd app create argocd --file apps/argocd/argocd.yaml
-argocd app create root --file apps/bootstrap/root.yaml
+argocd app create apps --file bootstrap/apps.yaml
 ```
 
 ## Upsert application
