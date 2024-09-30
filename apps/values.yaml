@@ -29,3 +29,13 @@ applications:
     enabled: true
     namespace: arc
     path: apps/arc
+
+  - name: cloudnative-pg
+    enabled: true
+    namespace: cloudnative-pg
+    path: apps/cloudnative-pg
+
+  - name: temporal
+    enabled: true
+    namespace: temporal
+    path: apps/temporal
