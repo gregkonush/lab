@@ -31,7 +31,7 @@ applications:
     path: apps/arc
 
   - name: cloudnative-pg
-    enabled: true
+    enabled: false
     namespace: cloudnative-pg
     path: apps/cloudnative-pg
 
