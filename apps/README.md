@@ -44,7 +44,6 @@ Remember to source your `.zshrc` file or restart your terminal session after upd
 
 ### Temporal
 
-
 Create a default namespace
 
 ```bash
@@ -56,3 +55,18 @@ Create a namespace
 ```bash
 temporal operator namespace create default
 ```
+
+### Apps Helm Chart
+
+This Helm chart is designed to manage multiple ArgoCD applications using an ApplicationSet.
+
+### Helm Templating and ArgoCD ApplicationSet
+
+This chart uses a combination of Helm templating and ArgoCD ApplicationSet templating. To distinguish between Helm templating and ApplicationSet templating, we use different syntax:
+
+- Single curly braces `{{ }}` are used for Helm templating.
+- Double curly braces `{{`` ``}}` are used for ApplicationSet templating.
+
+### Example
+
+In the `_application.yaml` template, you'll see a mix of both syntaxes:
