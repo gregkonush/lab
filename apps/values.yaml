@@ -28,7 +28,9 @@ applications:
   - name: arc
     enabled: true
     namespace: arc
-    path: apps/arc
+    sources:
+      - path: apps/arc/controller
+      - path: apps/arc/runner-set
 
   - name: cloudnative-pg
     enabled: false
