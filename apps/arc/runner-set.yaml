@@ -12,6 +12,8 @@ spec:
       helm:
         releaseName: arc-runner-set
         skipCrds: false
+        valuesFiles:
+          - runner-set-values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: arc
