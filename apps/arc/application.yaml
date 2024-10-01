@@ -18,6 +18,10 @@ spec:
       helm:
         releaseName: arc-runner-set
         skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
         # valuesObject:
         #   containerMode:
         #     type: "kubernetes"
