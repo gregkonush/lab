@@ -9,7 +9,7 @@ brew install argocd
 ## Kustomization bootstrap
 
 ```bash
-kubectl apply -k bootstrap/argo-cd
+kubectl apply -k apps/argocd
 ```
 
 ## Get initial password, login and update password
@@ -27,16 +27,16 @@ argocd account update-password --account admin --server argocd.proompteng.ai
 argocd repo add https://github.com/gregkonush/lab
 ```
 
-## Bootstrap root
+## Bootstrap apps
 
 ```bash
-argocd app create apps --file bootstrap/apps.yaml
+argocd appset create bootstrap/appset.yaml
 ```
 
-## Upsert application
+## Update apps
 
 ```bash
-argocd app create --upsert root --file bootstrap/root.yaml
+argocd appset create --upsert bootstrap/appset.yaml
 ```
 
 ### Delete apps that got stuck in deleting phase

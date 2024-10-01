@@ -12,8 +12,6 @@ spec:
         revision: dev
         directories:
           - path: apps/*
-        files:
-          - path: config/*/values.yaml
   template:
     metadata:
       name: "{{path.basename}}"
@@ -22,7 +20,7 @@ spec:
       source:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: dev
-        path: "{{path}}"
+        path: "{{.path.path}}"
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{path.basename}}"
