@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-config
+data:
+  registries.conf: |
+    registries:
+    - name: kalmyk-registry
+      prefix: kalmyk.duckdns.org
+      api_url: https://kalmyk.duckdns.org
+      credentials: pullsecret:argocd/kalmyk-registry
+      default: true
