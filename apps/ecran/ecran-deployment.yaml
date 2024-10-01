@@ -37,7 +37,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: ecran-secrets
-                  key: resend-api-key
+                  key: data
             - name: DB_URI
               valueFrom:
                 secretKeyRef:
