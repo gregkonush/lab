@@ -9,3 +9,6 @@ spec:
     repoURL: https://github.com/gregkonush/lab.git
     targetRevision: dev
     path: bootstrap
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
