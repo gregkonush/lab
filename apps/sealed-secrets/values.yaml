@@ -1,6 +1,6 @@
 sealed-secrets-web:
   sealedSecrets:
-    namespace: kube-system
+    namespace: sealed-secrets
     serviceName: sealed-secrets
   ingress:
     enabled: true
