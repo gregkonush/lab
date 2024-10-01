@@ -27,6 +27,14 @@ spec:
           runnerScaleSetName: arc-arm64
           minRunners: 3
           maxRunners: 9
+          containerMode:
+            type: "kubernetes"
+            kubernetesModeWorkVolumeClaim:
+              accessModes: ["ReadWriteOnce"]
+              storageClassName: "local-path"
+              resources:
+                requests:
+                  storage: 1Gi
         # valuesObject:
         #   containerMode:
         #     type: "kubernetes"
@@ -36,14 +44,6 @@ spec:
         #       resources:
         #         requests:
         #           storage: 1Gi
-        #   minRunners: 3
-        #   maxRunners: 9
-        #   githubConfigUrl: https://github.com/gregkonush/lab
-        #   githubConfigSecret: github-token
-        #   runnerScaleSetName: arc-arm64
-        #   controllerServiceAccount:
-        #     name: arc-controller-gha-rs-controller
-        #     namespace: arc-controller
         #   template:
         #     spec:
         #       initContainers:
