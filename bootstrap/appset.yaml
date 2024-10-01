@@ -36,3 +36,9 @@ spec:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          jsonPointers:
+            - /spec/VolumeClaimTemplates/0
+
