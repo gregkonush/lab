@@ -22,13 +22,6 @@ spec:
               # mitigate path traversal attacks.
             - mountPath: /tmp
               name: lovely-tmp
-          resources:
-            limits:
-              cpu: "500m"
-              memory: "512Mi"
-            requests:
-              cpu: "250m"
-              memory: "256Mi"
       volumes:
         # A temporary directory for the tool to work in.
         - emptyDir: {}
