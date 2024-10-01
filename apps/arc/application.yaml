@@ -22,6 +22,11 @@ spec:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
             namespace: arc
+          githubConfigUrl: https://github.com/gregkonush/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-arm64
+          minRunners: 3
+          maxRunners: 9
         # valuesObject:
         #   containerMode:
         #     type: "kubernetes"
