@@ -9,7 +9,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/gregkonush/lab.git
-        revision: dev
+        revision: HEAD
         directories:
           - path: apps/*
           - path: apps/root
@@ -21,7 +21,7 @@ spec:
       project: default
       sources:
         - repoURL: https://github.com/gregkonush/lab.git
-          targetRevision: dev
+          targetRevision: HEAD
           path: "{{.path.path}}"
           plugin:
             name: lovely
