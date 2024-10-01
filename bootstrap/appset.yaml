@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/gregkonush/lab.git
+        revision: dev
+        directories:
+          - path: apps/*
+          - path: apps/root
+            exclude: true
+  template:
+    metadata:
+      name: "{{.path.basename}}"
+    spec:
+      project: default
+      sources:
+        - repoURL: https://github.com/gregkonush/lab.git
+          targetRevision: dev
+          path: "{{.path.path}}"
+          plugin:
+            name: lovely
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.path.basename}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: gitea
+          jsonPointers:
+            - /spec/volumeClaimTemplates/0
