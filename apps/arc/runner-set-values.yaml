@@ -1,77 +1,81 @@
+githubConfigUrl: https://github.com/gregkonush/lab
+githubConfigSecret: github-token
+minRunners: 3
+maxRunners: 9
+runnerScaleSetName: arc-arm64
+
+controllerServiceAccount:
+  namespace: arc
+  name: arc-controller-gha-rs-controller
+
 containerMode:
   type: "kubernetes"
   kubernetesModeWorkVolumeClaim:
     accessModes: ["ReadWriteOnce"]
-    storageClassName: "local-path"
+    storageClassName: local-path
     resources:
       requests:
         storage: 1Gi
-  minRunners: 3
-  maxRunners: 9
-  githubConfigUrl: https://github.com/gregkonush/lab
-  githubConfigSecret: github-token
-  runnerScaleSetName: arc-arm64
-  controllerServiceAccount:
-    name: arc-controller-gha-rs-controller
-    namespace: arc
-  template:
-    spec:
-      initContainers:
-        - name: init-dind-externals
-          image: ghcr.io/actions/actions-runner:latest
-          command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
-          volumeMounts:
-            - name: dind-externals
-              mountPath: /home/runner/tmpDir
-      containers:
-        - name: runner
-          image: ghcr.io/actions/actions-runner:latest
-          command: ["/home/runner/run.sh"]
-          env:
-            - name: ACTIONS_RUNNER_CONTAINER_HOOKS
-              value: /home/runner/k8s/index.js
-            - name: ACTIONS_RUNNER_POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: DOCKER_HOST
-              value: unix:///var/run/docker.sock
-            - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
-              value: "false"
-          volumeMounts:
-            - name: work
-              mountPath: /home/runner/_work
-            - name: dind-sock
-              mountPath: /var/run
-        - name: dind
-          image: docker:dind
-          args:
-            - dockerd
-            - --host=unix:///var/run/docker.sock
-            - --group=$(DOCKER_GROUP_GID)
-          env:
-            - name: DOCKER_GROUP_GID
-              value: "123"
-          securityContext:
-            privileged: true
-          volumeMounts:
-            - name: work
-              mountPath: /home/runner/_work
-            - name: dind-sock
-              mountPath: /var/run
-            - name: dind-externals
-              mountPath: /home/runner/externals
-      volumes:
-        - name: work
-          ephemeral:
-            volumeClaimTemplate:
-              spec:
-                accessModes: ["ReadWriteOnce"]
-                storageClassName: "local-path"
-                resources:
-                  requests:
-                    storage: 5Gi
-        - name: dind-sock
-          emptyDir: {}
-        - name: dind-externals
-          emptyDir: {}
+
+template:
+  spec:
+    initContainers:
+      - name: init-dind-externals
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+        volumeMounts:
+          - name: dind-externals
+            mountPath: /home/runner/tmpDir
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        env:
+          - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+            value: /home/runner/k8s/index.js
+          - name: ACTIONS_RUNNER_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: DOCKER_HOST
+            value: unix:///var/run/docker.sock
+          - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+            value: "false"
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+      - name: dind
+        image: docker:dind
+        args:
+          - dockerd
+          - --host=unix:///var/run/docker.sock
+          - --group=$(DOCKER_GROUP_GID)
+        env:
+          - name: DOCKER_GROUP_GID
+            value: "123"
+        securityContext:
+          privileged: true
+        volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
+          - name: dind-sock
+            mountPath: /var/run
+          - name: dind-externals
+            mountPath: /home/runner/externals
+    volumes:
+      - name: work
+        ephemeral:
+          volumeClaimTemplate:
+            spec:
+              accessModes:
+                - ReadWriteOnce
+              storageClassName: local-path
+              resources:
+                requests:
+                  storage: 5Gi
+      - name: dind-sock
+        emptyDir: {}
+      - name: dind-externals
+        emptyDir: {}
