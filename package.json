@@ -10,7 +10,7 @@
     "k:install": "./kubernetes/install.sh",
     "k:config": "cp kubeconfig ~/.kube/kubeconfig",
     "k:bootstrap": "helm template argocd bootstrap/argo-cd --namespace argocd | kubectl apply -f -",
-    "ecran:dev": "bun run --cwd apps/ecran dev",
+    "ecran:dev": "bun run --cwd packages/ecran dev",
     "prepare": "husky"
   },
   "packageManager": "pnpm@9.8.0",
