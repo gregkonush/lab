@@ -21,6 +21,8 @@ spec:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: dev
         path: "{{.path.path}}"
+        plugin:
+          name: lovely
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{.path.basename}}"
@@ -28,3 +30,5 @@ spec:
         automated:
           prune: true
           selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
