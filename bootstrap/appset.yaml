@@ -12,6 +12,8 @@ spec:
         revision: dev
         directories:
           - path: apps/*
+          - path: apps/root
+            exclude: true
   template:
     metadata:
       name: "{{.path.basename}}"
