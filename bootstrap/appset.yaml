@@ -39,6 +39,6 @@ spec:
       ignoreDifferences:
         - kind: StatefulSet
           group: apps
+          namespace: gitea
           jsonPointers:
-            - /spec/VolumeClaimTemplates/0
-
+            - /spec/volumeClaimTemplates/0
