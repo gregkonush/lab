@@ -36,6 +36,9 @@ spec:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+      ignoreApplicationDifferences:
+        - jsonPointers:
+            - /spec/syncPolicy
       ignoreDifferences:
         - kind: StatefulSet
           group: apps
