@@ -19,7 +19,7 @@ spec:
         - name: kalmyk-registry
       containers:
         - name: ecran-worker
-          image: kalmyk.duckdns.org/lab/ecran-worker:0.0.1
+          image: kalmyk.duckdns.org/lab/ecran-worker:0.78.2
           imagePullPolicy: Always
           env:
             - name: RESEND_API_KEY
@@ -33,7 +33,7 @@ spec:
                   name: ecran-cluster-app
                   key: uri
             - name: TEMPORAL_ADDRESS
-              value: 'temporal-frontend.temporal.svc.cluster.local:7233'
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -41,8 +41,8 @@ spec:
                   key: data
           resources:
             limits:
-              cpu: '1'
-              memory: '1Gi'
+              cpu: "1"
+              memory: "1Gi"
             requests:
-              cpu: '100m'
-              memory: '100Mi'
+              cpu: "100m"
+              memory: "100Mi"

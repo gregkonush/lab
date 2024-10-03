@@ -25,8 +25,8 @@ spec:
           githubConfigUrl: https://github.com/gregkonush/lab
           githubConfigSecret: github-token
           runnerScaleSetName: arc-arm64
-          minRunners: 1
-          maxRunners: 1
+          minRunners: 3
+          maxRunners: 3
           containerMode:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
