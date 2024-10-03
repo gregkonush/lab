@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: argocd-image-updater-config
 data:
-  log.level: debug
+  log.level: trace
   registries.conf: |
     registries:
     - name: kalmyk-registry
