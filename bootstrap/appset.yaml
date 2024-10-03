@@ -43,11 +43,6 @@ spec:
           namespace: gitea
           jsonPointers:
             - /spec/volumeClaimTemplates/0
-        - kind: Deployment
-          group: apps
-          namespace: ecran
-          jsonPointers:
-            - /spec/template/spec/containers/0/image
   templatePatch: |
     {{- if eq .path.basename "ecran" }}
     metadata:

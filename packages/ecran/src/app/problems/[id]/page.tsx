@@ -1,4 +1,4 @@
-import 'highlight.js/styles/github-dark.css' // Add this import at the top of the file
+import 'highlight.js/styles/github-dark.css'
 import { logger } from '@/utils/logger'
 import { db } from '@/db'
 import { problems, solutions } from '@/db/schema'
