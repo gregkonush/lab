@@ -26,8 +26,6 @@ spec:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: HEAD
         path: "{{.path.path}}"
-        plugin:
-          name: lovely
       destination:
         server: https://kubernetes.default.svc
         namespace: "{{.path.basename}}"
@@ -55,9 +53,10 @@ spec:
     metadata:
       annotations:
         argocd-image-updater.argoproj.io/image-list: ecran=kalmyk.duckdns.org/lab/ecran:0.x, ecran-worker=kalmyk.duckdns.org/lab/ecran-worker:0.x
+    {{- end }}
+    {{- if ne .path.basename "ecran" }}
     spec:
       source:
-        repoURL: https://github.com/gregkonush/lab.git
-        targetRevision: HEAD
-        path: "{{.path.path}}"
+        plugin:
+          name: lovely
     {{- end }}
