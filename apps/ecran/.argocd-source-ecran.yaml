@@ -1,0 +1,4 @@
+kustomize:
+  images:
+  - kalmyk.duckdns.org/lab/ecran:0.81.2
+  - kalmyk.duckdns.org/lab/ecran-worker:0.81.2
