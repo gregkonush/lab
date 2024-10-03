@@ -9,7 +9,7 @@ spec:
   generators:
     - git:
         repoURL: https://github.com/gregkonush/lab.git
-        revision: HEAD
+        revision: main
         directories:
           - path: apps/*
           - path: apps/root
@@ -24,7 +24,7 @@ spec:
       project: default
       source:
         repoURL: https://github.com/gregkonush/lab.git
-        targetRevision: HEAD
+        targetRevision: main
         path: "{{.path.path}}"
       destination:
         server: https://kubernetes.default.svc
@@ -53,6 +53,9 @@ spec:
     metadata:
       annotations:
         argocd-image-updater.argoproj.io/image-list: ecran=kalmyk.duckdns.org/lab/ecran:0.x, ecran-worker=kalmyk.duckdns.org/lab/ecran-worker:0.x
+        argocd-image-updater.argoproj.io/ecran.update-strategy: semver
+        argocd-image-updater.argoproj.io/ecran-worker.update-strategy: semver
+        argocd-image-updater.argoproj.io/write-back-method: argocd
     {{- end }}
     {{- if ne .path.basename "ecran" }}
     spec:
