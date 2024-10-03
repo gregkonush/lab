@@ -28,7 +28,7 @@ spec:
                   key: uri
       containers:
         - name: ecran
-          image: kalmyk.duckdns.org/lab/ecran:0.78.2
+          image: kalmyk.duckdns.org/lab/ecran
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
