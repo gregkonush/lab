@@ -4,6 +4,8 @@ metadata:
   name: argocd-image-updater-config
 data:
   log.level: trace
+  applications_api: argocd
+  argocd.server_addr: argocd.proompteng.ai
   registries.conf: |
     registries:
     - name: kalmyk-registry
