@@ -14,6 +14,9 @@ spec:
           - path: apps/*
           - path: apps/root
             exclude: true
+  ignoreApplicationDifferences:
+    - jsonPointers:
+        - /spec/syncPolicy
   template:
     metadata:
       name: "{{.path.basename}}"
@@ -36,15 +39,17 @@ spec:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
-      ignoreApplicationDifferences:
-        - jsonPointers:
-            - /spec/syncPolicy
       ignoreDifferences:
         - kind: StatefulSet
           group: apps
           namespace: gitea
           jsonPointers:
             - /spec/volumeClaimTemplates/0
+        - kind: Deployment
+          group: apps
+          namespace: ecran
+          jsonPointers:
+            - /spec/template/spec/containers/0/image
   templatePatch: |
     {{- if eq .path.basename "ecran" }}
     metadata:
