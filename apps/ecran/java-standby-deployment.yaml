@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-standby-pool
+  namespace: ecran
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: java-standby
+  template:
+    metadata:
+      labels:
+        app: java-standby
+    spec:
+      containers:
+        - name: java-executor
+          image: openjdk:11
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 30; done"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
