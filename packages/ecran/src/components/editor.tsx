@@ -1,35 +1,16 @@
 'use client'
-import { useCallback, useEffect, useRef } from 'react'
-import loader from '@monaco-editor/loader'
-import { editor } from 'monaco-editor'
+
+import { useRef } from 'react'
+import Editor from '@monaco-editor/react'
+
+interface EditorProps {
+  code: string
+  onCodeChange: (value: string) => void
+  language: string
+  onExecute?: (currentCode: string) => void
+}
 
 const EDITOR_THEME = 'custom-dark'
-
-const editorOptions: editor.IStandaloneEditorConstructionOptions = {
-  value: 'console.log("Hello world!");',
-  language: 'typescript',
-  automaticLayout: true,
-  theme: EDITOR_THEME,
-  fontSize: 16,
-  fontFamily: 'var(--font-jetbrains-mono)',
-  fontLigatures: true,
-  fontWeight: '300',
-  padding: { top: 18 },
-  minimap: { enabled: false },
-  tabSize: 2,
-  insertSpaces: true,
-  scrollBeyondLastLine: false,
-  scrollbar: {
-    vertical: 'auto',
-    verticalScrollbarSize: 10,
-    verticalSliderSize: 10,
-  },
-  overviewRulerLanes: 0,
-  lineNumbersMinChars: 3,
-  lineDecorationsWidth: 0,
-  glyphMargin: false,
-  fixedOverflowWidgets: true,
-}
 
 const typescriptCompilerOptions = {
   target: 99, // ESNext
@@ -44,34 +25,11 @@ const typescriptCompilerOptions = {
   typeRoots: ['node_modules/@types'],
 }
 
-export default function Editor() {
-  const editorRef = useRef<HTMLDivElement>(null)
-  const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+export default function EditorComponent({ code, onCodeChange, language, onExecute }: EditorProps) {
+  const editorRef = useRef<any>(null)
+  const monacoRef = useRef<any>(null)
 
-  const initializeEditor = useCallback(async () => {
-    const monaco = await loader.init()
-
-    editorInstanceRef.current = monaco.editor.create(editorRef.current!, editorOptions)
-
-    defineCustomTheme(monaco)
-    setTypescriptCompilerOptions(monaco)
-    addResizeListener()
-  }, [])
-
-  useEffect(() => {
-    if (editorRef.current && !editorInstanceRef.current) {
-      initializeEditor()
-    }
-
-    return () => {
-      if (editorInstanceRef.current) {
-        editorInstanceRef.current.dispose()
-        editorInstanceRef.current = null
-      }
-    }
-  }, [initializeEditor])
-
-  const defineCustomTheme = (monaco: any) => {
+  const handleEditorWillMount = (monaco: any) => {
     monaco.editor.defineTheme(EDITOR_THEME, {
       base: 'vs-dark',
       inherit: true,
@@ -80,21 +38,54 @@ export default function Editor() {
         'editor.background': '#1E1E1E',
       },
     })
-    monaco.editor.setTheme(EDITOR_THEME)
-  }
-
-  const setTypescriptCompilerOptions = (monaco: any) => {
     monaco.languages.typescript.typescriptDefaults.setCompilerOptions(typescriptCompilerOptions)
   }
 
-  const addResizeListener = () => {
-    const resizeEditor = () => editorInstanceRef.current?.layout()
-    window.addEventListener('resize', resizeEditor)
+  const handleEditorDidMount = (editor: any, monaco: any) => {
+    editorRef.current = editor
+    monacoRef.current = monaco
+
+    // Register Cmd + Enter keybinding
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      if (onExecute && editorRef.current) {
+        const currentCode = editorRef.current.getValue()
+        onExecute(currentCode)
+      }
+    })
   }
 
   return (
-    <div className="h-full w-full relative rounded-lg overflow-hidden">
-      <div ref={editorRef} className="absolute inset-0" />
+    <div className="rounded-lg h-[500px] overflow-hidden">
+      <Editor
+        value={code}
+        language={language}
+        theme={EDITOR_THEME}
+        beforeMount={handleEditorWillMount}
+        onMount={handleEditorDidMount}
+        options={{
+          automaticLayout: true,
+          fontSize: 14,
+          fontFamily: 'var(--font-jetbrains-mono)',
+          fontLigatures: true,
+          fontWeight: '300',
+          padding: { top: 18 },
+          minimap: { enabled: false },
+          tabSize: 2,
+          insertSpaces: true,
+          scrollBeyondLastLine: false,
+          scrollbar: {
+            vertical: 'auto',
+            verticalScrollbarSize: 10,
+            verticalSliderSize: 10,
+          },
+          overviewRulerLanes: 0,
+          lineNumbersMinChars: 3,
+          lineDecorationsWidth: 0,
+          glyphMargin: false,
+          fixedOverflowWidgets: true,
+        }}
+        onChange={(value) => onCodeChange(value ?? '')}
+      />
     </div>
   )
 }

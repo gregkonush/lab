@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: ecran
 resources:
 - ecran-deployment.yaml
+- java-standby-deployment.yaml
 - ecran-worker-deployment.yaml
 - service.yaml
 - ingress.yaml
