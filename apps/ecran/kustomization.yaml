@@ -13,4 +13,4 @@ images:
 - name: kalmyk.duckdns.org/lab/ecran
   newTag: 0.82.1
 - name: kalmyk.duckdns.org/lab/ecran-worker
-  newTag: 0.82.1
+  newTag: 0.83.0
