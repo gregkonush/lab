@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: java-standby-pool
+  name: js-ts-standby-pool
   namespace: ecran
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: java-standby
+      app: js-ts-standby
   template:
     metadata:
       labels:
-        app: java-standby
+        app: js-ts-standby
     spec:
       containers:
-        - name: java-executor
-          image: amazoncorretto:23-alpine
+        - name: bun-executor
+          image: oven/bun:alpine
           command: ["/bin/sh", "-c"]
           args: ["while true; do sleep 30; done"]
           resources:

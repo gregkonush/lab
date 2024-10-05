@@ -1,16 +1,45 @@
 import * as k8s from '@kubernetes/client-node'
 import { PassThrough } from 'stream'
 
-export async function executeJavaCodeStream(code: string): Promise<NodeJS.ReadableStream> {
+export async function execute(
+  code: string,
+  language: 'javascript' | 'typescript' | 'python' | 'java',
+): Promise<NodeJS.ReadableStream> {
   const kc = new k8s.KubeConfig()
   kc.loadFromDefault()
 
   const namespace = 'ecran'
-  const podName = await getJavaStandbyPod(kc, namespace)
+  let podName: string
+  let containerName: string
+  let command: string[]
 
   const exec = new k8s.Exec(kc)
 
-  const command = ['/bin/sh', '-c', `echo '${code.replace(/'/g, "'\\''")}' > Main.java && javac Main.java && java Main`]
+  switch (language) {
+    case 'javascript':
+    case 'typescript':
+      podName = await getStandbyPod(kc, namespace, 'app=js-ts-standby')
+      containerName = 'bun-executor'
+      const filename = language === 'typescript' ? 'script.ts' : 'script.js'
+      const runCommand = `bun run ${filename}`
+      command = ['/bin/sh', '-c', `echo '${code.replace(/'/g, "'\\''")}' > ${filename} && ${runCommand}`]
+      break
+
+    case 'python':
+      podName = await getStandbyPod(kc, namespace, 'app=python-standby')
+      containerName = 'python-executor'
+      command = ['/bin/sh', '-c', `echo "${code.replace(/"/g, '\\"')}" > script.py && python script.py`]
+      break
+
+    case 'java':
+      podName = await getStandbyPod(kc, namespace, 'app=java-standby')
+      containerName = 'java-executor'
+      command = ['/bin/sh', '-c', `echo "${code.replace(/"/g, '\\"')}" > Main.java && java Main.java`]
+      break
+
+    default:
+      throw new Error(`Unsupported language: ${language}`)
+  }
 
   const stdoutStream = new PassThrough()
   const stderrStream = new PassThrough()
@@ -20,7 +49,7 @@ export async function executeJavaCodeStream(code: string): Promise<NodeJS.Readab
     .exec(
       namespace,
       podName,
-      'java-executor',
+      containerName,
       command,
       stdoutStream,
       stderrStream,
@@ -40,24 +69,20 @@ export async function executeJavaCodeStream(code: string): Promise<NodeJS.Readab
       stderrStream.end()
     })
 
-  // Combine stdout and stderr streams
   stdoutStream.pipe(outputStream, { end: false })
   stderrStream.pipe(outputStream, { end: false })
 
   let streamsEnded = 0
   function checkAndCloseOutputStream() {
     streamsEnded++
-    if (streamsEnded === 2) {
-      if (!outputStream.destroyed) {
-        outputStream.end()
-      }
+    if (streamsEnded === 2 && !outputStream.destroyed) {
+      outputStream.end()
     }
   }
 
   stdoutStream.on('end', checkAndCloseOutputStream)
   stderrStream.on('end', checkAndCloseOutputStream)
 
-  // Handle errors to prevent "write after end"
   stdoutStream.on('error', (err) => {
     console.error('StdoutStream error:', err)
     if (!outputStream.destroyed) {
@@ -79,17 +104,21 @@ export async function executeJavaCodeStream(code: string): Promise<NodeJS.Readab
   return outputStream
 }
 
-async function getJavaStandbyPod(kc: k8s.KubeConfig, namespace: string): Promise<string> {
+async function getStandbyPod(
+  kc: k8s.KubeConfig,
+  namespace: string,
+  labelSelector: string,
+): Promise<string> {
   const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
-  const res = await k8sApi.listNamespacedPod(namespace, undefined, undefined, undefined, undefined, 'app=java-standby')
+  const res = await k8sApi.listNamespacedPod(namespace, undefined, undefined, undefined, undefined, labelSelector)
 
   if (res.body.items.length === 0) {
-    throw new Error('No Java standby pods available')
+    throw new Error(`No standby pods available for selector: ${labelSelector}`)
   }
 
   const podName = res.body.items[0]?.metadata?.name
   if (!podName) {
-    throw new Error('No Java standby pod available')
+    throw new Error('No standby pod available')
   }
 
   return podName

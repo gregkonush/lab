@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
-import { executeJavaCodeStream } from '@/lib/kubernetes'
+import { execute } from '@/lib/kubernetes'
 
 export async function POST(request: Request) {
   try {
-    const { code } = await request.json()
-    const outputStream = await executeJavaCodeStream(code)
+    const { code, language } = await request.json()
+    const outputStream = await execute(code, language)
 
     return new Response(outputStream as any, {
       headers: {
