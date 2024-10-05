@@ -8,6 +8,8 @@ import './globals.css'
 
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jetbrains-mono' })
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'ProomptEng.AI - Where Developers Learn, Share, & Build Careers',
   description:
@@ -36,7 +38,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link href="/practice" className="hover:underline">
               Practice
             </Link>
-            <div className="justify-end">Version: {version}</div>
+            <div className="text-zinc-400">Version: {version}</div>
           </header>
           {children}
         </ThemeProvider>
