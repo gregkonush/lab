@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import Editor from '@/components/editor'
 import { motion } from 'framer-motion'
@@ -134,22 +135,28 @@ export default function PracticePage() {
       <div className="max-w-5xl mx-auto space-y-4">
         <h1 className="text-3xl font-bold">Practice</h1>
         <div className="flex items-end justify-between">
-          <motion.button
+          <motion.div
             whileTap={{ scale: isLoading ? 1 : 0.975 }}
-            onClick={() => handleExecuteCode()}
             onHoverStart={() => setIsHovered(true)}
             onHoverEnd={() => setIsHovered(false)}
-            disabled={isLoading}
-            className={cn(
-              'disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-400',
-              'rounded py-1 px-4 bg-indigo-600 text-zinc-200',
-              'hover:bg-zinc-200 hover:text-indigo-600 min-w-32',
-              'transition-all duration-300 flex items-center justify-center',
-              'text-center',
-            )}
+            tabIndex={-1}
+            className={cn(isLoading && 'opacity-50 cursor-not-allowed')}
           >
-            {isLoading ? <LoadingDots /> : isHovered ? '|>' : 'Run'}
-          </motion.button>
+            <Button
+              onClick={() => handleExecuteCode()}
+              disabled={isLoading}
+              className={cn(
+                'disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-400',
+                'rounded py-1 px-4 bg-indigo-600 text-zinc-200',
+                'hover:bg-zinc-200 hover:text-indigo-600 ',
+                'transition-all duration-300 flex items-center justify-center',
+                'text-center min-w-24 ring-1 ring-zinc-900 h-10 border border-indigo-400',
+                'shadow-dark-sm',
+              )}
+            >
+              {isLoading ? <LoadingDots /> : isHovered ? '|>' : 'Run'}
+            </Button>
+          </motion.div>
           <div className="space-y-2 flex flex-row items-center">
             <label className="mr-4 font-semibold text-sm pt-1.5" htmlFor="language-select">
               Language
@@ -171,19 +178,18 @@ export default function PracticePage() {
           <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
         </div>
 
-        <div className="border border-zinc-900 rounded-md p-4 space-y-2 min-h-40">
+        <div
+          className={cn([
+            'border border-zinc-900 rounded-md p-4 space-y-2 min-h-40',
+            output.toLowerCase().includes('error') || output.toLowerCase().includes('exception')
+              ? 'bg-red-800 text-red-100'
+              : 'bg-zinc-900 text-zinc-100',
+          ])}
+        >
           {isLoading ? (
             <p className="text-muted-foreground">Executing code...</p>
           ) : output ? (
-            <pre
-              className={`p-4 rounded-md w-full overflow-x-auto text-sm ${
-                output.toLowerCase().includes('error') || output.toLowerCase().includes('exception')
-                  ? 'bg-red-800 text-red-100'
-                  : 'bg-zinc-900 text-zinc-100'
-              }`}
-            >
-              {output}
-            </pre>
+            <pre className={cn(['rounded-md w-full overflow-x-auto text-sm'])}>{output}</pre>
           ) : (
             <p className="text-muted-foreground">Click execute to see the output.</p>
           )}
