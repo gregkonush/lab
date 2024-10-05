@@ -6,7 +6,7 @@ resources:
 - java-standby-deployment.yaml
 - python-standby-deployment.yaml
 - js-ts-standby-deployment.yaml
-- standby-deny-egress-networkpolicy.yaml # Added this line
+- standby-deny-egress-networkpolicy.yaml
 - service.yaml
 - ingress.yaml
 - sealed-secret.yaml
