@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: ecran
 resources:
 - ecran-deployment.yaml
+- ecran-worker-deployment.yaml
 - java-standby-deployment.yaml
 - python-standby-deployment.yaml
 - js-ts-standby-deployment.yaml
