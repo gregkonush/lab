@@ -1,7 +1,9 @@
 'use client'
 
-import { useRef } from 'react'
 import Editor from '@monaco-editor/react'
+import type { Monaco } from '@monaco-editor/react'
+import type * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api'
+import { useRef } from 'react'
 
 interface EditorProps {
   code: string
@@ -24,12 +26,11 @@ const typescriptCompilerOptions = {
   allowJs: true,
   typeRoots: ['node_modules/@types'],
 }
-
 export default function EditorComponent({ code, onCodeChange, language, onExecute }: EditorProps) {
-  const editorRef = useRef<any>(null)
-  const monacoRef = useRef<any>(null)
+  const editorRef = useRef<monacoEditor.editor.IStandaloneCodeEditor | null>(null)
+  const monacoRef = useRef<Monaco | null>(null)
 
-  const handleEditorWillMount = (monaco: any) => {
+  const handleEditorWillMount = (monaco: Monaco) => {
     monaco.editor.defineTheme(EDITOR_THEME, {
       base: 'vs-dark',
       inherit: true,
@@ -41,7 +42,7 @@ export default function EditorComponent({ code, onCodeChange, language, onExecut
     monaco.languages.typescript.typescriptDefaults.setCompilerOptions(typescriptCompilerOptions)
   }
 
-  const handleEditorDidMount = (editor: any, monaco: any) => {
+  const handleEditorDidMount = (editor: monacoEditor.editor.IStandaloneCodeEditor, monaco: Monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
 

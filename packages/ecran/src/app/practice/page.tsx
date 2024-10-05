@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import Editor from '@/components/editor'
+import { motion } from 'framer-motion'
+import { cn } from '@/lib/utils'
 
 const defaultJavaCode = `
 public class Main {
@@ -37,11 +37,34 @@ def greet(name):
 print(greet("World"))
 `.trim()
 
+function LoadingDots() {
+  return (
+    <div className="flex items-center justify-center space-x-1 min-h-6">
+      <motion.span
+        className="w-2 h-2 bg-current rounded-full"
+        animate={{ y: [0, -6, 0] }}
+        transition={{ duration: 0.5, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
+      />
+      <motion.span
+        className="w-2 h-2 bg-current rounded-full"
+        animate={{ y: [0, -6, 0] }}
+        transition={{ duration: 0.5, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut', delay: 0.2 }}
+      />
+      <motion.span
+        className="w-2 h-2 bg-current rounded-full"
+        animate={{ y: [0, -6, 0] }}
+        transition={{ duration: 0.5, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut', delay: 0.4 }}
+      />
+    </div>
+  )
+}
+
 export default function PracticePage() {
   const [code, setCode] = useState(defaultJavaCode)
   const [language, setLanguage] = useState('java')
   const [output, setOutput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
 
   const handleCodeChange = (value: string) => {
     setCode(value)
@@ -107,51 +130,64 @@ export default function PracticePage() {
   )
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-4 py-6">
       <div className="max-w-5xl mx-auto space-y-4">
-        <h1 className="text-3xl font-bold mb-6">Code Practice</h1>
-        <div className="flex items-center mb-4">
-          <label className="mr-2 font-semibold">Language:</label>
-          <Select value={language} onValueChange={handleLanguageChange}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Select a language" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="java">Java</SelectItem>
-              <SelectItem value="typescript">TypeScript</SelectItem>
-              <SelectItem value="javascript">JavaScript</SelectItem>
-              <SelectItem value="python">Python</SelectItem>
-            </SelectContent>
-          </Select>
+        <h1 className="text-3xl font-bold">Practice</h1>
+        <div className="flex items-end justify-between">
+          <motion.button
+            whileTap={{ scale: isLoading ? 1 : 0.975 }}
+            onClick={() => handleExecuteCode()}
+            onHoverStart={() => setIsHovered(true)}
+            onHoverEnd={() => setIsHovered(false)}
+            disabled={isLoading}
+            className={cn(
+              'disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-400',
+              'rounded py-1 px-4 bg-indigo-600 text-zinc-200',
+              'hover:bg-zinc-200 hover:text-indigo-600 min-w-32',
+              'transition-all duration-300 flex items-center justify-center',
+              'text-center',
+            )}
+          >
+            {isLoading ? <LoadingDots /> : isHovered ? '|>' : 'Run'}
+          </motion.button>
+          <div className="space-y-2 flex flex-row items-center">
+            <label className="mr-4 font-semibold text-sm pt-1.5" htmlFor="language-select">
+              Language
+            </label>
+            <Select value={language} onValueChange={handleLanguageChange} name="language-select">
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Select a language" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="java">Java</SelectItem>
+                <SelectItem value="typescript">TypeScript</SelectItem>
+                <SelectItem value="javascript">JavaScript</SelectItem>
+                <SelectItem value="python">Python</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <div>
           <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
         </div>
-        <Button onClick={() => handleExecuteCode()} disabled={isLoading} className="mb-4">
-          {isLoading ? 'Executing...' : 'Execute'}
-        </Button>
-        <Card className="-p-2">
-          <CardHeader>
-            <CardTitle>Output</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <p className="text-muted-foreground">Executing code...</p>
-            ) : output ? (
-              <pre
-                className={`p-4 rounded-md w-full overflow-x-auto text-sm ${
-                  output.toLowerCase().includes('error') || output.toLowerCase().includes('exception')
-                    ? 'bg-red-800 text-red-100'
-                    : 'bg-zinc-900 text-zinc-100'
-                }`}
-              >
-                {output}
-              </pre>
-            ) : (
-              <p className="text-muted-foreground">Click execute to see the output.</p>
-            )}
-          </CardContent>
-        </Card>
+
+        <div className="border border-zinc-900 rounded-md p-4 space-y-2 min-h-40">
+          {isLoading ? (
+            <p className="text-muted-foreground">Executing code...</p>
+          ) : output ? (
+            <pre
+              className={`p-4 rounded-md w-full overflow-x-auto text-sm ${
+                output.toLowerCase().includes('error') || output.toLowerCase().includes('exception')
+                  ? 'bg-red-800 text-red-100'
+                  : 'bg-zinc-900 text-zinc-100'
+              }`}
+            >
+              {output}
+            </pre>
+          ) : (
+            <p className="text-muted-foreground">Click execute to see the output.</p>
+          )}
+        </div>
       </div>
     </div>
   )
