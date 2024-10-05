@@ -1,4 +1,3 @@
-import React from 'react'
 import * as k8s from '@kubernetes/client-node'
 import type { Metadata } from 'next'
 import { JetBrains_Mono } from 'next/font/google'
@@ -23,7 +22,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en" suppressHydrationWarning>
       <body className={`${jetbrains.variable} font-mono`} suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          <header className="flex items-center space-x-10 px-10 py-4 border-b border-gray-800 justify-center">
+          <header className="flex items-center space-x-10 px-10 py-4 border-b border-zinc-900 justify-center">
             <div className="text-2xl uppercase">
               <Link href="/">
                 proompteng<span className="text-indigo-400">▪</span>ai
