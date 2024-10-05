@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 export default async function Problems() {
   const fetchedProblems = await db.select().from(problems)
   return (
-    <div className="flex flex-col space-y-4">
+    <div className="flex flex-col space-y-4 mx-auto">
       <Link href="/problems/create">
         <Button size="sm">Create</Button>
       </Link>
