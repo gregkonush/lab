@@ -4,7 +4,7 @@ metadata:
   name: python-standby-pool
   namespace: ecran
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: python-standby
