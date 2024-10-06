@@ -56,7 +56,7 @@ export default function EditorComponent({ code, onCodeChange, language, onExecut
   }
 
   return (
-    <div className="rounded-lg h-[500px] overflow-hidden">
+    <div className="rounded-lg h-full overflow-hidden">
       <Editor
         value={code}
         language={language}
