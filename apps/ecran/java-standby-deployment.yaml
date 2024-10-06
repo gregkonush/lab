@@ -17,7 +17,7 @@ spec:
         - name: kalmyk-registry
       containers:
         - name: java-standby
-          image: kalmyk.duckdns.org/lab/java-executor
+          image: kalmyk.duckdns.org/lab/java-executor:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 9090

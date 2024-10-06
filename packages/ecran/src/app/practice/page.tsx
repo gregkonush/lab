@@ -131,7 +131,7 @@ export default function PracticePage() {
 
   return (
     <div className="container mx-auto px-4 py-6">
-      <div className="max-w-5xl mx-auto space-y-4">
+      <div className="max-w-screen-xl mx-auto space-y-4">
         <h1 className="text-3xl font-bold">Practice</h1>
         <div className="flex items-end justify-between">
           <motion.div
@@ -173,8 +173,41 @@ export default function PracticePage() {
             </Select>
           </div>
         </div>
-        <div>
-          <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
+        <div className="flex flex-row space-x-4">
+          <div className="basis-1/2 h-auto shrink-0">
+            <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
+          </div>
+          <div className="basis-1/2 border border-zinc-900 rounded-md p-4 bg-zinc-900 text-sm whitespace-pre-wrap">
+            {`Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.
+
+You may assume that each input would have exactly one solution, and you may not use the same element twice.
+
+You can return the answer in any order.
+
+
+
+Example 1:
+
+Input: nums = [2,7,11,15], target = 9
+Output: [0,1]
+Explanation: Because nums[0] + nums[1] == 9, we return [0, 1].
+Example 2:
+
+Input: nums = [3,2,4], target = 6
+Output: [1,2]
+Example 3:
+
+Input: nums = [3,3], target = 6
+Output: [0,1]
+
+
+Constraints:
+
+2 <= nums.length <= 104
+-109 <= nums[i] <= 109
+-109 <= target <= 109
+Only one valid answer exists.`}
+          </div>
         </div>
 
         <div
