@@ -5,8 +5,12 @@ metadata:
   namespace: argocd
 spec:
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
   project: default
   sources:
     - chart: longhorn
