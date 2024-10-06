@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node'
-import { PassThrough } from 'stream'
+import { PassThrough } from 'node:stream'
+import { executeJavaCode } from './javaExecutor'
 
 export async function execute(
   code: string,
@@ -17,13 +18,14 @@ export async function execute(
 
   switch (language) {
     case 'javascript':
-    case 'typescript':
+    case 'typescript': {
       podName = await getStandbyPod(kc, namespace, 'app=js-ts-standby')
       containerName = 'bun-executor'
       const filename = language === 'typescript' ? 'script.ts' : 'script.js'
       const runCommand = `bun run ${filename}`
       command = ['/bin/sh', '-c', `echo '${code.replace(/'/g, "'\\''")}' > ${filename} && ${runCommand}`]
       break
+    }
 
     case 'python':
       podName = await getStandbyPod(kc, namespace, 'app=python-standby')
@@ -32,10 +34,7 @@ export async function execute(
       break
 
     case 'java':
-      podName = await getStandbyPod(kc, namespace, 'app=java-standby')
-      containerName = 'java-executor'
-      command = ['/bin/sh', '-c', `echo "${code.replace(/"/g, '\\"')}" > Main.java && java Main.java`]
-      break
+      return executeJavaCode(code)
 
     default:
       throw new Error(`Unsupported language: ${language}`)
@@ -104,11 +103,7 @@ export async function execute(
   return outputStream
 }
 
-async function getStandbyPod(
-  kc: k8s.KubeConfig,
-  namespace: string,
-  labelSelector: string,
-): Promise<string> {
+async function getStandbyPod(kc: k8s.KubeConfig, namespace: string, labelSelector: string): Promise<string> {
   const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
   const res = await k8sApi.listNamespacedPod(namespace, undefined, undefined, undefined, undefined, labelSelector)
 

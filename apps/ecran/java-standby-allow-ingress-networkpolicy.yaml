@@ -1,0 +1,14 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: java-standby-allow-ingress
+  namespace: ecran
+spec:
+  podSelector:
+    matchLabels:
+      app: java-standby
+  ingress:
+  - from:
+    - podSelector: {}
+  policyTypes:
+  - Ingress

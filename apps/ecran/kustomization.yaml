@@ -5,6 +5,9 @@ resources:
 - ecran-deployment.yaml
 - ecran-worker-deployment.yaml
 - java-standby-deployment.yaml
+- java-standby-service.yaml
+- java-standby-allow-ingress-networkpolicy.yaml
+- standby-allow-internal-egress-networkpolicy.yaml
 - python-standby-deployment.yaml
 - js-ts-standby-deployment.yaml
 - standby-deny-egress-networkpolicy.yaml
