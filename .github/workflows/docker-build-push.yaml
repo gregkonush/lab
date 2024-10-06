@@ -6,6 +6,7 @@ on:
       - "main"
     paths:
       - "packages/ecran/**"
+      - "packages/java-executor/**"
 
 jobs:
   version:
@@ -61,6 +62,18 @@ jobs:
       image_name: ecran-migrator
       dockerfile: ./packages/ecran/Dockerfile.migrator
       context: ./packages/ecran
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-java-executor:
+    needs: version
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: java-executor
+      dockerfile: ./packages/java-executor/Dockerfile
+      context: ./packages/java-executor
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
