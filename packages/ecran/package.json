@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.3",
+    "@auth/drizzle-adapter": "^1.6.1",
     "@dotenvx/dotenvx": "^1.14.1",
     "@headlessui/react": "^2.1.8",
     "@heroicons/react": "^2.1.5",
@@ -47,7 +48,7 @@
     "@temporalio/client": "^1.11.1",
     "@temporalio/worker": "^1.11.1",
     "@temporalio/workflow": "^1.11.1",
-    "@types/mdx": "^2.0.13",
+    "bcrypt": "^5.1.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.5",
@@ -58,7 +59,8 @@
     "logrocket": "^9.0.0",
     "lucide-react": "^0.441.0",
     "monaco-editor": "^0.52.0",
-    "next": "14.2.11",
+    "next": "14.2.14",
+    "next-auth": "5.0.0-beta.22",
     "next-mdx-remote": "^5.0.0",
     "next-themes": "^0.3.0",
     "pino": "^9.4.0",
@@ -75,10 +77,12 @@
     "tsx": "^4.19.1",
     "usehooks-ts": "^3.1.0",
     "uuid": "^10.0.0",
-    "yup": "^1.4.0"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@tsconfig/node20": "^20.1.4",
+    "@types/bcrypt": "^5.0.2",
+    "@types/mdx": "^2.0.13",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.8",
     "@types/react-dom": "^18.3.0",

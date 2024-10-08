@@ -1,6 +1,8 @@
 import * as k8s from '@kubernetes/client-node'
 import { PassThrough } from 'node:stream'
 import { executeJavaCode } from './javaExecutor'
+import { db } from '@/db'
+import { executions } from '@/db/schema'
 
 export async function execute(
   code: string,
@@ -43,6 +45,16 @@ export async function execute(
   const stdoutStream = new PassThrough()
   const stderrStream = new PassThrough()
   const outputStream = new PassThrough()
+
+  const outputChunks: Buffer[] = []
+
+  stdoutStream.on('data', (chunk) => {
+    outputChunks.push(chunk)
+  })
+
+  stderrStream.on('data', (chunk) => {
+    outputChunks.push(chunk)
+  })
 
   exec
     .exec(
@@ -100,6 +112,11 @@ export async function execute(
     console.error('OutputStream error:', err)
   })
 
+  outputStream.on('end', async () => {
+    const output = Buffer.concat(outputChunks).toString()
+    await saveExecution(code, output, language)
+  })
+
   return outputStream
 }
 
@@ -117,4 +134,12 @@ async function getStandbyPod(kc: k8s.KubeConfig, namespace: string, labelSelecto
   }
 
   return podName
+}
+
+export async function saveExecution(code: string, output: string, language: 'javascript' | 'typescript' | 'python' | 'java') {
+  await db.insert(executions).values({
+    code,
+    output,
+    language,
+  })
 }

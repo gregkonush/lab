@@ -22,6 +22,20 @@
       "when": 1725857741861,
       "tag": "0002_aberrant_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1728363416937,
+      "tag": "0003_chunky_zarek",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1728371031695,
+      "tag": "0004_illegal_golden_guardian",
+      "breakpoints": true
     }
   ]
 }
