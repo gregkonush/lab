@@ -6,6 +6,10 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config({ path: '.env.local' })
 }
 
-const queryClient = postgres(process.env.DB_URI!)
+if (!process.env.DB_URI) {
+  throw new Error('DB_URI is not set')
+}
+
+const queryClient = postgres(process.env.DB_URI)
 
 export const db = drizzle(queryClient)

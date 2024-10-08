@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import Editor from '@/components/editor'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
+import { useSession } from 'next-auth/react'
 
 const defaultJavaCode = `
 public String greet(String name) {
@@ -60,6 +61,10 @@ function LoadingDots() {
 }
 
 export default function PracticePage() {
+  const { data: session, status } = useSession()
+  console.log('status', status)
+  console.log(JSON.stringify(session, null, 2))
+
   const [code, setCode] = useState(defaultJavaCode)
   const [language, setLanguage] = useState('java')
   const [output, setOutput] = useState('')
@@ -132,7 +137,10 @@ export default function PracticePage() {
   return (
     <div className="container mx-auto px-4 py-6">
       <div className="max-w-screen-xl mx-auto space-y-4">
-        <h1 className="text-3xl font-bold">Practice</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold">Practice</h1>
+          <div>{session?.user?.name && <p>Hello, {session.user.name}</p>}</div>
+        </div>
         <div className="flex items-end justify-between">
           <motion.div
             whileTap={{ scale: isLoading ? 1 : 0.975 }}

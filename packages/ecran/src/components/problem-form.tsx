@@ -1,8 +1,8 @@
 'use client'
 
 import { useForm, Controller } from 'react-hook-form'
-import { yupResolver } from '@hookform/resolvers/yup'
-import * as yup from 'yup'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { ComboSelect } from '@/components/combo-select'
 import { Label } from '@/components/ui/label'
@@ -13,19 +13,18 @@ import { Textarea } from '@/components/ui/textarea'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
-const schema = yup
+const schema = z
   .object({
-    title: yup.string().required('Title is required'),
-    difficulty: yup
-      .string()
-      .oneOf(['easy', 'medium', 'hard'], 'Please select a difficulty')
-      .required('Difficulty is required'),
-    tags: yup.array().of(yup.string()).required('At least one tag is required'),
-    description: yup.string().required('Description is required'),
+    title: z.string().min(1, 'Title is required'),
+    difficulty: z.enum(['easy', 'medium', 'hard'], {
+      required_error: 'Difficulty is required',
+    }),
+    tags: z.array(z.string()).min(1, 'At least one tag is required'),
+    description: z.string().min(1, 'Description is required'),
   })
   .required()
 
-type FormData = yup.InferType<typeof schema>
+type FormData = z.infer<typeof schema>
 
 export function CreateProblemForm() {
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +33,6 @@ export function CreateProblemForm() {
     handleSubmit,
     formState: { errors, isValid },
   } = useForm<FormData>({
-    resolver: yupResolver(schema),
     defaultValues: {
       title: '',
       difficulty: 'easy',
@@ -46,7 +44,6 @@ export function CreateProblemForm() {
   const router = useRouter()
 
   const onSubmit = async (data: FormData) => {
-    console.log(data)
     const response = await fetch('/api/problems', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -66,7 +63,7 @@ export function CreateProblemForm() {
         Save
       </Button>
       {error && <p className="text-rose-500/90 text-xs h-4 pt-1.5">{error}</p>}
-      <div>
+      <div className="space-y-2">
         <Label htmlFor="title">Problem Name</Label>
         <Controller
           name="title"
@@ -77,7 +74,7 @@ export function CreateProblemForm() {
       </div>
 
       <div className="flex flex-row space-x-4">
-        <div className="w-36">
+        <div className="w-36 space-y-2">
           <Label htmlFor="difficulty">Difficulty</Label>
           <Controller
             name="difficulty"
@@ -97,7 +94,7 @@ export function CreateProblemForm() {
           />
           <p className="text-rose-500/90 text-xs h-4 pt-1.5">{errors.difficulty?.message}</p>
         </div>
-        <div>
+        <div className="space-y-2">
           <Label htmlFor="tags">Tags</Label>
           <Controller
             name="tags"
@@ -115,13 +112,18 @@ export function CreateProblemForm() {
         </div>
       </div>
 
-      <div>
+      <div className="space-y-2">
         <Label htmlFor="description">Description</Label>
         <Controller
           name="description"
           control={control}
           render={({ field }) => (
-            <Textarea {...field} id="description" placeholder="Paste or type your description here..." className="min-h-96" />
+            <Textarea
+              {...field}
+              id="description"
+              placeholder="Paste or type your description here..."
+              className="min-h-96"
+            />
           )}
         />
         <p className="text-rose-500/90 text-xs h-4 pt-1.5">{errors.description?.message}</p>
