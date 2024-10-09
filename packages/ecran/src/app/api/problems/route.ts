@@ -1,8 +1,8 @@
 import { db } from '@/db'
 import { problems } from '@/db/schema'
-import { getTemporalClient } from '@/temporal/client'
+import { temporalClient } from '@/temporal/client'
 import { PROBLEMS_QUEUE_NAME } from '@/temporal/shared'
-import { solveProblem } from '@/temporal/workflows'
+import type { solveProblem } from '@/temporal/workflows'
 
 type Problem = typeof problems.$inferInsert
 
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Failed to create problem' }, { status: 500 })
   }
 
-  await getTemporalClient().workflow.start<typeof solveProblem>('solveProblem', {
+  await temporalClient.workflow.start<typeof solveProblem>('solveProblem', {
     taskQueue: PROBLEMS_QUEUE_NAME,
     workflowId: problemId,
     args: [problemId, body.description],

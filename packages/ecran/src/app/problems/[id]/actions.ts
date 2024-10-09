@@ -3,10 +3,10 @@
 import { problems, solutions } from '@/db/schema'
 import { db } from '@/db'
 import { redirect } from 'next/navigation'
-import { eq, InferSelectModel } from 'drizzle-orm'
-import { getTemporalClient } from '@/temporal/client'
+import { eq, type InferSelectModel } from 'drizzle-orm'
+import { temporalClient } from '@/temporal/client'
 import { PROBLEMS_QUEUE_NAME } from '@/temporal/shared'
-import { solveProblem } from '@/temporal/workflows'
+import type { solveProblem } from '@/temporal/workflows'
 import { logger } from '@/utils/logger'
 import { revalidatePath } from 'next/cache'
 
@@ -42,7 +42,7 @@ export async function createProblem(formData: FormData) {
 
     logger.info(`Created problem ${problemId} with description ${description}`)
 
-    await getTemporalClient().workflow.start<typeof solveProblem>('solveProblem', {
+    await temporalClient.workflow.start<typeof solveProblem>('solveProblem', {
       taskQueue: PROBLEMS_QUEUE_NAME,
       workflowId: problemId,
       args: [problemId, description],
