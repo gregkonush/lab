@@ -43,6 +43,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
   const solution = problemsWithSolutions.at(0)?.solutions
 
   logger.info(`Solution for problem ${problem?.id}`)
+  const elements = Array.from({ length: 10 }).map((_, idx) => ({ id: idx }))
 
   return (
     <div className="text-base text-zinc-200">
@@ -96,8 +97,8 @@ export default async function Problem({ params: { id } }: { params: { id: string
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {Array.from({ length: 10 }).map((_, index) => (
-                <div key={index} className="bg-zinc-300 dark:bg-zinc-900 animate-pulse rounded h-5" />
+              {elements.map(({ id }) => (
+                <div key={id} className="bg-zinc-300 dark:bg-zinc-900 animate-pulse rounded h-5" />
               ))}
             </div>
           )}
