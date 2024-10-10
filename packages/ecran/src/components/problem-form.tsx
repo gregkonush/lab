@@ -57,7 +57,7 @@ export function CreateProblemForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 min-w-full">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 min-w-[52rem] self-center">
       <Button size="sm" type="submit" disabled={!isValid}>
         Save
       </Button>

@@ -10,10 +10,11 @@ export const dynamic = 'force-dynamic'
 export default async function Problems() {
   const fetchedProblems = await db.select().from(problems)
   return (
-    <div className="flex flex-col space-y-4 mx-auto">
+    <div className="flex flex-col space-y-4 self-center min-w-[52rem]">
       <Link href="/problems/create">
         <Button size="sm">Create</Button>
       </Link>
+
       <DataTable
         columns={columns}
         data={fetchedProblems.map(({ id, difficulty, title, tags }) => ({ id, difficulty, title, tags: tags ?? [] }))}
