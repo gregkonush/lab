@@ -4,6 +4,10 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import jdk.jshell.JShell;
 import jdk.jshell.Snippet;
 import jdk.jshell.SnippetEvent;
@@ -11,63 +15,60 @@ import jdk.jshell.SourceCodeAnalysis;
 
 public class JShellServer {
 
+    private static final int JSHELL_POOL_SIZE = 10;
+    private static final int THREAD_POOL_SIZE = 20;
+
+    private static final BlockingQueue<JShellWrapper> jshellPool = new LinkedBlockingQueue<>();
+
     public static void main(String[] args) {
         int port = 9090;
         System.out.println("Attempting to start JShellServer on port " + port);
         ServerSocket serverSocket = null;
+
+        ExecutorService threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+
+        for (int i = 0; i < JSHELL_POOL_SIZE; i++) {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            PrintStream printStream = new PrintStream(outputStream, true, StandardCharsets.UTF_8);
+            JShell jshellInstance = JShell.builder()
+                    .out(printStream)
+                    .err(printStream)
+                    .build();
+            jshellPool.offer(new JShellWrapper(jshellInstance, outputStream));
+        }
+
         try {
             serverSocket = new ServerSocket(port);
             System.out.println("JShellServer is running on port " + port);
             while (true) {
-                acceptClientConnection(serverSocket);
+                Socket clientSocket = serverSocket.accept();
+                JShellWrapper jshellWrapper = jshellPool.take();
+                threadPool.execute(() -> handleClient(clientSocket, jshellWrapper));
             }
-        } catch (IOException e) {
-            System.err.println("Failed to start server on port " + port + ": " + e.getMessage());
+        } catch (IOException | InterruptedException e) {
+            System.err.println("Server error: " + e.getMessage());
             e.printStackTrace();
         } finally {
             closeServerSocket(serverSocket);
+            threadPool.shutdown();
         }
     }
 
-    private static void acceptClientConnection(ServerSocket serverSocket) {
-        try {
-            System.out.println("Waiting for client connection...");
-            Socket clientSocket = serverSocket.accept();
-            System.out.println("New client connected: " + clientSocket.getInetAddress());
-            new Thread(() -> handleClient(clientSocket)).start();
-        } catch (IOException e) {
-            System.err.println("Error accepting client connection: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    private static void closeServerSocket(ServerSocket serverSocket) {
-        try {
-            if (serverSocket != null) {
-                serverSocket.close();
-                System.out.println("Server socket closed.");
-            }
-        } catch (IOException e) {
-            System.err.println("Error closing server socket: " + e.getMessage());
-        }
-    }
-
-    private static void handleClient(Socket clientSocket) {
-        ByteArrayOutputStream jshellOutputStream = new ByteArrayOutputStream();
-        PrintStream jshellPrintStream = new PrintStream(jshellOutputStream, true, StandardCharsets.UTF_8);
-        JShell jshell = JShell.builder()
-                .out(jshellPrintStream)
-                .err(jshellPrintStream)
-                .build();
+    private static void handleClient(Socket clientSocket, JShellWrapper jshellWrapper) {
+        JShell jshell = jshellWrapper.getJshell();
+        ByteArrayOutputStream jshellOutputStream = jshellWrapper.getOutputStream();
 
         try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                 BufferedWriter out = new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream()))) {
 
             String code = readCodeFromClient(in);
-            List<String> snippets = parseCodeIntoSnippets(jshell, code);
             jshellOutputStream.reset();
 
-            if (!evaluateSnippets(jshell, snippets, jshellPrintStream)) {
+            jshell.eval("/reset");
+
+            List<String> snippets = parseCodeIntoSnippets(jshell, code);
+
+            if (!evaluateSnippets(jshell, snippets, new PrintStream(jshellOutputStream))) {
                 sendOutputToClient(out, jshellOutputStream);
                 return;
             }
@@ -78,6 +79,7 @@ public class JShellServer {
             System.err.println("Error handling client: " + e.getMessage());
             e.printStackTrace();
         } finally {
+            jshellPool.offer(jshellWrapper);
             closeClientSocket(clientSocket);
         }
     }
@@ -126,7 +128,7 @@ public class JShellServer {
 
                         int lineNumber = 1;
                         int column = 1;
-                        for (int i = 0; i < startPos; i++) {
+                        for (int i = 0; i < startPos && i < snippetSource.length(); i++) {
                             if (snippetSource.charAt(i) == '\n') {
                                 lineNumber++;
                                 column = 1;
@@ -163,6 +165,35 @@ public class JShellServer {
             System.out.println("Client connection closed.");
         } catch (IOException e) {
             System.err.println("Error closing client connection: " + e.getMessage());
+        }
+    }
+
+    private static void closeServerSocket(ServerSocket serverSocket) {
+        try {
+            if (serverSocket != null) {
+                serverSocket.close();
+                System.out.println("Server socket closed.");
+            }
+        } catch (IOException e) {
+            System.err.println("Error closing server socket: " + e.getMessage());
+        }
+    }
+
+    private static class JShellWrapper {
+        private final JShell jshell;
+        private final ByteArrayOutputStream outputStream;
+
+        public JShellWrapper(JShell jshell, ByteArrayOutputStream outputStream) {
+            this.jshell = jshell;
+            this.outputStream = outputStream;
+        }
+
+        public JShell getJshell() {
+            return jshell;
+        }
+
+        public ByteArrayOutputStream getOutputStream() {
+            return outputStream;
         }
     }
 }
