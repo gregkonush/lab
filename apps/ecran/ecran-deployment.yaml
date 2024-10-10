@@ -55,6 +55,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-secret
+                  key: data
           resources:
             limits:
               cpu: "1"
