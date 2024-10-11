@@ -36,7 +36,7 @@ export default function EditorComponent({ code, onCodeChange, language, onExecut
       inherit: true,
       rules: [],
       colors: {
-        'editor.background': '#1E1E1E',
+        'editor.background': '#27272A',
       },
     })
     monaco.languages.typescript.typescriptDefaults.setCompilerOptions(typescriptCompilerOptions)

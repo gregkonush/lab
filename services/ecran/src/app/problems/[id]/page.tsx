@@ -68,18 +68,18 @@ export default async function Problem({ params: { id } }: { params: { id: string
           await checkIfSolutionExists(problem?.id)
         }}
       />
-      <div key={problem?.id} className="flex flex-row divide-x divide-zinc-700">
-        <div className="pr-10 basis-1/2 flex-shrink-0">
+      <div key={problem?.id} className="flex flex-row space-x-4">
+        <div className="pr-10 basis-1/2 flex-shrink-0 bg-zinc-800 rounded p-4">
           <h2 className="text-2xl font-bold mb-5">{problem?.title}</h2>
           <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-5 text-center">
             <div>
               Difficulty:{' '}
-              <span className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{problem?.difficulty}</span>
+              <span className="bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{problem?.difficulty}</span>
             </div>
             <div>
               <span>Topics: </span>
               {problem?.tags?.map((tag) => (
-                <span key={tag} className="bg-zinc-800 text-zinc-200 rounded-full py-0.5 px-2 text-xs">
+                <span key={tag} className="bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs">
                   {tag}
                 </span>
               ))}
@@ -88,9 +88,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
 
           <MarkdownContent content={problem?.description || ''} useMDX={false} className="whitespace-break-spaces" />
         </div>
-        <div className="pl-10 basis-1/2 prose dark:prose-invert max-w-none overflow-x-auto text-zinc-200">
-          <h2 className="text-2xl font-bold mb-5">Solution</h2>
-
+        <div className="basis-1/2 prose dark:prose-invert max-w-none overflow-x-auto text-zinc-200">
           {solution ? (
             <div className="overflow-x-auto pr-4">
               <MarkdownContent content={solution.solution} useMDX={true} />

@@ -61,10 +61,6 @@ function LoadingDots() {
 }
 
 export default function PracticePage() {
-  const { data: session, status } = useSession()
-  console.log('status', status)
-  console.log(JSON.stringify(session, null, 2))
-
   const [code, setCode] = useState(defaultJavaCode)
   const [language, setLanguage] = useState('java')
   const [output, setOutput] = useState('')
@@ -138,8 +134,7 @@ export default function PracticePage() {
     <div className="container mx-auto px-4 py-6">
       <div className="max-w-screen-xl mx-auto space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold">Practice</h1>
-          <div>{session?.user?.name && <p>Hello, {session.user.name}</p>}</div>
+          <h1 className="text-2xl font-bold">Practice</h1>
         </div>
         <div className="flex items-end justify-between">
           <motion.div
@@ -185,7 +180,7 @@ export default function PracticePage() {
           <div className="basis-1/2 h-auto shrink-0">
             <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
           </div>
-          <div className="basis-1/2 border border-zinc-900 rounded-md p-4 bg-zinc-900 text-sm whitespace-pre-wrap">
+          <div className="basis-1/2 border border-zinc-900 rounded-md p-4 bg-zinc-800 text-sm whitespace-pre-wrap">
             {`Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.
 
 You may assume that each input would have exactly one solution, and you may not use the same element twice.
@@ -223,7 +218,7 @@ Only one valid answer exists.`}
             'border border-zinc-900 rounded-md p-4 space-y-2 min-h-40',
             output.toLowerCase().includes('error') || output.toLowerCase().includes('exception')
               ? 'bg-red-800 text-red-100'
-              : 'bg-zinc-900 text-zinc-100',
+              : 'bg-zinc-800 text-zinc-100',
           ])}
         >
           {isLoading ? (

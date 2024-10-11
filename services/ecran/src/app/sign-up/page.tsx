@@ -78,7 +78,7 @@ export default function SignUp() {
               <FormControl>
                 <Input type="email" placeholder="you@example.com" {...field} className="w-full" />
               </FormControl>
-              <FormMessage className="h-5" />
+              <FormMessage />
             </FormItem>
           )}
         />
@@ -92,7 +92,7 @@ export default function SignUp() {
               <FormControl>
                 <Input type="password" placeholder="Your Password" {...field} className="w-full" />
               </FormControl>
-              <FormMessage className="h-5" />
+              <FormMessage />
             </FormItem>
           )}
         />
