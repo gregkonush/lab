@@ -7,12 +7,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useState } from 'react'
+import { invalidateRootLayout } from './actions'
 
 export default function SignIn() {
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const handleInvalidation = async () => {
+    await invalidateRootLayout()
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,6 +30,7 @@ export default function SignIn() {
     if (result?.error) {
       setError('Invalid email or password')
     } else {
+      await handleInvalidation()
       router.push('/practice')
     }
   }

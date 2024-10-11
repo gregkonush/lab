@@ -28,7 +28,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${jetbrains.variable} font-mono tracking-normal antialiased leading-6 text-base bg-zinc-900 text-zinc-100`}
+        className={`${jetbrains.variable} font-mono tracking-normal antialiased leading-6 text-base bg-zinc-900 text-zinc-300`}
         suppressHydrationWarning
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
@@ -44,7 +44,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <Link href="/practice" className="hover:text-indigo-400 transition-colors duration-200">
               Practice
             </Link>
-            {session ? (
+            {session?.user ? (
               <UserMenu />
             ) : (
               <Link href="/sign-in" className="hover:text-indigo-400 transition-colors duration-200">
