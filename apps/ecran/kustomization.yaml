@@ -19,8 +19,8 @@ resources:
 - rolebinding.yaml
 images:
 - name: kalmyk.duckdns.org/lab/ecran
-  newTag: 0.93.0
+  newTag: 0.94.0
 - name: kalmyk.duckdns.org/lab/ecran-worker
   newTag: 0.93.0
 - name: kalmyk.duckdns.org/lab/java-executor
-  newTag: sha-a2d3d11
+  newTag: sha-e67c4a7
