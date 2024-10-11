@@ -5,8 +5,8 @@ on:
     branches:
       - "main"
     paths:
-      - "packages/ecran/**"
-      - "packages/java-executor/**"
+      - "services/ecran/**"
+      - "services/java-executor/**"
 
 jobs:
   version:
@@ -36,8 +36,8 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: ecran
-      dockerfile: ./packages/ecran/Dockerfile
-      context: ./packages/ecran
+      dockerfile: ./services/ecran/Dockerfile
+      context: ./services/ecran
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -48,8 +48,8 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: ecran-worker
-      dockerfile: ./packages/ecran/Dockerfile.worker
-      context: ./packages/ecran
+      dockerfile: ./services/ecran/Dockerfile.worker
+      context: ./services/ecran
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -60,8 +60,8 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: ecran-migrator
-      dockerfile: ./packages/ecran/Dockerfile.migrator
-      context: ./packages/ecran
+      dockerfile: ./services/ecran/Dockerfile.migrator
+      context: ./services/ecran
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -72,8 +72,8 @@ jobs:
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: java-executor
-      dockerfile: ./packages/java-executor/Dockerfile
-      context: ./packages/java-executor
+      dockerfile: ./services/java-executor/Dockerfile
+      context: ./services/java-executor
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}

@@ -2,8 +2,8 @@
 
 # Set variables
 IMAGE_NAME="kalmyk.duckdns.org/lab/java-executor"
-DOCKERFILE="packages/java-executor/Dockerfile"
-CONTEXT_PATH="packages/java-executor"
+DOCKERFILE="services/java-executor/Dockerfile"
+CONTEXT_PATH="services/java-executor"
 
 # Check if a tag is provided as an argument
 if [ $# -eq 1 ]; then
