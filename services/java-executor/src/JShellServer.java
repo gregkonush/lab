@@ -20,6 +20,25 @@ public class JShellServer {
 
     private static final BlockingQueue<JShellWrapper> jshellPool = new LinkedBlockingQueue<>();
 
+    private static void setupAutomaticImports(JShell jshell) {
+        String[] autoImports = {
+            "import java.util.*;",
+            "import java.lang.*;",
+            "import java.io.*;",
+            "import java.math.*;",
+            "import java.text.*;",
+            "import java.time.*;",
+            "import java.util.concurrent.*;",
+            "import java.util.function.*;",
+            "import java.util.regex.*;",
+            "import java.util.stream.*;"
+        };
+
+        for (String importStatement : autoImports) {
+            jshell.eval(importStatement);
+        }
+    }
+
     public static void main(String[] args) {
         int port = 9090;
         System.out.println("Attempting to start JShellServer on port " + port);
@@ -34,6 +53,7 @@ public class JShellServer {
                     .out(printStream)
                     .err(printStream)
                     .build();
+            setupAutomaticImports(jshellInstance); // Add this line to set up automatic imports
             jshellPool.offer(new JShellWrapper(jshellInstance, outputStream));
         }
 
