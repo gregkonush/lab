@@ -2,8 +2,8 @@
 
 # Set variables
 IMAGE_NAME="kalmyk.duckdns.org/lab/ecran"
-DOCKERFILE="packages/ecran/Dockerfile"
-CONTEXT_PATH="packages/ecran"
+DOCKERFILE="services/ecran/Dockerfile"
+CONTEXT_PATH="services/ecran"
 
 # Check if a tag is provided as an argument
 if [ $# -eq 1 ]; then

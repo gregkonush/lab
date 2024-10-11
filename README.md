@@ -109,28 +109,10 @@ Install with poetry for package management with pipx
 pipx install poetry
 ```
 
-#### Devtools
-
-Autocomplete
-
-```bash
-brew install --cask codewhisperer
-```
+### Devtools
 
 Github
 
 ```bash
 brew install gh
-```
-
-Install pre-commit
-
-```bash
-brew install pre-commit
-```
-
-Install pre-commit hooks
-
-```bash
-pre-commit install
 ```
