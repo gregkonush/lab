@@ -36,6 +36,13 @@
       "when": 1728371031695,
       "tag": "0004_illegal_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1728699913880,
+      "tag": "0005_fat_stone_men",
+      "breakpoints": true
     }
   ]
 }

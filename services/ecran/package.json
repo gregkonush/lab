@@ -81,6 +81,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@iconify/react": "^5.0.2",
     "@tsconfig/node20": "^20.1.4",
     "@types/bcrypt": "^5.0.2",
     "@types/mdx": "^2.0.13",
