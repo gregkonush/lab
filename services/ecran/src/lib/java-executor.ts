@@ -34,6 +34,7 @@ export async function executeJavaCode(code: string): Promise<NodeJS.ReadableStre
   })
 
   socket.on('end', () => {
+    
     console.log('Disconnected from server')
   })
 
