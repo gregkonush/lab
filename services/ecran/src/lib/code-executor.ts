@@ -1,10 +1,6 @@
 import * as k8s from '@kubernetes/client-node'
 import { PassThrough } from 'node:stream'
-import { executeJavaCode } from './javaExecutor'
-import { db } from '@/db'
-import { executions, users } from '@/db/schema'
-import { auth } from '@/auth'
-import { eq } from 'drizzle-orm'
+import { executeJavaCode } from './java-executor'
 
 export async function execute(
   code: string,
@@ -114,11 +110,6 @@ export async function execute(
     console.error('OutputStream error:', err)
   })
 
-  outputStream.on('end', async () => {
-    const output = Buffer.concat(outputChunks).toString()
-    await saveExecution(code, output, language)
-  })
-
   return outputStream
 }
 
@@ -136,18 +127,4 @@ async function getStandbyPod(kc: k8s.KubeConfig, namespace: string, labelSelecto
   }
 
   return podName
-}
-
-export async function saveExecution(
-  code: string,
-  output: string,
-  language: 'javascript' | 'typescript' | 'python' | 'java',
-) {
-  const userSession = await auth()
-  await db.insert(executions).values({
-    code,
-    output,
-    language,
-    userId: userSession?.user?.id,
-  })
 }
