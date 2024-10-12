@@ -60,6 +60,10 @@ spec:
                 secretKeyRef:
                   name: ecran-secret
                   key: data
+            - name: AUTH_URL
+              value: "https://proompteng.ai/api/auth/session"
+            - name: AUTH_TRUST_HOST
+              value: "true"
           resources:
             limits:
               cpu: "1"
