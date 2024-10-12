@@ -81,6 +81,7 @@ export const executions = pgTable('executions', {
   output: text('output').notNull(),
   language: languageEnum('language').notNull(),
   executedAt: timestamp('executed_at').defaultNow().notNull(),
+  userId: uuid('user_id').references(() => users.id),
 })
 
 export const users = pgTable('user', {

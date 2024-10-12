@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Form, FormField, FormItem, FormLabel, FormControl, FormMessage } from '@/components/ui/form'
+import { invalidateRootLayout } from '../sign-in/actions'
 
 const signUpSchema = z.object({
   name: z.string().min(1, { message: 'Name is required' }),
@@ -27,6 +28,9 @@ export default function SignUp() {
       password: '',
     },
   })
+  const handleInvalidation = async () => {
+    await invalidateRootLayout()
+  }
 
   const onSubmit = async (values: z.infer<typeof signUpSchema>) => {
     setError(null)
@@ -40,6 +44,7 @@ export default function SignUp() {
       })
 
       if (response.ok) {
+        await handleInvalidation()
         router.push('/practice')
       } else {
         const data = await response.json()
