@@ -51,3 +51,37 @@ kube-worker-03   Ready    <none>                      4m56s   v1.28.8+k3s1
 kube-worker-04   Ready    <none>                      4m45s   v1.28.8+k3s1
 kube-worker-05   Ready    <none>                      4m35s   v1.28.8+k3s1
 ```
+
+## Tainting a node
+
+To taint a node (for example, `kube-worker-08`) to prevent pod scheduling unless they have a matching toleration, use the following command:
+
+```bash
+kubectl taint nodes kube-worker-08 role=worker:NoSchedule
+```
+
+To remove the taint, you can use:
+
+```bash
+kubectl taint nodes kube-worker-08 role=worker:NoSchedule-
+```
+
+### Querying nodes for taints
+
+To view the taints on all nodes in your cluster, you can use the following command:
+
+```bash
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+```
+
+See key and value of taint on a node
+
+```bash
+kubectl describe node kube-worker-08 | grep Taint
+```
+
+To see all pods on a specific node:
+
+```bash
+kubectl get pods --field-selector spec.nodeName=kube-worker-08
+```
