@@ -1,15 +1,9 @@
 'use client'
 
-import { Combobox, ComboboxButton, ComboboxInput, ComboboxOption, ComboboxOptions } from '@headlessui/react'
-import { CheckIcon, ChevronDownIcon } from '@heroicons/react/20/solid'
-import clsx from 'clsx'
+import type React from 'react'
 import { useState } from 'react'
-
-interface Tag {
-  id: number
-  name: string
-  value: string
-}
+import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption, ComboboxButton } from '@headlessui/react'
+import { Check, ChevronsUpDown, X } from 'lucide-react'
 
 const tags = [
   { id: 1, name: 'Array', value: 'array' },
@@ -50,72 +44,115 @@ const tags = [
   { id: 36, name: 'Priority Queue', value: 'priority-queue' },
 ]
 
-export function ComboSelect({
-  value,
-  onChange,
-  onBlur,
-  name,
-}: {
+interface Tag {
+  id: number
+  name: string
   value: string
-  onChange: (value: string) => void
+}
+
+interface ComboSelectProps {
+  value: string[]
+  onChange: (value: string[]) => void
   onBlur: () => void
   name: string
-}) {
-  const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState<string>(value)
+}
 
-  const filteredtags =
-    query === ''
-      ? tags
-      : tags.filter((tag) => {
-          return tag.name.toLowerCase().includes(query.toLowerCase())
-        })
+export function ComboSelect({ value, onChange, onBlur, name }: ComboSelectProps) {
+  const [query, setQuery] = useState('')
+  const [highlightedTag, setHighlightedTag] = useState<string | null>(null)
+
+  const filteredTags = query === '' ? tags : tags.filter((tag) => tag.name.toLowerCase().includes(query.toLowerCase()))
+
+  const removeTag = (tagToRemove: string) => {
+    onChange(value.filter((tag) => tag !== tagToRemove))
+  }
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (highlightedTag && !value.includes(highlightedTag)) {
+        onChange([...value, highlightedTag])
+      } else if (filteredTags.length > 0 && !value.includes(filteredTags[0]?.value || '')) {
+        onChange([...value, filteredTags[0]?.value || ''])
+      }
+      setQuery('')
+      setHighlightedTag(null)
+    }
+  }
 
   return (
-    <div onBlur={onBlur}>
-      <Combobox
-        value={selected}
-        name={name}
-        onChange={(value: string) => {
-          setSelected(value)
-          onChange(value)
-        }}
-      >
-        <div className="relative">
-          <ComboboxInput
-            className={clsx(
-              'w-full rounded-lg bg-zinc-950 border py-1.5 pr-8 pl-3 text-sm/6 text-gray-200',
-              'data-[focus]:outline-none data-[focus]:ring-2 data-[focus]:ring-white/80 ring-offset-background ring-offset-2',
-            )}
-            displayValue={(tag: string) => tags.find((t) => t.value === tag)?.name || 'Select a Topic'}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <ComboboxButton className="group absolute inset-y-0 right-0 px-2.5">
-            <ChevronDownIcon className="size-4 fill-white/60 group-data-[hover]:fill-white" />
+    <Combobox value={value} onChange={onChange} multiple>
+      <div className="relative w-full">
+        <div className="relative w-full min-h-[2.5rem] cursor-default overflow-hidden rounded-md bg-zinc-800 text-left shadow-md">
+          <div className="flex flex-wrap items-center gap-1 p-1">
+            {value.map((tagValue) => {
+              const tag = tags.find((t) => t.value === tagValue)
+              return (
+                <span
+                  key={tagValue}
+                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-600 text-white"
+                >
+                  {tag ? tag.name : tagValue}
+                  <button
+                    type="button"
+                    onClick={() => removeTag(tagValue)}
+                    className="ml-1 inline-flex items-center justify-center"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )
+            })}
+            <div className="relative flex-1">
+              <ComboboxInput
+                className="w-full border-none py-1 pl-2 pr-8 text-sm leading-5 text-zinc-200 bg-transparent focus:ring-0 focus:outline-none"
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={handleKeyDown}
+                onBlur={onBlur}
+                name={name}
+                placeholder={value.length === 0 ? 'Select tags...' : ''}
+                value={query}
+              />
+            </div>
+          </div>
+          <ComboboxButton className="absolute inset-y-2 right-0 flex items-center pr-2">
+            <ChevronsUpDown className="h-5 w-5 text-zinc-400" aria-hidden="true" />
           </ComboboxButton>
         </div>
-
-        <ComboboxOptions
-          anchor="bottom"
-          transition
-          className={clsx(
-            'h-64 w-[var(--input-width)] rounded-xl border border-white/5',
-            'bg-zinc-950 p-1 [--anchor-gap:var(--spacing-1)] empty:invisible',
-            'transition duration-100 ease-in data-[leave]:data-[closed]:opacity-0',
+        <ComboboxOptions className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-zinc-800 py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-10">
+          {filteredTags.length === 0 && query !== '' ? (
+            <div className="relative cursor-default select-none py-2 px-4 text-zinc-400">Nothing found.</div>
+          ) : (
+            filteredTags.map((tag) => (
+              <ComboboxOption
+                key={tag.id}
+                className={({ active }) =>
+                  `relative cursor-default select-none py-2 pl-10 pr-4 ${
+                    active ? 'bg-indigo-600 text-white' : 'text-zinc-200'
+                  }`
+                }
+                value={tag.value}
+                onFocus={() => setHighlightedTag(tag.value)}
+              >
+                {({ selected, active }) => (
+                  <>
+                    <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>{tag.name}</span>
+                    {selected ? (
+                      <span
+                        className={`absolute inset-y-0 left-0 flex items-center pl-3 ${
+                          active ? 'text-white' : 'text-indigo-600'
+                        }`}
+                      >
+                        <Check className="h-5 w-5" aria-hidden="true" />
+                      </span>
+                    ) : null}
+                  </>
+                )}
+              </ComboboxOption>
+            ))
           )}
-        >
-          {filteredtags.map(({ id, name, value }) => (
-            <ComboboxOption
-              key={id}
-              value={value}
-              className="group flex cursor-default items-center gap-2 rounded-lg py-1.5 px-2 select-none data-[focus]:bg-white/10"
-            >
-              <CheckIcon className="invisible size-4 fill-white group-data-[selected]:visible" />
-              <div className="text-sm/6 text-white">{name}</div>
-            </ComboboxOption>
-          ))}
         </ComboboxOptions>
-      </Combobox>
-    </div>
+      </div>
+    </Combobox>
   )
 }

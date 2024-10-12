@@ -217,13 +217,13 @@ export default function PracticePage() {
   }, [code, isLoadingHint, language])
 
   return (
-    <div className="container mx-auto px-4 py-6">
-      <div className="max-w-screen-xl mx-auto space-y-4">
+    <div className="container mx-auto px-2">
+      <div className="max-w-screen-xl mx-auto space-y-3">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Practice</h1>
+          <h1 className="text-2xl font-bold -mt-2">Practice</h1>
         </div>
         <div className="flex items-end justify-between">
-          <div className="flex flex-row space-x-2 items-center">
+          <div className="flex flex-row space-x-3 items-center">
             <motion.div
               whileTap={{ scale: isLoading ? 1 : 0.975 }}
               onHoverStart={() => setIsHovered(true)}
@@ -301,7 +301,7 @@ export default function PracticePage() {
             </Select>
           </div>
         </div>
-        <div className="flex flex-row space-x-4">
+        <div className="flex flex-row space-x-3 min-h-[calc(100vh-30rem)]">
           <div className="basis-1/2 h-auto shrink-0">
             <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
           </div>

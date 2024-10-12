@@ -96,7 +96,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
           ) : (
             <div className="flex flex-col gap-2">
               {elements.map(({ id }) => (
-                <div key={id} className="bg-zinc-300 dark:bg-zinc-900 animate-pulse rounded h-5" />
+                <div key={id} className="bg-zinc-800 animate-pulse rounded h-5" />
               ))}
             </div>
           )}

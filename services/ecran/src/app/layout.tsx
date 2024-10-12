@@ -53,7 +53,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             )}
             <div className="text-zinc-400 absolute right-5 text-sm">Version: {version}</div>
           </header>
-          <main className="container mx-auto px-4 py-8">{children}</main>
+          <main className="container mx-auto p-5">{children}</main>
         </ThemeProvider>
       </body>
     </html>
