@@ -21,9 +21,9 @@ resources:
 - juge-service.yaml
 images:
 - name: kalmyk.duckdns.org/lab/ecran
-  newTag: 0.101.0
+  newTag: 0.102.0
 - name: kalmyk.duckdns.org/lab/ecran-worker
-  newTag: 0.101.0
+  newTag: 0.102.0
 - name: kalmyk.duckdns.org/lab/java-executor
   newTag: sha-66f6d98
 - name: kalmyk.duckdns.org/lab/juge
