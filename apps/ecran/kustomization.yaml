@@ -27,4 +27,4 @@ images:
 - name: kalmyk.duckdns.org/lab/java-executor
   newTag: sha-aa6ab49
 - name: kalmyk.duckdns.org/lab/juge
-  newTag: 0.102.0
+  newTag: 0.103.0
