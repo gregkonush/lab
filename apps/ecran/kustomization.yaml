@@ -18,6 +18,7 @@ resources:
 - role.yaml
 - rolebinding.yaml
 - juge-deployment.yaml
+- juge-service.yaml
 images:
 - name: kalmyk.duckdns.org/lab/ecran
   newTag: 0.101.0
