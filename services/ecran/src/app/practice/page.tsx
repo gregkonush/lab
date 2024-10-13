@@ -7,11 +7,10 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/h
 import Editor from '@/components/editor'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
-import { useSession } from 'next-auth/react'
 import { Skeleton } from '@/components/ui/skeleton'
 
 const defaultJavaCode = `
-public String greet(String name) {
+String greet(String name) {
     return "Hello, " + name + "!";
 }
 System.out.println(greet("World"));

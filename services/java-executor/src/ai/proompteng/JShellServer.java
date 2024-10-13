@@ -1,3 +1,5 @@
+package ai.proompteng;
+
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -53,7 +55,7 @@ public class JShellServer {
                     .out(printStream)
                     .err(printStream)
                     .build();
-            setupAutomaticImports(jshellInstance); // Add this line to set up automatic imports
+            setupAutomaticImports(jshellInstance);
             jshellPool.offer(new JShellWrapper(jshellInstance, outputStream));
         }
 
@@ -75,8 +77,8 @@ public class JShellServer {
     }
 
     private static void handleClient(Socket clientSocket, JShellWrapper jshellWrapper) {
-        JShell jshell = jshellWrapper.getJshell();
-        ByteArrayOutputStream jshellOutputStream = jshellWrapper.getOutputStream();
+        JShell jshell = jshellWrapper.jshell();
+        ByteArrayOutputStream jshellOutputStream = jshellWrapper.outputStream();
 
         try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                 BufferedWriter out = new BufferedWriter(new OutputStreamWriter(clientSocket.getOutputStream()))) {
@@ -171,7 +173,7 @@ public class JShellServer {
 
     private static void sendOutputToClient(BufferedWriter out, ByteArrayOutputStream jshellOutputStream)
             throws IOException {
-        String jshellOutput = jshellOutputStream.toString(StandardCharsets.UTF_8.name());
+        String jshellOutput = jshellOutputStream.toString(StandardCharsets.UTF_8);
         System.out.println("Sending output to client...");
         out.write(jshellOutput);
         out.write("END_OF_OUTPUT\n");
@@ -199,21 +201,6 @@ public class JShellServer {
         }
     }
 
-    private static class JShellWrapper {
-        private final JShell jshell;
-        private final ByteArrayOutputStream outputStream;
-
-        public JShellWrapper(JShell jshell, ByteArrayOutputStream outputStream) {
-            this.jshell = jshell;
-            this.outputStream = outputStream;
-        }
-
-        public JShell getJshell() {
-            return jshell;
-        }
-
-        public ByteArrayOutputStream getOutputStream() {
-            return outputStream;
-        }
+    private record JShellWrapper(JShell jshell, ByteArrayOutputStream outputStream) {
     }
 }
