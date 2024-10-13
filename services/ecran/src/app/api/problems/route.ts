@@ -1,5 +1,6 @@
 import { db } from '@/db'
-import { problems } from '@/db/schema'
+import { codeTemplates, problems } from '@/db/schema'
+import { eq, sql } from 'drizzle-orm'
 import { temporalClient } from '@/temporal/client'
 import { PROBLEMS_QUEUE_NAME } from '@/temporal/shared'
 import type { solveProblem } from '@/temporal/workflows'
@@ -14,8 +15,30 @@ interface RequestBody {
 }
 
 export async function GET() {
-  const dbProblems = await db.select().from(problems)
-  return Response.json(dbProblems, { status: 200 })
+  const dbProblems = await db
+    .select({
+      id: problems.id,
+      title: problems.title,
+      description: problems.description,
+      difficulty: problems.difficulty,
+      tags: problems.tags,
+      codeTemplates: sql<{ language: string; starter_code: string }[]>`jsonb_agg(code_templates)`,
+    })
+    .from(problems)
+    .leftJoin(codeTemplates, eq(problems.id, codeTemplates.problemId))
+    .groupBy(problems.id)
+
+  const problemsWithCodeTemplates = dbProblems.map((problem) => ({
+    ...problem,
+    codeTemplates: problem.codeTemplates?.reduce?.((acc, template) => {
+      if (template?.language && template?.starter_code) {
+        acc[template.language] = template.starter_code;
+      }
+      return acc;
+    }, {} as Record<string, string>) ?? {},
+  }));
+
+  return Response.json(problemsWithCodeTemplates, { status: 200 })
 }
 
 export async function POST(request: Request) {

@@ -26,7 +26,7 @@ spec:
           githubConfigSecret: github-token
           runnerScaleSetName: arc-arm64
           minRunners: 3
-          maxRunners: 3
+          maxRunners: 9
           containerMode:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
@@ -37,6 +37,8 @@ spec:
                   storage: 1Gi
           template:
             spec:
+              nodeSelector:
+                kubernetes.io/hostname: kube-worker-08
               initContainers:
                 - name: init-dind-externals
                   image: ghcr.io/actions/actions-runner:latest
