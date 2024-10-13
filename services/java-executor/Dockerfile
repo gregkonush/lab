@@ -2,7 +2,7 @@ FROM amazoncorretto:23-alpine
 
 WORKDIR /app
 
-COPY src/JShellServer.java .
+COPY src/ai/proompteng/JShellServer.java .
 
 EXPOSE 9090
 
