@@ -86,7 +86,7 @@ jobs:
     with:
       image_name: juge
       dockerfile: ./services/juge/Dockerfile
-      context: ./services/juge
+      context: ./services/juge/app
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
