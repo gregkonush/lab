@@ -47,3 +47,4 @@ kubeconfig
 .idea/
 *.iml
 *.class
+out/

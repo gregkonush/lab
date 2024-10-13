@@ -1,6 +1,9 @@
 import { PassThrough } from 'node:stream'
 import * as net from 'node:net'
 
+const MESSAGE_DELIMITER = '\n<<END_OF_MESSAGE>>\n'
+const CODE_DELIMITER = '\n<<END_OF_CODE>>\n'
+
 export async function executeJavaCode(code: string): Promise<NodeJS.ReadableStream> {
   const namespace = 'ecran'
   const serviceName = 'java-standby-service'
@@ -15,7 +18,7 @@ export async function executeJavaCode(code: string): Promise<NodeJS.ReadableStre
   const socket = net.createConnection({ host, port }, () => {
     console.log('Connected to server')
     console.log('Sending code:\n', code)
-    socket.write(`${code}\nEND_OF_CODE\n`)
+    socket.write(`${code}${CODE_DELIMITER}`)
   })
 
   const outputStream = new PassThrough()
@@ -24,8 +27,10 @@ export async function executeJavaCode(code: string): Promise<NodeJS.ReadableStre
   socket.on('data', (data) => {
     console.log('Received data from server:', data.toString())
     buffer += data.toString()
-    if (buffer.includes('END_OF_OUTPUT')) {
-      const output = buffer.split('END_OF_OUTPUT')[0]
+
+    const endMessageIndex = buffer.indexOf(MESSAGE_DELIMITER)
+    if (endMessageIndex !== -1) {
+      const output = buffer.substring(0, endMessageIndex)
       console.log('Full output received:', output)
       outputStream.write(output)
       outputStream.end()
@@ -34,8 +39,12 @@ export async function executeJavaCode(code: string): Promise<NodeJS.ReadableStre
   })
 
   socket.on('end', () => {
-    
     console.log('Disconnected from server')
+    if (buffer.length > 0) {
+      console.log('Remaining buffer:', buffer)
+      outputStream.write(buffer)
+      outputStream.end()
+    }
   })
 
   socket.on('error', (err) => {

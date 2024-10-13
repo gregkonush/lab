@@ -7,6 +7,7 @@ on:
     paths:
       - "services/ecran/**"
       - "services/java-executor/**"
+      - "services/juge/**"
 
 jobs:
   version:
@@ -31,30 +32,6 @@ jobs:
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: ${{ steps.tag_version.outputs.changelog }}
 
-  build-ecran:
-    needs: version
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: ecran
-      dockerfile: ./services/ecran/Dockerfile
-      context: ./services/ecran
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-
-  build-ecran-worker:
-    needs: version
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: ecran-worker
-      dockerfile: ./services/ecran/Dockerfile.worker
-      context: ./services/ecran
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-
   build-ecran-migrator:
     needs: version
     uses: ./.github/workflows/docker-build-common.yaml
@@ -67,13 +44,49 @@ jobs:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
+  build-ecran:
+    needs: [version, build-ecran-migrator]
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: ecran
+      dockerfile: ./services/ecran/Dockerfile
+      context: ./services/ecran
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-ecran-worker:
+    needs: [version, build-ecran-migrator]
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: ecran-worker
+      dockerfile: ./services/ecran/Dockerfile.worker
+      context: ./services/ecran
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
   build-java-executor:
-    needs: version
+    needs: [version, build-ecran-migrator]
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: java-executor
       dockerfile: ./services/java-executor/Dockerfile
       context: ./services/java-executor
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-juge:
+    needs: [version, build-ecran-migrator]
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: juge
+      dockerfile: ./services/juge/Dockerfile
+      context: ./services/juge
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
