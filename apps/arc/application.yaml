@@ -39,6 +39,11 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/hostname: kube-worker-08
+              tolerations:
+                - key: "role"
+                  operator: "Equal"
+                  value: "worker"
+                  effect: "NoSchedule"
               initContainers:
                 - name: init-dind-externals
                   image: ghcr.io/actions/actions-runner:latest
