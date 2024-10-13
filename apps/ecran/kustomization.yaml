@@ -2,28 +2,28 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: ecran
 resources:
-  - ecran-deployment.yaml
-  - ecran-worker-deployment.yaml
-  - java-standby-deployment.yaml
-  - java-standby-service.yaml
-  - java-standby-allow-ingress-networkpolicy.yaml
-  - python-standby-deployment.yaml
-  - js-ts-standby-deployment.yaml
-  - standby-deny-egress-networkpolicy.yaml
-  - service.yaml
-  - ingress.yaml
-  - sealed-secret.yaml
-  - postgresql.yaml
-  - serviceaccount.yaml
-  - role.yaml
-  - rolebinding.yaml
-  - juge-deployment.yaml
+- ecran-deployment.yaml
+- ecran-worker-deployment.yaml
+- java-standby-deployment.yaml
+- java-standby-service.yaml
+- java-standby-allow-ingress-networkpolicy.yaml
+- python-standby-deployment.yaml
+- js-ts-standby-deployment.yaml
+- standby-deny-egress-networkpolicy.yaml
+- service.yaml
+- ingress.yaml
+- sealed-secret.yaml
+- postgresql.yaml
+- serviceaccount.yaml
+- role.yaml
+- rolebinding.yaml
+- juge-deployment.yaml
 images:
-  - name: kalmyk.duckdns.org/lab/ecran
-    newTag: 0.99.0
-  - name: kalmyk.duckdns.org/lab/ecran-worker
-    newTag: 0.99.0
-  - name: kalmyk.duckdns.org/lab/java-executor
-    newTag: sha-dcc3bc5
-  - name: kalmyk.duckdns.org/lab/juge
-    newTag: 0.99.0
+- name: kalmyk.duckdns.org/lab/ecran
+  newTag: 0.99.0
+- name: kalmyk.duckdns.org/lab/ecran-worker
+  newTag: 0.100.0
+- name: kalmyk.duckdns.org/lab/java-executor
+  newTag: sha-dcc3bc5
+- name: kalmyk.duckdns.org/lab/juge
+  newTag: 0.99.0
