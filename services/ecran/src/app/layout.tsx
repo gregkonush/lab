@@ -6,6 +6,7 @@ import { auth } from '@/auth'
 import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 import { UserMenu } from '@/components/user-menu'
+import Providers from './providers'
 
 const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
@@ -31,30 +32,32 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         className={`${jetbrains.variable} font-mono tracking-normal antialiased leading-6 text-base bg-zinc-900 text-zinc-300`}
         suppressHydrationWarning
       >
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-          <header className="flex items-center space-x-10 px-10 py-6 border-b border-zinc-800 justify-center">
-            <div className="text-2xl uppercase font-bold">
-              <Link href="/" className="hover:text-indigo-400 transition-colors duration-200">
-                proompteng<span className="text-indigo-400">▪</span>ai
+        <Providers>
+          <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
+            <header className="flex items-center space-x-10 px-10 py-6 border-b border-zinc-800 justify-center">
+              <div className="text-2xl uppercase font-bold">
+                <Link href="/" className="hover:text-indigo-400 transition-colors duration-200">
+                  proompteng<span className="text-indigo-400">▪</span>ai
+                </Link>
+              </div>
+              <Link href="/problems" className="hover:text-indigo-400 transition-colors duration-200">
+                Problems
               </Link>
-            </div>
-            <Link href="/problems" className="hover:text-indigo-400 transition-colors duration-200">
-              Problems
-            </Link>
-            <Link href="/practice" className="hover:text-indigo-400 transition-colors duration-200">
-              Practice
-            </Link>
-            {session?.user ? (
-              <UserMenu />
-            ) : (
-              <Link href="/sign-in" className="hover:text-indigo-400 transition-colors duration-200">
-                Sign In
+              <Link href="/practice" className="hover:text-indigo-400 transition-colors duration-200">
+                Practice
               </Link>
-            )}
-            <div className="text-zinc-400 absolute right-5 text-sm">Version: {version}</div>
-          </header>
-          <main className="container mx-auto p-5">{children}</main>
-        </ThemeProvider>
+              {session?.user ? (
+                <UserMenu />
+              ) : (
+                <Link href="/sign-in" className="hover:text-indigo-400 transition-colors duration-200">
+                  Sign In
+                </Link>
+              )}
+              <div className="text-zinc-400 absolute right-5 text-sm">Version: {version}</div>
+            </header>
+            <main className="container mx-auto p-5">{children}</main>
+          </ThemeProvider>
+        </Providers>
       </body>
     </html>
   )

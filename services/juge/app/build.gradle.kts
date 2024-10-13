@@ -1,7 +1,7 @@
 plugins {
-    kotlin("jvm") version "2.0.0"
-    application
+    id("org.jetbrains.kotlin.jvm") version "2.1.0-Beta1"
     id("com.github.johnrengelman.shadow") version "8.1.1"
+    application
 }
 
 repositories {

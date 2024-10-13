@@ -1,22 +1,29 @@
 package ai.proompteng.juge
 
 import kotlinx.coroutines.*
-import kotlinx.coroutines.selects.select
-import kotlin.io.path.Path
 
 class App
 
 fun main() {
     runBlocking {
+        val supervisorJob = SupervisorJob()
+        val scope = CoroutineScope(Dispatchers.Default + supervisorJob)
+
         while (true) {
             val server = TcpServer(9090)
-            val serverJob = launch { server.start() }
+            val serverJob = scope.launch { server.start() }
 
-            select {
-                serverJob.onJoin { println("Server stopped") }
+            try {
+                serverJob.join()
+            } catch (e: CancellationException) {
+                println("Server job was cancelled: ${e.message}")
+            } catch (e: Exception) {
+                println("Server encountered an error: ${e.message}")
+            } finally {
+                supervisorJob.cancelChildren()
+                println("Server stopped")
             }
 
-            serverJob.join()
             delay(500)
         }
     }

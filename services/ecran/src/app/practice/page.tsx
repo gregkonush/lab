@@ -1,13 +1,22 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import Editor from '@/components/editor'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
+import type { problems } from '@/db/schema'
+import { ScrollAreaThumb } from '@radix-ui/react-scroll-area'
+
+type Problem = typeof problems.$inferSelect
 
 const defaultJavaCode = `
 String greet(String name) {
@@ -121,7 +130,18 @@ const sparkleVariants = {
   },
 }
 
+async function fetchProblems() {
+  const response = await fetch('/api/problems')
+  if (!response.ok) {
+    throw new Error('Failed to fetch problems')
+  }
+  return response.json()
+}
+
 export default function PracticePage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
   const [code, setCode] = useState(defaultJavaCode)
   const [language, setLanguage] = useState('java')
   const [output, setOutput] = useState('')
@@ -129,6 +149,7 @@ export default function PracticePage() {
   const [isHovered, setIsHovered] = useState(false)
   const [hint, setHint] = useState('')
   const [isLoadingHint, setIsLoadingHint] = useState(false)
+  const [activeTab, setActiveTab] = useState('description')
 
   const handleCodeChange = (value: string) => {
     setCode(value)
@@ -214,6 +235,32 @@ export default function PracticePage() {
       setIsLoadingHint(false)
     }
   }, [code, isLoadingHint, language])
+
+  const { data: problems = [], isLoading: isLoadingProblems } = useQuery({
+    queryKey: ['problems'],
+    queryFn: fetchProblems,
+  })
+
+  const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null)
+
+  useEffect(() => {
+    const problemId = searchParams.get('problemId')
+    if (problemId && problems.length > 0) {
+      const problem = problems.find((p: Problem) => p.id === problemId)
+      if (problem) {
+        setSelectedProblem(problem)
+        setActiveTab('description')
+      }
+    } else if (problems.length > 0) {
+      setSelectedProblem(problems[0])
+    }
+  }, [problems, searchParams])
+
+  const handleProblemChange = (problem: Problem) => {
+    setSelectedProblem(problem)
+    setActiveTab('description')
+    router.push(`/practice?problemId=${problem.id}`, { scroll: false })
+  }
 
   return (
     <div className="container mx-auto px-2">
@@ -304,8 +351,49 @@ export default function PracticePage() {
           <div className="basis-1/2 h-auto shrink-0">
             <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
           </div>
-          <div className="basis-1/2 border border-zinc-900 rounded-md p-4 bg-zinc-800 text-sm whitespace-pre-wrap">
-            {defaultProblem}
+          <div className="basis-1/2 border border-zinc-900 rounded-md p-2 bg-zinc-800 text-sm">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="bg-zinc-700">
+                <TabsTrigger value="description">Problem Description</TabsTrigger>
+                <TabsTrigger value="select">Select Problem</TabsTrigger>
+              </TabsList>
+              <TabsContent value="description">
+                <ScrollArea className="h-[calc(100vh-40rem)] px-2 relative">
+                  <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4">
+                    {selectedProblem ? `\n${selectedProblem.description}` : 'No problem selected'}
+                  </div>
+                  <ScrollBar orientation="vertical" className="w-2" />
+                </ScrollArea>
+              </TabsContent>
+              <TabsContent value="select">
+                <ScrollArea className="pr-4 relative">
+                  {isLoadingProblems ? (
+                    <div className="flex justify-center items-center h-[calc(100vh-40rem)]">
+                      <LoadingDots />
+                    </div>
+                  ) : (
+                    <ul className="space-y-2 pr-4">
+                      {problems.map((problem: Problem, index: number) => (
+                        <li key={problem.id}>
+                          <Button
+                            variant="ghost"
+                            className={cn(
+                              'w-full justify-start text-left hover:bg-zinc-700',
+                              selectedProblem?.id === problem.id && 'bg-zinc-700',
+                            )}
+                            onClick={() => handleProblemChange(problem)}
+                          >
+                            {problem.title}
+                          </Button>
+                          {index < problems.length - 1 && <Separator className="mt-2 bg-zinc-700" />}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <ScrollBar orientation="vertical" className="w-2" />
+                </ScrollArea>
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
 

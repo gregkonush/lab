@@ -13,6 +13,11 @@ interface RequestBody {
   tags: Problem['tags']
 }
 
+export async function GET() {
+  const dbProblems = await db.select().from(problems)
+  return Response.json(dbProblems, { status: 200 })
+}
+
 export async function POST(request: Request) {
   let body: RequestBody
   try {

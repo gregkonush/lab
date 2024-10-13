@@ -11,6 +11,9 @@ import jdk.jshell.Snippet
 import jdk.jshell.SnippetEvent
 import java.util.Locale
 
+const val END_OF_CODE = "\n<<END_OF_CODE>>\n"
+const val END_OF_MESSAGE = "\n<<END_OF_MESSAGE>>\n"
+
 class TcpServer(private val port: Int) {
     private val serverChannel = AsynchronousServerSocketChannel.open()
     private val jShellPool = JShellPool(Runtime.getRuntime().availableProcessors())
@@ -35,7 +38,6 @@ class TcpServer(private val port: Int) {
         jShellPool.withJShell { jShell, outputStream ->
             clientChannel.use {
                 val buffer = ByteBuffer.allocate(4096)
-                val fullMessage = StringBuilder()
 
                 while (true) {
                     val bytesRead = clientChannel.aRead(buffer)
@@ -43,20 +45,16 @@ class TcpServer(private val port: Int) {
 
                     buffer.flip()
                     val message = String(buffer.array(), 0, bytesRead)
-                    fullMessage.append(message)
 
-                    if (fullMessage.endsWith("\n<<END_OF_CODE>>\n")) {
-                        val code = fullMessage.removeSuffix("\n<<END_OF_CODE>>\n").toString()
-                        println("Received full code block:\n$code")
-                        jShell.eval("/reset")
+                    val code = message.removeSuffix(END_OF_CODE)
+                    println("Received full code block:\n$code")
+                    jShell.eval("/reset")
 
-                        val result = evaluateInJShell(jShell, outputStream, code)
-                        val response = "$result\n<<END_OF_MESSAGE>>\n"
-                        clientChannel.aWrite(ByteBuffer.wrap(response.toByteArray()))
+                    val result = evaluateInJShell(jShell, outputStream, code)
+                    val response = "$result$END_OF_MESSAGE"
+                    clientChannel.aWrite(ByteBuffer.wrap(response.toByteArray()))
 
-                        fullMessage.clear()
-                        clearJShell(jShell)
-                    }
+                    clearJShell(jShell)
 
                     buffer.clear()
                 }
@@ -64,7 +62,7 @@ class TcpServer(private val port: Int) {
         }
     }
 
-    private fun evaluateInJShell(jShell: JShell, outputStream: ByteArrayOutputStream, code: String): String {
+    private fun evaluateInJShell(jShell: JShell, jshellOutput: ByteArrayOutputStream, code: String): String {
         val output = StringBuilder()
         val snippets = parseCodeIntoSnippets(jShell, code)
 
@@ -72,11 +70,11 @@ class TcpServer(private val port: Int) {
             jShell.eval(snippet).forEach { event ->
                 when (event.status()) {
                     Snippet.Status.VALID -> {
-                        event.value()?.takeIf { it != "null" }?.let { output.appendLine(it) }
+                        event.value()?.let { output.appendLine(it) }
                     }
 
                     Snippet.Status.REJECTED -> {
-                        output.appendLine("Error: ${getDiagnostics(jShell, event)}")
+                        return "Error: ${getDiagnostics(jShell, event)}\n"
                     }
 
                     else -> {}
@@ -84,9 +82,7 @@ class TcpServer(private val port: Int) {
             }
         }
 
-        outputStream.toString().trim().takeIf { it.isNotEmpty() }?.let {
-            output.appendLine(it)
-        }
+        output.appendLine(jshellOutput.toString())
 
         return output.toString().trim().ifEmpty { "Code executed successfully with no output." }
     }
