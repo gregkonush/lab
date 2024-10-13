@@ -25,6 +25,6 @@ images:
 - name: kalmyk.duckdns.org/lab/ecran-worker
   newTag: 0.102.0
 - name: kalmyk.duckdns.org/lab/java-executor
-  newTag: sha-66f6d98
+  newTag: sha-aa6ab49
 - name: kalmyk.duckdns.org/lab/juge
   newTag: 0.102.0
