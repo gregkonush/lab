@@ -48,3 +48,4 @@ kubeconfig
 *.iml
 *.class
 out/
+bin/

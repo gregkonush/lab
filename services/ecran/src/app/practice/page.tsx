@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -13,10 +13,15 @@ import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import type { problems } from '@/db/schema'
-import { ScrollAreaThumb } from '@radix-ui/react-scroll-area'
 
-type Problem = typeof problems.$inferSelect
+type Problem = {
+  id: string
+  title: string
+  description: string
+  difficulty: string
+  tags: string[]
+  codeTemplates: Record<string, string>
+}
 
 const defaultJavaCode = `
 String greet(String name) {
@@ -157,10 +162,10 @@ export default function PracticePage() {
 
   const handleLanguageChange = (value: string) => {
     setLanguage(value)
-    setCode(getDefaultCode(value))
+    setCode(selectedProblem?.codeTemplates[value] || getDefaultCode)
   }
 
-  const getDefaultCode = (language: string) => {
+  const getDefaultCode = useMemo(() => {
     switch (language) {
       case 'java':
         return defaultJavaCode
@@ -173,7 +178,7 @@ export default function PracticePage() {
       default:
         return ''
     }
-  }
+  }, [language])
 
   const handleExecuteCode = useCallback(
     async (currentCode?: string) => {
@@ -250,15 +255,19 @@ export default function PracticePage() {
       if (problem) {
         setSelectedProblem(problem)
         setActiveTab('description')
+        // Set initial code based on the current language
+        setCode(problem.codeTemplates[language] || getDefaultCode)
       }
     } else if (problems.length > 0) {
       setSelectedProblem(problems[0])
+      setCode(problems[0].codeTemplates[language] || getDefaultCode)
     }
-  }, [problems, searchParams])
+  }, [problems, searchParams, language, getDefaultCode])
 
   const handleProblemChange = (problem: Problem) => {
     setSelectedProblem(problem)
     setActiveTab('description')
+    setCode(problem.codeTemplates[language] || getDefaultCode)
     router.push(`/practice?problemId=${problem.id}`, { scroll: false })
   }
 
@@ -358,9 +367,10 @@ export default function PracticePage() {
                 <TabsTrigger value="select">Select Problem</TabsTrigger>
               </TabsList>
               <TabsContent value="description">
+                <Separator className="bg-zinc-700" />
                 <ScrollArea className="h-[calc(100vh-40rem)] px-2 relative">
-                  <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4">
-                    {selectedProblem ? `\n${selectedProblem.description}` : 'No problem selected'}
+                  <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4 pt-1">
+                    {selectedProblem ? selectedProblem.description : 'No problem selected'}
                   </div>
                   <ScrollBar orientation="vertical" className="w-2" />
                 </ScrollArea>
@@ -372,23 +382,26 @@ export default function PracticePage() {
                       <LoadingDots />
                     </div>
                   ) : (
-                    <ul className="space-y-2 pr-4">
-                      {problems.map((problem: Problem, index: number) => (
-                        <li key={problem.id}>
-                          <Button
-                            variant="ghost"
-                            className={cn(
-                              'w-full justify-start text-left hover:bg-zinc-700',
-                              selectedProblem?.id === problem.id && 'bg-zinc-700',
-                            )}
-                            onClick={() => handleProblemChange(problem)}
-                          >
-                            {problem.title}
-                          </Button>
-                          {index < problems.length - 1 && <Separator className="mt-2 bg-zinc-700" />}
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      <Separator className="bg-zinc-700" />
+                      <ul className="space-y-2 pr-4 mt-2">
+                        {problems.map((problem: Problem, index: number) => (
+                          <li key={problem.id}>
+                            <Button
+                              variant="ghost"
+                              className={cn(
+                                'w-full justify-start text-left hover:bg-zinc-700',
+                                selectedProblem?.id === problem.id && 'bg-zinc-700',
+                              )}
+                              onClick={() => handleProblemChange(problem)}
+                            >
+                              {problem.title}
+                            </Button>
+                            {index < problems.length - 1 && <Separator className="mt-2 bg-zinc-700" />}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
                   )}
                   <ScrollBar orientation="vertical" className="w-2" />
                 </ScrollArea>

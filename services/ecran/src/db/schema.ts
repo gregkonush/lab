@@ -73,7 +73,7 @@ export const solutionsToProblems = relations(solutions, ({ one }) => ({
   }),
 }))
 
-export const languageEnum = pgEnum('language', ['python', 'java', 'javascript', 'typescript'])
+export const languageEnum = pgEnum('language', ['python', 'java', 'javascript', 'typescript', 'go', 'rust'])
 
 export const executions = pgTable('executions', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -161,3 +161,22 @@ export const authenticators = pgTable(
     }),
   }),
 )
+
+export const codeTemplates = pgTable('code_templates', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  problemId: uuid('problem_id').references(() => problems.id),
+  language: languageEnum('language').notNull(),
+  starterCode: text('starter_code').notNull(),
+})
+
+export const codeTemplatesToProblems = relations(codeTemplates, ({ one }) => ({
+  problem: one(problems, {
+    fields: [codeTemplates.problemId],
+    references: [problems.id],
+  }),
+}))
+
+export const problemsRelations = relations(problems, ({ many }) => ({
+  solutions: many(solutions),
+  codeTemplates: many(codeTemplates),
+}))
