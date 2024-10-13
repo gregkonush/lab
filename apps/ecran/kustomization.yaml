@@ -22,7 +22,7 @@ images:
 - name: kalmyk.duckdns.org/lab/ecran
   newTag: 0.100.0
 - name: kalmyk.duckdns.org/lab/ecran-worker
-  newTag: 0.100.0
+  newTag: 0.101.0
 - name: kalmyk.duckdns.org/lab/java-executor
   newTag: sha-dcc3bc5
 - name: kalmyk.duckdns.org/lab/juge
