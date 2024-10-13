@@ -6,7 +6,7 @@ const CODE_DELIMITER = '\n<<END_OF_CODE>>\n'
 
 export async function executeJavaCode(code: string): Promise<NodeJS.ReadableStream> {
   const namespace = 'ecran'
-  const serviceName = 'java-standby-service'
+  const serviceName = 'juge-service'
   const port = 9090
   let host = '127.0.0.1'
 
