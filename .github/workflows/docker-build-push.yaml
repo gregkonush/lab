@@ -6,7 +6,6 @@ on:
       - "main"
     paths:
       - "services/ecran/**"
-      - "services/java-executor/**"
       - "services/juge/**"
 
 jobs:
@@ -63,18 +62,6 @@ jobs:
       image_name: ecran-worker
       dockerfile: ./services/ecran/Dockerfile.worker
       context: ./services/ecran
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-
-  build-java-executor:
-    needs: [version, build-ecran-migrator]
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: java-executor
-      dockerfile: ./services/java-executor/Dockerfile
-      context: ./services/java-executor
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
