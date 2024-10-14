@@ -3,10 +3,8 @@
 import { useForm, Controller } from 'react-hook-form'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
-import { ComboSelect } from '@/components/combo-select'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
@@ -14,10 +12,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 
 const schema = z.object({
   title: z.string().min(1, 'Title is required'),
-  difficulty: z.enum(['easy', 'medium', 'hard'], {
-    required_error: 'Difficulty is required',
-  }),
-  tags: z.array(z.string()).min(1, 'At least one tag is required'),
   description: z.string().min(1, 'Description is required'),
 })
 
@@ -32,8 +26,6 @@ export function CreateProblemForm() {
   } = useForm<FormData>({
     defaultValues: {
       title: '',
-      difficulty: 'easy',
-      tags: [],
       description: '',
     },
     mode: 'onChange',
@@ -82,42 +74,6 @@ export function CreateProblemForm() {
           render={({ field }) => <Input {...field} id="title" placeholder="Problem Name..." className="bg-zinc-800" />}
         />
         {errors.title && <p className="text-destructive text-sm">{errors.title.message}</p>}
-      </div>
-
-      <div className="flex flex-row space-x-4">
-        <div className="w-36 space-y-2">
-          <Label htmlFor="difficulty">Difficulty</Label>
-          <Controller
-            name="difficulty"
-            control={control}
-            render={({ field }) => (
-              <Select onValueChange={field.onChange} defaultValue={field.value}>
-                <SelectTrigger id="difficulty" className="bg-zinc-800">
-                  <SelectValue placeholder="Select..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="easy">Easy</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="hard">Hard</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-          />
-          {errors.difficulty && <p className="text-destructive text-sm">{errors.difficulty.message}</p>}
-        </div>
-        <div className="space-y-2 flex-grow">
-          <div className="space-y-2 w-[30rem]">
-            <Label htmlFor="tags">Tags</Label>
-            <Controller
-              name="tags"
-              control={control}
-              render={({ field }) => (
-                <ComboSelect value={field.value} onChange={field.onChange} onBlur={field.onBlur} name={field.name} />
-              )}
-            />
-            {errors.tags && <p className="text-destructive text-sm">{errors.tags.message}</p>}
-          </div>
-        </div>
       </div>
 
       <div className="space-y-2">

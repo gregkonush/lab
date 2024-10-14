@@ -1,2 +1,15 @@
-use kebab case for file names
-optimize react component rendering by using memo and useMemo and useCallback
+use kebab case for file names.
+optimize react component rendering by using memo and useMemo and useCallback.
+zod for form, api, ai generation validation.
+tailwindcss for styling, use module css with variables only for complex animation.
+use frame motion for animation.
+make sure to separate view and business logic components.
+in workflow files though use log utility from temporal.
+if view components gets too complex, use useImmerReducer for state management.
+use cn utility function for conditional class names.
+break apart long list of class names into multiple lines if it longer than 100 characters.
+use shadcn/ui for components, make sure to use zinc color palette for backgrounds and text.
+for primary actions and buttons use indigo color palette.
+make sure components are accessible, add aria labels where necessary.
+component export should be `export default function ComponentName() {}`.
+do not comment code when suggesting edits, just make the changes.

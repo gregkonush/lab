@@ -2,32 +2,36 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { saltAndHashPassword } from '@/utils/password'
 import { db } from '@/db'
 import { users } from '@/db/schema'
-import { eq } from 'drizzle-orm'
+import { z } from 'zod'
+import { logger } from '@/utils/logger'
+
+const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  name: z.string().min(2),
+})
 
 export async function POST(req: NextRequest) {
-  const { email, password, name } = await req.json()
+  try {
+    const body = await req.json()
+    const { email, password, name } = registerSchema.parse(body)
 
-  // Validate input (add proper validation as needed)
-  if (!email || !password || !name) {
-    return NextResponse.json({ message: 'Missing fields' }, { status: 400 })
+    const passwordHash = await saltAndHashPassword(password)
+
+    await db.insert(users).values({
+      email,
+      name,
+      passwordHash,
+    })
+
+    return NextResponse.json({ message: 'Registration successful' }, { status: 201 })
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ message: 'Invalid input' }, { status: 400 })
+    }
+
+    logger.error('Registration error:', error)
+
+    return NextResponse.json({ message: 'Registration failed' }, { status: 500 })
   }
-
-  // Check if user already exists
-  const [existingUser] = await db.select().from(users).where(eq(users.email, email))
-
-  if (existingUser) {
-    return NextResponse.json({ message: 'User already exists' }, { status: 400 })
-  }
-
-  // Hash the password
-  const passwordHash = await saltAndHashPassword(password)
-
-  // Create the user
-  await db.insert(users).values({
-    email,
-    name,
-    passwordHash,
-  })
-
-  return NextResponse.json({ message: 'User created successfully' }, { status: 201 })
 }

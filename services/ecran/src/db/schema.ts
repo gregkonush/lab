@@ -4,7 +4,7 @@ import type { AdapterAccountType } from 'next-auth/adapters'
 
 export const difficultyEnum = pgEnum('difficulty', ['easy', 'medium', 'hard'])
 
-export const tags = pgEnum('tags', [
+export const tagsEnum = pgEnum('tags', [
   'array',
   'dynamic-programming',
   'graph',
@@ -49,8 +49,8 @@ export const problems = pgTable('problems', {
   id: uuid('id').primaryKey().defaultRandom(),
   title: varchar('title', { length: 256 }).notNull(),
   description: text('description').notNull(),
-  difficulty: difficultyEnum('difficulty').notNull(),
-  tags: tags('tags').array().default([]),
+  difficulty: difficultyEnum('difficulty').notNull().default('easy'),
+  tags: tagsEnum('tags').array().default([]),
 })
 
 export const problemsToSolutions = relations(problems, ({ many }) => ({
@@ -179,4 +179,23 @@ export const codeTemplatesToProblems = relations(codeTemplates, ({ one }) => ({
 export const problemsRelations = relations(problems, ({ many }) => ({
   solutions: many(solutions),
   codeTemplates: many(codeTemplates),
+}))
+
+export const feedback = pgTable('feedback', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  content: text('content').notNull(),
+  url: text('url'),
+  userId: text('user_id').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const feedbackToUsers = relations(feedback, ({ one }) => ({
+  user: one(users, {
+    fields: [feedback.userId],
+    references: [users.id],
+  }),
+}))
+
+export const usersRelations = relations(users, ({ many }) => ({
+  feedback: many(feedback),
 }))

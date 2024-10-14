@@ -17,6 +17,7 @@ import { notFound } from 'next/navigation'
 import { RefreshCache } from '@/components/refresh-cache'
 import { CreateProblemForm } from '@/components/problem-form'
 import { MarkdownContent } from '@/components/markdown-content'
+import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,8 +79,11 @@ export default async function Problem({ params: { id } }: { params: { id: string
             </div>
             <div>
               <span>Topics: </span>
-              {problem?.tags?.map((tag) => (
-                <span key={tag} className="bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs">
+              {problem?.tags?.map((tag, index) => (
+                <span
+                  key={tag}
+                  className={cn('bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs', index > 0 && 'ml-1')}
+                >
                   {tag}
                 </span>
               ))}

@@ -5,13 +5,9 @@ import { temporalClient } from '@/temporal/client'
 import { PROBLEMS_QUEUE_NAME } from '@/temporal/shared'
 import type { solveProblem } from '@/temporal/workflows'
 
-type Problem = typeof problems.$inferInsert
-
 interface RequestBody {
   title: string
   description: string
-  difficulty: Problem['difficulty']
-  tags: Problem['tags']
 }
 
 export async function GET() {
@@ -20,8 +16,6 @@ export async function GET() {
       id: problems.id,
       title: problems.title,
       description: problems.description,
-      difficulty: problems.difficulty,
-      tags: problems.tags,
       codeTemplates: sql<{ language: string; starter_code: string }[]>`jsonb_agg(code_templates)`,
     })
     .from(problems)
@@ -53,7 +47,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  if (!body.title || !body.description || !body.difficulty || !body.tags) {
+  if (!body.title || !body.description) {
     return Response.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
@@ -62,8 +56,6 @@ export async function POST(request: Request) {
     .values({
       title: body.title,
       description: body.description,
-      difficulty: body.difficulty,
-      tags: body.tags,
     })
     .returning({ id: problems.id })
   const problemId = problem.at(0)?.id

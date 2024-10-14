@@ -1,7 +1,6 @@
 import '@anthropic-ai/sdk/shims/node'
-import anthropicClient from './anthropic'
 import { db } from '@/db'
-import { codeTemplates, languageEnum, problems, solutions } from '@/db/schema'
+import { codeTemplates, difficultyEnum, languageEnum, problems, solutions, tagsEnum } from '@/db/schema'
 import { SYSTEM_SOLVER_PROMPT } from '@/temporal/prompts/solver'
 import { logger } from '@/utils/logger'
 import { eq } from 'drizzle-orm'
@@ -9,22 +8,40 @@ import { generateObject, generateText } from 'ai'
 import { anthropic } from '@ai-sdk/anthropic'
 import { z } from 'zod'
 
-export async function askClaude(problemStatement: string): Promise<string> {
+export async function askClaude(problemStatement: string): Promise<{
+  solution: string
+  tags: (typeof tagsEnum.enumValues)[number][]
+  difficulty: (typeof difficultyEnum.enumValues)[number]
+}> {
   logger.info(`Solving problem: ${problemStatement}`)
-  const message = await anthropicClient.messages.create({
-    max_tokens: 1024,
-    temperature: 0.1,
+
+  const {
+    object: { solution, tags, difficulty },
+  } = await generateObject({
+    model: anthropic('claude-3-5-sonnet-20240620'),
     system: SYSTEM_SOLVER_PROMPT,
-    messages: [{ role: 'user', content: problemStatement }],
-    model: 'claude-3-5-sonnet-20240620',
+    temperature: 0.1,
+    schema: z.object({
+      solution: z.string(),
+      tags: z.array(z.enum(tagsEnum.enumValues)),
+      difficulty: z.enum(difficultyEnum.enumValues),
+    }),
+    prompt: problemStatement,
+    maxTokens: 1024,
   })
 
-  const result = message.content.map((c) => {
-    if (c.type === 'text') {
-      return c.text
-    }
-  })
-  return result.join('\n')
+  return { solution, tags, difficulty }
+}
+
+export async function updateProblem(
+  problemId: string,
+  {
+    tags,
+    difficulty,
+  }: { tags: (typeof tagsEnum.enumValues)[number][]; difficulty: (typeof difficultyEnum.enumValues)[number] },
+): Promise<void> {
+  logger.info(`Updating problem with id: ${problemId} and tags: ${tags} and difficulty: ${difficulty}`)
+  await db.update(problems).set({ tags, difficulty }).where(eq(problems.id, problemId))
 }
 
 export async function persistSolution(problemId: string, solution: string): Promise<string> {

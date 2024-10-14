@@ -7,6 +7,8 @@ import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 import { UserMenu } from '@/components/user-menu'
 import Providers from './providers'
+import FeedbackButton from '@/components/feedback-button'
+import { Toaster } from '@/components/ui/toaster'
 
 const jetbrains = JetBrains_Mono({
   subsets: ['latin'],
@@ -56,6 +58,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="text-zinc-400 absolute right-5 text-sm">Version: {version}</div>
             </header>
             <main className="container mx-auto p-5">{children}</main>
+            <FeedbackButton />
+            <Toaster />
           </ThemeProvider>
         </Providers>
       </body>
