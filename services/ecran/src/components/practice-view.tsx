@@ -11,7 +11,6 @@ import { Separator } from '@/components/ui/separator'
 import { LoadingDots } from '@/components/loading-dots'
 import { HintSkeleton } from '@/components/hint-skeleton'
 
-// Define the Problem type
 type Problem = {
   id: string
   title: string
