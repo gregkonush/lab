@@ -1,0 +1,43 @@
+.typedText {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  animation: typing var(--total-duration) steps(var(--text-length), end) forwards;
+  width: 0;
+  position: relative;
+}
+
+.typedText::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: -10%;
+  height: 100%;
+  width: 0.9em;
+  background-color: black;
+  animation: blink 1s ease-in-out infinite;
+}
+
+@keyframes typing {
+  0% {
+    width: 0;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+@keyframes blink {
+  0%, 100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .typedText::after {
+    background-color: white;
+  }
+}

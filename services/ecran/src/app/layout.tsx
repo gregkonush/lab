@@ -37,7 +37,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <header className="flex items-center space-x-10 px-10 py-6 border-b border-zinc-800 justify-center">
               <div className="text-2xl uppercase font-bold">
                 <Link href="/" className="hover:text-indigo-400 transition-colors duration-200">
-                  proompteng<span className="text-indigo-400">▪</span>ai
+                  proompteng<span className="text-indigo-400 hover:text-rose-400">▪</span>ai
                 </Link>
               </div>
               <Link href="/problems" className="hover:text-indigo-400 transition-colors duration-200">

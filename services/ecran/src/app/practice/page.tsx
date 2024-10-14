@@ -1,18 +1,9 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useReducer, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import Editor from '@/components/editor'
-import { motion } from 'framer-motion'
-import { cn } from '@/lib/utils'
-import { Skeleton } from '@/components/ui/skeleton'
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
+import PracticeView from '@/components/practice-view'
 
 type Problem = {
   id: string
@@ -85,54 +76,69 @@ Constraints:
 Only one valid answer exists.
 `.trim()
 
-function LoadingDots() {
-  return (
-    <div className="flex items-center justify-center space-x-1 min-h-6">
-      <motion.span
-        className="w-2 h-2 bg-current rounded-full"
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 0.5, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut' }}
-      />
-      <motion.span
-        className="w-2 h-2 bg-current rounded-full"
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 0.5, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut', delay: 0.2 }}
-      />
-      <motion.span
-        className="w-2 h-2 bg-current rounded-full"
-        animate={{ y: [0, -6, 0] }}
-        transition={{ duration: 0.5, repeat: Number.POSITIVE_INFINITY, ease: 'easeInOut', delay: 0.4 }}
-      />
-    </div>
-  )
+type State = {
+  code: string
+  language: string
+  output: string
+  isLoading: boolean
+  isHovered: boolean
+  hint: string
+  isLoadingHint: boolean
+  activeTab: string
+  selectedProblem: Problem | null
+  error: string | null
 }
 
-function HintSkeleton() {
-  return (
-    <div className="space-y-2">
-      <Skeleton className="h-4 w-3/4" />
-      <Skeleton className="h-4 w-1/2" />
-      <Skeleton className="h-4 w-2/3" />
-    </div>
-  )
+type Action =
+  | { type: 'SET_CODE'; payload: string }
+  | { type: 'SET_LANGUAGE'; payload: string }
+  | { type: 'SET_OUTPUT'; payload: string }
+  | { type: 'SET_IS_LOADING'; payload: boolean }
+  | { type: 'SET_IS_HOVERED'; payload: boolean }
+  | { type: 'SET_HINT'; payload: string }
+  | { type: 'SET_IS_LOADING_HINT'; payload: boolean }
+  | { type: 'SET_ACTIVE_TAB'; payload: string }
+  | { type: 'SET_SELECTED_PROBLEM'; payload: Problem | null }
+  | { type: 'SET_ERROR'; payload: string | null }
+
+const initialState: State = {
+  code: defaultJavaCode,
+  language: 'java',
+  output: '',
+  isLoading: false,
+  isHovered: false,
+  hint: '',
+  isLoadingHint: false,
+  activeTab: 'description',
+  selectedProblem: null,
+  error: null,
 }
 
-const sparkleVariants = {
-  initial: { borderColor: 'rgba(99, 102, 241, 0.2)' },
-  animate: {
-    borderColor: [
-      'rgba(99, 102, 241, 0.2)',
-      'rgba(99, 102, 241, 0.8)',
-      'rgba(99, 102, 241, 0.2)',
-      'rgba(99, 102, 241, 0.8)',
-      'rgba(99, 102, 241, 0.2)',
-    ],
-    transition: {
-      duration: 7,
-      repeat: Number.POSITIVE_INFINITY,
-      ease: 'easeInOut',
-    },
-  },
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'SET_CODE':
+      return { ...state, code: action.payload }
+    case 'SET_LANGUAGE':
+      return { ...state, language: action.payload }
+    case 'SET_OUTPUT':
+      return { ...state, output: action.payload }
+    case 'SET_IS_LOADING':
+      return { ...state, isLoading: action.payload }
+    case 'SET_IS_HOVERED':
+      return { ...state, isHovered: action.payload }
+    case 'SET_HINT':
+      return { ...state, hint: action.payload }
+    case 'SET_IS_LOADING_HINT':
+      return { ...state, isLoadingHint: action.payload }
+    case 'SET_ACTIVE_TAB':
+      return { ...state, activeTab: action.payload }
+    case 'SET_SELECTED_PROBLEM':
+      return { ...state, selectedProblem: action.payload }
+    case 'SET_ERROR':
+      return { ...state, error: action.payload }
+    default:
+      return state
+  }
 }
 
 async function fetchProblems() {
@@ -143,290 +149,152 @@ async function fetchProblems() {
   return response.json()
 }
 
-export default function PracticePage() {
+export default function PracticeContainer() {
   const router = useRouter()
   const searchParams = useSearchParams()
-
-  const [code, setCode] = useState(defaultJavaCode)
-  const [language, setLanguage] = useState('java')
-  const [output, setOutput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [isHovered, setIsHovered] = useState(false)
-  const [hint, setHint] = useState('')
-  const [isLoadingHint, setIsLoadingHint] = useState(false)
-  const [activeTab, setActiveTab] = useState('description')
-
-  const handleCodeChange = (value: string) => {
-    setCode(value)
-  }
-
-  const handleLanguageChange = (value: string) => {
-    setLanguage(value)
-    setCode(selectedProblem?.codeTemplates[value] || getDefaultCode)
-  }
-
-  const getDefaultCode = useMemo(() => {
-    switch (language) {
-      case 'java':
-        return defaultJavaCode
-      case 'typescript':
-        return defaultTypeScriptCode
-      case 'javascript':
-        return defaultJavaScriptCode
-      case 'python':
-        return defaultPythonCode
-      default:
-        return ''
-    }
-  }, [language])
-
-  const handleExecuteCode = useCallback(
-    async (currentCode?: string) => {
-      setIsLoading(true)
-      setOutput('')
-      try {
-        const codeToExecute = currentCode ?? code
-        const response = await fetch('/api/executions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ code: codeToExecute, language }),
-        })
-        if (!response.body) {
-          throw new Error('ReadableStream not supported.')
-        }
-
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let done = false
-
-        while (!done) {
-          const { value, done: doneReading } = await reader.read()
-          done = doneReading
-          if (value) {
-            const chunk = decoder.decode(value)
-            setOutput((prevOutput) => prevOutput + chunk)
-          }
-        }
-      } catch (error) {
-        console.error('Execution error:', error)
-        setOutput('An error occurred while executing the code.')
-      } finally {
-        setIsLoading(false)
-      }
-    },
-    [code, language],
-  )
-
-  const handleHint = useCallback(async () => {
-    if (isLoadingHint) return
-    setIsLoadingHint(true)
-    setHint('')
-    try {
-      const response = await fetch('/api/hints', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ code, problem: defaultProblem, language }),
-      })
-      const data = await response.json()
-      setHint(data.hint)
-    } catch (error) {
-      console.error('Error fetching hint:', error)
-      setHint('Failed to fetch hint. Please try again.')
-    } finally {
-      setIsLoadingHint(false)
-    }
-  }, [code, isLoadingHint, language])
+  const [state, dispatch] = useReducer(reducer, initialState)
 
   const { data: problems = [], isLoading: isLoadingProblems } = useQuery({
     queryKey: ['problems'],
     queryFn: fetchProblems,
   })
 
-  const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null)
+  const handleCodeChange = (value: string) => {
+    dispatch({ type: 'SET_CODE', payload: value })
+  }
+
+  const handleLanguageChange = (value: string) => {
+    dispatch({ type: 'SET_LANGUAGE', payload: value })
+    dispatch({
+      type: 'SET_CODE',
+      payload: state.selectedProblem?.codeTemplates[value] || getDefaultCode(value),
+    })
+  }
+
+  const handleExecuteCode = useCallback(
+    async (currentCode?: string) => {
+      dispatch({ type: 'SET_IS_LOADING', payload: true })
+      dispatch({ type: 'SET_OUTPUT', payload: '' })
+      dispatch({ type: 'SET_ERROR', payload: null })
+      try {
+        const codeToExecute = currentCode ?? state.code
+        const response = await fetch('/api/executions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: codeToExecute, language: state.language }),
+        })
+        if (!response.ok) {
+          throw new Error('Execution failed')
+        }
+        if (!response.body) {
+          throw new Error('ReadableStream not supported.')
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let result = ''
+
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          result += chunk
+          dispatch({ type: 'SET_OUTPUT', payload: result })
+        }
+      } catch (error) {
+        console.error('Execution error:', error)
+        dispatch({ type: 'SET_ERROR', payload: 'An error occurred while executing the code.' })
+        dispatch({ type: 'SET_OUTPUT', payload: '' })
+      } finally {
+        dispatch({ type: 'SET_IS_LOADING', payload: false })
+      }
+    },
+    [state.code, state.language],
+  )
+
+  const handleHint = useCallback(async () => {
+    if (state.isLoadingHint) return
+    dispatch({ type: 'SET_IS_LOADING_HINT', payload: true })
+    dispatch({ type: 'SET_HINT', payload: '' })
+    try {
+      const response = await fetch('/api/hints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: state.code,
+          problem: state.selectedProblem?.description,
+          language: state.language,
+        }),
+      })
+      const data = await response.json()
+      dispatch({ type: 'SET_HINT', payload: data.hint })
+    } catch (error) {
+      console.error('Error fetching hint:', error)
+      dispatch({ type: 'SET_HINT', payload: 'Failed to fetch hint. Please try again.' })
+    } finally {
+      dispatch({ type: 'SET_IS_LOADING_HINT', payload: false })
+    }
+  }, [state.code, state.isLoadingHint, state.language, state.selectedProblem?.description])
 
   useEffect(() => {
     const problemId = searchParams.get('problemId')
     if (problemId && problems.length > 0) {
       const problem = problems.find((p: Problem) => p.id === problemId)
       if (problem) {
-        setSelectedProblem(problem)
-        setActiveTab('description')
-        // Set initial code based on the current language
-        setCode(problem.codeTemplates[language] || getDefaultCode)
+        dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problem })
+        dispatch({ type: 'SET_ACTIVE_TAB', payload: 'description' })
+        dispatch({
+          type: 'SET_CODE',
+          payload: problem.codeTemplates[state.language] || getDefaultCode(state.language),
+        })
       }
     } else if (problems.length > 0) {
-      setSelectedProblem(problems[0])
-      setCode(problems[0].codeTemplates[language] || getDefaultCode)
+      dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problems[0] })
+      dispatch({
+        type: 'SET_CODE',
+        payload: problems[0].codeTemplates[state.language] || getDefaultCode(state.language),
+      })
     }
-  }, [problems, searchParams, language, getDefaultCode])
+  }, [problems, searchParams, state.language])
 
   const handleProblemChange = (problem: Problem) => {
-    setSelectedProblem(problem)
-    setActiveTab('description')
-    setCode(problem.codeTemplates[language] || getDefaultCode)
+    dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problem })
+    dispatch({ type: 'SET_ACTIVE_TAB', payload: 'description' })
+    dispatch({
+      type: 'SET_CODE',
+      payload: problem.codeTemplates[state.language] || getDefaultCode(state.language),
+    })
     router.push(`/practice?problemId=${problem.id}`, { scroll: false })
   }
 
   return (
-    <div className="container mx-auto px-2">
-      <div className="max-w-screen-xl mx-auto space-y-3">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold -mt-2">Practice</h1>
-        </div>
-        <div className="flex items-end justify-between">
-          <div className="flex flex-row space-x-3 items-center">
-            <motion.div
-              whileTap={{ scale: isLoading ? 1 : 0.975 }}
-              onHoverStart={() => setIsHovered(true)}
-              onHoverEnd={() => setIsHovered(false)}
-              tabIndex={-1}
-              className={cn(isLoading && 'opacity-50 cursor-not-allowed')}
-            >
-              <Button
-                onClick={() => handleExecuteCode()}
-                disabled={isLoading}
-                className={cn(
-                  'disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-400',
-                  'rounded py-1 px-4 bg-indigo-600 text-zinc-200',
-                  'hover:bg-zinc-200 hover:text-indigo-600 ',
-                  'transition-all duration-300 flex items-center justify-center',
-                  'text-center min-w-20 ring-zinc-900',
-                  'shadow-dark-sm ring-1 ring-indigo-400',
-                )}
-              >
-                {isLoading ? <LoadingDots /> : isHovered ? '|>' : 'Run'}
-              </Button>
-            </motion.div>
-            <HoverCard openDelay={200} closeDelay={100}>
-              <HoverCardTrigger asChild>
-                <Button
-                  variant="outline"
-                  className={cn(
-                    'py-1 px-4 rounded min-w-20 bg-inherit',
-                    'ring-2 ring-indigo-500/50 shadow-dark-sm',
-                    'disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-400',
-                    isLoadingHint && 'opacity-50 cursor-not-allowed',
-                  )}
-                  onClick={handleHint}
-                >
-                  {isLoadingHint ? <LoadingDots /> : 'Hint'}
-                </Button>
-              </HoverCardTrigger>
-              <HoverCardContent className="p-0 bg-transparent border-none">
-                <motion.div
-                  className={cn(
-                    'w-80 p-4 bg-stone-900 border-2 border-indigo-500/50',
-                    'relative overflow-hidden rounded-md',
-                  )}
-                  variants={sparkleVariants}
-                  initial="initial"
-                  animate="animate"
-                >
-                  <div className="relative z-10">
-                    {isLoadingHint ? (
-                      <HintSkeleton />
-                    ) : hint ? (
-                      <p className="text-sm text-zinc-200">{hint}</p>
-                    ) : (
-                      <p className="text-sm text-zinc-400">Click to load a hint</p>
-                    )}
-                  </div>
-                </motion.div>
-              </HoverCardContent>
-            </HoverCard>
-          </div>
-          <div className="space-y-2 flex flex-row items-center">
-            <label className="mr-4 font-semibold text-sm pt-1.5" htmlFor="language-select">
-              Language
-            </label>
-            <Select value={language} onValueChange={handleLanguageChange} name="language-select">
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Select a language" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="java">Java</SelectItem>
-                <SelectItem value="typescript">TypeScript</SelectItem>
-                <SelectItem value="javascript">JavaScript</SelectItem>
-                <SelectItem value="python">Python</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div className="flex flex-row space-x-3 min-h-[calc(100vh-30rem)]">
-          <div className="basis-1/2 h-auto shrink-0">
-            <Editor code={code} onCodeChange={handleCodeChange} language={language} onExecute={handleExecuteCode} />
-          </div>
-          <div className="basis-1/2 border border-zinc-900 rounded-md p-2 bg-zinc-800 text-sm">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="bg-zinc-700">
-                <TabsTrigger value="description">Problem Description</TabsTrigger>
-                <TabsTrigger value="select">Select Problem</TabsTrigger>
-              </TabsList>
-              <TabsContent value="description">
-                <Separator className="bg-zinc-700" />
-                <ScrollArea className="h-[calc(100vh-40rem)] px-2 relative">
-                  <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4 pt-1">
-                    {selectedProblem ? selectedProblem.description : 'No problem selected'}
-                  </div>
-                  <ScrollBar orientation="vertical" className="w-2" />
-                </ScrollArea>
-              </TabsContent>
-              <TabsContent value="select">
-                <ScrollArea className="pr-4 relative">
-                  {isLoadingProblems ? (
-                    <div className="flex justify-center items-center h-[calc(100vh-40rem)]">
-                      <LoadingDots />
-                    </div>
-                  ) : (
-                    <>
-                      <Separator className="bg-zinc-700" />
-                      <ul className="space-y-2 pr-4 mt-2">
-                        {problems.map((problem: Problem, index: number) => (
-                          <li key={problem.id}>
-                            <Button
-                              variant="ghost"
-                              className={cn(
-                                'w-full justify-start text-left hover:bg-zinc-700',
-                                selectedProblem?.id === problem.id && 'bg-zinc-700',
-                              )}
-                              onClick={() => handleProblemChange(problem)}
-                            >
-                              {problem.title}
-                            </Button>
-                            {index < problems.length - 1 && <Separator className="mt-2 bg-zinc-700" />}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                  <ScrollBar orientation="vertical" className="w-2" />
-                </ScrollArea>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </div>
-
-        <div
-          className={cn([
-            'border border-zinc-900 rounded-md p-4 space-y-2 min-h-40',
-            output.toLowerCase().includes('error') || output.toLowerCase().includes('exception')
-              ? 'bg-red-800 text-red-100'
-              : 'bg-zinc-800 text-zinc-100',
-          ])}
-        >
-          {isLoading ? (
-            <p className="text-muted-foreground">Executing code...</p>
-          ) : output ? (
-            <pre className={cn(['rounded-md w-full overflow-x-auto text-sm'])}>{output}</pre>
-          ) : (
-            <p className="text-muted-foreground">Click execute to see the output.</p>
-          )}
-        </div>
-      </div>
-    </div>
+    <PracticeView
+      {...state}
+      problems={problems}
+      isLoadingProblems={isLoadingProblems}
+      onCodeChange={handleCodeChange}
+      onLanguageChange={handleLanguageChange}
+      onExecuteCode={handleExecuteCode}
+      onHint={handleHint}
+      onProblemChange={handleProblemChange}
+      onHoverStart={() => dispatch({ type: 'SET_IS_HOVERED', payload: true })}
+      onHoverEnd={() => dispatch({ type: 'SET_IS_HOVERED', payload: false })}
+      onActiveTabChange={(tab) => dispatch({ type: 'SET_ACTIVE_TAB', payload: tab })}
+    />
   )
+}
+
+function getDefaultCode(language: string): string {
+  switch (language) {
+    case 'java':
+      return defaultJavaCode
+    case 'typescript':
+      return defaultTypeScriptCode
+    case 'javascript':
+      return defaultJavaScriptCode
+    case 'python':
+      return defaultPythonCode
+    default:
+      return ''
+  }
 }
