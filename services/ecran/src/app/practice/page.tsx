@@ -154,12 +154,10 @@ export default function PracticeContainer() {
   const searchParams = useSearchParams()
   const [state, dispatch] = useReducer(reducer, initialState)
 
-  const { data: problemsData = [], isLoading: isLoadingProblems } = useQuery({
+  const { data: problems = [], isLoading: isLoadingProblems } = useQuery({
     queryKey: ['problems'],
     queryFn: fetchProblems,
   })
-
-  const problems = useMemo(() => problemsData, [problemsData])
 
   const handleCodeChange = useCallback((value: string) => {
     dispatch({ type: 'SET_CODE', payload: value })

@@ -1,4 +1,3 @@
-import MillionLint from '@million/lint'
 import createMDX from '@next/mdx'
 
 /** @type {import('next').NextConfig} */
@@ -12,10 +11,4 @@ const nextConfig = {
 
 const withMDX = createMDX({})
 
-export default MillionLint.next({
-  enabled: false,
-  rsc: true,
-  server: true,
-  telemetry: false,
-  framework: 'next',
-})(withMDX(nextConfig))
+export default withMDX(nextConfig)
