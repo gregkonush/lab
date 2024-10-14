@@ -3,11 +3,14 @@
 import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import type * as React from 'react'
+import { useState, memo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useState } from 'react'
 import { invalidateRootLayout } from './actions'
+
+const MemoizedButton = memo(Button)
 
 export default function SignIn() {
   const router = useRouter()
@@ -35,6 +38,14 @@ export default function SignIn() {
     }
   }
 
+  const handleEmailChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setEmail(e.target.value)
+  }, [])
+
+  const handlePasswordChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value)
+  }, [])
+
   return (
     <div className="flex flex-col items-center space-y-4 min-w-[20rem]">
       <div className="text-2xl font-thin">Welcome Back</div>
@@ -43,7 +54,7 @@ export default function SignIn() {
         <Label htmlFor="email" className="">
           Email
         </Label>
-        <Input id="email" name="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <Input id="email" name="email" type="email" value={email} onChange={handleEmailChange} required />
 
         <Label htmlFor="password">Password</Label>
         <Input
@@ -52,12 +63,12 @@ export default function SignIn() {
           type="password"
           required
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={handlePasswordChange}
         />
 
-        <Button type="submit" className="w-full">
+        <MemoizedButton type="submit" className="w-full">
           Sign In
-        </Button>
+        </MemoizedButton>
       </form>
       <p className="text-sm">
         Don&apos;t have an account?{' '}

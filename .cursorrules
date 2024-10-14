@@ -1,0 +1,2 @@
+use kebab case for file names
+optimize react component rendering by using memo and useMemo and useCallback

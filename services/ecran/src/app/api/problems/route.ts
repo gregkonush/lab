@@ -30,13 +30,17 @@ export async function GET() {
 
   const problemsWithCodeTemplates = dbProblems.map((problem) => ({
     ...problem,
-    codeTemplates: problem.codeTemplates?.reduce?.((acc, template) => {
-      if (template?.language && template?.starter_code) {
-        acc[template.language] = template.starter_code;
-      }
-      return acc;
-    }, {} as Record<string, string>) ?? {},
-  }));
+    codeTemplates:
+      problem.codeTemplates?.reduce?.(
+        (acc, template) => {
+          if (template?.language && template?.starter_code) {
+            acc[template.language] = template.starter_code
+          }
+          return acc
+        },
+        {} as Record<string, string>,
+      ) ?? {},
+  }))
 
   return Response.json(problemsWithCodeTemplates, { status: 200 })
 }
@@ -46,7 +50,7 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as RequestBody
   } catch (error) {
-    return new Response('Invalid JSON body', { status: 400 })
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
   if (!body.title || !body.description || !body.difficulty || !body.tags) {

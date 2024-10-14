@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState, memo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -15,6 +15,8 @@ const signUpSchema = z.object({
   email: z.string().email({ message: 'Invalid email address' }),
   password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
 })
+
+const MemoizedFormControl = memo(FormControl)
 
 export default function SignUp() {
   const router = useRouter()
@@ -66,9 +68,9 @@ export default function SignUp() {
           render={({ field }) => (
             <FormItem>
               <FormLabel>Name</FormLabel>
-              <FormControl>
+              <MemoizedFormControl>
                 <Input placeholder="Your Name" {...field} className="w-full" />
-              </FormControl>
+              </MemoizedFormControl>
               <FormMessage />
             </FormItem>
           )}
@@ -80,9 +82,9 @@ export default function SignUp() {
           render={({ field }) => (
             <FormItem>
               <FormLabel>Email</FormLabel>
-              <FormControl>
+              <MemoizedFormControl>
                 <Input type="email" placeholder="you@example.com" {...field} className="w-full" />
-              </FormControl>
+              </MemoizedFormControl>
               <FormMessage />
             </FormItem>
           )}
@@ -94,9 +96,9 @@ export default function SignUp() {
           render={({ field }) => (
             <FormItem>
               <FormLabel>Password</FormLabel>
-              <FormControl>
+              <MemoizedFormControl>
                 <Input type="password" placeholder="Your Password" {...field} className="w-full" />
-              </FormControl>
+              </MemoizedFormControl>
               <FormMessage />
             </FormItem>
           )}
