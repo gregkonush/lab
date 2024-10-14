@@ -1,6 +1,6 @@
 'use client'
 
-import { useReducer, useCallback, useEffect } from 'react'
+import { useReducer, useCallback, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
 import PracticeView from '@/components/practice-view'
@@ -154,22 +154,27 @@ export default function PracticeContainer() {
   const searchParams = useSearchParams()
   const [state, dispatch] = useReducer(reducer, initialState)
 
-  const { data: problems = [], isLoading: isLoadingProblems } = useQuery({
+  const { data: problemsData = [], isLoading: isLoadingProblems } = useQuery({
     queryKey: ['problems'],
     queryFn: fetchProblems,
   })
 
-  const handleCodeChange = (value: string) => {
-    dispatch({ type: 'SET_CODE', payload: value })
-  }
+  const problems = useMemo(() => problemsData, [problemsData])
 
-  const handleLanguageChange = (value: string) => {
-    dispatch({ type: 'SET_LANGUAGE', payload: value })
-    dispatch({
-      type: 'SET_CODE',
-      payload: state.selectedProblem?.codeTemplates[value] || getDefaultCode(value),
-    })
-  }
+  const handleCodeChange = useCallback((value: string) => {
+    dispatch({ type: 'SET_CODE', payload: value })
+  }, [])
+
+  const handleLanguageChange = useCallback(
+    (value: string) => {
+      dispatch({ type: 'SET_LANGUAGE', payload: value })
+      dispatch({
+        type: 'SET_CODE',
+        payload: state.selectedProblem?.codeTemplates[value] || getDefaultCode(value),
+      })
+    },
+    [state.selectedProblem],
+  )
 
   const handleExecuteCode = useCallback(
     async (currentCode?: string) => {
@@ -238,34 +243,42 @@ export default function PracticeContainer() {
 
   useEffect(() => {
     const problemId = searchParams.get('problemId')
-    if (problemId && problems.length > 0) {
-      const problem = problems.find((p: Problem) => p.id === problemId)
-      if (problem) {
-        dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problem })
-        dispatch({ type: 'SET_ACTIVE_TAB', payload: 'description' })
-        dispatch({
-          type: 'SET_CODE',
-          payload: problem.codeTemplates[state.language] || getDefaultCode(state.language),
-        })
-      }
-    } else if (problems.length > 0) {
-      dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problems[0] })
+    if (problems.length > 0) {
+      const problem = problemId ? problems.find((p: Problem) => p.id === problemId) || problems[0] : problems[0]
+
+      dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problem })
+      dispatch({ type: 'SET_ACTIVE_TAB', payload: 'description' })
       dispatch({
         type: 'SET_CODE',
-        payload: problems[0].codeTemplates[state.language] || getDefaultCode(state.language),
+        payload: problem.codeTemplates[state.language] || getDefaultCode(state.language),
       })
     }
   }, [problems, searchParams, state.language])
 
-  const handleProblemChange = (problem: Problem) => {
-    dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problem })
-    dispatch({ type: 'SET_ACTIVE_TAB', payload: 'description' })
-    dispatch({
-      type: 'SET_CODE',
-      payload: problem.codeTemplates[state.language] || getDefaultCode(state.language),
-    })
-    router.push(`/practice?problemId=${problem.id}`, { scroll: false })
-  }
+  const handleProblemChange = useCallback(
+    (problem: Problem) => {
+      dispatch({ type: 'SET_SELECTED_PROBLEM', payload: problem })
+      dispatch({ type: 'SET_ACTIVE_TAB', payload: 'description' })
+      dispatch({
+        type: 'SET_CODE',
+        payload: problem.codeTemplates[state.language] || getDefaultCode(state.language),
+      })
+      router.push(`/practice?problemId=${problem.id}`, { scroll: false })
+    },
+    [router, state.language],
+  )
+
+  const onHoverStart = useCallback(() => {
+    dispatch({ type: 'SET_IS_HOVERED', payload: true })
+  }, [])
+
+  const onHoverEnd = useCallback(() => {
+    dispatch({ type: 'SET_IS_HOVERED', payload: false })
+  }, [])
+
+  const onActiveTabChange = useCallback((tab: string) => {
+    dispatch({ type: 'SET_ACTIVE_TAB', payload: tab })
+  }, [])
 
   return (
     <PracticeView
@@ -277,9 +290,9 @@ export default function PracticeContainer() {
       onExecuteCode={handleExecuteCode}
       onHint={handleHint}
       onProblemChange={handleProblemChange}
-      onHoverStart={() => dispatch({ type: 'SET_IS_HOVERED', payload: true })}
-      onHoverEnd={() => dispatch({ type: 'SET_IS_HOVERED', payload: false })}
-      onActiveTabChange={(tab) => dispatch({ type: 'SET_ACTIVE_TAB', payload: tab })}
+      onHoverStart={onHoverStart}
+      onHoverEnd={onHoverEnd}
+      onActiveTabChange={onActiveTabChange}
     />
   )
 }

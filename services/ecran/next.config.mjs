@@ -1,4 +1,6 @@
+import MillionLint from '@million/lint'
 import createMDX from '@next/mdx'
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -10,5 +12,10 @@ const nextConfig = {
 
 const withMDX = createMDX({})
 
-// Merge MDX config with Next.js config
-export default withMDX(nextConfig)
+export default MillionLint.next({
+  enabled: false,
+  rsc: true,
+  server: true,
+  telemetry: false,
+  framework: 'next',
+})(withMDX(nextConfig))
