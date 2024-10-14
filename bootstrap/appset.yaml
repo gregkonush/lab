@@ -47,7 +47,7 @@ spec:
     {{- if eq .path.basename "ecran" }}
     metadata:
       annotations:
-        argocd-image-updater.argoproj.io/image-list: ecran=kalmyk.duckdns.org/lab/ecran:0.x, ecran-worker=kalmyk.duckdns.org/lab/ecran-worker:0.x, java-executor=kalmyk.duckdns.org/lab/java-executor, juge=kalmyk.duckdns.org/lab/juge
+        argocd-image-updater.argoproj.io/image-list: ecran=kalmyk.duckdns.org/lab/ecran:0.x, ecran-worker=kalmyk.duckdns.org/lab/ecran-worker:0.x, juge=kalmyk.duckdns.org/lab/juge
         argocd-image-updater.argoproj.io/java-executor.update-strategy: latest
         argocd-image-updater.argoproj.io/ecran: semver
         argocd-image-updater.argoproj.io/ecran-worker: semver

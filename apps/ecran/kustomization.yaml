@@ -4,9 +4,6 @@ namespace: ecran
 resources:
 - ecran-deployment.yaml
 - ecran-worker-deployment.yaml
-- java-standby-deployment.yaml
-- java-standby-service.yaml
-- java-standby-allow-ingress-networkpolicy.yaml
 - python-standby-deployment.yaml
 - js-ts-standby-deployment.yaml
 - standby-deny-egress-networkpolicy.yaml
@@ -24,7 +21,5 @@ images:
   newTag: 0.106.0
 - name: kalmyk.duckdns.org/lab/ecran-worker
   newTag: 0.106.0
-- name: kalmyk.duckdns.org/lab/java-executor
-  newTag: sha-aa6ab49
 - name: kalmyk.duckdns.org/lab/juge
   newTag: 0.106.0
