@@ -1,0 +1,58 @@
+# Node.js
+node_modules
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# Astro
+dist
+
+# Environment variables
+.env
+.env.*
+
+# Editor directories and files
+.vscode
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build files
+build
+
+# Cache
+.cache
+.pnpm-store
+
+# Coverage directory used by tools like istanbul
+coverage
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Git related
+.git
+.gitignore
+
+# Docker related
+Dockerfile
+.dockerignore
+
+# Other
+README.md
+LICENSE
