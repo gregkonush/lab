@@ -1,5 +1,7 @@
 import { proxyActivities, log } from '@temporalio/workflow'
-import type * as Activities from '../activities'
+import { createMachine } from 'xstate'
+
+import type * as Activities from '../activities/solve-problem'
 
 const { askClaude, persistSolution, generateCodeTemplates, persistCodeTemplates, updateProblem } = proxyActivities<
   typeof Activities
@@ -21,3 +23,22 @@ export async function solveProblem(problemId: string, problemStatement: string):
   const solutionId = await persistSolution(problemId, solution)
   return solutionId
 }
+
+const crackerMachine = createMachine({
+  id: 'crackerMachine',
+  initial: 'fetchProblem',
+  states: {
+    fetchProblem: {
+      entry: () => console.log('fetchProblem'),
+    },
+    solveProblem: {
+      entry: () => console.log('solveProblem'),
+    },
+    persistSolution: {
+      type: 'final',
+      entry: () => console.log('persistSolution'),
+    },
+  },
+})
+
+export async function solveDailyQuestion(): Promise<void> {}

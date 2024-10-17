@@ -20,10 +20,10 @@ spec:
         - name: ecran
           port: 80
     - kind: Rule
-      match: Host(`grisha.cloud`)
-      priority: 10
+      match: Host(`proompteng.ai`) && PathPrefix(`/blog`)
+      priority: 20
       services:
-        - name: ecran
+        - name: riposte
           port: 80
   tls:
     certResolver: default

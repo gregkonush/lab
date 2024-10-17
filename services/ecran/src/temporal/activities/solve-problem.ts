@@ -4,7 +4,7 @@ import { codeTemplates, difficultyEnum, languageEnum, problems, solutions, tagsE
 import { SYSTEM_SOLVER_PROMPT } from '@/temporal/prompts/solver'
 import { logger } from '@/utils/logger'
 import { eq } from 'drizzle-orm'
-import { generateObject, generateText } from 'ai'
+import { generateObject } from 'ai'
 import { anthropic } from '@ai-sdk/anthropic'
 import { z } from 'zod'
 

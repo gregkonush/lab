@@ -178,7 +178,7 @@ export default function PracticeView({
               </TabsList>
               <TabsContent value="description">
                 <Separator className="bg-zinc-700" />
-                <ScrollArea className="h-[calc(100vh-40rem)] px-2 relative">
+                <ScrollArea className="h-[calc(100vh-30rem)] px-2 relative">
                   <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4 pt-1">
                     {selectedProblem ? selectedProblem.description : 'No problem selected'}
                   </div>

@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/java-executor"
-DOCKERFILE="services/java-executor/Dockerfile"
-CONTEXT_PATH="services/java-executor"
+IMAGE_NAME="kalmyk.duckdns.org/lab/riposte"
+DOCKERFILE="services/riposte/Dockerfile"
+CONTEXT_PATH="services/riposte"
 
 # Check if a tag is provided as an argument
 if [ $# -eq 1 ]; then
