@@ -101,6 +101,13 @@ const config = {
         'accordion-up': 'accordion-up 0.2s ease-out',
         'gradient-x': 'gradient-x 10s ease infinite',
       },
+      typography: {
+        DEFAULT: {
+          css: {
+            maxWidth: '100%',
+          },
+        },
+      },
     },
   },
   plugins: [
