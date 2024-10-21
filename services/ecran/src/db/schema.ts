@@ -1,56 +1,49 @@
+import { Stats } from '@react-three/drei'
 import { relations } from 'drizzle-orm'
-import { pgTable, varchar, text, uuid, pgEnum, timestamp, primaryKey, integer, boolean } from 'drizzle-orm/pg-core'
+import {
+  pgTable,
+  varchar,
+  text,
+  uuid,
+  pgEnum,
+  timestamp,
+  primaryKey,
+  integer,
+  boolean,
+  jsonb,
+} from 'drizzle-orm/pg-core'
 import type { AdapterAccountType } from 'next-auth/adapters'
 
 export const difficultyEnum = pgEnum('difficulty', ['easy', 'medium', 'hard'])
 
-export const tagsEnum = pgEnum('tags', [
-  'array',
-  'dynamic-programming',
-  'graph',
-  'greedy',
-  'hash-table',
-  'heap',
-  'math',
-  'number-theory',
-  'parsing',
-  'simulation',
-  'sorting',
-  'string',
-  'tree',
-  'two-pointers',
-  'binary-search',
-  'divide-and-conquer',
-  'depth-first-search',
-  'breadth-first-search',
-  'union-find',
-  'topological-sort',
-  'binary-tree',
-  'binary-search-tree',
-  'segment-tree',
-  'binary-indexed-tree',
-  'tree-decomposition',
-  'trie',
-  'djikstra',
-  'bellman-ford',
-  'floyd-warshall',
-  'recursion',
-  'sliding-window',
-  'linked-list',
-  'stack',
-  'queue',
-  'doubly-linked-list',
-  'priority-queue',
-  'matrix',
-  'bit-manipulation',
-])
+export type CodewarsStats = {
+  totalAttempts: number
+  totalCompleted: number
+}
+
+export type LeetcodeStats = {
+  acRate: number
+  freqBar: number
+  likes: number
+  dislikes: number
+}
+
+export const platformEnum = pgEnum('platform', ['leetcode', 'codewars'])
 
 export const problems = pgTable('problems', {
   id: uuid('id').primaryKey().defaultRandom(),
   title: varchar('title', { length: 256 }).notNull(),
   description: text('description').notNull(),
+  descriptionHtml: text('description_html'),
   difficulty: difficultyEnum('difficulty').notNull().default('easy'),
-  tags: tagsEnum('tags').array().default([]),
+  tags: jsonb('tags').$type<string[]>().default([]),
+  titleSlug: varchar('title_slug', { length: 256 }),
+  platform: platformEnum('platform').notNull().default('leetcode'),
+  stats: jsonb('stats').$type<LeetcodeStats | CodewarsStats>(),
+  updatedAt: timestamp('updated_at')
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
 })
 
 export const problemsToSolutions = relations(problems, ({ many }) => ({
@@ -157,6 +150,7 @@ export const authenticators = pgTable(
   },
   (authenticator) => ({
     compositePK: primaryKey({
+      name: 'authenticator_userid_credentialid_pk',
       columns: [authenticator.userId, authenticator.credentialID],
     }),
   }),
@@ -179,6 +173,27 @@ export const codeTemplatesToProblems = relations(codeTemplates, ({ one }) => ({
 export const problemsRelations = relations(problems, ({ many }) => ({
   solutions: many(solutions),
   codeTemplates: many(codeTemplates),
+  hints: many(hints),
+}))
+
+export const hints = pgTable('hints', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  problemId: uuid('problem_id')
+    .references(() => problems.id)
+    .notNull(),
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at')
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+})
+
+export const hintsToProblems = relations(hints, ({ one }) => ({
+  problem: one(problems, {
+    fields: [hints.problemId],
+    references: [problems.id],
+  }),
 }))
 
 export const feedback = pgTable('feedback', {

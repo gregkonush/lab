@@ -70,7 +70,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
         }}
       />
       <div key={problem?.id} className="flex flex-row space-x-4">
-        <div className="pr-10 basis-1/2 flex-shrink-0 bg-zinc-800 rounded p-4">
+        <div className="basis-1/2 flex-shrink-0 bg-zinc-800 rounded p-4">
           <h2 className="text-2xl font-bold mb-5">{problem?.title}</h2>
           <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-5 text-center">
             <div>
@@ -89,8 +89,11 @@ export default async function Problem({ params: { id } }: { params: { id: string
               ))}
             </div>
           </div>
-
-          <MarkdownContent content={problem?.description || ''} useMDX={false} className="whitespace-break-spaces" />
+          {problem?.descriptionHtml ? (
+            <MarkdownContent content={problem?.descriptionHtml || ''} html useMDX={false} />
+          ) : (
+            <MarkdownContent content={problem?.description || ''} useMDX={false} className="whitespace-break-spaces" />
+          )}
         </div>
         <div className="basis-1/2 prose dark:prose-invert max-w-none overflow-x-auto text-zinc-200">
           {solution ? (

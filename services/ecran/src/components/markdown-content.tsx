@@ -1,14 +1,16 @@
 import { cn } from '@/lib/utils'
 import { MDXRemote } from 'next-mdx-remote/rsc'
 import rehypeHighlight from 'rehype-highlight'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 interface MarkdownContentProps {
   content: string
   className?: string
   useMDX?: boolean
+  html?: boolean
 }
 
-export function MarkdownContent({ content, className, useMDX = true }: MarkdownContentProps) {
+export function MarkdownContent({ content, className, useMDX = true, html = false }: MarkdownContentProps) {
   const sharedClasses = cn(
     'prose-sm dark:prose-invert max-w-none text-zinc-200',
     'prose-pre:text-[1.05rem] prose-pre:rounded prose-pre:whitespace-pre',
@@ -19,6 +21,24 @@ export function MarkdownContent({ content, className, useMDX = true }: MarkdownC
     'prose-inline-code:text-[.95rem]',
     className,
   )
+
+  if (html) {
+    return (
+      <ScrollArea className="h-[calc(100vh-20rem)] -mr-3 pr-3">
+        <div
+          className={cn(
+            'prose dark:prose-invert prose-sm prose-pre:text-[1.01rem]',
+            'prose-pre:whitespace-break-spaces',
+            "prose-code:before:content-[''] prose-code:after:content-['']",
+            'prose-inline-code:text-[.95rem]',
+            className,
+          )}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: <explanation>
+          dangerouslySetInnerHTML={{ __html: content }}
+        />
+      </ScrollArea>
+    )
+  }
 
   if (useMDX) {
     return (

@@ -1,6 +1,6 @@
 import '@anthropic-ai/sdk/shims/node'
 import { db } from '@/db'
-import { codeTemplates, difficultyEnum, languageEnum, problems, solutions, tagsEnum } from '@/db/schema'
+import { codeTemplates, difficultyEnum, languageEnum, problems, solutions } from '@/db/schema'
 import { SYSTEM_SOLVER_PROMPT } from '@/temporal/prompts/solver'
 import { logger } from '@/utils/logger'
 import { eq } from 'drizzle-orm'
@@ -10,7 +10,7 @@ import { z } from 'zod'
 
 export async function askClaude(problemStatement: string): Promise<{
   solution: string
-  tags: (typeof tagsEnum.enumValues)[number][]
+  tags: string[]
   difficulty: (typeof difficultyEnum.enumValues)[number]
 }> {
   logger.info(`Solving problem: ${problemStatement}`)
@@ -23,7 +23,7 @@ export async function askClaude(problemStatement: string): Promise<{
     temperature: 0.1,
     schema: z.object({
       solution: z.string(),
-      tags: z.array(z.enum(tagsEnum.enumValues)),
+      tags: z.array(z.string()),
       difficulty: z.enum(difficultyEnum.enumValues),
     }),
     prompt: problemStatement,
@@ -35,10 +35,7 @@ export async function askClaude(problemStatement: string): Promise<{
 
 export async function updateProblem(
   problemId: string,
-  {
-    tags,
-    difficulty,
-  }: { tags: (typeof tagsEnum.enumValues)[number][]; difficulty: (typeof difficultyEnum.enumValues)[number] },
+  { tags, difficulty }: { tags: string[]; difficulty: (typeof difficultyEnum.enumValues)[number] },
 ): Promise<void> {
   logger.info(`Updating problem with id: ${problemId} and tags: ${tags} and difficulty: ${difficulty}`)
   await db.update(problems).set({ tags, difficulty }).where(eq(problems.id, problemId))

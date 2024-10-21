@@ -16,8 +16,6 @@ resources:
 - rolebinding.yaml
 - juge-deployment.yaml
 - juge-service.yaml
-- riposte-deployment.yaml
-- riposte-service.yaml
 images:
 - name: kalmyk.duckdns.org/lab/ecran
   newTag: 0.107.0
@@ -25,5 +23,3 @@ images:
   newTag: 0.107.0
 - name: kalmyk.duckdns.org/lab/juge
   newTag: 0.107.0
-- name: kalmyk.duckdns.org/lab/riposte
-  newTag: 0.1.0
