@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -10,15 +10,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { LoadingDots } from '@/components/loading-dots'
 import { HintSkeleton } from '@/components/hint-skeleton'
-
-type Problem = {
-  id: string
-  title: string
-  description: string
-  difficulty: string
-  tags: string[]
-  codeTemplates: Record<string, string>
-}
+import type { Problem } from '@/app/problems/types'
 
 type PracticeViewProps = {
   code: string
@@ -60,6 +52,44 @@ const sparkleVariants = {
   },
 }
 
+const ProblemsList = React.memo(
+  ({
+    problems,
+    selectedProblem,
+    onProblemChange,
+  }: {
+    problems: Problem[]
+    selectedProblem: Problem | null
+    onProblemChange: (problem: Problem) => void
+  }) => {
+    return (
+      <ScrollArea className="h-[calc(100vh-35rem)] w-full">
+        <div className="pr-4">
+          <ul className="space-y-2 mt-2">
+            {problems.map((problem: Problem, index: number) => (
+              <li key={problem.id}>
+                <Button
+                  variant="ghost"
+                  className={cn(
+                    'w-full justify-start text-left hover:bg-zinc-700',
+                    selectedProblem?.id === problem.id && 'bg-zinc-700',
+                  )}
+                  onClick={() => onProblemChange(problem)}
+                >
+                  {problem.title}
+                </Button>
+                {index < problems.length - 1 && <Separator className="mt-2 bg-zinc-700" />}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <ScrollBar orientation="vertical" className="w-2" />
+      </ScrollArea>
+    )
+  },
+)
+ProblemsList.displayName = 'ProblemsList'
+
 export default function PracticeView({
   code,
   language,
@@ -81,6 +111,24 @@ export default function PracticeView({
   onHoverEnd,
   onActiveTabChange,
 }: PracticeViewProps) {
+  const description = useMemo(() => {
+    if (selectedProblem?.description) {
+      return selectedProblem.description
+    }
+    if (selectedProblem?.descriptionHtml) {
+      return selectedProblem.descriptionHtml
+    }
+    return ''
+  }, [selectedProblem])
+
+  const handleExecuteCode = useCallback(() => {
+    onExecuteCode()
+  }, [onExecuteCode])
+
+  const handleHint = useCallback(() => {
+    onHint()
+  }, [onHint])
+
   return (
     <div className="container mx-auto px-2">
       <div className="max-w-screen-xl mx-auto space-y-3">
@@ -97,7 +145,7 @@ export default function PracticeView({
               className={cn(isLoading && 'opacity-50 cursor-not-allowed')}
             >
               <Button
-                onClick={() => onExecuteCode()}
+                onClick={() => handleExecuteCode()}
                 disabled={isLoading}
                 className={cn(
                   'disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-600 disabled:text-zinc-400',
@@ -121,7 +169,7 @@ export default function PracticeView({
                     'disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-400',
                     isLoadingHint && 'opacity-50 cursor-not-allowed',
                   )}
-                  onClick={onHint}
+                  onClick={handleHint}
                 >
                   {isLoadingHint ? <LoadingDots /> : 'Hint'}
                 </Button>
@@ -168,7 +216,7 @@ export default function PracticeView({
         </div>
         <div className="flex flex-row space-x-3 min-h-[calc(100vh-30rem)]">
           <div className="basis-1/2 h-auto shrink-0">
-            <Editor code={code} onCodeChange={onCodeChange} language={language} onExecute={onExecuteCode} />
+            <Editor code={code} onCodeChange={onCodeChange} language={language} onExecute={handleExecuteCode} />
           </div>
           <div className="basis-1/2 border border-zinc-900 rounded-md p-2 bg-zinc-800 text-sm">
             <Tabs value={activeTab} onValueChange={onActiveTabChange} className="w-full">
@@ -178,43 +226,33 @@ export default function PracticeView({
               </TabsList>
               <TabsContent value="description">
                 <Separator className="bg-zinc-700" />
-                <ScrollArea className="h-[calc(100vh-30rem)] px-2 relative">
-                  <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4 pt-1">
-                    {selectedProblem ? selectedProblem.description : 'No problem selected'}
+                <ScrollArea className="h-[calc(100vh-30rem)]">
+                  <div className="px-2">
+                    {selectedProblem?.descriptionHtml ? (
+                      <div
+                        className="prose prose-invert pr-4 pt-1"
+                        // biome-ignore lint/security/noDangerouslySetInnerHtml: <explanation>
+                        dangerouslySetInnerHTML={{ __html: selectedProblem.descriptionHtml }}
+                      />
+                    ) : (
+                      <div className="whitespace-pre-wrap prose prose-invert prose-sm pr-4 pt-1">{description}</div>
+                    )}
                   </div>
                   <ScrollBar orientation="vertical" className="w-2" />
                 </ScrollArea>
               </TabsContent>
-              <TabsContent value="select">
-                <ScrollArea className="pr-4 relative">
-                  {isLoadingProblems ? (
-                    <div className="flex justify-center items-center h-[calc(100vh-40rem)]">
-                      <LoadingDots />
-                    </div>
-                  ) : (
-                    <>
-                      <Separator className="bg-zinc-700" />
-                      <ul className="space-y-2 pr-4 mt-2">
-                        {problems.map((problem: Problem, index: number) => (
-                          <li key={problem.id}>
-                            <Button
-                              variant="ghost"
-                              className={cn(
-                                'w-full justify-start text-left hover:bg-zinc-700',
-                                selectedProblem?.id === problem.id && 'bg-zinc-700',
-                              )}
-                              onClick={() => onProblemChange(problem)}
-                            >
-                              {problem.title}
-                            </Button>
-                            {index < problems.length - 1 && <Separator className="mt-2 bg-zinc-700" />}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                  <ScrollBar orientation="vertical" className="w-2" />
-                </ScrollArea>
+              <TabsContent value="select" className="flex-1">
+                {isLoadingProblems ? (
+                  <div className="flex justify-center items-center h-[calc(100vh-40rem)]">
+                    <LoadingDots />
+                  </div>
+                ) : (
+                  <ProblemsList
+                    problems={problems}
+                    selectedProblem={selectedProblem}
+                    onProblemChange={onProblemChange}
+                  />
+                )}
               </TabsContent>
             </Tabs>
           </div>

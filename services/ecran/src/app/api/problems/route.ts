@@ -15,7 +15,10 @@ export async function GET() {
     .select({
       id: problems.id,
       title: problems.title,
+      difficulty: problems.difficulty,
+      tags: problems.tags,
       description: problems.description,
+      descriptionHtml: problems.descriptionHtml,
       codeTemplates: sql<{ language: string; starter_code: string }[]>`jsonb_agg(code_templates)`,
     })
     .from(problems)

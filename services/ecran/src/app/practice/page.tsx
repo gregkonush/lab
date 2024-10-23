@@ -4,15 +4,7 @@ import { useReducer, useCallback, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
 import PracticeView from '@/components/practice-view'
-
-type Problem = {
-  id: string
-  title: string
-  description: string
-  difficulty: string
-  tags: string[]
-  codeTemplates: Record<string, string>
-}
+import type { Problem } from '@/app/problems/types'
 
 const defaultJavaCode = `
 String greet(String name) {
