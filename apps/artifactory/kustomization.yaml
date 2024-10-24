@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: artifactory
+helmCharts:
+  - name: artifactory
+    repo: https://charts.jfrog.io
+    version: 107.90.9
+    releaseName: artifactory
+    namespace: artifactory
+    includeCRDs: true
+    valuesFile: artifactory-xsmall.yaml
+    additionalValuesFiles:
+      - artifactory-xsmall-extra-config.yaml
