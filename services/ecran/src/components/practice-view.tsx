@@ -63,7 +63,7 @@ const ProblemsList = React.memo(
     onProblemChange: (problem: Problem) => void
   }) => {
     return (
-      <ScrollArea className="h-[calc(100vh-35rem)] w-full">
+      <ScrollArea className="h-[calc(100vh-35rem)]">
         <div className="pr-4">
           <ul className="space-y-2 mt-2">
             {problems.map((problem: Problem, index: number) => (
@@ -218,8 +218,8 @@ export default function PracticeView({
           <div className="basis-1/2 h-auto shrink-0">
             <Editor code={code} onCodeChange={onCodeChange} language={language} onExecute={handleExecuteCode} />
           </div>
-          <div className="basis-1/2 border border-zinc-900 rounded-md p-2 bg-zinc-800 text-sm">
-            <Tabs value={activeTab} onValueChange={onActiveTabChange} className="w-full">
+          <div className="basis-1/2 max-w-[49%] border border-zinc-900 rounded-md p-2 bg-zinc-800 text-sm">
+            <Tabs value={activeTab} onValueChange={onActiveTabChange}>
               <TabsList className="bg-zinc-700">
                 <TabsTrigger value="description">Problem Description</TabsTrigger>
                 <TabsTrigger value="select">Select Problem</TabsTrigger>
