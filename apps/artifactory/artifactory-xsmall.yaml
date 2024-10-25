@@ -120,8 +120,8 @@ postgresql:
             topologyKey: kubernetes.io/hostname
   resources:
     requests:
-      memory: 8Gi
       cpu: "2"
+      memory: 4Gi
     limits:
-      memory: 8Gi
-      # cpu: "8"
+      cpu: "2"
+      memory: 4Gi

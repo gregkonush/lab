@@ -28,7 +28,7 @@ spec:
         path: "{{.path.path}}"
       destination:
         server: https://kubernetes.default.svc
-        namespace: "{{.path.basename}}"
+        namespace: '{{if eq .path.basename "longhorn"}}longhorn-system{{else}}{{.path.basename}}{{end}}'
       syncPolicy:
         automated:
           prune: true
