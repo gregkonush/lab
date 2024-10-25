@@ -1,4 +1,6 @@
 gitea:
+  global:
+    storageClass: longhorn
   replicaCount: 3
   gitea:
     admin:
@@ -14,6 +16,9 @@ gitea:
     storageClass: longhorn
     accessModes:
       - ReadWriteMany
+  postgresql-ha:
+    global:
+      defaultStorageClass: longhorn
   ingress:
     enabled: true
     className: traefik
