@@ -12,10 +12,7 @@ gitea:
         SSH_DOMAIN: kalmyk.duckdns.org
   persistence:
     enabled: true
-    size: 50Gi
-    storageClass: longhorn
-    accessModes:
-      - ReadWriteMany
+    size: 20Gi
   postgresql-ha:
     global:
       defaultStorageClass: longhorn
