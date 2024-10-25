@@ -106,6 +106,9 @@ nginx:
 postgresql:
   postgresqlExtendedConf:
     maxConnections: "50"
+  persistence:
+    enabled: true
+    size: 50Gi
   primary:
     affinity:
       # Require PostgreSQL pod to run on a different node than Artifactory pods
