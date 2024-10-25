@@ -1,4 +1,5 @@
 gitea:
+  replicaCount: 3
   gitea:
     admin:
       existingSecret: gitea-admin-secret
@@ -11,6 +12,8 @@ gitea:
     enabled: true
     size: 50Gi
     storageClass: longhorn
+    accessModes:
+      - ReadWriteMany
   ingress:
     enabled: true
     className: traefik
