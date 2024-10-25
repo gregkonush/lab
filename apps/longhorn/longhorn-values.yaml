@@ -1,2 +1,6 @@
 preUpgradeChecker:
   jobEnabled: false
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  host: longhorn.lan
