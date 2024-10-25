@@ -8,7 +8,9 @@ gitea:
         ROOT_URL: https://kalmyk.duckdns.org
         SSH_DOMAIN: kalmyk.duckdns.org
   persistence:
+    enabled: true
     size: 50Gi
+    storageClass: longhorn
   ingress:
     enabled: true
     className: traefik
