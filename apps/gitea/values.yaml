@@ -1,7 +1,7 @@
 gitea:
   global:
     storageClass: longhorn
-  replicaCount: 3
+  replicaCount: 1
   gitea:
     admin:
       existingSecret: gitea-admin-secret
