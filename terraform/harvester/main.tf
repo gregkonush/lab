@@ -85,6 +85,7 @@ resource "harvester_image" "ubuntu-focal" {
   source_type  = "download"
   namespace    = "harvester-public"
   url          = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
+  storage_class_name = harvester_storageclass.single-node-longhorn.name
 
   lifecycle {
     prevent_destroy = true
@@ -97,6 +98,7 @@ resource "harvester_image" "ubuntu-jammy" {
   source_type  = "download"
   namespace    = "harvester-public"
   url          = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
+  storage_class_name = harvester_storageclass.single-node-longhorn.name
 
   lifecycle {
     prevent_destroy = true
@@ -141,7 +143,7 @@ resource "harvester_virtualmachine" "kube-cluster" {
   disk {
     name        = "root"
     type        = "disk"
-    size        = "200Gi"
+    size        = "300Gi"
     bus         = "virtio"
     boot_order  = 1
     image       = harvester_image.ubuntu-jammy.id
