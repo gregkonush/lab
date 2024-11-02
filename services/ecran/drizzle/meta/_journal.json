@@ -71,6 +71,13 @@
       "when": 1729492883557,
       "tag": "0009_calm_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1729840440354,
+      "tag": "0010_light_ares",
+      "breakpoints": true
     }
   ]
 }

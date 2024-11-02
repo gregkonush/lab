@@ -15,10 +15,10 @@ export default function FeedbackButton({ userId }: { userId?: string }) {
         <Button
           className={cn(
             'fixed right-4 top-1/2 -translate-y-1/2',
-            'bg-indigo-600 text-white',
+            'bg-zinc-800 text-white',
             'px-3 py-1 rounded-l-md',
             'transform -rotate-90 origin-right',
-            'hover:bg-indigo-700 transition-colors duration-200',
+            'hover:bg-zinc-700 transition-colors duration-200',
           )}
         >
           Feedback

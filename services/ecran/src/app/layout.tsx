@@ -31,7 +31,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${jetbrains.variable} font-mono tracking-normal antialiased leading-6 text-base bg-zinc-900 text-zinc-300`}
+        className={`${jetbrains.variable} font-mono tracking-normal antialiased leading-6 text-base bg-zinc-900 text-zinc-300 min-h-screen`}
         suppressHydrationWarning
       >
         <Providers>
@@ -57,7 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               )}
               <div className="text-zinc-400 absolute right-5 text-sm">Version: {version}</div>
             </header>
-            <main className="container mx-auto p-5">{children}</main>
+            <main className="container py-5">{children}</main>
             <FeedbackButton />
             <Toaster />
           </ThemeProvider>
