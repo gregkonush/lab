@@ -43,6 +43,13 @@ spec:
                 - name: init-dind-externals
                   image: ghcr.io/actions/actions-runner:latest
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "50m"
+                      memory: "64Mi"
+                    limits:
+                      cpu: "100m"
+                      memory: "128Mi"
                   volumeMounts:
                     - name: dind-externals
                       mountPath: /home/runner/tmpDir
@@ -50,6 +57,13 @@ spec:
                 - name: runner
                   image: ghcr.io/actions/actions-runner:latest
                   command: ["/home/runner/run.sh"]
+                  resources:
+                    requests:
+                      cpu: "200m"
+                      memory: "512Mi"
+                    limits:
+                      cpu: "1"
+                      memory: "1Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -72,6 +86,13 @@ spec:
                     - dockerd
                     - --host=unix:///var/run/docker.sock
                     - --group=$(DOCKER_GROUP_GID)
+                  resources:
+                    requests:
+                      cpu: "200m"
+                      memory: "512Mi"
+                    limits:
+                      cpu: "1"
+                      memory: "2Gi"
                   env:
                     - name: DOCKER_GROUP_GID
                       value: "123"
