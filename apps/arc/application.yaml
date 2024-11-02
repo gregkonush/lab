@@ -37,13 +37,8 @@ spec:
                   storage: 1Gi
           template:
             spec:
-              nodeSelector:
-                kubernetes.io/hostname: kube-worker-08
-              tolerations:
-                - key: "role"
-                  operator: "Equal"
-                  value: "worker"
-                  effect: "NoSchedule"
+              securityContext:
+                fsGroup: 1001
               initContainers:
                 - name: init-dind-externals
                   image: ghcr.io/actions/actions-runner:latest
