@@ -21,6 +21,7 @@ spec:
       initContainers:
         - name: run-migrations
           image: kalmyk.duckdns.org/lab/ecran-migrator:latest
+          imagePullPolicy: Always
           env:
             - name: DB_URI
               valueFrom:

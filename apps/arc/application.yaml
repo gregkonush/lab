@@ -31,7 +31,7 @@ spec:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
               accessModes: ["ReadWriteOnce"]
-              storageClassName: "local-path"
+              storageClassName: "longhorn"
               resources:
                 requests:
                   storage: 1Gi
@@ -95,7 +95,7 @@ spec:
                     volumeClaimTemplate:
                       spec:
                         accessModes: ["ReadWriteOnce"]
-                        storageClassName: "local-path"
+                        storageClassName: "longhorn"
                         resources:
                           requests:
                             storage: 5Gi
