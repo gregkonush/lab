@@ -29,12 +29,11 @@ ALTER TABLE "authenticator"
 
 --> statement-breakpoint
 ALTER TABLE "problems"
-  ALTER COLUMN "tags" TYPE jsonb
-  USING tags::jsonb;
+  DROP COLUMN IF EXISTS "tags";
 
 --> statement-breakpoint
 ALTER TABLE "problems"
-  ALTER COLUMN "tags" SET DEFAULT '[]'::jsonb;
+  ADD COLUMN IF NOT EXISTS "tags" jsonb DEFAULT '[]'::jsonb;
 
 --> statement-breakpoint
 DO $$
