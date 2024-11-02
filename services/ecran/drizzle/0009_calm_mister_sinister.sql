@@ -29,7 +29,8 @@ ALTER TABLE "authenticator"
 
 --> statement-breakpoint
 ALTER TABLE "problems"
-  ALTER COLUMN "tags" SET DATA TYPE jsonb;
+  ALTER COLUMN "tags" TYPE jsonb
+  USING tags::jsonb;
 
 --> statement-breakpoint
 ALTER TABLE "problems"
