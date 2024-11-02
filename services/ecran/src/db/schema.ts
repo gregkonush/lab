@@ -1,4 +1,3 @@
-import { Stats } from '@react-three/drei'
 import { relations } from 'drizzle-orm'
 import {
   pgTable,
@@ -29,6 +28,8 @@ export type LeetcodeStats = {
 }
 
 export const platformEnum = pgEnum('platform', ['leetcode', 'codewars'])
+
+export const roleEnum = pgEnum('role', ['user', 'admin'])
 
 export const problems = pgTable('problems', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -86,6 +87,7 @@ export const users = pgTable('user', {
   emailVerified: timestamp('emailVerified', { mode: 'date' }),
   image: text('image'),
   passwordHash: text('passwordHash').notNull(),
+  role: roleEnum('role').notNull().default('user'),
 })
 
 export const accounts = pgTable(

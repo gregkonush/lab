@@ -8,7 +8,7 @@
     "dev": "npm-run-all --parallel dev:temporal dev:next dev:temporal-server",
     "dev:next": "next dev",
     "dev:temporal": "dotenvx run -f .env.local -- tsx watch ./src/temporal/worker.ts",
-    "dev:temporal-server": "temporal server start-dev --ui-port 8080",
+    "dev:temporal-server": "temporal server start-dev --ui-port 9090",
     "dev:temporal-port-forward": "kubectl port-forward -n temporal svc/temporal-frontend-headless 7233:7233",
     "build": "next build",
     "build:workflow": "tsx ./src/temporal/scripts/build-bundle.ts",

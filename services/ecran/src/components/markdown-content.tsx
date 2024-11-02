@@ -1,3 +1,5 @@
+'use server'
+
 import { cn } from '@/lib/utils'
 import { MDXRemote } from 'next-mdx-remote/rsc'
 import rehypeHighlight from 'rehype-highlight'
@@ -10,7 +12,7 @@ interface MarkdownContentProps {
   html?: boolean
 }
 
-export function MarkdownContent({ content, className, useMDX = true, html = false }: MarkdownContentProps) {
+export async function MarkdownContent({ content, className, useMDX = true, html = false }: MarkdownContentProps) {
   const sharedClasses = cn(
     'prose-sm dark:prose-invert max-w-none text-zinc-200',
     'prose-pre:text-[1.05rem] prose-pre:rounded prose-pre:whitespace-pre',
@@ -24,7 +26,7 @@ export function MarkdownContent({ content, className, useMDX = true, html = fals
 
   if (html) {
     return (
-      <ScrollArea className="h-[calc(100vh-20rem)] -mr-3 pr-3">
+      <ScrollArea className="h-[calc(100vh-22rem)] -mr-3 pr-3">
         <div
           className={cn(
             'prose dark:prose-invert prose-sm prose-pre:text-[1.01rem]',
