@@ -33,6 +33,7 @@ export default async function ProblemsPage({ searchParams }: ProblemsPageProps) 
       .select({
         id: problems.id,
         title: problems.title,
+        titleSlug: problems.titleSlug,
         difficulty: problems.difficulty,
         tags: problems.tags,
         description: problems.description,
