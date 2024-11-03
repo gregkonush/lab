@@ -5,5 +5,19 @@ metadata:
   namespace: ecran
 spec:
   instances: 3
+  bootstrap:
+    initdb:
+      database: ecran
+      owner: ecran
+      secret:
+        name: ecran-cluster-secret
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS "vectors";
+      dataChecksums: true
+      encoding: "UTF8"
   storage:
-    size: 1Gi
+    size: 5Gi
+  imageName: kalmyk.duckdns.org/lab/vecteur:latest
+  postgresql:
+    shared_preload_libraries:
+      - "vectors.so"
