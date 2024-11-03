@@ -4,27 +4,20 @@ import type { ColumnDef } from '@tanstack/react-table'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-
-type Problem = {
-  id: string
-  title: string
-  difficulty: string
-  tags: string[]
-}
+import type { Problem } from './types'
 
 export const columns: ColumnDef<Problem>[] = [
   {
     accessorKey: 'title',
     header: 'Title',
-    cell: ({
-      row: {
-        original: { id, title },
-      },
-    }) => (
-      <Link href={`/problems/${id}`} className="hover:text-indigo-400">
-        {title}
-      </Link>
-    ),
+    cell: ({ row }) => {
+      const { title, titleSlug } = row.original
+      return (
+        <Link href={`/problems/${titleSlug}`} className="hover:text-indigo-400">
+          {title}
+        </Link>
+      )
+    },
   },
   {
     accessorKey: 'difficulty',

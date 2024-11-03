@@ -1,4 +1,5 @@
 import * as k8s from '@kubernetes/client-node'
+import { GoogleAnalytics } from '@next/third-parties/google'
 import type { Metadata } from 'next'
 import { JetBrains_Mono } from 'next/font/google'
 import Link from 'next/link'
@@ -19,9 +20,16 @@ const jetbrains = JetBrains_Mono({
 export const dynamic = 'force-dynamic'
 
 export const metadata: Metadata = {
-  title: 'ProomptEng.AI - Where Developers Learn, Share, & Build Careers',
-  description:
-    'ProomptEng.AI is the largest, most trusted online community for developers to learn, share their prompt engineering knowledge.',
+  title: {
+    template: '%s | ProomptEng',
+    default: 'ProomptEng - Practice Programming Problems with AI',
+  },
+  description: 'Practice programming problems with AI assistance',
+  metadataBase: new URL('https://proompteng.ai'),
+  robots: {
+    index: true,
+    follow: true,
+  },
 }
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +38,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head />
       <body
         className={`${jetbrains.variable} font-mono tracking-normal antialiased leading-6 text-base bg-zinc-900 text-zinc-300 min-h-screen`}
         suppressHydrationWarning
@@ -63,6 +72,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </ThemeProvider>
         </Providers>
       </body>
+      <GoogleAnalytics gaId="G-2DDR7KTRFL" />
     </html>
   )
 }

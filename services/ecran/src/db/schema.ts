@@ -38,7 +38,7 @@ export const problems = pgTable('problems', {
   descriptionHtml: text('description_html'),
   difficulty: difficultyEnum('difficulty').notNull().default('easy'),
   tags: jsonb('tags').$type<string[]>().default([]),
-  titleSlug: varchar('title_slug', { length: 256 }),
+  titleSlug: varchar('title_slug', { length: 256 }).unique(),
   platform: platformEnum('platform').notNull().default('leetcode'),
   stats: jsonb('stats').$type<LeetcodeStats | CodewarsStats>(),
   updatedAt: timestamp('updated_at')

@@ -1,7 +1,8 @@
 import 'highlight.js/styles/github-dark.css'
 import { logger } from '@/utils/logger'
 import { db } from '@/db'
-import { problems, solutions } from '@/db/schema'
+import type { Metadata } from 'next'
+import type { ResolvingMetadata } from 'next'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -11,38 +12,96 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { eq } from 'drizzle-orm'
-import { validate } from 'uuid'
 import { notFound } from 'next/navigation'
+import TurndownService from 'turndown'
 import { CreateProblemForm } from '@/components/problem-form'
 import { MarkdownContent } from '@/components/markdown-content'
 import { cn } from '@/lib/utils'
 import { SolveProblemButton } from '@/components/solve-problem-button'
 import { SolutionStateProvider } from '@/components/solution-state-provider'
-import { SolutionPanel } from '@/components/solution-panel'
+import { EmptySolutionPanel } from '@/components/empty-solution-panel'
+import { problems, solutions } from '@/db/schema'
 
-export default async function Problem({ params: { id } }: { params: { id: string } }) {
-  if (!validate(id) && id !== 'create') {
-    notFound()
+type Props = {
+  params: { id: string }
+}
+
+export async function generateMetadata({ params: { id } }: Props, parent: ResolvingMetadata): Promise<Metadata> {
+  if (id === 'create') {
+    return {
+      title: 'Create New Problem',
+      description: 'Create a new coding problem and share it with the community',
+    }
   }
-  logger.info(`Loading problem ${id}`)
 
+  const [problemResult] = await db
+    .select({
+      title: problems.title,
+      description: problems.description,
+      descriptionHtml: problems.descriptionHtml,
+      tags: problems.tags,
+    })
+    .from(problems)
+    .where(eq(problems.titleSlug, id))
+    .limit(1)
+
+  if (!problemResult) {
+    return {
+      title: 'Problem Not Found',
+    }
+  }
+
+  const previousImages = (await parent).openGraph?.images || []
+  const turndownService = new TurndownService()
+  let description: string
+  if (problemResult.descriptionHtml) {
+    description = turndownService.turndown(problemResult.descriptionHtml)
+  } else {
+    description = problemResult.description
+  }
+
+  return {
+    title: `${problemResult.title} | Coding Problem`,
+    description: description.slice(0, 160),
+    keywords: problemResult.tags,
+    openGraph: {
+      title: `${problemResult.title} | Coding Problem`,
+      description: description.slice(0, 160),
+      type: 'article',
+      tags: problemResult.tags,
+      images: [...previousImages],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${problemResult.title} | Coding Problem`,
+      description: description.slice(0, 160),
+    },
+  }
+}
+
+export default async function Problem({ params: { id } }: Props) {
   if (id === 'create') {
     return <CreateProblemForm />
   }
 
-  const problemsWithSolutions = await db
-    .select()
+  logger.info(`Loading problem ${id}`)
+
+  const [result] = await db
+    .select({
+      problem: problems,
+      solution: solutions,
+    })
     .from(problems)
     .leftJoin(solutions, eq(solutions.problemId, problems.id))
-    .where(eq(problems.id, id))
+    .where(eq(problems.titleSlug, id))
+    .limit(1)
 
-  if (problemsWithSolutions.length === 0) {
+  if (!result) {
     notFound()
   }
-  const problem = problemsWithSolutions.at(0)?.problems
-  const solution = problemsWithSolutions.at(0)?.solutions
 
-  logger.info(`Solution for problem ${problem?.id}`)
+  const { problem, solution } = result
+  logger.info(`Solution for problem ${problem.titleSlug}`)
 
   return (
     <SolutionStateProvider>
@@ -59,25 +118,23 @@ export default async function Problem({ params: { id } }: { params: { id: string
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbPage>{problem?.title}</BreadcrumbPage>
+                <BreadcrumbPage>{problem.title}</BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
-          {problem?.id && <SolveProblemButton problemId={problem.id} />}
+          {problem.id && <SolveProblemButton problemId={problem.id} />}
         </div>
-        <div key={problem?.id} className="flex flex-row space-x-4">
+        <div key={problem.titleSlug} className="flex flex-row space-x-4">
           <div className="basis-1/2 flex-shrink-0 bg-zinc-800 rounded p-4">
-            <h2 className="text-2xl font-bold mb-5">{problem?.title}</h2>
+            <h2 className="text-2xl font-bold mb-5">{problem.title}</h2>
             <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-5 text-center">
               <div>
                 Difficulty:{' '}
-                <span className="bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs">
-                  {problem?.difficulty}
-                </span>
+                <span className="bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{problem.difficulty}</span>
               </div>
               <div>
                 <span>Topics: </span>
-                {problem?.tags?.map((tag, index) => (
+                {problem.tags?.map((tag, index) => (
                   <span
                     key={tag}
                     className={cn('bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs', index > 0 && 'ml-1')}
@@ -87,14 +144,10 @@ export default async function Problem({ params: { id } }: { params: { id: string
                 ))}
               </div>
             </div>
-            {problem?.descriptionHtml ? (
-              <MarkdownContent content={problem?.descriptionHtml || ''} html useMDX={false} />
+            {problem.descriptionHtml ? (
+              <MarkdownContent content={problem.descriptionHtml} html useMDX={false} />
             ) : (
-              <MarkdownContent
-                content={problem?.description || ''}
-                useMDX={false}
-                className="whitespace-break-spaces"
-              />
+              <MarkdownContent content={problem.description} useMDX={false} className="whitespace-break-spaces" />
             )}
           </div>
           <div className="basis-1/2 prose dark:prose-invert max-w-none overflow-x-auto text-zinc-200">
@@ -103,7 +156,7 @@ export default async function Problem({ params: { id } }: { params: { id: string
                 <MarkdownContent content={solution.solution} />
               </div>
             ) : (
-              <SolutionPanel />
+              <EmptySolutionPanel />
             )}
           </div>
         </div>

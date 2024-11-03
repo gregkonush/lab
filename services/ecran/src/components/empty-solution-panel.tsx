@@ -1,8 +1,9 @@
 'use client'
 
 import { useSolutionState } from './solution-state-provider'
+import Image from 'next/image'
 
-export function SolutionPanel() {
+export function EmptySolutionPanel() {
   const { solution, isLoading } = useSolutionState()
 
   if (!solution && !isLoading) {
@@ -16,6 +17,10 @@ export function SolutionPanel() {
   }
 
   if (isLoading) {
-    return <div className="h-full animate-pulse bg-zinc-800 rounded" />
+    return (
+      <div className="h-full animate-pulse bg-zinc-800 rounded flex items-center justify-center">
+        <Image src="/seal.png" alt="Loading..." width={200} height={200} className="animate-ping" />
+      </div>
+    )
   }
 }
