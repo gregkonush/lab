@@ -17,7 +17,7 @@ spec:
       encoding: "UTF8"
   storage:
     size: 5Gi
-  imageName: kalmyk.duckdns.org/lab/vecteur:latest
+  imageName: kalmyk.duckdns.org/lab/vecteur:1.0.0
   postgresql:
     shared_preload_libraries:
       - "vectors.so"
