@@ -46,10 +46,10 @@ spec:
                   resources:
                     requests:
                       cpu: "50m"
-                      memory: "64Mi"
+                      memory: "128Mi"
                     limits:
                       cpu: "100m"
-                      memory: "128Mi"
+                      memory: "256Mi"
                   volumeMounts:
                     - name: dind-externals
                       mountPath: /home/runner/tmpDir
@@ -59,11 +59,11 @@ spec:
                   command: ["/home/runner/run.sh"]
                   resources:
                     requests:
-                      cpu: "200m"
-                      memory: "512Mi"
-                    limits:
                       cpu: "1"
                       memory: "1Gi"
+                    limits:
+                      cpu: "2"
+                      memory: "2Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -88,10 +88,10 @@ spec:
                     - --group=$(DOCKER_GROUP_GID)
                   resources:
                     requests:
-                      cpu: "200m"
-                      memory: "512Mi"
-                    limits:
                       cpu: "1"
+                      memory: "1Gi"
+                    limits:
+                      cpu: "2"
                       memory: "2Gi"
                   env:
                     - name: DOCKER_GROUP_GID
