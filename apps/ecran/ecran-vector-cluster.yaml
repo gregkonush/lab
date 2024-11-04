@@ -1,7 +1,7 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: ecran-cluster
+  name: ecran-vector-cluster
   namespace: ecran
 spec:
   instances: 3
