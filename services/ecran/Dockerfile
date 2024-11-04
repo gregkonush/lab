@@ -6,6 +6,8 @@ RUN npm install -g pnpm
 FROM base AS deps
 WORKDIR /app
 COPY package.json ./
+COPY .npmrc ./
+
 RUN pnpm install
 
 # Rebuild the source code only when needed

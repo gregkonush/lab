@@ -3,6 +3,7 @@ WORKDIR /app
 
 RUN npm install -g pnpm
 COPY package.json ./
+COPY .npmrc ./
 RUN pnpm install
 
 FROM node:lts-slim AS builder
