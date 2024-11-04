@@ -10,7 +10,8 @@ resources:
 - service.yaml
 - ingress.yaml
 - sealed-secret.yaml
-- postgresql.yaml
+- ecran-cluster.yaml
+- ecran-vector-cluster.yaml
 - serviceaccount.yaml
 - role.yaml
 - rolebinding.yaml
