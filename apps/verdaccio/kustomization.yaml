@@ -8,3 +8,4 @@ helmCharts:
     releaseName: verdaccio
     namespace: verdaccio
     includeCRDs: true
+    valuesFile: verdaccio-values.yaml
