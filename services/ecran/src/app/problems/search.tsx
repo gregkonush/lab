@@ -16,6 +16,7 @@ export default function SearchProblems({ defaultValue }: { defaultValue?: string
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams)
+    const currentSearch = params.get('search') ?? ''
 
     if (debouncedValue) {
       params.set('search', debouncedValue)
@@ -23,7 +24,9 @@ export default function SearchProblems({ defaultValue }: { defaultValue?: string
       params.delete('search')
     }
 
-    params.set('page', '1')
+    if (currentSearch !== debouncedValue) {
+      params.set('page', '1')
+    }
 
     startTransition(() => {
       router.push(`${pathname}?${params.toString()}`)
