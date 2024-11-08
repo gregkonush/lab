@@ -26,7 +26,7 @@ spec:
           githubConfigSecret: github-token
           runnerScaleSetName: arc-arm64
           minRunners: 3
-          maxRunners: 3
+          maxRunners: 9
           containerMode:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
@@ -37,33 +37,28 @@ spec:
                   storage: 1Gi
           template:
             spec:
-              securityContext:
-                fsGroup: 1001
               initContainers:
                 - name: init-dind-externals
                   image: ghcr.io/actions/actions-runner:latest
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
-                      cpu: "50m"
+                      cpu: "100m"
                       memory: "128Mi"
                     limits:
-                      cpu: "100m"
+                      cpu: "200m"
                       memory: "256Mi"
-                  volumeMounts:
-                    - name: dind-externals
-                      mountPath: /home/runner/tmpDir
               containers:
                 - name: runner
                   image: ghcr.io/actions/actions-runner:latest
                   command: ["/home/runner/run.sh"]
                   resources:
                     requests:
-                      cpu: "1"
-                      memory: "1Gi"
-                    limits:
-                      cpu: "2"
+                      cpu: "500m"
                       memory: "2Gi"
+                    limits:
+                      cpu: "2000m"
+                      memory: "4Gi"
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
@@ -88,11 +83,11 @@ spec:
                     - --group=$(DOCKER_GROUP_GID)
                   resources:
                     requests:
-                      cpu: "1"
-                      memory: "1Gi"
-                    limits:
-                      cpu: "2"
+                      cpu: "500m"
                       memory: "2Gi"
+                    limits:
+                      cpu: "2000m"
+                      memory: "4Gi"
                   env:
                     - name: DOCKER_GROUP_GID
                       value: "123"
