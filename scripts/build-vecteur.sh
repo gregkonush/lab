@@ -5,6 +5,9 @@ IMAGE_NAME="kalmyk.duckdns.org/lab/vecteur"
 DOCKERFILE="services/vecteur/Dockerfile"
 CONTEXT_PATH="services/vecteur"
 
+TARGETARCH="arm64"
+CNPG_TAG="16"
+
 # Check if a tag is provided as an argument
 if [ $# -eq 1 ]; then
     TAG=$1
@@ -19,9 +22,10 @@ FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
 # Build the Docker image
 echo "Building Docker image: ${FULL_IMAGE_NAME}"
 docker buildx build \
-    --platform linux/arm64 \
+    --platform linux/${TARGETARCH} \
     --build-arg PGVECTORS_TAG=v0.3.0 \
-    --build-arg TARGETARCH=arm64 \
+    --build-arg TARGETARCH=${TARGETARCH} \
+    --build-arg CNPG_TAG=${CNPG_TAG} \
     -t ${FULL_IMAGE_NAME} \
     -f ${DOCKERFILE} ${CONTEXT_PATH} \
     --push
