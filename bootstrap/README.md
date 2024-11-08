@@ -30,13 +30,13 @@ argocd repo add https://github.com/gregkonush/lab
 ## Bootstrap apps
 
 ```bash
-argocd appset create bootstrap/appset.yaml
+argocd app create --file apps/root/application.yaml
 ```
 
 ## Update apps
 
 ```bash
-argocd appset create --upsert bootstrap/appset.yaml
+argocd app create --upsert --file apps/root/application.yaml
 ```
 
 ### Delete apps that got stuck in deleting phase
