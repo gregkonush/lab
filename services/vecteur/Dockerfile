@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile-upstream:master
-FROM ghcr.io/cloudnative-pg/postgresql:16.4
+FROM ghcr.io/cloudnative-pg/postgresql:16
 
+ARG CNPG_TAG
 ARG PGVECTORS_TAG
 ARG TARGETARCH
 
@@ -8,7 +9,7 @@ ARG TARGETARCH
 USER root
 
 # install pgvecto.rs
-ADD https://github.com/tensorchord/pgvecto.rs/releases/download/${PGVECTORS_TAG}/vectors-pg14_${PGVECTORS_TAG#"v"}_${TARGETARCH}.deb ./pgvectors.deb
+ADD https://github.com/tensorchord/pgvecto.rs/releases/download/$PGVECTORS_TAG/vectors-pg${CNPG_TAG%.*}_${PGVECTORS_TAG#"v"}_$TARGETARCH.deb ./pgvectors.deb
 RUN apt install ./pgvectors.deb
 
 USER postgres
