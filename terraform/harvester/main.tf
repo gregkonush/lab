@@ -17,63 +17,163 @@ provider "harvester" {
 locals {
   vms = {
     "kube-master-00" = {
-      mac_address = "00:16:3E:3C:0E:FC" // 192.168.1.150
-      cpu         = 10
-      memory      = "8Gi"
+      mac_address = "00:16:3E:3C:0D:00" // 192.168.1.150
+      cpu         = 4
+      memory      = "16Gi"
     }
     "kube-master-01" = {
-      mac_address = "00:16:3E:3C:0E:FD" // 192.168.1.151
-      cpu         = 10
-      memory      = "8Gi"
+      mac_address = "00:16:3E:3C:0D:01" // 192.168.1.151
+      cpu         = 4
+      memory      = "16Gi"
     }
     "kube-master-02" = {
-      mac_address = "00:16:3E:3C:0E:FE" // 192.168.1.152
-      cpu         = 10
-      memory      = "8Gi"
+      mac_address = "00:16:3E:3C:0D:02" // 192.168.1.152
+      cpu         = 4
+      memory      = "16Gi"
     }
     "kube-worker-00" = {
-      mac_address = "00:16:3E:3C:0E:FF" // 192.168.1.160
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:00" // 192.168.1.160
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-01" = {
-      mac_address = "00:16:3E:3C:0E:00" // 192.168.1.161
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:01" // 192.168.1.161
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-02" = {
-      mac_address = "00:16:3E:3C:0E:01" // 192.168.1.162
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:02" // 192.168.1.162
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-03" = {
-      mac_address = "00:16:3E:3C:0E:02" // 192.168.1.163
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:03" // 192.168.1.163
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-04" = {
-      mac_address = "00:16:3E:3C:0E:03" // 192.168.1.164
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:04" // 192.168.1.164
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-05" = {
-      mac_address = "00:16:3E:3C:0E:04" // 192.168.1.165
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:05" // 192.168.1.165
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-06" = {
-      mac_address = "00:16:3E:3C:0E:05" // 192.168.1.166
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:06" // 192.168.1.166
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-07" = {
-      mac_address = "00:16:3E:3C:0E:06" // 192.168.1.167
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:07" // 192.168.1.167
+      cpu         = 4
       memory      = "8Gi"
     }
     "kube-worker-08" = {
-      mac_address = "00:16:3E:3C:0E:07" // 192.168.1.168
-      cpu         = 10
+      mac_address = "00:16:3E:3C:0E:08" // 192.168.1.168
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-09" = {
+      mac_address = "00:16:3E:3C:0E:09" // 192.168.1.169
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-10" = {
+      mac_address = "00:16:3E:3C:0E:0A" // 192.168.1.170
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-11" = {
+      mac_address = "00:16:3E:3C:0E:0B" // 192.168.1.171
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-12" = {
+      mac_address = "00:16:3E:3C:0E:0C" // 192.168.1.172
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-13" = {
+      mac_address = "00:16:3E:3C:0E:0D" // 192.168.1.173
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-14" = {
+      mac_address = "00:16:3E:3C:0E:0E" // 192.168.1.174
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-15" = {
+      mac_address = "00:16:3E:3C:0E:0F" // 192.168.1.175
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-16" = {
+      mac_address = "00:16:3E:3C:0E:10" // 192.168.1.176
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-17" = {
+      mac_address = "00:16:3E:3C:0E:11" // 192.168.1.177
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-18" = {
+      mac_address = "00:16:3E:3C:0E:12" // 192.168.1.178
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-19" = {
+      mac_address = "00:16:3E:3C:0E:13" // 192.168.1.179
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-20" = {
+      mac_address = "00:16:3E:3C:0E:14" // 192.168.1.180
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-21" = {
+      mac_address = "00:16:3E:3C:0E:15" // 192.168.1.181
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-22" = {
+      mac_address = "00:16:3E:3C:0E:16" // 192.168.1.182
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-23" = {
+      mac_address = "00:16:3E:3C:0E:17" // 192.168.1.183
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-24" = {
+      mac_address = "00:16:3E:3C:0E:18" // 192.168.1.184
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-25" = {
+      mac_address = "00:16:3E:3C:0E:19" // 192.168.1.185
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-26" = {
+      mac_address = "00:16:3E:3C:0E:1A" // 192.168.1.186
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-27" = {
+      mac_address = "00:16:3E:3C:0E:1B" // 192.168.1.187
+      cpu         = 4
+      memory      = "8Gi"
+    }
+    "kube-worker-28" = {
+      mac_address = "00:16:3E:3C:0E:1C" // 192.168.1.188
+      cpu         = 4
       memory      = "8Gi"
     }
   }
@@ -143,7 +243,7 @@ resource "harvester_virtualmachine" "kube-cluster" {
   disk {
     name        = "root"
     type        = "disk"
-    size        = "300Gi"
+    size        = "100Gi"
     bus         = "virtio"
     boot_order  = 1
     image       = harvester_image.ubuntu-jammy.id

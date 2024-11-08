@@ -9,7 +9,7 @@ resources:
 - standby-deny-egress-networkpolicy.yaml
 - service.yaml
 - ingress.yaml
-- sealed-secret.yaml
+- ecran-secrets.yaml
 - ecran-cluster.yaml
 - ecran-vector-cluster.yaml
 - serviceaccount.yaml

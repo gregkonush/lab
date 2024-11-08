@@ -38,7 +38,7 @@ spec:
             - name: RESEND_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: ecran-secrets
+                  name: resend-api-key
                   key: data
             - name: DB_URI
               valueFrom:
@@ -59,7 +59,7 @@ spec:
             - name: AUTH_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: ecran-secret
+                  name: auth-secret
                   key: data
             - name: AUTH_URL
               value: "https://proompteng.ai"
