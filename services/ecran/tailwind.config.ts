@@ -112,7 +112,8 @@ const config = {
   plugins: [
     require('@tailwindcss/typography'),
     require('tailwindcss-animate'),
-    plugin(function ({ addVariant }) {
+    require('tailwindcss-motion'),
+    plugin(({ addVariant }) => {
       addVariant('prose-inline-code', '& :where(:not(pre) > code)')
     }),
   ],
