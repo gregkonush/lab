@@ -26,3 +26,4 @@ spec:
       owner: ecran
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS vector;
+        - CREATE EXTENSION IF NOT EXISTS age;
