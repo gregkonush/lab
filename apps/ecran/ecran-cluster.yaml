@@ -4,7 +4,7 @@ metadata:
   name: ecran-cluster
   namespace: ecran
 spec:
-  imageName: kalmyk.duckdns.org/lab/vecteur:16.4
+  imageName: kalmyk.duckdns.org/lab/vecteur:17.0
   imagePullSecrets:
     - name: kalmyk-registry
   postgresql:
