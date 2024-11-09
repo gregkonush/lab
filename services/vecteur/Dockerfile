@@ -29,6 +29,5 @@ RUN set -xe; \
   rm -fr /tmp/* ; \
   rm -rf /var/lib/apt/lists/*;
 
-
 RUN usermod -u 26 postgres
 USER 26
