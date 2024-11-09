@@ -1,15 +1,12 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: ecran-cluster
+  name: ecran-vector-cluster
   namespace: ecran
 spec:
-  imageName: kalmyk.duckdns.org/lab/vecteur:17.0
+  imageName: kalmyk.duckdns.org/lab/vecteur:16
   imagePullSecrets:
     - name: kalmyk-registry
-  postgresql:
-    shared_preload_libraries:
-      - "vectors.so"
   instances: 3
   storage:
     size: 20Gi
@@ -19,5 +16,3 @@ spec:
       owner: ecran
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS vector;
-      dataChecksums: true
-      encoding: "UTF8"

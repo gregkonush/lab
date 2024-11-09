@@ -6,7 +6,7 @@ metadata:
   name: ecran
   namespace: ecran
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: ecran
@@ -26,7 +26,7 @@ spec:
             - name: DB_URI
               valueFrom:
                 secretKeyRef:
-                  name: ecran-cluster-app
+                  name: ecran-vector-cluster-ecran
                   key: uri
       containers:
         - name: ecran
@@ -43,7 +43,7 @@ spec:
             - name: DB_URI
               valueFrom:
                 secretKeyRef:
-                  name: ecran-cluster-app
+                  name: ecran-vector-cluster-ecran
                   key: uri
             - name: TEMPORAL_ADDRESS
               value: "temporal-frontend.temporal.svc.cluster.local:7233"
