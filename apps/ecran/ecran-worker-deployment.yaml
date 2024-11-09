@@ -30,7 +30,7 @@ spec:
             - name: DB_URI
               valueFrom:
                 secretKeyRef:
-                  name: ecran-vector-cluster-ecran
+                  name: ecran-vector-cluster-app
                   key: uri
             - name: TEMPORAL_ADDRESS
               value: "temporal-frontend.temporal.svc.cluster.local:7233"
