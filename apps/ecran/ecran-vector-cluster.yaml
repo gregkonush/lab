@@ -8,7 +8,15 @@ spec:
   imagePullSecrets:
     - name: kalmyk-registry
   instances: 3
+  resources:
+    requests:
+      cpu: "1"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
   storage:
+    storageClass: longhorn
     size: 20Gi
   bootstrap:
     initdb:
