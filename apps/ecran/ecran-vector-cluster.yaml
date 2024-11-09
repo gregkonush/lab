@@ -12,6 +12,8 @@ spec:
     size: 20Gi
   bootstrap:
     initdb:
+      dataChecksums: true
+      encoding: "UTF8"
       database: ecran
       owner: ecran
       postInitApplicationSQL:
