@@ -4,6 +4,20 @@ metadata:
   name: ecran-cluster
   namespace: ecran
 spec:
+  imageName: kalmyk.duckdns.org/lab/vecteur:16.4
+  imagePullSecrets:
+    - name: kalmyk-registry
+  postgresql:
+    shared_preload_libraries:
+      - "vectors.so"
   instances: 3
   storage:
-    size: 5Gi
+    size: 20Gi
+  bootstrap:
+    initdb:
+      database: ecran
+      owner: ecran
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+      dataChecksums: true
+      encoding: "UTF8"
