@@ -23,9 +23,6 @@ FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
 echo "Building Docker image: ${FULL_IMAGE_NAME}"
 docker buildx build \
     --platform linux/${TARGETARCH} \
-    --build-arg PGVECTORS_TAG=v0.3.0 \
-    --build-arg TARGETARCH=${TARGETARCH} \
-    --build-arg CNPG_TAG=${CNPG_TAG} \
     -t ${FULL_IMAGE_NAME} \
     -f ${DOCKERFILE} ${CONTEXT_PATH} \
     --push
