@@ -5,6 +5,7 @@ metadata:
   namespace: ecran
 spec:
   imageName: kalmyk.duckdns.org/lab/vecteur:16
+  imagePullPolicy: Always
   imagePullSecrets:
     - name: kalmyk-registry
   instances: 3
