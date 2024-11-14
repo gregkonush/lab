@@ -2,6 +2,9 @@
   "recommendations": [
     "HashiCorp.terraform",
     "ms-kubernetes-tools.vscode-kubernetes-tools",
-    "github.vscode-pull-request-github"
+    "bradlc.vscode-tailwindcss",
+    "biomejs.biome",
+    "esbenp.prettier-vscode",
+    "yoavbls.pretty-ts-errors"
   ]
 }
