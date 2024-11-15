@@ -6,32 +6,26 @@ RUN npm install -g pnpm
 FROM base AS deps
 WORKDIR /app
 
-# Copy workspace configuration
-COPY pnpm-workspace.yaml ./
-COPY pnpm-lock.yaml ./
-COPY package.json ./
-COPY .npmrc ./
+COPY . .
 
-# Copy the service package.json
-COPY services/ecran/package.json ./services/ecran/
+WORKDIR /app/services/ecran
 
 # Install dependencies
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --no-frozen-lockfile
+  pnpm install --no-frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
-WORKDIR /app
+WORKDIR /app/services/ecran
 
 # Copy all workspace files
 COPY . .
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/services/ecran/node_modules ./services/ecran/node_modules
+COPY --from=deps /app/services/ecran/node_modules ./node_modules
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build the project
-WORKDIR /app/services/ecran
 RUN pnpm run build
 
 # Production image, copy all the files and run next
