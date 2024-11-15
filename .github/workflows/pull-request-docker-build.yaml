@@ -10,7 +10,7 @@ jobs:
     with:
       image_name: ecran
       dockerfile: ./services/ecran/Dockerfile
-      context: ./services/ecran
+      context: ./
       new_tag: ${{ github.sha }}
       push_image: false
     secrets:
