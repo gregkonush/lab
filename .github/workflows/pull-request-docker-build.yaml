@@ -1,0 +1,14 @@
+name: Pull Request Docker Build
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  build-ecran:
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: ecran
+      dockerfile: ./services/ecran/Dockerfile
+      context: ./services/ecran
+      new_tag: ${{ github.sha }}

@@ -15,20 +15,6 @@ on:
       new_tag:
         required: true
         type: string
-      external_repository:
-        required: false
-        type: string
-        default: ""
-      platforms:
-        required: false
-        type: string
-        default: "linux/arm64"
-    secrets:
-      REGISTRY_USERNAME:
-        required: true
-      REGISTRY_TOKEN:
-        required: true
-  pull_request:
 
 jobs:
   build:
@@ -36,52 +22,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.external_repository }}
-          path: ${{ inputs.external_repository && 'external_repo' || '.' }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            kalmyk.duckdns.org/lab/${{ inputs.image_name }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}},value=${{ inputs.new_tag }}
-            type=sha
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache docker layers
-        uses: actions/cache@v4
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
         with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
-      - name: Login to Docker Registry
-        uses: docker/login-action@v3
-        with:
-          registry: kalmyk.duckdns.org
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          platforms: ${{ inputs.platforms }}
-          context: ${{ inputs.external_repository && 'external_repo' || inputs.context }}
-          file: ${{ inputs.external_repository && 'external_repo/' || '' }}${{ inputs.dockerfile }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          push: true
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          push: false
+          tags: |
+            ${{ inputs.image_name }}:${{ inputs.new_tag }}
+            ${{ inputs.image_name }}:latest
