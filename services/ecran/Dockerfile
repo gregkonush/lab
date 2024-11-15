@@ -5,10 +5,11 @@ RUN npm install -g pnpm
 
 FROM base AS deps
 WORKDIR /app
-COPY package.json ./
+COPY package.json pnpm-lock.yaml ./
 COPY .npmrc ./
 
-RUN pnpm install
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+  pnpm install --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
