@@ -8,6 +8,7 @@ resources:
   - base/ingress.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/master/manifests/install.yaml
   - base/secrets.yaml
+  - base/docker-registry-secret.yaml
 
 patches:
   - path: overlays/argocd-cm.yaml
@@ -18,3 +19,30 @@ patches:
       kind: Deployment
       name: argocd-repo-server
   - path: overlays/argocd-image-updater-config.yaml
+
+# https://github.com/argoproj/argo-cd/issues/16623#issuecomment-2176566772
+patchesJson6902:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: argocd-repo-server
+    patch: |
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: dockerconfigjson
+          secret:
+            secretName: docker-registry-auth
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: dockerconfigjson
+          mountPath: /home/argocd/.docker/
+          readOnly: true
+      - op: replace
+        path: /spec/template/spec/containers/0/securityContext/readOnlyRootFilesystem
+        value: false
