@@ -7,7 +7,7 @@ spec:
   project: default
   sources:
     - repoURL: registry-1.docker.io/bitnamicharts
-      targetRevision: 9.12.14
+      targetRevision: 9.2.14
       chart: spark
       helm:
         releaseName: spark
