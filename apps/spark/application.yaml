@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spark
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: registry-1.docker.io/bitnamicharts
+      targetRevision: 9.12.14
+      chart: spark
+      helm:
+        releaseName: spark
+        skipCrds: false
+        passCredentials: true
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: spark
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
