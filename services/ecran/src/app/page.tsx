@@ -2,7 +2,6 @@ import LogRocket from '@/components/logrocket'
 import { ThreeScene } from '@/components/three'
 import TypedText from '@/components/typed-text'
 
-
 export default async function Home() {
   return (
     <div className="flex min-w-full min-h-[calc(100vh-10rem)] flex-col items-center justify-center prose dark:prose-invert">
@@ -17,4 +16,3 @@ export default async function Home() {
     </div>
   )
 }
-

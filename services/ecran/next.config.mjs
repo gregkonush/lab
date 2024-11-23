@@ -4,9 +4,7 @@ import createMDX from '@next/mdx'
 const nextConfig = {
   output: 'standalone',
   pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
-  experimental: {
-    serverComponentsExternalPackages: ['pino', 'pino-pretty'],
-  },
+  serverExternalPackages: ['pino', 'pino-pretty'],
 }
 
 const withMDX = createMDX({})

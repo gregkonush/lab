@@ -15,15 +15,16 @@ const QuerySchema = z.object({
 })
 
 interface ProblemsPageProps {
-  searchParams: {
+  searchParams: Promise<{
     page?: string
     pageSize?: string
     search?: string
-  }
+  }>
 }
 
-export default async function ProblemsPage({ searchParams }: ProblemsPageProps) {
-  const { page, pageSize, search } = QuerySchema.parse({
+export default async function ProblemsPage(props: ProblemsPageProps) {
+  const searchParams = await props.searchParams
+  const { page, pageSize, search } = await QuerySchema.parseAsync({
     page: searchParams.page,
     pageSize: searchParams.pageSize,
     search: searchParams.search,

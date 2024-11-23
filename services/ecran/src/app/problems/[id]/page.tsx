@@ -23,10 +23,16 @@ import { EmptySolutionPanel } from '@/components/empty-solution-panel'
 import { problems, solutions } from '@/db/schema'
 
 type Props = {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }
 
-export async function generateMetadata({ params: { id } }: Props, parent: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata(props: Props, parent: ResolvingMetadata): Promise<Metadata> {
+  const params = await props.params;
+
+  const {
+    id
+  } = params;
+
   if (id === 'create') {
     return {
       title: 'Create New Problem',
@@ -79,7 +85,13 @@ export async function generateMetadata({ params: { id } }: Props, parent: Resolv
   }
 }
 
-export default async function Problem({ params: { id } }: Props) {
+export default async function Problem(props: Props) {
+  const params = await props.params;
+
+  const {
+    id
+  } = params;
+
   if (id === 'create') {
     return <CreateProblemForm />
   }
