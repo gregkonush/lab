@@ -83,14 +83,14 @@ export function ComboSelect({ value, onChange, onBlur, name }: ComboSelectProps)
   return (
     <Combobox value={value} onChange={onChange} multiple>
       <div className="relative w-full">
-        <div className="relative w-full min-h-[2.5rem] cursor-default overflow-hidden rounded-md bg-zinc-800 text-left shadow-md">
+        <div className="relative min-h-[2.5rem] w-full cursor-default overflow-hidden rounded-md bg-zinc-800 text-left shadow-md">
           <div className="flex flex-wrap items-center gap-1 p-1">
             {value.map((tagValue) => {
               const tag = tags.find((t) => t.value === tagValue)
               return (
                 <span
                   key={tagValue}
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-600 text-white"
+                  className="inline-flex items-center rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white"
                 >
                   {tag ? tag.name : tagValue}
                   <button
@@ -105,8 +105,8 @@ export function ComboSelect({ value, onChange, onBlur, name }: ComboSelectProps)
             })}
             <div className="relative flex-1">
               <ComboboxInput
-                className="w-full border-none py-1 pl-2 pr-8 text-sm leading-5 text-zinc-200 bg-transparent focus:ring-0 focus:outline-none"
-                onChange={(event) => setQuery(event.target.value)}
+                className="w-full border-none bg-transparent py-1 pl-2 pr-8 text-sm leading-5 text-zinc-200 focus:outline-none focus:ring-0"
+                onChange={(event: { target: { value: React.SetStateAction<string> } }) => setQuery(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onBlur={onBlur}
                 name={name}
@@ -119,14 +119,14 @@ export function ComboSelect({ value, onChange, onBlur, name }: ComboSelectProps)
             <ChevronsUpDown className="h-5 w-5 text-zinc-400" aria-hidden="true" />
           </ComboboxButton>
         </div>
-        <ComboboxOptions className="absolute mt-1 max-h-60 w-full overflow-auto rounded-md bg-zinc-800 py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm z-10">
+        <ComboboxOptions className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-zinc-800 py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
           {filteredTags.length === 0 && query !== '' ? (
-            <div className="relative cursor-default select-none py-2 px-4 text-zinc-400">Nothing found.</div>
+            <div className="relative cursor-default select-none px-4 py-2 text-zinc-400">Nothing found.</div>
           ) : (
             filteredTags.map((tag) => (
               <ComboboxOption
                 key={tag.id}
-                className={({ active }) =>
+                className={({ active }: { active: boolean }) =>
                   `relative cursor-default select-none py-2 pl-10 pr-4 ${
                     active ? 'bg-indigo-600 text-white' : 'text-zinc-200'
                   }`
@@ -134,7 +134,7 @@ export function ComboSelect({ value, onChange, onBlur, name }: ComboSelectProps)
                 value={tag.value}
                 onFocus={() => setHighlightedTag(tag.value)}
               >
-                {({ selected, active }) => (
+                {({ selected, active }: { selected: boolean; active: boolean }) => (
                   <>
                     <span className={`block truncate ${selected ? 'font-medium' : 'font-normal'}`}>{tag.name}</span>
                     {selected ? (
