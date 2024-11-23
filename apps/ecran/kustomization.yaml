@@ -22,4 +22,4 @@ images:
 - name: kalmyk.duckdns.org/lab/ecran-worker
   newTag: 0.117.0
 - name: kalmyk.duckdns.org/lab/juge
-  newTag: 0.117.0
+  newTag: 0.118.0
