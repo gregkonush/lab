@@ -27,11 +27,9 @@ type Props = {
 }
 
 export async function generateMetadata(props: Props, parent: ResolvingMetadata): Promise<Metadata> {
-  const params = await props.params;
+  const params = await props.params
 
-  const {
-    id
-  } = params;
+  const { id } = params
 
   if (id === 'create') {
     return {
@@ -86,11 +84,9 @@ export async function generateMetadata(props: Props, parent: ResolvingMetadata):
 }
 
 export default async function Problem(props: Props) {
-  const params = await props.params;
+  const params = await props.params
 
-  const {
-    id
-  } = params;
+  const { id } = params
 
   if (id === 'create') {
     return <CreateProblemForm />
@@ -118,7 +114,7 @@ export default async function Problem(props: Props) {
   return (
     <SolutionStateProvider>
       <div className="text-base text-zinc-200">
-        <div className="flex justify-between items-center mb-5">
+        <div className="mb-5 flex items-center justify-between">
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
@@ -137,19 +133,19 @@ export default async function Problem(props: Props) {
           {problem.id && <SolveProblemButton problemId={problem.id} />}
         </div>
         <div key={problem.titleSlug} className="flex flex-row space-x-4">
-          <div className="basis-1/2 flex-shrink-0 bg-zinc-800 rounded p-4">
-            <h2 className="text-2xl font-bold mb-5">{problem.title}</h2>
-            <div className="text-sm flex flex-row gap-4 text-zinc-300 mb-5 text-center">
+          <div className="flex-shrink-0 basis-1/2 rounded bg-zinc-800 p-4">
+            <h2 className="mb-5 text-2xl font-bold">{problem.title}</h2>
+            <div className="mb-5 flex flex-row gap-4 text-center text-sm text-zinc-300">
               <div>
                 Difficulty:{' '}
-                <span className="bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs">{problem.difficulty}</span>
+                <span className="rounded-full bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200">{problem.difficulty}</span>
               </div>
               <div>
                 <span>Topics: </span>
                 {problem.tags?.map((tag, index) => (
                   <span
                     key={tag}
-                    className={cn('bg-zinc-900 text-zinc-200 rounded-full py-0.5 px-2 text-xs', index > 0 && 'ml-1')}
+                    className={cn('rounded-full bg-zinc-900 px-2 py-0.5 text-xs text-zinc-200', index > 0 && 'ml-1')}
                   >
                     {tag}
                   </span>
@@ -162,9 +158,9 @@ export default async function Problem(props: Props) {
               <MarkdownContent content={problem.description} useMDX={false} className="whitespace-break-spaces" />
             )}
           </div>
-          <div className="basis-1/2 prose dark:prose-invert max-w-none overflow-x-auto text-zinc-200">
+          <div className="prose max-w-none basis-1/2 overflow-x-auto text-zinc-200 dark:prose-invert">
             {solution?.solution ? (
-              <div className="bg-zinc-800 rounded p-4 h-full">
+              <div className="h-full rounded bg-zinc-800 p-4">
                 <MarkdownContent content={solution.solution} />
               </div>
             ) : (
