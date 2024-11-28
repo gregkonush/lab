@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: dgraph
+helmCharts:
+  - name: dgraph
+    repo: https://charts.dgraph.io
+    version: 24.0.5
+    releaseName: dgraph
+    namespace: dgraph
+    includeCRDs: true
+    valuesInline:
+      ratel:
+        enabled: true
+      global:
+        domain: dgraph.lan
+        ingress:
+          enabled: true
+          ingressClassName: traefik
+        ingress_grpc:
+          enabled: true
+          ingressClassName: traefik
+
