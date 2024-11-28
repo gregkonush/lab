@@ -9,14 +9,27 @@ helmCharts:
     namespace: dgraph
     includeCRDs: true
     valuesInline:
-      ratel:
-        enabled: true
-      global:
-        domain: dgraph.lan
+      zero:
+        persistence:
+          enabled: true
+          storageClass: longhorn
+          size: 20Gi
+      alpha:
+        persistence:
+          enabled: true
+          storageClass: longhorn
+          size: 10Gi
         ingress:
           enabled: true
+          hostname: alpha.dgraph.lan
           ingressClassName: traefik
         ingress_grpc:
           enabled: true
+          hostname: alpha-grpc.dgraph.lan
           ingressClassName: traefik
-
+      ratel:
+        enabled: true
+        ingress:
+          enabled: true
+          hostname: ratel.dgraph.lan
+          ingressClassName: traefik
