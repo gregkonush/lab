@@ -1,3 +1,4 @@
+# this template is created to use OCI helm charts
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
