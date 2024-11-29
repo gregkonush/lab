@@ -22,7 +22,6 @@ spec:
             chart: dgraph
             version: 24.0.5
             releaseName: dgraph
-            customValues: true
             valuesObject:
               zero:
                 persistence:
@@ -52,10 +51,9 @@ spec:
           releaseName: "{{.releaseName}}"
           skipCrds: false
   templatePatch: |
-    {{- if .customValues }}
+    {{- if hasKey . "valuesObject" }}
     spec:
       source:
         helm:
-          valuesObject:
-            {{ .valuesObject }}
+          valuesObject: {{- .valuesObject | toYaml | nindent 12 }}
     {{- end }}
