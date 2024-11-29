@@ -30,13 +30,18 @@ spec:
               alpha:
                 persistence:
                   storageClass: longhorn
-                  size: 10Gi
-              ratel:
-                enabled: true
+                  size: 20Gi
+              global:
+                domain: dgraph.lan
                 ingress:
                   enabled: true
-                  hostname: ratel.dgraph.lan
                   ingressClassName: traefik
+                  ratel_hostname: ratel.dgraph.lan
+                  alpha_hostname: alpha.dgraph.lan
+                ingress_grpc:
+                  enabled: true
+                  ingressClassName: traefik
+                  alpha_grpc_hostname: alpha-grpc.dgraph.lan
   template:
     metadata:
       name: "{{.name}}"
