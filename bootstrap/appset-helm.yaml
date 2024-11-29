@@ -8,15 +8,26 @@ spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
-    - matrix:
-        generators:
-          - git:
-              repoURL: https://github.com/gregkonush/lab.git
-              revision: main
-              files:
-                - path: bootstrap/appset-values.yaml
-          - list:
-              elementsYaml: "{{ .apps | toJson }}"
+    - list:
+        elements:
+          - name: spark
+            namespace: spark
+            repoUrl: registry-1.docker.io/bitnamicharts
+            chart: spark
+            version: 9.2.14
+            releaseName: spark
+          - name: dgraph
+            namespace: dgraph
+            repoUrl: https://charts.dgraph.io
+            chart: dgraph
+            version: 24.0.5
+            releaseName: dgraph
+            customValues: true
+            valuesObject:
+              zero:
+                persistence:
+                  storageClass: longhorn
+                  size: 20Gi
   template:
     metadata:
       name: "{{.name}}"
@@ -33,10 +44,18 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
-      sources:
-        - repoURL: "{{.repoUrl}}"
-          chart: "{{.chart}}"
-          targetRevision: "{{.version}}"
-          helm:
-            releaseName: "{{.releaseName}}"
-            skipCrds: false
+      source:
+        repoURL: "{{.repoUrl}}"
+        chart: "{{.chart}}"
+        targetRevision: "{{.version}}"
+        helm:
+          releaseName: "{{.releaseName}}"
+          skipCrds: false
+  templatePatch: |
+    {{- if .customValues }}
+    spec:
+      source:
+        helm:
+          valuesObject:
+            {{ .valuesObject }}
+    {{- end }}
