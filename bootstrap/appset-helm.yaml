@@ -32,7 +32,6 @@ spec:
                   storageClass: longhorn
                   size: 20Gi
               global:
-                domain: dgraph.lan
                 ingress:
                   enabled: true
                   ingressClassName: traefik
