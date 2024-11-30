@@ -3,6 +3,11 @@
 Install argo-cd CLI
 
 ```bash
+# Manually create the rest of kubernetes resources for harvester
+k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
+```
+
+```bash
 brew install argocd
 ```
 

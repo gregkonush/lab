@@ -126,5 +126,9 @@
   {
     "hostname": "kube-worker-28",
     "ip": "192.168.1.188"
+  },
+  {
+    "hostname": "kube-worker-29",
+    "ip": "192.168.1.90"
   }
 ]
