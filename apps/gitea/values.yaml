@@ -13,6 +13,8 @@ gitea:
   persistence:
     enabled: true
     size: 20Gi
+    accessModes:
+      - ReadWriteMany
   postgresql-ha:
     global:
       defaultStorageClass: longhorn
