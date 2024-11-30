@@ -31,16 +31,20 @@ spec:
                 persistence:
                   storageClass: longhorn
                   size: 20Gi
-              global:
                 ingress:
                   enabled: true
                   ingressClassName: traefik
-                  ratel_hostname: ratel.dgraph.lan
-                  alpha_hostname: alpha.dgraph.lan
+                  hostname: alpha.dgraph.lan
                 ingress_grpc:
                   enabled: true
                   ingressClassName: traefik
-                  alpha_grpc_hostname: alpha-grpc.dgraph.lan
+                  hostname: alpha-grpc.dgraph.lan
+              ratel:
+                enabled: true
+                ingress:
+                  enabled: true
+                  ingressClassName: traefik
+                  hostname: ratel.dgraph.lan
   template:
     metadata:
       name: "{{.name}}"
@@ -64,6 +68,12 @@ spec:
         helm:
           releaseName: "{{.releaseName}}"
           skipCrds: false
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: dgraph
+          jsonPointers:
+            - /spec/volumeClaimTemplates/0
   templatePatch: |
     {{- if hasKey . "valuesObject" }}
     spec:
