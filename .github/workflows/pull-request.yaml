@@ -77,5 +77,5 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: kalmyk.duckdns.org/lab/ecran:${{ github.sha }}
-          cache-from: type=gha,scope=${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=${{ github.workflow }}
+          cache-from: type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
+          cache-to: type=inline
