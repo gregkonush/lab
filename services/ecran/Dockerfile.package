@@ -5,15 +5,12 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+  adduser --system --uid 1001 nextjs
 
-# Copy build artifacts from host
-COPY .next/standalone ./
-COPY .next/static ./.next/static
-COPY public ./public
-
-# Set correct ownership
-RUN chown -R nextjs:nodejs .
+# Copy build artifacts from host and resolve symlinks
+COPY --chown=nextjs:nodejs .next/standalone/ ./
+COPY --chown=nextjs:nodejs .next/static ./.next/static
+COPY --chown=nextjs:nodejs public ./public
 
 USER nextjs
 
