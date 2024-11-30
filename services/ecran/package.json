@@ -13,6 +13,7 @@
     "build": "next build",
     "build:workflow": "tsx ./src/temporal/scripts/build-bundle.ts",
     "start": "next start",
+    "start:worker": "node src/temporal/worker.cjs",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
