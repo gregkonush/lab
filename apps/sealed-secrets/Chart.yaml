@@ -5,9 +5,9 @@ name: sealed-secrets
 version: 3.1.4
 dependencies:
   - name: sealed-secrets
-    version: 2.16.1
+    version: 2.16.2
     repository: https://bitnami-labs.github.io/sealed-secrets
 
   - name: sealed-secrets-web
-    version: 3.1.4
+    version: 3.1.5
     repository: https://charts.bakito.net

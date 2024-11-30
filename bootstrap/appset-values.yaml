@@ -1,7 +1,0 @@
-apps:
-  - name: spark
-    namespace: spark
-    repoUrl: registry-1.docker.io/bitnamicharts
-    chart: spark
-    version: 9.2.14
-    releaseName: spark

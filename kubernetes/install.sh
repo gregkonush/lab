@@ -261,3 +261,11 @@ k3sup join \
   --node-token "$NODE_TOKEN" \
   --ssh-key ~/.ssh/id_ed25519 \
   --user kalmyk
+
+echo "Setting up worker: 30"
+k3sup join \
+  --host 192.168.1.90 \
+  --server-host 192.168.1.150 \
+  --node-token "$NODE_TOKEN" \
+  --ssh-key ~/.ssh/id_ed25519 \
+  --user kalmyk
