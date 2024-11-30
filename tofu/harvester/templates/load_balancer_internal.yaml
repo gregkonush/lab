@@ -18,33 +18,6 @@ spec:
   workloadType: vm
   backendServerSelector:
     harvesterhci.io/vmName:
-      - kube-worker-00
-      - kube-worker-01
-      - kube-worker-02
-      - kube-worker-03
-      - kube-worker-04
-      - kube-worker-05
-      - kube-worker-06
-      - kube-worker-07
-      - kube-worker-08
-      - kube-worker-09
-      - kube-worker-10
-      - kube-worker-11
-      - kube-worker-12
-      - kube-worker-13
-      - kube-worker-14
-      - kube-worker-15
-      - kube-worker-16
-      - kube-worker-17
-      - kube-worker-18
-      - kube-worker-19
-      - kube-worker-20
-      - kube-worker-21
-      - kube-worker-22
-      - kube-worker-23
-      - kube-worker-24
-      - kube-worker-25
-      - kube-worker-26
-      - kube-worker-27
-      - kube-worker-28
-      - kube-worker-29
+      - kube-master-00
+      - kube-master-01
+      - kube-master-02
