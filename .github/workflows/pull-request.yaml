@@ -26,6 +26,7 @@ jobs:
         with:
           path: |
             services/ecran/.next/cache
+            services/ecran/node_modules
           key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
 
       - name: Set up pnpm
@@ -35,7 +36,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -48,6 +48,7 @@ jobs:
         with:
           path: |
             services/ecran/.next/cache
+            services/ecran/node_modules
           key: ${{ steps.restore-nextjs-build-cache.outputs.cache-primary-key }}
 
       - name: Set up QEMU
