@@ -20,60 +20,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Restore Next.js build cache
-        uses: actions/cache/restore@v4
-        id: restore-nextjs-build-cache
-        with:
-          path: |
-            services/ecran/.next/cache
-            services/ecran/node_modules
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build
-        run: pnpm run build
-
-      - name: Save Next.js build cache
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            services/ecran/.next/cache
-            services/ecran/node_modules
-          key: ${{ steps.restore-nextjs-build-cache.outputs.cache-primary-key }}
-
-      - name: Resolve symlinks in standalone build
-        run: |
-          echo "=== Current directory ==="
-          pwd
-
-          echo "=== Changing to .next/standalone ==="
-          cd .next/standalone
-
-          echo "=== Content of node_modules before ==="
-          ls -la node_modules
-
-          echo "=== Creating tar with resolved symlinks ==="
-          tar -chf modules.tar node_modules/
-          rm -rf node_modules
-          tar -xf modules.tar
-          rm modules.tar
-
-          echo "=== Final content of node_modules ==="
-          ls -la node_modules
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -100,5 +46,14 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: kalmyk.duckdns.org/lab/ecran:${{ github.sha }}
-          cache-from: type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
-          cache-to: type=inline
+          target: runner
+          build-args: |
+            NEXT_PUBLIC_COMMIT_SHA=${{ github.sha }}
+            BUILDKIT_INLINE_CACHE=1
+          cache-from: |
+            type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
+            type=registry,ref=kalmyk.duckdns.org/lab/ecran:buildcache
+          cache-to: type=registry,ref=kalmyk.duckdns.org/lab/ecran:buildcache,mode=max
+          secrets: |
+            "github-token=${{ secrets.GITHUB_TOKEN }}"
+          provenance: false
