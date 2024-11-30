@@ -39,12 +39,6 @@ spec:
                   enabled: true
                   ingressClassName: traefik
                   hostname: alpha-grpc.dgraph.lan
-              ratel:
-                enabled: true
-                ingress:
-                  enabled: true
-                  ingressClassName: traefik
-                  hostname: ratel.dgraph.lan
   template:
     metadata:
       name: "{{.name}}"
