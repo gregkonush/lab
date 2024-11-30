@@ -12,7 +12,7 @@ COPY .npmrc ./
 # Install dependencies with cache
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store,id=pnpm-store \
     --mount=type=cache,target=/app/node_modules,id=node-modules \
-    pnpm install --frozen-lockfile
+    pnpm install --no-frozen-lockfile
 
 # Copy source files
 COPY . .
