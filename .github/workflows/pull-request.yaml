@@ -15,14 +15,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Next.js build
-        uses: actions/cache@v4
+      - name: Restore Next.js build cache
+        uses: actions/cache/restore@v4
+        id: restore-nextjs-build-cache
         with:
           path: |
             services/ecran/.next/cache
-          key: ${{ runner.os }}-next-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-next-
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -38,6 +37,13 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      - name: Restore Next.js build cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            services/ecran/.next/cache
+          key: ${{ steps.restore-nextjs-build-cache.outputs.cache-primary-key }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -57,7 +63,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./services/ecran
           file: Dockerfile.package
           platforms: linux/arm64
           push: true
