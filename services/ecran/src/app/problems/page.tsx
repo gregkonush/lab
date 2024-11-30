@@ -80,13 +80,26 @@ export default async function ProblemsPage(props: ProblemsPageProps) {
     <div className="container mx-auto">
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <div className="text-2xl font-semibold tracking-tight text-zinc-900/50 dark:text-zinc-50/50">Problems</div>
           <SearchProblems defaultValue={search} />
+          <div className="flex items-center gap-2">
+            <span
+              className="rounded-full bg-zinc-100 px-2 py-0.5 text-sm font-medium text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100"
+              aria-label="Total number of problems"
+            >
+              {total}
+            </span>
+            <h1 className="text-xl font-semibold tracking-tight text-zinc-900/50 dark:text-zinc-50/50">Problems</h1>
+          </div>
         </div>
         <Suspense
           fallback={
             <div className="flex h-[400px] items-center justify-center">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+              <div
+                className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent"
+                aria-label="Loading problems"
+              >
+                <span className="sr-only">Loading problems...</span>
+              </div>
             </div>
           }
         >

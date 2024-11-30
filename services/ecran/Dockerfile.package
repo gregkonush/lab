@@ -1,0 +1,48 @@
+FROM node:lts-alpine AS builder
+WORKDIR /app
+
+# Install pnpm
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g pnpm
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+COPY .npmrc ./
+
+# Install dependencies with cache
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,id=pnpm-store \
+    --mount=type=cache,target=/app/node_modules,id=node-modules \
+    pnpm install --no-frozen-lockfile
+
+# Copy source files
+COPY . .
+
+# Build the application with cache
+RUN --mount=type=cache,target=/app/.next/cache,id=next-cache \
+    --mount=type=cache,target=/app/node_modules,id=node-modules \
+    --mount=type=cache,target=/root/.local/share/pnpm/store,id=pnpm-store \
+    NEXT_TELEMETRY_DISABLED=1 pnpm run build
+
+# Production image
+FROM node:lts-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy build output from builder
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]
