@@ -32,13 +32,16 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          run_install: true
+          run_install: false
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
 
       - name: Build
         run: pnpm run build
@@ -66,22 +69,29 @@ jobs:
           echo "=== Content of node_modules ==="
           ls -la node_modules
 
-          echo "=== Content of pnpm store ==="
-          ls -la /home/runner/.local/share/pnpm/store/v3
-
           echo "=== Creating resolved modules directory ==="
           mkdir -p node_modules_resolved
 
           for module in node_modules/*; do
             if [ -L "$module" ]; then
               module_name=$(basename "$module")
+              target=$(readlink "$module")
               echo "=== Processing $module_name ==="
-              echo "Original symlink target: $(readlink $module)"
-              echo "Looking for module in pnpm store..."
-              ls -la /home/runner/.local/share/pnpm/store/v3/*/node_modules/$module_name || echo "Not found in first try"
-              cp -r "/home/runner/.local/share/pnpm/store/v3/"*"/node_modules/$module_name" "node_modules_resolved/"
-              echo "=== Content of node_modules_resolved/$module_name ==="
-              ls -la "node_modules_resolved/$module_name"
+              echo "Original symlink target: $target"
+
+              # Extract the package path from the symlink
+              pkg_path=$(echo "$target" | sed 's|../../../node_modules/||')
+              echo "Package path: $pkg_path"
+
+              # Copy from the original node_modules
+              if [ -d "../../../node_modules/$pkg_path" ]; then
+                echo "Copying from original node_modules"
+                cp -r "../../../node_modules/$pkg_path" "node_modules_resolved/"
+                echo "=== Content of node_modules_resolved/$module_name ==="
+                ls -la "node_modules_resolved/$module_name" || true
+              else
+                echo "Warning: Could not find $pkg_path"
+              fi
             fi
           done
 
