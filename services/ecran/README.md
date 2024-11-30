@@ -25,5 +25,5 @@ temporal operator namespace create default
 Create vector cluster image
 
 ```bash
-./scripts/build-vecteur.sh
+./scripts/build-vecteur.sh 16
 ```
