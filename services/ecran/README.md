@@ -21,3 +21,9 @@ Run a curl to temporal to create default namespace
 ```bash
 temporal operator namespace create default
 ```
+
+Create vector cluster image
+
+```bash
+./scripts/build-vecteur.sh
+```
