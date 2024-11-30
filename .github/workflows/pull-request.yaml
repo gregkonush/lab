@@ -54,10 +54,45 @@ jobs:
 
       - name: Resolve symlinks in standalone build
         run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Content of current directory ==="
+          ls -la
+
+          echo "=== Changing to .next/standalone ==="
           cd .next/standalone
-          cp -rL node_modules node_modules_resolved
+          echo "=== Content of .next/standalone ==="
+          ls -la
+
+          echo "=== Content of node_modules ==="
+          ls -la node_modules
+
+          echo "=== Content of pnpm store ==="
+          ls -la /home/runner/.local/share/pnpm/store/v3
+
+          echo "=== Creating resolved modules directory ==="
+          mkdir -p node_modules_resolved
+
+          for module in node_modules/*; do
+            if [ -L "$module" ]; then
+              module_name=$(basename "$module")
+              echo "=== Processing $module_name ==="
+              echo "Original symlink target: $(readlink $module)"
+              echo "Looking for module in pnpm store..."
+              ls -la /home/runner/.local/share/pnpm/store/v3/*/node_modules/$module_name || echo "Not found in first try"
+              cp -r "/home/runner/.local/share/pnpm/store/v3/"*"/node_modules/$module_name" "node_modules_resolved/"
+              echo "=== Content of node_modules_resolved/$module_name ==="
+              ls -la "node_modules_resolved/$module_name"
+            fi
+          done
+
+          echo "=== Removing old node_modules ==="
           rm -rf node_modules
+          echo "=== Moving resolved modules ==="
           mv node_modules_resolved node_modules
+
+          echo "=== Final content of node_modules ==="
+          ls -la node_modules
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
