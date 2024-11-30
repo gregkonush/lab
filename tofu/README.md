@@ -1,5 +1,11 @@
 # Harvester
 
+## Install opentofu
+
+```bash
+brew install opentofu
+```
+
 Force delete virtual machine:
 
 ```bash
