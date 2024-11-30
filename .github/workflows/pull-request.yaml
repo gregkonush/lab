@@ -58,47 +58,18 @@ jobs:
         run: |
           echo "=== Current directory ==="
           pwd
-          echo "=== Content of current directory ==="
-          ls -la
 
           echo "=== Changing to .next/standalone ==="
           cd .next/standalone
-          echo "=== Content of .next/standalone ==="
-          ls -la
 
-          echo "=== Content of node_modules ==="
+          echo "=== Content of node_modules before ==="
           ls -la node_modules
 
-          echo "=== Creating resolved modules directory ==="
-          mkdir -p node_modules_resolved
-
-          for module in node_modules/*; do
-            if [ -L "$module" ]; then
-              module_name=$(basename "$module")
-              target=$(readlink "$module")
-              echo "=== Processing $module_name ==="
-              echo "Original symlink target: $target"
-
-              # Extract the package path from the symlink
-              pkg_path=$(echo "$target" | sed 's|../../../node_modules/||')
-              echo "Package path: $pkg_path"
-
-              # Copy from the original node_modules
-              if [ -d "../../../node_modules/$pkg_path" ]; then
-                echo "Copying from original node_modules"
-                cp -r "../../../node_modules/$pkg_path" "node_modules_resolved/"
-                echo "=== Content of node_modules_resolved/$module_name ==="
-                ls -la "node_modules_resolved/$module_name" || true
-              else
-                echo "Warning: Could not find $pkg_path"
-              fi
-            fi
-          done
-
-          echo "=== Removing old node_modules ==="
+          echo "=== Creating tar with resolved symlinks ==="
+          tar -chf modules.tar node_modules/
           rm -rf node_modules
-          echo "=== Moving resolved modules ==="
-          mv node_modules_resolved node_modules
+          tar -xf modules.tar
+          rm modules.tar
 
           echo "=== Final content of node_modules ==="
           ls -la node_modules
