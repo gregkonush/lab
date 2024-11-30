@@ -45,15 +45,12 @@ jobs:
           file: services/ecran/Dockerfile.package
           platforms: linux/arm64
           push: true
-          tags: kalmyk.duckdns.org/lab/ecran:${{ github.sha }}
+          tags: kalmyk.duckdns.org/lab/ecran:${{ github.sha }},kalmyk.duckdns.org/lab/ecran:latest
           target: runner
           build-args: |
             NEXT_PUBLIC_COMMIT_SHA=${{ github.sha }}
-            BUILDKIT_INLINE_CACHE=1
-          cache-from: |
-            type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
-            type=registry,ref=kalmyk.duckdns.org/lab/ecran:buildcache
-          cache-to: type=registry,ref=kalmyk.duckdns.org/lab/ecran:buildcache,mode=max
+          cache-from: type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
+          cache-to: type=inline
           secrets: |
-            "github-token=${{ secrets.GITHUB_TOKEN }}"
+            github-token=${{ secrets.GITHUB_TOKEN }}
           provenance: false
