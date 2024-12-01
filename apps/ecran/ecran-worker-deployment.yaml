@@ -17,6 +17,16 @@ spec:
     spec:
       imagePullSecrets:
         - name: kalmyk-registry
+      initContainers:
+        - name: run-migrations
+          image: kalmyk.duckdns.org/lab/ecran-migrator:latest
+          imagePullPolicy: Always
+          env:
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
       containers:
         - name: ecran-worker
           image: kalmyk.duckdns.org/lab/ecran-worker
