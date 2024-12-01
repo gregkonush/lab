@@ -3,6 +3,8 @@
 import type { ColumnDef } from '@tanstack/react-table'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Problem } from './types'
 
@@ -56,6 +58,25 @@ export const columns: ColumnDef<Problem>[] = [
             </Badge>
           ))}
         </div>
+      )
+    },
+  },
+  {
+    id: 'actions',
+    cell: ({ row }) => {
+      const { id } = row.original
+      return (
+        <Button
+          variant="ghost"
+          size="icon"
+          asChild
+          className="hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-950"
+          aria-label="Practice problem"
+        >
+          <Link href={`/practice?problemId=${id}`}>
+            <Play className="h-4 w-4" />
+          </Link>
+        </Button>
       )
     },
   },

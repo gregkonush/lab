@@ -55,6 +55,7 @@
     "@tanstack/react-query": "5.62.0",
     "@tanstack/react-query-devtools": "5.62.0",
     "@tanstack/react-table": "8.20.5",
+    "@tanstack/react-virtual": "3.10.9",
     "@temporalio/activity": "1.11.5",
     "@temporalio/client": "1.11.5",
     "@temporalio/worker": "1.11.5",
