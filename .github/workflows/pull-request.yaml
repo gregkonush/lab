@@ -17,19 +17,34 @@ jobs:
       run:
         working-directory: services/ecran
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        id: cache
         with:
-          image: public.ecr.aws/eks-distro-build-tooling/binfmt-misc:qemu-v7.0.0
+          path: |
+            services/ecran/node_modules
+            services/ecran/.next/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('services/ecran/package.json') }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build
+        run: bun run build
+
+      - name: Save cache
+        uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
-          driver-opts: |
-            image=moby/buildkit:v0.18.0
+          path: |
+            services/ecran/node_modules
+            services/ecran/.next/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('services/ecran/package.json') }}
 
       - name: Login to Container Registry
         uses: docker/login-action@v3
@@ -38,19 +53,13 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Package into Docker image
         uses: docker/build-push-action@v6
         with:
+          push: true
           context: services/ecran
           file: services/ecran/Dockerfile.package
           platforms: linux/arm64
-          push: true
-          tags: kalmyk.duckdns.org/lab/ecran:${{ github.sha }},kalmyk.duckdns.org/lab/ecran:latest
-          target: runner
-          build-args: |
-            NEXT_PUBLIC_COMMIT_SHA=${{ github.sha }}
+          tags: kalmyk.duckdns.org/lab/ecran:latest
           cache-from: type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
           cache-to: type=inline
-          secrets: |
-            github-token=${{ secrets.GITHUB_TOKEN }}
-          provenance: false
