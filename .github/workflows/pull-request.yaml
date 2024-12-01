@@ -21,6 +21,7 @@ jobs:
 
       - name: Restore cache
         uses: actions/cache/restore@v4
+        id: cache
         with:
           path: |
             services/ecran/node_modules
@@ -38,6 +39,7 @@ jobs:
 
       - name: Save cache
         uses: actions/cache/save@v4
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
           path: |
             services/ecran/node_modules
