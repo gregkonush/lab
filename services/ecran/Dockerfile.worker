@@ -1,21 +1,18 @@
-FROM node:lts-slim AS deps
+FROM oven/bun:latest AS deps
 WORKDIR /app
 
-RUN npm install -g pnpm
-COPY package.json ./
-COPY .npmrc ./
-RUN pnpm install
+COPY package.json bun.lockb .npmrc ./
+RUN bun install
 
 FROM node:lts-slim AS builder
 WORKDIR /app
-RUN npm install -g pnpm
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm run build:workflow
+RUN npm run build:workflow
 
-FROM node:lts-slim
+FROM node:lts-slim AS runner
 WORKDIR /app
-RUN npm install -g pnpm && pnpm install esbuild-loader
+RUN npm install esbuild-loader
 COPY --from=builder /app .
 
-CMD ["pnpm", "run", "start:worker"]
+CMD ["npm", "run", "start:worker"]
