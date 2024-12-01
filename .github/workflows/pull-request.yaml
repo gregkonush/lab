@@ -51,6 +51,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: services/ecran
-          file: Dockerfile.package
+          file: services/ecran/Dockerfile.package
           platforms: linux/arm64
           tags: kalmyk.duckdns.org/lab/ecran:pr-${{ github.event.pull_request.number }}
