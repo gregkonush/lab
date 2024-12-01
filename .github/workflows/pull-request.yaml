@@ -22,8 +22,10 @@ jobs:
       - name: Restore cache
         uses: actions/cache/restore@v4
         with:
-          key: ${{ runner.os }}-bun-${{ hashFiles('package.json') }}
-          path: node_modules
+          path: |
+            services/ecran/node_modules
+            services/ecran/.next/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('services/ecran/package.json') }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -37,5 +39,7 @@ jobs:
       - name: Save cache
         uses: actions/cache/save@v4
         with:
-          key: ${{ runner.os }}-bun-${{ hashFiles('package.json') }}
-          path: node_modules
+          path: |
+            services/ecran/node_modules
+            services/ecran/.next/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('services/ecran/package.json') }}
