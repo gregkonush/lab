@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button'
 import { useRouter, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
@@ -94,6 +95,7 @@ export function DataTable<TData, TValue>({ columns, data, pageCount, pageSize, p
             size="sm"
             onClick={() => handlePageChange(currentPage - 1)}
             disabled={currentPage === 1}
+            className={cn(currentPage === 1 && 'bg-zinc-100 dark:bg-zinc-800')}
           >
             <ChevronLeft />
           </Button>
@@ -102,6 +104,7 @@ export function DataTable<TData, TValue>({ columns, data, pageCount, pageSize, p
             size="sm"
             onClick={() => handlePageChange(currentPage + 1)}
             disabled={currentPage === pageCount}
+            className={cn(currentPage === pageCount && 'bg-zinc-100 dark:bg-zinc-800')}
           >
             <ChevronRight />
           </Button>
