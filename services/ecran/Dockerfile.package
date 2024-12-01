@@ -1,11 +1,13 @@
-FROM oven/bun:latest AS builder
+FROM oven/bun:latest AS deps
 WORKDIR /app
-
-COPY package.json bun.lockb ./
+COPY package.json bun.lockb .npmrc ./
 RUN bun install --frozen-lockfile
 
+FROM node:lts-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN bun run build
+RUN npm run build
 
 FROM node:lts-alpine AS runner
 WORKDIR /app
