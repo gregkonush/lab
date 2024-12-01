@@ -93,7 +93,7 @@ jobs:
           context: services/ecran
           file: services/ecran/Dockerfile.package
           platforms: linux/arm64
-          tags: ${{ needs.version.outputs.new_tag }}
+          tags: kalmyk.duckdns.org/lab/ecran:${{ needs.version.outputs.new_tag }}
           cache-from: type=registry,ref=kalmyk.duckdns.org/lab/ecran:latest
           cache-to: type=inline
 
