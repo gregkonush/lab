@@ -233,9 +233,6 @@ importers:
       vaul:
         specifier: 1.1.1
         version: 1.1.1(react-dom@19.0.0-rc-7670501b-20241124(react@19.0.0-rc-7670501b-20241124))(react@19.0.0-rc-7670501b-20241124)(types-react-dom@19.0.0-rc.1)(types-react@19.0.0-rc.1)
-      ws:
-        specifier: 8.18.0
-        version: 8.18.0
       xstate:
         specifier: 5.19.0
         version: 5.19.0
