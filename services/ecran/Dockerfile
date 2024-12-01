@@ -1,14 +1,10 @@
-FROM node:lts-alpine AS base
-
-# Install pnpm
-RUN npm install -g pnpm
-
+FROM oven/bun:1 as base
 FROM base AS deps
 WORKDIR /app
 COPY package.json ./
 COPY .npmrc ./
 
-RUN pnpm install
+RUN bun install
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -19,7 +15,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
 # Production image, copy all the files and run next
-FROM base AS runner
+FROM node:lts-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
