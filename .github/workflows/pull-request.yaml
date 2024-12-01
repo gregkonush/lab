@@ -43,3 +43,14 @@ jobs:
             services/ecran/node_modules
             services/ecran/.next/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('services/ecran/package.json') }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Package into Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/ecran
+          file: Dockerfile.package
+          platforms: linux/arm64
+          tags: kalmyk.duckdns.org/lab/ecran:pr-${{ github.event.pull_request.number }}
