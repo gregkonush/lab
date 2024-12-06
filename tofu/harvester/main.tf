@@ -182,14 +182,22 @@ locals {
       memory      = "24Gi"
     }
   }
+
+  docker_vm = {
+    "docker-host" = {
+      mac_address = "00:16:3E:3C:0F:00" // 192.168.1.190
+      cpu         = 4
+      memory      = "16Gi"
+    }
+  }
 }
 
 resource "harvester_image" "ubuntu-focal" {
-  name         = "ubuntu-focal"
-  display_name = "Ubuntu 20 Focal LTS"
-  source_type  = "download"
-  namespace    = "harvester-public"
-  url          = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
+  name               = "ubuntu-focal"
+  display_name       = "Ubuntu 20 Focal LTS"
+  source_type        = "download"
+  namespace          = "harvester-public"
+  url                = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
   storage_class_name = harvester_storageclass.single-node-longhorn.name
 
   lifecycle {
@@ -198,11 +206,11 @@ resource "harvester_image" "ubuntu-focal" {
 }
 
 resource "harvester_image" "ubuntu-jammy" {
-  name         = "ubuntu-jammy"
-  display_name = "Ubuntu 22 Jammy LTS"
-  source_type  = "download"
-  namespace    = "harvester-public"
-  url          = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
+  name               = "ubuntu-jammy"
+  display_name       = "Ubuntu 22 Jammy LTS"
+  source_type        = "download"
+  namespace          = "harvester-public"
+  url                = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
   storage_class_name = harvester_storageclass.single-node-longhorn.name
 
   lifecycle {
@@ -391,4 +399,39 @@ users:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILWfFMdjfvEs7lXmrGiE++QDNve9M+Lg/uoGBW8C/+kT
 EOF
   network_data = ""
+}
+
+resource "harvester_virtualmachine" "docker-host" {
+  for_each = local.docker_vm
+  name     = each.key
+  cpu      = each.value.cpu
+  memory   = each.value.memory
+
+  efi          = true
+  hostname     = each.key
+  run_strategy = "Always"
+
+  disk {
+    name        = "root"
+    type        = "disk"
+    size        = "100Gi"
+    bus         = "virtio"
+    boot_order  = 1
+    image       = harvester_image.ubuntu-jammy.id
+    auto_delete = true
+  }
+
+  network_interface {
+    name           = "bridge"
+    model          = "virtio"
+    type           = "bridge"
+    mac_address    = each.value.mac_address
+    network_name   = harvester_network.cluster_network.name
+    wait_for_lease = true
+  }
+
+  cloudinit {
+    user_data_secret_name    = harvester_cloudinit_secret.ubuntu-docker.name
+    network_data_secret_name = harvester_cloudinit_secret.ubuntu-docker.name
+  }
 }
