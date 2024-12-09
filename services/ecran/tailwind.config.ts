@@ -1,5 +1,6 @@
 import type { Config } from 'tailwindcss'
 import plugin from 'tailwindcss/plugin'
+import tailwindcssMotion from 'tailwindcss-motion'
 
 const config = {
   darkMode: ['class'],
@@ -111,8 +112,7 @@ const config = {
   },
   plugins: [
     require('@tailwindcss/typography'),
-    require('tailwindcss-animate'),
-    require('tailwindcss-motion'),
+    tailwindcssMotion,
     plugin(({ addVariant }) => {
       addVariant('prose-inline-code', '& :where(:not(pre) > code)')
     }),
