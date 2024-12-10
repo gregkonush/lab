@@ -26,7 +26,6 @@ spec:
               ratel:
                 enabled: true
               global:
-                domain: dgraph.lan
                 ingress:
                   enabled: true
                   ingressClassName: traefik
