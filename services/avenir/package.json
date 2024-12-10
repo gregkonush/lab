@@ -1,0 +1,37 @@
+{
+  "name": "avenir",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vinxi dev",
+    "build": "vinxi build",
+    "start": "vinxi start"
+  },
+  "keywords": [
+    "startup",
+    "react",
+    "typescript",
+    "graphql",
+    "dgraph"
+  ],
+  "author": "Greg Konush",
+  "license": "MIT",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.4",
+    "@tanstack/react-router": "^1.87.3",
+    "@tanstack/start": "^1.87.4",
+    "dgraph-js": "^24.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "vinxi": "^0.5.1"
+  },
+  "devDependencies": {
+    "@tanstack/eslint-plugin-router": "^1.87.3",
+    "@types/react": "19.0.1",
+    "@types/react-dom": "19.0.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "5.7.2"
+  }
+}
