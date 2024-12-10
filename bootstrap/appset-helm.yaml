@@ -23,6 +23,11 @@ spec:
             version: 24.0.5
             releaseName: dgraph
             valuesObject:
+              ratel:
+                ingress:
+                  enabled: true
+                  ingressClassName: traefik
+                  hostname: ratel.dgraph.lan
               zero:
                 persistence:
                   storageClass: longhorn
