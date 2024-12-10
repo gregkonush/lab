@@ -23,16 +23,17 @@ spec:
             version: 24.0.5
             releaseName: dgraph
             valuesObject:
-              domain: dgraph.lan
-              ingress:
-                enabled: true
-                ingressClassName: traefik
-                ratel_hostname: ratel.dgraph.lan
-                alpha_hostname: alpha.dgraph.lan
-              ingress_grpc:
-                enabled: true
-                ingressClassName: traefik
-                alpha_grpc_hostname: alpha-grpc.dgraph.lan
+              global:
+                domain: dgraph.lan
+                ingress:
+                  enabled: true
+                  ingressClassName: traefik
+                  ratel_hostname: ratel.dgraph.lan
+                  alpha_hostname: alpha.dgraph.lan
+                ingress_grpc:
+                  enabled: true
+                  ingressClassName: traefik
+                  alpha_grpc_hostname: alpha-grpc.dgraph.lan
   template:
     metadata:
       name: "{{.name}}"
