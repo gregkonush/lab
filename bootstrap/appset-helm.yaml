@@ -23,13 +23,10 @@ spec:
             version: 24.0.5
             releaseName: dgraph
             valuesObject:
-              ratel:
-                enabled: true
               global:
                 ingress:
                   enabled: true
                   ingressClassName: traefik
-                  ratel_hostname: ratel.dgraph.lan
                   alpha_hostname: alpha.dgraph.lan
                 ingress_grpc:
                   enabled: true
