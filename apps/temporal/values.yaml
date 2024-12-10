@@ -9,9 +9,10 @@ temporal:
       className: traefik
       hosts:
         - "temporal.lan"
-  frontend:
-    ingress:
-      enabled: true
-      className: traefik
-      hosts:
-        - "frontend.temporal.lan"
+  server:
+    frontend:
+      ingress:
+        enabled: true
+        className: traefik
+        hosts:
+          - "frontend.temporal.lan"
