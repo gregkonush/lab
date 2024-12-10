@@ -23,27 +23,16 @@ spec:
             version: 24.0.5
             releaseName: dgraph
             valuesObject:
-              ratel:
-                ingress:
-                  enabled: true
-                  ingressClassName: traefik
-                  hostname: ratel.dgraph.lan
-              zero:
-                persistence:
-                  storageClass: longhorn
-                  size: 20Gi
-              alpha:
-                persistence:
-                  storageClass: longhorn
-                  size: 20Gi
-                ingress:
-                  enabled: true
-                  ingressClassName: traefik
-                  hostname: alpha.dgraph.lan
-                ingress_grpc:
-                  enabled: true
-                  ingressClassName: traefik
-                  hostname: alpha-grpc.dgraph.lan
+              domain: dgraph.lan
+              ingress:
+                enabled: true
+                ingressClassName: traefik
+                ratel_hostname: ratel.dgraph.lan
+                alpha_hostname: alpha.dgraph.lan
+              ingress_grpc:
+                enabled: true
+                ingressClassName: traefik
+                alpha_grpc_hostname: alpha-grpc.dgraph.lan
   template:
     metadata:
       name: "{{.name}}"
