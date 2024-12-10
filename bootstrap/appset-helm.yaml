@@ -23,6 +23,8 @@ spec:
             version: 24.0.5
             releaseName: dgraph
             valuesObject:
+              ratel:
+                enabled: true
               global:
                 domain: dgraph.lan
                 ingress:
