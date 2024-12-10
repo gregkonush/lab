@@ -20,6 +20,6 @@ images:
 - name: kalmyk.duckdns.org/lab/ecran
   newTag: 0.122.0
 - name: kalmyk.duckdns.org/lab/ecran-worker
-  newTag: 0.122.0
+  newTag: 0.123.0
 - name: kalmyk.duckdns.org/lab/juge
-  newTag: 0.122.0
+  newTag: 0.123.0
