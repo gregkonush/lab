@@ -7,9 +7,11 @@ temporal:
     ingress:
       enabled: true
       className: traefik
-      annotations:
-        traefik.frontend.rule.type: PathPrefix
-        kubernetes.io/ingress.class: traefik
-        ingress.kubernetes.io/ssl-redirect: "false"
       hosts:
         - "temporal.lan"
+  frontend:
+    ingress:
+      enabled: true
+      className: traefik
+      hosts:
+        - "frontend.temporal.lan"
