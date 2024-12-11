@@ -1,4 +1,3 @@
-// app/routes/__root.tsx
 import { Outlet, ScrollRestoration, createRootRoute } from "@tanstack/react-router"
 import { Meta, Scripts } from "@tanstack/start"
 import type { ReactNode } from "react"
