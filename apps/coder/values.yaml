@@ -2,7 +2,7 @@ coder:
   coder:
     env:
       - name: CODER_ACCESS_URL
-        value: "https://coder.proomteng.ai"
+        value: "https://coder.proompteng.ai"
       - name: CODER_PG_CONNECTION_URL
         valueFrom:
           secretKeyRef:
@@ -11,4 +11,4 @@ coder:
     ingress:
       enable: true
       className: traefik
-      host: coder.proomteng.ai
+      host: coder.proompteng.ai
