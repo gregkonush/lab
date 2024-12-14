@@ -18,6 +18,8 @@ coder:
           secretKeyRef:
             name: github-oauth2
             key: client_secret
+      - name: CODER_OAUTH2_GITHUB_ALLOWED_ORGS
+        value: "gregkonush"
     ingress:
       enable: true
       className: traefik
