@@ -1,0 +1,16 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coder-cluster
+  namespace: coder
+spec:
+  instances: 1
+  storage:
+    storageClass: longhorn
+    size: 10Gi
+  bootstrap:
+    initdb:
+      dataChecksums: true
+      encoding: "UTF8"
+      database: coder
+      owner: coder

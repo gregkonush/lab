@@ -16,22 +16,6 @@ spec:
             chart: spark
             version: 9.2.14
             releaseName: spark
-          - name: dgraph
-            namespace: dgraph
-            repoUrl: https://charts.dgraph.io
-            chart: dgraph
-            version: 24.0.5
-            releaseName: dgraph
-            valuesObject:
-              global:
-                ingress:
-                  enabled: true
-                  ingressClassName: traefik
-                  alpha_hostname: alpha.dgraph.lan
-                ingress_grpc:
-                  enabled: true
-                  ingressClassName: traefik
-                  alpha_grpc_hostname: alpha-grpc.dgraph.lan
   template:
     metadata:
       name: "{{.name}}"
