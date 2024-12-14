@@ -343,8 +343,32 @@ resource "kubernetes_deployment" "main" {
   }
 }
 
-module "github-upload-public-key" {
-  source   = "registry.coder.com/modules/github-upload-public-key/coder"
+module "git-clone" {
+  source   = "registry.coder.com/modules/git-clone/coder"
+  version  = "1.0.18"
+  agent_id = coder_agent.main.id
+  url      = "https://github.com/gregkonush/lab"
+  base_dir = "~/github.com"
+}
+
+module "vscode" {
+  source   = "registry.coder.com/modules/vscode-desktop/coder"
   version  = "1.0.15"
   agent_id = coder_agent.main.id
+  folder   = "~/github.com/lab"
+}
+
+module "cursor" {
+  source   = "registry.coder.com/modules/cursor/coder"
+  version  = "1.0.19"
+  agent_id = coder_agent.main.id
+  folder   = "~/github.com/lab"
+}
+
+module "nodejs" {
+  source               = "registry.coder.com/modules/nodejs/coder"
+  version              = "1.0.10"
+  agent_id             = coder_agent.main.id
+  node_versions        = ["20", "22"]
+  default_node_version = "22"
 }
