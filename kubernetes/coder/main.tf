@@ -351,13 +351,6 @@ module "git-clone" {
   base_dir = "~/github.com"
 }
 
-module "vscode" {
-  source   = "registry.coder.com/modules/vscode-desktop/coder"
-  version  = "1.0.15"
-  agent_id = coder_agent.main.id
-  folder   = "~/github.com/lab"
-}
-
 module "cursor" {
   source   = "registry.coder.com/modules/cursor/coder"
   version  = "1.0.19"
