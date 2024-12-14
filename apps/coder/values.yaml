@@ -8,6 +8,16 @@ coder:
           secretKeyRef:
             name: coder-cluster-app
             key: uri
+      - name: CODER_OAUTH2_GITHUB_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: github-oauth2
+            key: client_id
+      - name: CODER_OAUTH2_GITHUB_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: github-oauth2
+            key: client_secret
     ingress:
       enable: true
       className: traefik
