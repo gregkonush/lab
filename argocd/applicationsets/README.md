@@ -14,7 +14,7 @@ brew install argocd
 ## Kustomization bootstrap
 
 ```bash
-kubectl apply -k argocd/argocd
+k apply -k argocd/applications/argocd
 ```
 
 ## Get initial password, login and update password
