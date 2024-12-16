@@ -1,11 +1,10 @@
 apiVersion: loadbalancer.harvesterhci.io/v1beta1
 kind: LoadBalancer
 metadata:
-  name: kube-lb-internal
+  name: kube-load-balancer-internal
   namespace: default
 spec:
-  ipam: pool
-  ipPool: kube-lb-pool-internal
+  ipam: dhcp
   listeners:
     - name: https
       port: 443
