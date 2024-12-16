@@ -14,7 +14,7 @@ brew install argocd
 ## Kustomization bootstrap
 
 ```bash
-kubectl apply -k argocd/argocd
+k apply -k argocd/applications/argocd
 ```
 
 ## Get initial password, login and update password
@@ -35,13 +35,13 @@ argocd repo add https://github.com/gregkonush/lab
 ## Bootstrap argocd
 
 ```bash
-argocd app create --file argocd/root/application.yaml
+argocd appset create argocd/applicationsets/lovely-apps.yaml
 ```
 
 ## Update argocd
 
 ```bash
-argocd app create --upsert --file argocd/root/application.yaml
+argocd appset create --upsert argocd/applicationsets/lovely-apps.yaml
 ```
 
 ### Delete argocd that got stuck in deleting phase
@@ -52,4 +52,3 @@ kubectl edit application
 ```
 
 Remove finalizers from spec
-
