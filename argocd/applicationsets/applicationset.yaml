@@ -11,9 +11,7 @@ spec:
         repoURL: https://github.com/gregkonush/lab.git
         revision: main
         directories:
-          - path: apps/*
-          - path: apps/root
-            exclude: true
+          - path: argocd/applications/*
   ignoreApplicationDifferences:
     - jsonPointers:
         - /spec/syncPolicy

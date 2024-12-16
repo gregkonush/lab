@@ -39,12 +39,6 @@ spec:
         helm:
           releaseName: "{{.releaseName}}"
           skipCrds: false
-      ignoreDifferences:
-        - kind: StatefulSet
-          group: apps
-          namespace: dgraph
-          jsonPointers:
-            - /spec/volumeClaimTemplates/0
   templatePatch: |
     {{- if hasKey . "valuesObject" }}
     spec:
