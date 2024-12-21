@@ -1,6 +1,7 @@
 {
-  "name": "lab",
+  "name": "@proompteng/source",
   "license": "MIT",
+  "version": "0.0.1",
   "scripts": {
     "tf:plan": "terraform -chdir='./terraform/harvester' plan",
     "tf:apply": "terraform -chdir='./terraform/harvester' apply -auto-approve",
@@ -13,9 +14,53 @@
     "ecran:dev": "bun run --cwd services/ecran dev",
     "prepare": "husky"
   },
+  "dependencies": {
+    "next": "14.2.16",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
   "devDependencies": {
     "husky": "^9.1.7",
-    "prettier": "^3.4.2"
+    "prettier": "^3.4.2",
+        "@eslint/compat": "^1.1.1",
+    "@eslint/js": "^9.8.0",
+    "@nx/devkit": "20.3.0",
+    "@nx/eslint": "20.3.0",
+    "@nx/eslint-plugin": "20.3.0",
+    "@nx/jest": "20.3.0",
+    "@nx/js": "20.3.0",
+    "@nx/next": "20.3.0",
+    "@nx/playwright": "20.3.0",
+    "@nx/workspace": "20.3.0",
+    "@playwright/test": "^1.36.0",
+    "@swc-node/register": "~1.9.1",
+    "@swc/core": "~1.5.7",
+    "@swc/helpers": "~0.5.11",
+    "@testing-library/react": "15.0.6",
+    "@types/jest": "^29.5.12",
+    "@types/node": "18.16.9",
+    "@types/react": "18.3.1",
+    "@types/react-dom": "18.3.0",
+    "autoprefixer": "10.4.13",
+    "babel-jest": "^29.7.0",
+    "eslint": "^9.8.0",
+    "eslint-config-next": "14.2.16",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-import": "2.31.0",
+    "eslint-plugin-jsx-a11y": "6.10.1",
+    "eslint-plugin-playwright": "^1.6.2",
+    "eslint-plugin-react": "7.35.0",
+    "eslint-plugin-react-hooks": "5.0.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "nx": "20.3.0",
+    "postcss": "8.4.38",
+    "tailwindcss": "3.4.3",
+    "ts-jest": "^29.1.0",
+    "ts-node": "10.9.1",
+    "tslib": "^2.3.0",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8.13.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,css,md}": "prettier --write"
