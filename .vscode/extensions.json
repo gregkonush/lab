@@ -5,6 +5,10 @@
     "bradlc.vscode-tailwindcss",
     "biomejs.biome",
     "esbenp.prettier-vscode",
-    "yoavbls.pretty-ts-errors"
+    "yoavbls.pretty-ts-errors",
+    "nrwl.angular-console",
+    "dbaeumer.vscode-eslint",
+    "ms-playwright.playwright",
+    "firsttris.vscode-jest-runner"
   ]
 }
