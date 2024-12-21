@@ -1,1 +1,0 @@
-export { ThreeScene } from './scene'
