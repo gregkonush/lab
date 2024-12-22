@@ -1,15 +1,17 @@
 FROM node:lts-alpine AS deps
 WORKDIR /app
-COPY package.json pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY apps/proompteng/package.json ./apps/proompteng/
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 RUN pnpm install --frozen-lockfile
 
 FROM node:lts-alpine AS builder
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/proompteng/node_modules ./apps/proompteng/node_modules
 COPY . .
 RUN pnpm build
 
