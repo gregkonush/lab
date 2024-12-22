@@ -36,7 +36,7 @@ jobs:
     with:
       image_name: proompteng
       dockerfile: ./apps/proompteng/Dockerfile
-      context: ./apps/proompteng
+      context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
