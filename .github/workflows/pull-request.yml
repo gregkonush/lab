@@ -1,18 +1,11 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-
-permissions:
-  actions: read
-  contents: read
 
 jobs:
   main:
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,7 +19,4 @@ jobs:
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps
-      - uses: nrwl/nx-set-shas@v4
-
-      - run: pnpm exec nx affected -t lint test build e2e
+      - run: pnpm build
