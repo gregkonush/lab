@@ -5,8 +5,7 @@ on:
     branches:
       - "main"
     paths:
-      - "services/ecran/**"
-      - "services/juge/**"
+      - "apps/proompteng/**"
 
 jobs:
   version:
@@ -31,49 +30,13 @@ jobs:
           name: Release ${{ steps.tag_version.outputs.new_tag }}
           body: ${{ steps.tag_version.outputs.changelog }}
 
-  build-ecran-migrator:
+  build-proompteng:
     needs: version
     uses: ./.github/workflows/docker-build-common.yaml
     with:
-      image_name: ecran-migrator
-      dockerfile: ./services/ecran/Dockerfile.migrator
-      context: ./services/ecran
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-
-  build-ecran:
-    needs: [version, build-ecran-migrator]
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: ecran
-      dockerfile: ./services/ecran/Dockerfile
-      context: ./services/ecran
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-
-  build-ecran-worker:
-    needs: [version, build-ecran-migrator]
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: ecran-worker
-      dockerfile: ./services/ecran/Dockerfile.worker
-      context: ./services/ecran
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-
-  build-juge:
-    needs: [version, build-ecran-migrator]
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: juge
-      dockerfile: ./services/juge/Dockerfile
-      context: ./services/juge/app
+      image_name: proompteng
+      dockerfile: ./apps/proompteng/Dockerfile
+      context: ./apps/proompteng
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
