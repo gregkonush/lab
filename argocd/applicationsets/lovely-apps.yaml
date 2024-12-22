@@ -5,25 +5,27 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
-  goTemplateOptions: ["missingkey=error"]
+  goTemplateOptions: ['missingkey=error']
   generators:
     - git:
         repoURL: https://github.com/gregkonush/lab.git
         revision: main
         directories:
           - path: argocd/applications/*
+          - path: argocd/applications/ecran
+            ignore: true
   ignoreApplicationDifferences:
     - jsonPointers:
         - /spec/syncPolicy
   template:
     metadata:
-      name: "{{.path.basename}}"
+      name: '{{.path.basename}}'
     spec:
       project: default
       source:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
-        path: "{{.path.path}}"
+        path: '{{.path.path}}'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{if eq .path.basename "longhorn"}}longhorn-system{{else}}{{.path.basename}}{{end}}'
