@@ -13,7 +13,7 @@ spec:
         directories:
           - path: argocd/applications/*
           - path: argocd/applications/ecran
-            ignore: true
+            exclude: true
   ignoreApplicationDifferences:
     - jsonPointers:
         - /spec/syncPolicy
