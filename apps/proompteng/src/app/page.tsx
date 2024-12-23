@@ -112,7 +112,10 @@ export default function Home() {
   return (
     <main className="min-h-screen w-full mx-auto flex flex-col items-center">
       <div className="container px-4 py-10 max-w-7xl">
-        <h1 className="text-4xl font-bold mb-12 text-center">Latest Tech & AI News</h1>
+        <div className="flex justify-center space-x-12 mb-10">
+          <div className="size-16 rounded-full border-indigo-400 border-8" />
+          <div className="size-16 rounded-full border-indigo-400 border-8 scale-125" />
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mx-auto max-w-[1400px]">
           {newsItems.map((item) => (
             <Card
