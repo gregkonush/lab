@@ -1,6 +1,47 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
+function InfinityBackground() {
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full opacity-[0.07] pointer-events-none transition-[opacity] duration-200 group-hover:opacity-[0.15]"
+      width="100%"
+      height="100%"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      viewBox="0 0 100 40"
+    >
+      <title>Decorative 00 Background</title>
+      <defs>
+        <linearGradient id="circleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="rgb(139 92 246)" />
+          <stop offset="100%" stopColor="rgb(99 102 241)" />
+        </linearGradient>
+      </defs>
+      <g className="origin-[50%_20px] transition-transform duration-700 group-hover:rotate-[360deg]">
+        <circle
+          cx="35"
+          cy="20"
+          r="8"
+          fill="none"
+          stroke="url(#circleGradient)"
+          strokeWidth="3"
+          className="transition-colors duration-200"
+        />
+        <circle
+          cx="65"
+          cy="20"
+          r="8"
+          fill="none"
+          stroke="url(#circleGradient)"
+          strokeWidth="3"
+          className="transition-colors duration-200"
+        />
+      </g>
+    </svg>
+  )
+}
+
 interface NewsItem {
   id: number
   title: string
@@ -76,33 +117,36 @@ export default function Home() {
           {newsItems.map((item) => (
             <Card
               key={item.id}
-              className="flex flex-col h-72 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer bg-slate-950 hover:bg-gradient-to-br hover:from-slate-950 hover:to-indigo-950"
+              className="relative flex flex-col h-72 hover:shadow-lg hover:scale-[1.01] transition-all duration-200 cursor-pointer bg-slate-950/80 hover:bg-gradient-to-br hover:from-slate-950 hover:to-indigo-900/10 overflow-hidden group"
             >
-              <CardHeader className="flex-none">
-                <div className="flex items-center justify-between mb-2">
-                  <span
-                    className={cn('select-none px-3 py-1 rounded-full text-xs font-semibold', {
-                      'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-700/10': item.category === 'AI',
-                      'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-700/10': item.category === 'Tech',
-                      'bg-violet-100 text-violet-700 ring-1 ring-violet-700/10': item.category === 'Prompt Engineering',
+              <InfinityBackground />
+              <div className="relative z-10 flex flex-col h-full">
+                <CardHeader className="flex-none">
+                  <div className="flex items-center justify-between mb-2">
+                    <span
+                      className={cn('select-none px-3 py-1 rounded-full text-xs font-semibold', {
+                        'bg-indigo-950/80 text-indigo-200 ring-1 ring-indigo-800/30': item.category === 'AI',
+                        'bg-emerald-950/80 text-emerald-200 ring-1 ring-emerald-800/30': item.category === 'Tech',
+                        'bg-violet-950/80 text-violet-200 ring-1 ring-violet-800/30': item.category === 'Prompt Engineering',
+                      })}
+                    >
+                      {item.category}
+                    </span>
+                    <span className="text-sm text-slate-400">{item.readTime}</span>
+                  </div>
+                  <CardTitle className="line-clamp-2 min-h-[48px]">{item.title}</CardTitle>
+                  <CardDescription className="text-sm text-slate-400">
+                    {new Date(item.date).toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
                     })}
-                  >
-                    {item.category}
-                  </span>
-                  <span className="text-sm text-muted-foreground">{item.readTime}</span>
-                </div>
-                <CardTitle className="line-clamp-2 min-h-[48px]">{item.title}</CardTitle>
-                <CardDescription className="text-sm text-muted-foreground">
-                  {new Date(item.date).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex-1">
-                <p className="text-sm text-muted-foreground line-clamp-3">{item.description}</p>
-              </CardContent>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex-1">
+                  <p className="text-sm text-slate-400 line-clamp-3">{item.description}</p>
+                </CardContent>
+              </div>
             </Card>
           ))}
         </div>
