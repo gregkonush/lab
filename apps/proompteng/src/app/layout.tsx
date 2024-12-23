@@ -19,11 +19,12 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL('https://proompteng.ai'),
   title: {
-    default: 'ProomptEng - AI Engineering Platform',
+    default: 'ProomptEng - Latest Tech & AI News',
     template: '%s | ProomptEng',
   },
-  description: 'ProomptEng is an AI-powered engineering platform that helps teams build better software faster.',
-  keywords: ['AI', 'Engineering', 'Platform', 'Software Development', 'Automation'],
+  description:
+    'Stay updated with the latest news in AI, Tech, and Prompt Engineering. Get insights on GPT-4, Claude, and emerging technologies.',
+  keywords: ['AI News', 'Tech News', 'Prompt Engineering', 'GPT-4', 'Claude AI', 'AI Updates'],
   authors: [{ name: 'ProomptEng' }],
   creator: 'ProomptEng',
   publisher: 'ProomptEng',
@@ -38,28 +39,39 @@ export const metadata: Metadata = {
       'max-snippet': -1,
     },
   },
+  icons: {
+    icon: [
+      { url: '/favicon.ico' },
+      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: { url: '/apple-touch-icon.png' },
+  },
+  manifest: '/site.webmanifest',
   openGraph: {
     type: 'website',
     locale: 'en_US',
     url: 'https://proompteng.ai',
-    title: 'ProomptEng - AI Engineering Platform',
-    description: 'ProomptEng is an AI-powered engineering platform that helps teams build better software faster.',
+    title: 'ProomptEng - Latest Tech & AI News',
+    description: 'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
     siteName: 'ProomptEng',
     images: [
       {
-        url: 'https://proompteng.ai/og-image.png',
-        width: 1200,
-        height: 630,
-        alt: 'ProomptEng - AI Engineering Platform',
+        url: '/android-chrome-512x512.png',
+        width: 512,
+        height: 512,
+        alt: 'ProomptEng Logo',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ProomptEng - AI Engineering Platform',
-    description: 'ProomptEng is an AI-powered engineering platform that helps teams build better software faster.',
+    title: 'ProomptEng - Latest Tech & AI News',
+    description: 'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
+    images: ['/android-chrome-512x512.png'],
     creator: '@proompteng',
-    images: ['https://proompteng.ai/twitter-image.png'],
   },
   alternates: {
     canonical: 'https://proompteng.ai',
@@ -71,15 +83,21 @@ const JsonLd = () => {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: 'ProomptEng',
-    description: 'ProomptEng is an AI-powered engineering platform that helps teams build better software faster.',
+    description: 'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
     url: 'https://proompteng.ai',
-    potentialAction: {
-      '@type': 'SearchAction',
-      target: {
-        '@type': 'EntryPoint',
-        urlTemplate: 'https://proompteng.ai/search?q={search_term_string}',
+    publisher: {
+      '@type': 'Organization',
+      name: 'ProomptEng',
+      logo: {
+        '@type': 'ImageObject',
+        url: 'https://proompteng.ai/android-chrome-512x512.png',
       },
-      'query-input': 'required name=search_term_string',
+    },
+    image: {
+      '@type': 'ImageObject',
+      url: 'https://proompteng.ai/android-chrome-512x512.png',
+      width: 512,
+      height: 512,
     },
   }
 
@@ -90,11 +108,7 @@ const JsonLd = () => {
   )
 }
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
@@ -108,11 +122,6 @@ export default function RootLayout({
       )}
       suppressHydrationWarning
     >
-      <head>
-        <link rel="icon" href="/favicon.ico" sizes="any" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-        <link rel="manifest" href="/manifest.json" />
-      </head>
       <body>
         <JsonLd />
         {children}
