@@ -13,7 +13,7 @@ const inter = Inter({
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#18181b',
+  themeColor: '#020817',
 }
 
 export const metadata: Metadata = {
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
       { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
       { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
-    apple: { url: '/apple-touch-icon.png' },
+    apple: { url: '/apple-icon.png' },
   },
   manifest: '/site.webmanifest',
   openGraph: {

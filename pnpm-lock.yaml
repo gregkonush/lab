@@ -18,6 +18,46 @@ importers:
         specifier: 5.7.2
         version: 5.7.2
 
+  apps/findbobastore:
+    dependencies:
+      next:
+        specifier: 15.1.2
+        version: 15.1.2(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      react:
+        specifier: ^19.0.0
+        version: 19.0.0
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.0.0(react@19.0.0)
+    devDependencies:
+      '@eslint/eslintrc':
+        specifier: ^3
+        version: 3.2.0
+      '@types/node':
+        specifier: ^20
+        version: 20.17.10
+      '@types/react':
+        specifier: ^19
+        version: 19.0.2
+      '@types/react-dom':
+        specifier: ^19
+        version: 19.0.2(@types/react@19.0.2)
+      eslint:
+        specifier: ^9
+        version: 9.17.0(jiti@1.21.7)
+      eslint-config-next:
+        specifier: 15.1.2
+        version: 15.1.2(eslint@9.17.0(jiti@1.21.7))(typescript@5.7.2)
+      postcss:
+        specifier: ^8
+        version: 8.4.49
+      tailwindcss:
+        specifier: ^3.4.1
+        version: 3.4.17
+      typescript:
+        specifier: ^5
+        version: 5.7.2
+
   apps/proompteng:
     dependencies:
       '@radix-ui/react-slot':
