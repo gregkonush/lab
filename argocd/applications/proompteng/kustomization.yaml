@@ -5,3 +5,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+
+images:
+- name: kalmyk.duckdns.org/lab/proompteng
+  newTag: 0.126.0

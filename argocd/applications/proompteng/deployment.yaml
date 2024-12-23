@@ -16,7 +16,7 @@ spec:
         - name: kalmyk-registry
       containers:
         - name: proompteng
-          image: kalmyk.duckdns.org/lab/proompteng
+          image: kalmyk.duckdns.org/lab/proompteng:0.126.0
           resources:
             limits:
               cpu: "1"

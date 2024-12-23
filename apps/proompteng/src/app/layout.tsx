@@ -115,7 +115,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={cn(
         'min-h-screen bg-slate-950 antialiased',
         'min-w-full mx-auto',
-        'prose prose-invert prose-sm prose-slate',
+        'prose prose-invert prose-slate',
         'prose-headings:text-slate-300/90',
         'prose-p:text-slate-300/80',
         inter.variable,
