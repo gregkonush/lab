@@ -1,20 +1,17 @@
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
 metadata:
   name: proompteng
   namespace: proompteng
-  annotations:
-    kubernetes.io/ingress.class: traefik
-    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
-  rules:
-    - host: proompteng.ai
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: proompteng
-                port:
-                  number: 80
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`proompteng.ai`)
+      services:
+        - name: proompteng
+          port: 80
+  tls:
+    certResolver: default
