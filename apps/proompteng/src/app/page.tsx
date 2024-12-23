@@ -74,7 +74,10 @@ export default function Home() {
         <h1 className="text-4xl font-bold mb-12 text-center">Latest Tech & AI News</h1>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mx-auto max-w-[1400px]">
           {newsItems.map((item) => (
-            <Card key={item.id} className="flex flex-col h-72 hover:shadow-lg transition-shadow">
+            <Card
+              key={item.id}
+              className="flex flex-col h-72 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer bg-slate-950 hover:bg-gradient-to-br hover:from-slate-950 hover:to-indigo-950"
+            >
               <CardHeader className="flex-none">
                 <div className="flex items-center justify-between mb-2">
                   <span
