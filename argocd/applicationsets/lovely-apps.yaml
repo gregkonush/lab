@@ -44,19 +44,15 @@ spec:
           jsonPointers:
             - /spec/volumeClaimTemplates/0
   templatePatch: |
-    {{- if eq .path.basename "ecran" }}
+    {{- if eq .path.basename "proompteng" }}
     metadata:
       annotations:
-        argocd-image-updater.argoproj.io/image-list: ecran=kalmyk.duckdns.org/lab/ecran:0.x, ecran-worker=kalmyk.duckdns.org/lab/ecran-worker:0.x, juge=kalmyk.duckdns.org/lab/juge
-        argocd-image-updater.argoproj.io/java-executor.update-strategy: latest
-        argocd-image-updater.argoproj.io/ecran: semver
-        argocd-image-updater.argoproj.io/ecran-worker: semver
-        argocd-image-updater.argoproj.io/juge: semver
+        argocd-image-updater.argoproj.io/image-list: proompteng=kalmyk.duckdns.org/lab/proompteng
+        argocd-image-updater.argoproj.io/proompteng: semver
         argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
         argocd-image-updater.argoproj.io/git-branch: main
         argocd-image-updater.argoproj.io/write-back-target: "kustomization:/apps/ecran"
-    {{- end }}
-    {{- if ne .path.basename "ecran" }}
+    {{- else }}
     spec:
       source:
         plugin:

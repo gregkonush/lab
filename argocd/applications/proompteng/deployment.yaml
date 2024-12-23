@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  selector:
+    matchLabels:
+      app: proompteng
+  template:
+    metadata:
+      labels:
+        app: proompteng
+    spec:
+      imagePullSecrets:
+        - name: kalmyk-registry
+      containers:
+        - name: proompteng
+          image: kalmyk.duckdns.org/lab/proompteng
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - containerPort: 3000
