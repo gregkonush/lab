@@ -5,11 +5,11 @@ metadata:
   namespace: proompteng
 spec:
   entryPoints:
+    - web
     - websecure
   routes:
     - kind: Rule
       match: Host(`proompteng.ai`)
-      priority: 10
       services:
         - name: proompteng
           port: 80
