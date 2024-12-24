@@ -1,3 +1,5 @@
+'use client'
+
 import { useCallback, memo, useState } from 'react'
 import ReactMapGL, { Marker, NavigationControl, GeolocateControl } from 'react-map-gl'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -31,8 +33,7 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
   )
 }
 
-export function MapView({ token }: { token: string | undefined }) {
-  console.log({ token })
+export const MapView = memo(function MapView({ token }: { token: string | undefined }) {
   const [selectedStore, setSelectedStore] = useState<BobaStore | null>(null)
   const [viewState, setViewState] = useState({
     longitude: -122.4194,
@@ -114,7 +115,6 @@ export function MapView({ token }: { token: string | undefined }) {
           </Marker>
         ))}
 
-        {/* User location marker */}
         {viewState.longitude !== -122.4194 && (
           <Marker longitude={viewState.longitude} latitude={viewState.latitude}>
             <div className="text-4xl" aria-label="Your location">
@@ -127,6 +127,4 @@ export function MapView({ token }: { token: string | undefined }) {
       {locationError && <div className="absolute top-4 left-4 p-4 bg-slate-900/90 rounded-lg text-slate-100 text-sm">{locationError}</div>}
     </div>
   )
-}
-
-export default memo(MapView)
+})
