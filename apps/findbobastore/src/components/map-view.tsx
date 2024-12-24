@@ -5,6 +5,7 @@ import ReactMapGL, { Marker, NavigationControl, GeolocateControl } from 'react-m
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { stores, type BobaStore } from '@/data/stores'
+import { ErrorMessage } from '@/components/error-message'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
 function MapOverlay({ store }: { store: BobaStore | null }) {
@@ -33,7 +34,7 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
   )
 }
 
-export const MapView = memo(function MapView({ token }: { token: string | undefined }) {
+export const MapView = memo(function MapView() {
   const [selectedStore, setSelectedStore] = useState<BobaStore | null>(null)
   const [viewState, setViewState] = useState({
     longitude: -122.4194,
@@ -41,6 +42,7 @@ export const MapView = memo(function MapView({ token }: { token: string | undefi
     zoom: 12,
   })
   const [locationError, setLocationError] = useState<string | null>(null)
+  const [mapError, setMapError] = useState<{ message: string; details?: string } | null>(null)
 
   const getUserLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -67,27 +69,25 @@ export const MapView = memo(function MapView({ token }: { token: string | undefi
     )
   }, [])
 
-  if (!token) {
-    return (
-      <div className="flex items-center justify-center w-full h-full bg-slate-900 text-slate-100">
-        <div className="p-4 bg-slate-800 rounded-lg">
-          <p className="text-lg">Mapbox token is missing</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="relative w-full h-full">
       <ReactMapGL
         {...viewState}
         onMove={(evt) => setViewState(evt.viewState)}
-        mapboxAccessToken={token}
+        mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN}
         style={{ width: '100%', height: '100%' }}
         mapStyle="mapbox://styles/mapbox/dark-v11"
         maxZoom={15}
         onLoad={() => {
           getUserLocation()
+        }}
+        onError={(evt) => {
+          const errorDetails = evt?.error?.message || JSON.stringify(evt, null, 2)
+          console.error('Map error:', errorDetails)
+          setMapError({
+            message: 'Failed to load map',
+            details: errorDetails,
+          })
         }}
       >
         <NavigationControl />
@@ -124,7 +124,24 @@ export const MapView = memo(function MapView({ token }: { token: string | undefi
         )}
       </ReactMapGL>
       <MapOverlay store={selectedStore} />
-      {locationError && <div className="absolute top-4 left-4 p-4 bg-slate-900/90 rounded-lg text-slate-100 text-sm">{locationError}</div>}
+      {locationError && (
+        <div className="absolute top-4 right-4 z-10">
+          <ErrorMessage title="Location Error" description={locationError} />
+        </div>
+      )}
+      {mapError && (
+        <div className="absolute top-4 right-4 z-10">
+          <ErrorMessage
+            title="Map Error"
+            description={
+              <div className="space-y-2">
+                <p>{mapError.message}</p>
+                {mapError.details && <pre className="text-xs bg-slate-900/50 p-2 rounded overflow-auto max-h-32">{mapError.details}</pre>}
+              </div>
+            }
+          />
+        </div>
+      )}
     </div>
   )
 })

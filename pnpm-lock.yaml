@@ -20,12 +20,18 @@ importers:
 
   apps/findbobastore:
     dependencies:
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
       framer-motion:
         specifier: ^11.15.0
         version: 11.15.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      lucide-react:
+        specifier: ^0.469.0
+        version: 0.469.0(react@19.0.0)
       mapbox-gl:
         specifier: ^3.9.1
         version: 3.9.1
@@ -44,6 +50,9 @@ importers:
       tailwind-merge:
         specifier: ^2.5.5
         version: 2.5.5
+      tailwindcss-animate:
+        specifier: ^1.0.7
+        version: 1.0.7(tailwindcss@3.4.17)
     devDependencies:
       '@eslint/eslintrc':
         specifier: ^3
