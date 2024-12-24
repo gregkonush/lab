@@ -52,7 +52,15 @@ spec:
         argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
         argocd-image-updater.argoproj.io/git-branch: main
         argocd-image-updater.argoproj.io/write-back-target: "kustomization:/argocd/applications/proompteng"
-    {{- else }}
+    {{- elif eq .path.basename "findbobastore" }}
+    metadata:
+      annotations:
+        argocd-image-updater.argoproj.io/image-list: findbobastore=kalmyk.duckdns.org/lab/findbobastore
+        argocd-image-updater.argoproj.io/findbobastore: semver
+        argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
+        argocd-image-updater.argoproj.io/git-branch: main
+        argocd-image-updater.argoproj.io/write-back-target: "kustomization:/argocd/applications/findbobastore"
+    {{- end }}
     spec:
       source:
         plugin:
