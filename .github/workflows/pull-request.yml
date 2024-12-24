@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  main:
+  proompteng:
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
@@ -26,12 +26,39 @@ jobs:
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
+
       - uses: actions/cache@v4
         with:
           path: |
             ${{ github.workspace }}/apps/proompteng/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          key: ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
-      - run: pnpm build
+      - run: pnpm --filter proompteng build
+
+  findbobastore:
+    runs-on: arc-arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/apps/findbobastore/.next/cache
+          key: ${{ runner.os }}-nextjs-findbobastore-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-findbobastore-${{ hashFiles('**/pnpm-lock.yaml') }}-
+
+      - run: pnpm --filter findbobastore build

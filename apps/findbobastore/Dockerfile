@@ -13,7 +13,7 @@ RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/findbobastore/node_modules ./apps/findbobastore/node_modules
 COPY . .
-RUN pnpm build
+RUN pnpm build:findbobastore
 
 FROM node:lts-alpine AS runner
 WORKDIR /app
