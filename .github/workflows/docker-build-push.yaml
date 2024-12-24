@@ -54,3 +54,4 @@ jobs:
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      docker_secrets: mapbox_access_token=${{ secrets.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN }}
