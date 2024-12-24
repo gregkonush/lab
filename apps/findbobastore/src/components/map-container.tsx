@@ -11,6 +11,6 @@ const MapView = dynamic(() => import('./map-view'), {
   ),
 })
 
-export function MapContainer() {
-  return <MapView />
+export function MapContainer({ token }: { token: string }) {
+  return <MapView token={token} />
 }
