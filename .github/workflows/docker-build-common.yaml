@@ -28,6 +28,8 @@ on:
         required: true
       REGISTRY_TOKEN:
         required: true
+      docker_secrets:
+        required: false
 
 jobs:
   build:
@@ -74,3 +76,5 @@ jobs:
           push: true
           cache-from: type=registry,ref=kalmyk.duckdns.org/lab/${{ inputs.image_name }}:latest
           cache-to: type=inline
+          secrets: |
+            ${{ secrets.docker_secrets }}
