@@ -26,3 +26,9 @@ spec:
               memory: '256Mi'
           ports:
             - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mapbox-token
+                  key: token
