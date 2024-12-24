@@ -221,7 +221,7 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: 20 }}
         className={cn(
-          'absolute bottom-4 left-4 p-4 bg-slate-900/90 rounded-lg shadow-lg',
+          'absolute bottom-4 left-4 p-4 bg-slate-900/40 rounded-lg shadow-lg',
           'backdrop-blur-sm border border-slate-800',
           'max-w-sm w-full z-10',
         )}
@@ -238,7 +238,6 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
 }
 
 export function MapView({ token }: { token: string }) {
-  mapboxgl.accessToken = token
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const [selectedStore, setSelectedStore] = useState<BobaStore | null>(null)
@@ -328,6 +327,7 @@ export function MapView({ token }: { token: string }) {
         center: location,
         zoom: 12,
         maxZoom: 15,
+        accessToken: token,
       })
 
       map.current.on('load', () => {
@@ -367,7 +367,7 @@ export function MapView({ token }: { token: string }) {
         trackUserLocation: true,
       }),
     )
-  }, [getUserLocation, clearMarkers, addUserLocationMarker, addBobaMarkers])
+  }, [getUserLocation, clearMarkers, addUserLocationMarker, addBobaMarkers, token])
 
   useEffect(() => {
     if (!map.current) {
