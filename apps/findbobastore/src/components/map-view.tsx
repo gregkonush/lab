@@ -316,6 +316,8 @@ export function MapView({ token }: { token: string | undefined }) {
 
   const initializeMap = useCallback(async () => {
     if (!mapContainer.current) return
+    if (!token) return
+    console.log('token', token)
 
     try {
       // Try to get user location first
