@@ -6,10 +6,14 @@
     "node": "22.12.0"
   },
   "scripts": {
-    "dev": "pnpm --filter proompteng dev",
-    "build": "pnpm --filter proompteng build",
-    "start": "pnpm --filter proompteng start",
-    "lint": "pnpm --filter proompteng lint",
+    "dev:proompteng": "pnpm --filter proompteng dev",
+    "dev:findbobastore": "pnpm --filter findbobastore dev",
+    "build:proompteng": "pnpm --filter proompteng build",
+    "build:findbobastore": "pnpm --filter findbobastore build",
+    "start:proompteng": "pnpm --filter proompteng start",
+    "start:findbobastore": "pnpm --filter findbobastore start",
+    "lint:proompteng": "pnpm --filter proompteng lint",
+    "lint:findbobastore": "pnpm --filter findbobastore lint",
     "clean": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,css,md,json}\"",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
