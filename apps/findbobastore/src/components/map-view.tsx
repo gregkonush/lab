@@ -237,7 +237,7 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
   )
 }
 
-export function MapView({ token }: { token: string }) {
+export function MapView({ token }: { token: string | undefined }) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const [selectedStore, setSelectedStore] = useState<BobaStore | null>(null)
