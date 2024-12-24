@@ -4,14 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../lib/utils'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
-const MAPBOX_ACCESS_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
-
-if (!MAPBOX_ACCESS_TOKEN) {
-  throw new Error('Missing NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN')
-}
-
-mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN
-
 interface BobaStore {
   id: string
   name: string
@@ -196,6 +188,27 @@ const mockBobaStores: BobaStore[] = [
     rating: 4.5,
     address: '677 Tasman Dr, Sunnyvale, CA 94089',
   },
+  {
+    id: '26',
+    name: 'Pekoe',
+    coordinates: [-122.0317, 37.3784],
+    rating: 3.9,
+    address: '939 W El Camino Real Suite 117, Sunnyvale, CA 94087',
+  },
+  {
+    id: '27',
+    name: 'Tastea Sunnyvale',
+    coordinates: [-122.0327, 37.3794],
+    rating: 4.2,
+    address: '114 E El Camino Real, Sunnyvale, CA 94087',
+  },
+  {
+    id: '28',
+    name: 'Mr. Sun Tea Mountain View',
+    coordinates: [-122.0891, 37.3894],
+    rating: 4.1,
+    address: '801 W El Camino Real A, Mountain View, CA 94040',
+  },
 ]
 
 function MapOverlay({ store }: { store: BobaStore | null }) {
@@ -224,7 +237,8 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
   )
 }
 
-export function MapView() {
+export function MapView({ token }: { token: string }) {
+  mapboxgl.accessToken = token
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const [selectedStore, setSelectedStore] = useState<BobaStore | null>(null)
