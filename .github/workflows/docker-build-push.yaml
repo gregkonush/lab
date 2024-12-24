@@ -3,9 +3,10 @@ name: Docker Build and Push
 on:
   push:
     branches:
-      - "main"
+      - 'main'
     paths:
-      - "apps/proompteng/**"
+      - 'apps/proompteng/**'
+      - 'apps/findbobastore/**'
 
 jobs:
   version:
@@ -36,6 +37,18 @@ jobs:
     with:
       image_name: proompteng
       dockerfile: ./apps/proompteng/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-findbobastore:
+    needs: version
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: findbobastore
+      dockerfile: ./apps/findbobastore/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
