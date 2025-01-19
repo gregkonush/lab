@@ -276,6 +276,17 @@ resource "harvester_virtualmachine" "kube-cluster" {
     user_data_secret_name    = harvester_cloudinit_secret.ubuntu-plain.name
     network_data_secret_name = harvester_cloudinit_secret.ubuntu-plain.name
   }
+
+  ssh_keys = [
+    harvester_ssh_key.public-key.name
+  ]
+}
+
+resource "harvester_ssh_key" "public-key" {
+  name      = "1password"
+  namespace = "default"
+
+  public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDVYPSSdt6tjSWRooRm7nUDS73CebsP92G6GjFa9X+zy"
 }
 
 # https://github.com/harvester/harvester/issues/4739 ~ Disable fstrim
@@ -284,6 +295,10 @@ resource "harvester_cloudinit_secret" "ubuntu-plain" {
 
   user_data    = <<-EOF
 #cloud-config
+ssh_authorized_keys:
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOE//lpGZI2015yMUjHwhWJjgarTLIsqQBIFXlAanPvS
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDVYPSSdt6tjSWRooRm7nUDS73CebsP92G6GjFa9X+zy
 package_update: true
 package_upgrade: true
 package_reboot_if_required: true
@@ -333,16 +348,7 @@ users:
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOE//lpGZI2015yMUjHwhWJjgarTLIsqQBIFXlAanPvS
-  - name: xueyingxia
-    groups: [adm, cdrom, dip, plugdev, lxd, sudo]
-    lock_passwd: false
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    no_ssh_fingerprints: false
-    ssh:
-      emit_keys_to_console: false
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILWfFMdjfvEs7lXmrGiE++QDNve9M+Lg/uoGBW8C/+kT
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDVYPSSdt6tjSWRooRm7nUDS73CebsP92G6GjFa9X+zy
 EOF
   network_data = ""
 }
@@ -387,16 +393,7 @@ users:
       emit_keys_to_console: false
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIZ/qbQDkfh+J3eZvJnpScECqBxKuovpS88mHaQlLt7z
-  - name: xueyingxia
-    groups: [adm, cdrom, dip, plugdev, lxd, sudo, docker]
-    lock_passwd: false
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    no_ssh_fingerprints: false
-    ssh:
-      emit_keys_to_console: false
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILWfFMdjfvEs7lXmrGiE++QDNve9M+Lg/uoGBW8C/+kT
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDVYPSSdt6tjSWRooRm7nUDS73CebsP92G6GjFa9X+zy
 EOF
   network_data = ""
 }
@@ -434,4 +431,8 @@ resource "harvester_virtualmachine" "docker-host" {
     user_data_secret_name    = harvester_cloudinit_secret.ubuntu-docker.name
     network_data_secret_name = harvester_cloudinit_secret.ubuntu-docker.name
   }
+
+  ssh_keys = [
+    harvester_ssh_key.public-key.name
+  ]
 }
