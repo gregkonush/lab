@@ -3,12 +3,25 @@ kind: Deployment
 metadata:
   name: argocd-lovely-plugin
 spec:
+  selector:
+    matchLabels:
+      app: argocd-lovely-plugin
   template:
+    metadata:
+      labels:
+        app: argocd-lovely-plugin
     spec:
       containers:
         - name: lovely-plugin
           # Choose your image here - see https://github.com/crumbhole/argocd-lovely-plugin/blob/main/doc/variations.md
           image: ghcr.io/crumbhole/lovely:1.1.1
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
           securityContext:
             runAsNonRoot: true
             runAsUser: 999

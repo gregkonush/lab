@@ -6,7 +6,6 @@ resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.1/manifests/ha/install.yaml
   - base/namespace.yaml
   - base/ingress.yaml
-  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/master/manifests/install.yaml
   - base/secrets.yaml
 
 patches:
