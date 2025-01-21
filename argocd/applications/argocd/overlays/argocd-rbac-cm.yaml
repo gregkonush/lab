@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-rbac-cm
-data:
-  policy.csv: |
-    p, role:imageUpdater, applications, get, */*, allow
-    p, role:imageUpdater, applications, update, */*, allow
-    g, imageUpdater, role:imageUpdater
