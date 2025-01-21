@@ -7,4 +7,4 @@ resources:
 - ingress.yaml
 images:
 - name: kalmyk.duckdns.org/lab/proompteng
-  newTag: 0.133.2
+  newTag: 0.133.3
