@@ -1,0 +1,16 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`backstage.proompteng.ai`)
+      kind: Rule
+      services:
+        - name: backstage
+          port: 7007
+  tls:
+    certResolver: default
