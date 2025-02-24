@@ -22,9 +22,8 @@ spec:
             value: "65532 65532"
       containers:
         - command:
-            - /bin/sh
-            - -c
-            - "while true; do sleep 30; done"
+            - sleep
+            - "infinity"
           image: cloudflare/cloudflared:latest
           name: cloudflared
           env:
