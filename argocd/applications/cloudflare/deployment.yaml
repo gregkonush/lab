@@ -22,14 +22,12 @@ spec:
             - tunnel
             - --no-autoupdate
             - run
-          args:
-            - --token=$CLOUDFLARED_TOKEN
-          env:
-            - name: CLOUDFLARED_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: cloudflared-token
-                  key: data
+            - --token
+            - $(cat /etc/cloudflared/token)
+          volumeMounts:
+            - name: cloudflared-token
+              mountPath: /etc/cloudflared
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /ready
@@ -48,3 +46,6 @@ spec:
         - name: cloudflared-token
           secret:
             secretName: cloudflared-token
+            items:
+              - key: data
+                path: token
