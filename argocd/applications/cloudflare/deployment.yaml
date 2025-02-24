@@ -24,10 +24,12 @@ spec:
             - run
           args:
             - --token=$CLOUDFLARED_TOKEN
-          volumeMounts:
-            - name: cloudflared-token
-              mountPath: /etc/cloudflared
-              readOnly: true
+          env:
+            - name: CLOUDFLARED_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-token
+                  key: data
           livenessProbe:
             httpGet:
               path: /ready
