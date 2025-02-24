@@ -12,7 +12,6 @@ spec:
       pod: cloudflared
   template:
     metadata:
-      creationTimestamp: null
       labels:
         pod: cloudflared
     spec:
@@ -22,8 +21,9 @@ spec:
             value: "65532 65532"
       containers:
         - command:
-            - sleep
-            - "infinity"
+            - tail
+            - "-f"
+            - "/dev/null"
           image: cloudflare/cloudflared:latest
           name: cloudflared
           env:
