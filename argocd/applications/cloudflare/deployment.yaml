@@ -32,7 +32,13 @@ spec:
             - run
           args:
             - --token
-            - <token value>
+            - $CLOUDFLARED_TOKEN
+          env:
+            - name: CLOUDFLARED_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: token
+                  key: token
           image: cloudflare/cloudflared:latest
           name: cloudflared
           resources:
