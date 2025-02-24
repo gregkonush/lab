@@ -32,7 +32,7 @@ spec:
             - run
           args:
             - --token
-            - $CLOUDFLARED_TOKEN
+            - (echo $CLOUDFLARED_TOKEN | base64 -d)
           env:
             - name: CLOUDFLARED_TOKEN
               valueFrom:
