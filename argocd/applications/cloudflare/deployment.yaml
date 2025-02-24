@@ -37,8 +37,8 @@ spec:
             - name: CLOUDFLARED_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: token
-                  key: token
+                  name: cloudflared-token
+                  key: data
           image: cloudflare/cloudflared:latest
           name: cloudflared
           resources:
