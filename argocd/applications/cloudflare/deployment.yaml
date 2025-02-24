@@ -24,13 +24,11 @@ spec:
             - run
           args:
             - --token
-            - $CLOUDFLARED_TOKEN
-          env:
-            - name: CLOUDFLARED_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: cloudflared-token
-                  key: data
+            - $(cat /etc/cloudflared/token)
+          volumeMounts:
+            - name: cloudflared-token
+              mountPath: /etc/cloudflared
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /ready
@@ -45,3 +43,7 @@ spec:
             requests:
               cpu: "200m"
               memory: "256Mi"
+      volumes:
+        - name: cloudflared-token
+          secret:
+            secretName: cloudflared-token
