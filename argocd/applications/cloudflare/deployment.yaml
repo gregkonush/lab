@@ -22,21 +22,17 @@ spec:
             value: "65532 65532"
       containers:
         - command:
-            # - cloudflared
-            # - tunnel
-            # - --no-autoupdate
-            # - run
-            - echo
-          args:
-            - 'token is here $CLOUDFLARED_TOKEN'
+            - /bin/sh
+            - -c
+            - "while true; do sleep 30; done"
+          image: cloudflare/cloudflared:latest
+          name: cloudflared
           env:
             - name: CLOUDFLARED_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: cloudflared-token
                   key: data
-          image: cloudflare/cloudflared:latest
-          name: cloudflared
           resources:
             limits:
               cpu: "1"
