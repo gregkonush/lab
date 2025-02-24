@@ -21,9 +21,7 @@ spec:
             value: "65532 65532"
       containers:
         - command:
-            - tail
-            - "-f"
-            - "/dev/null"
+            - printenv
           image: cloudflare/cloudflared:latest
           name: cloudflared
           env:
