@@ -8,11 +8,11 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app: cloudflared
+      pod: cloudflared
   template:
     metadata:
       labels:
-        app: cloudflared
+        pod: cloudflared
     spec:
       containers:
         - name: cloudflared
