@@ -6,28 +6,38 @@ metadata:
   name: cloudflared-deployment
   namespace: cloudflare
 spec:
-  replicas: 2
   selector:
     matchLabels:
-      pod: cloudflared
+      app: cloudflared
   template:
     metadata:
       labels:
-        pod: cloudflared
+        app: cloudflared
     spec:
-      securityContext:
-        sysctls:
-          - name: net.ipv4.ping_group_range
-            value: "65532 65532"
       containers:
-        - image: nginx:latest
-          name: nginx
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          command:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+          args:
+            - --token
+            - $CLOUDFLARED_TOKEN
           env:
             - name: CLOUDFLARED_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: cloudflared-token
                   key: data
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            failureThreshold: 1
+            initialDelaySeconds: 10
+            periodSeconds: 10
           resources:
             limits:
               cpu: "1"
