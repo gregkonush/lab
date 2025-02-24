@@ -23,8 +23,7 @@ spec:
             - --no-autoupdate
             - run
           args:
-            - --token
-            - $(cat /etc/cloudflared/token)
+            - --token=$CLOUDFLARED_TOKEN
           volumeMounts:
             - name: cloudflared-token
               mountPath: /etc/cloudflared
