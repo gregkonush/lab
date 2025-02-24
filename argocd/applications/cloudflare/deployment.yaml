@@ -21,7 +21,13 @@ spec:
             value: "65532 65532"
       containers:
         - command:
-            - printenv
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+          args:
+            - $CLOUDFLARED_TOKEN
           image: cloudflare/cloudflared:latest
           name: cloudflared
           env:
