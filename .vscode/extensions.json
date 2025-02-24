@@ -9,6 +9,7 @@
     "nrwl.angular-console",
     "dbaeumer.vscode-eslint",
     "ms-playwright.playwright",
-    "firsttris.vscode-jest-runner"
+    "firsttris.vscode-jest-runner",
+    "github.vscode-pull-request-github"
   ]
 }
