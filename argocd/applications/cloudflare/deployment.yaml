@@ -28,7 +28,7 @@ spec:
             # - run
             - echo
           args:
-            - $CLOUDFLARED_TOKEN
+            - 'token is here $CLOUDFLARED_TOKEN'
           env:
             - name: CLOUDFLARED_TOKEN
               valueFrom:
