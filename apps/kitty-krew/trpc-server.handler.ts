@@ -1,18 +1,25 @@
 import { defineEventHandler, toWebRequest } from '@tanstack/react-start/server'
-import { initTRPC } from '@trpc/server'
+import { initTRPC, TRPCError } from '@trpc/server'
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch'
 import * as k8s from '@kubernetes/client-node'
 
 const t = initTRPC.create()
 
 const appRouter = t.router({
-  hello: t.procedure.query(() => 'Hello world!'),
   pods: t.procedure.query(async () => {
-    const kc = new k8s.KubeConfig()
-    kc.loadFromDefault()
-    const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
-    const response = await k8sApi.listPodForAllNamespaces()
-    return response.items
+    try {
+      const kc = new k8s.KubeConfig()
+      kc.loadFromDefault()
+      const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
+      const response = await k8sApi.listPodForAllNamespaces()
+      return response.items
+    } catch (error) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: error instanceof Error ? error.message : 'Failed to fetch pods',
+        cause: error,
+      })
+    }
   }),
 })
 

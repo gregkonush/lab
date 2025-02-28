@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "ignore": ["node_modules", "app/routeTree.gen.ts"]
+    "ignore": ["node_modules", "app/routeTree.gen.ts", ".output", ".vinxi"]
   },
   "formatter": {
     "enabled": true,
