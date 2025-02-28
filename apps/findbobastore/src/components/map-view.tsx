@@ -1,7 +1,11 @@
 'use client'
 
 import { useCallback, memo, useState } from 'react'
-import ReactMapGL, { Marker, NavigationControl, GeolocateControl } from 'react-map-gl'
+import ReactMapGL, {
+  Marker,
+  NavigationControl,
+  GeolocateControl,
+} from 'react-map-gl'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { stores, type BobaStore } from '@/data/stores'
@@ -24,7 +28,9 @@ function MapOverlay({ store }: { store: BobaStore | null }) {
         )}
         aria-label="Store information"
       >
-        <h3 className="text-lg font-semibold text-slate-100 mb-2">{store.name}</h3>
+        <h3 className="text-lg font-semibold text-slate-100 mb-2">
+          {store.name}
+        </h3>
         <div className="text-sm text-slate-300 space-y-1">
           <p>Rating: {store.rating.toFixed(1)} ⭐️</p>
           <p>{store.address}</p>
@@ -42,7 +48,10 @@ export const MapView = memo(function MapView() {
     zoom: 12,
   })
   const [locationError, setLocationError] = useState<string | null>(null)
-  const [mapError, setMapError] = useState<{ message: string; details?: string } | null>(null)
+  const [mapError, setMapError] = useState<{
+    message: string
+    details?: string
+  } | null>(null)
 
   const getUserLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -82,7 +91,8 @@ export const MapView = memo(function MapView() {
           getUserLocation()
         }}
         onError={(evt) => {
-          const errorDetails = evt?.error?.message || JSON.stringify(evt, null, 2)
+          const errorDetails =
+            evt?.error?.message || JSON.stringify(evt, null, 2)
           console.error('Map error:', errorDetails)
           setMapError({
             message: 'Failed to load map',
@@ -91,7 +101,10 @@ export const MapView = memo(function MapView() {
         }}
       >
         <NavigationControl />
-        <GeolocateControl positionOptions={{ enableHighAccuracy: true }} trackUserLocation />
+        <GeolocateControl
+          positionOptions={{ enableHighAccuracy: true }}
+          trackUserLocation
+        />
 
         {stores.map((store) => (
           <Marker
@@ -109,7 +122,10 @@ export const MapView = memo(function MapView() {
               }))
             }}
           >
-            <div className="text-4xl cursor-pointer" aria-label={`${store.name} location marker`}>
+            <div
+              className="text-4xl cursor-pointer"
+              aria-label={`${store.name} location marker`}
+            >
               🧋
             </div>
           </Marker>
@@ -136,7 +152,11 @@ export const MapView = memo(function MapView() {
             description={
               <div className="space-y-2">
                 <p>{mapError.message}</p>
-                {mapError.details && <pre className="text-xs bg-slate-900/50 p-2 rounded overflow-auto max-h-32">{mapError.details}</pre>}
+                {mapError.details && (
+                  <pre className="text-xs bg-slate-900/50 p-2 rounded overflow-auto max-h-32">
+                    {mapError.details}
+                  </pre>
+                )}
               </div>
             }
           />

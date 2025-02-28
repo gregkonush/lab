@@ -1,0 +1,35 @@
+{
+  "name": "tanstack-router-react-example-with-trpc-react-query",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vinxi dev",
+    "build": "vinxi build",
+    "start": "vinxi start"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^1.0.0",
+    "@tailwindcss/vite": "^4.0.9",
+    "@tanstack/react-query": "^5.66.9",
+    "@tanstack/react-query-devtools": "^5.66.9",
+    "@tanstack/react-router": "^1.112.0",
+    "@tanstack/react-start": "^1.112.0",
+    "@tanstack/router-devtools": "^1.112.0",
+    "@tanstack/router-plugin": "^1.112.0",
+    "@trpc/client": "^11.0.0-rc.818",
+    "@trpc/server": "^11.0.0-rc.818",
+    "@trpc/tanstack-react-query": "^11.0.0-rc.818",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.9",
+    "vinxi": "0.5.3",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/bun": "latest",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4"
+  }
+}
