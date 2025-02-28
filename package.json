@@ -15,7 +15,7 @@
     "lint:proompteng": "pnpm --filter proompteng lint",
     "lint:findbobastore": "pnpm --filter findbobastore lint",
     "clean": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,css,md,json}\"",
+    "format": "biome format --write",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
     "tf:apply": "tofu -chdir='./tofu/harvester' apply -auto-approve",
     "tf:destroy": "tofu -chdir='./tofu/harvester' destroy --target harvester_virtualmachine.kube-cluster -auto-approve",
@@ -31,7 +31,7 @@
     "typescript": "5.7.3"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,css,md}": "prettier --write"
+    "*.{ts,tsx,js,jsx,css,md}": "biome format --write"
   },
   "packageManager": "pnpm@9.14.2+sha512.6e2baf77d06b9362294152c851c4f278ede37ab1eba3a55fda317a4a17b209f4dbb973fb250a77abc463a341fcb1f17f17cfa24091c4eb319cda0d9b84278387"
 }

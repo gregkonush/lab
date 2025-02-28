@@ -24,14 +24,7 @@ export const metadata: Metadata = {
   },
   description:
     'Stay updated with the latest news in AI, Tech, and Prompt Engineering. Get insights on GPT-4, Claude, and emerging technologies.',
-  keywords: [
-    'AI News',
-    'Tech News',
-    'Prompt Engineering',
-    'GPT-4',
-    'Claude AI',
-    'AI Updates',
-  ],
+  keywords: ['AI News', 'Tech News', 'Prompt Engineering', 'GPT-4', 'Claude AI', 'AI Updates'],
   authors: [{ name: 'ProomptEng' }],
   creator: 'ProomptEng',
   publisher: 'ProomptEng',
@@ -70,8 +63,7 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: 'https://proompteng.ai',
     title: 'ProomptEng - Latest Tech & AI News',
-    description:
-      'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
+    description: 'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
     siteName: 'ProomptEng',
     images: [
       {
@@ -85,8 +77,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'ProomptEng - Latest Tech & AI News',
-    description:
-      'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
+    description: 'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
     images: ['/android-chrome-512x512.png'],
     creator: '@proompteng',
   },
@@ -100,8 +91,7 @@ const JsonLd = () => {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: 'ProomptEng',
-    description:
-      'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
+    description: 'Stay updated with the latest news in AI, Tech, and Prompt Engineering',
     url: 'https://proompteng.ai',
     publisher: {
       '@type': 'Organization',
@@ -126,9 +116,7 @@ const JsonLd = () => {
   )
 }
 
-export default function RootLayout({
-  children,
-}: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"

@@ -7,9 +7,7 @@ export const metadata: Metadata = {
   description: 'Find the best boba stores near you',
 }
 
-export default function RootLayout({
-  children,
-}: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={inter.variable}>
       <body className="font-sans antialiased">{children}</body>
