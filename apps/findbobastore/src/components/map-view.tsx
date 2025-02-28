@@ -42,7 +42,10 @@ export const MapView = memo(function MapView() {
     zoom: 12,
   })
   const [locationError, setLocationError] = useState<string | null>(null)
-  const [mapError, setMapError] = useState<{ message: string; details?: string } | null>(null)
+  const [mapError, setMapError] = useState<{
+    message: string
+    details?: string
+  } | null>(null)
 
   const getUserLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -136,7 +139,9 @@ export const MapView = memo(function MapView() {
             description={
               <div className="space-y-2">
                 <p>{mapError.message}</p>
-                {mapError.details && <pre className="text-xs bg-slate-900/50 p-2 rounded overflow-auto max-h-32">{mapError.details}</pre>}
+                {mapError.details && (
+                  <pre className="text-xs bg-slate-900/50 p-2 rounded overflow-auto max-h-32">{mapError.details}</pre>
+                )}
               </div>
             }
           />

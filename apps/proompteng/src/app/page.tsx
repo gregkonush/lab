@@ -25,7 +25,8 @@ export default function Home() {
                       className={cn('select-none px-3 py-1 rounded-full text-xs font-semibold', {
                         'bg-indigo-950/80 text-indigo-200 ring-1 ring-indigo-800/30': item.category === 'AI',
                         'bg-emerald-950/80 text-emerald-200 ring-1 ring-emerald-800/30': item.category === 'Tech',
-                        'bg-violet-950/80 text-violet-200 ring-1 ring-violet-800/30': item.category === 'Prompt Engineering',
+                        'bg-violet-950/80 text-violet-200 ring-1 ring-violet-800/30':
+                          item.category === 'Prompt Engineering',
                       })}
                     >
                       {item.category}
