@@ -56,44 +56,64 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
   }, [])
 
   // Render pods with loading and error states
-  if (isLoading) return <div className="py-2 text-sm text-zinc-300">Loading pods...</div>
-  if (error)
+  if (isLoading)
     return (
-      <div className="py-2 text-sm text-red-400">
-        Error loading pods: {error instanceof Error ? error.message : 'Unknown error'}
+      <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+        <div className="w-full py-2 text-sm text-zinc-300 flex items-center justify-center h-full">Loading pods...</div>
       </div>
     )
-  if (!pods?.length) return <div className="py-2 text-sm text-zinc-300">No pods found</div>
+
+  if (error)
+    return (
+      <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+        <div className="w-full py-2 text-sm text-red-400 flex items-center justify-center h-full">
+          Error loading pods: {error instanceof Error ? error.message : 'Unknown error'}
+        </div>
+      </div>
+    )
+
+  if (!pods?.length)
+    return (
+      <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+        <div className="w-full py-2 text-sm text-zinc-300 flex items-center justify-center h-full">No pods found</div>
+      </div>
+    )
 
   return (
-    <div className="rounded-md border border-zinc-700 overflow-hidden text-sm">
-      <table className="w-full text-left">
-        <thead className="bg-zinc-900 text-zinc-100 border-b border-zinc-700">
-          <tr>
-            <th className="py-2 px-3 font-medium">Name</th>
-            <th className="py-2 px-3 font-medium">Namespace</th>
-            <th className="py-2 px-3 font-medium">Status</th>
-            <th className="py-2 px-3 font-medium">Created</th>
-            <th className="py-2 px-3 font-medium">IP</th>
-          </tr>
-        </thead>
-        <tbody className="bg-zinc-950 text-zinc-300">
-          {pods.map((pod) => (
-            <tr
-              key={`${pod.metadata?.namespace}-${pod.metadata?.name}`}
-              className="border-b border-zinc-800 hover:bg-zinc-900 transition-colors"
-            >
-              <td className="py-1.5 px-3 font-medium">{pod.metadata?.name || 'N/A'}</td>
-              <td className="py-1.5 px-3">{pod.metadata?.namespace || 'N/A'}</td>
-              <td className="py-1.5 px-3">
-                <span className={getStatusBadgeClass(pod.status?.phase)}>{pod.status?.phase || 'Unknown'}</span>
-              </td>
-              <td className="py-1.5 px-3">{formatCreationTime(pod.metadata?.creationTimestamp)}</td>
-              <td className="py-1.5 px-3">{pod.status?.podIP || 'N/A'}</td>
+    <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+      <div className="w-full">
+        <table className="w-full text-left table-fixed">
+          <thead className="bg-zinc-900 text-zinc-100 border-b border-zinc-700">
+            <tr>
+              <th className="py-2 px-3 font-medium w-[30%]">Name</th>
+              <th className="py-2 px-3 font-medium w-[20%]">Namespace</th>
+              <th className="py-2 px-3 font-medium w-[15%]">Status</th>
+              <th className="py-2 px-3 font-medium w-[20%]">Created</th>
+              <th className="py-2 px-3 font-medium w-[15%]">IP</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+        </table>
+      </div>
+      <div className="overflow-y-auto h-[calc(100vh-12rem-6px)]">
+        <table className="w-full text-left table-fixed">
+          <tbody className="bg-zinc-950 text-zinc-300">
+            {pods.map((pod) => (
+              <tr
+                key={`${pod.metadata?.namespace}-${pod.metadata?.name}`}
+                className="border-b border-zinc-800 hover:bg-zinc-900 transition-colors"
+              >
+                <td className="py-1.5 px-3 font-medium w-[30%] truncate">{pod.metadata?.name || 'N/A'}</td>
+                <td className="py-1.5 px-3 w-[20%] truncate">{pod.metadata?.namespace || 'N/A'}</td>
+                <td className="py-1.5 px-3 w-[15%]">
+                  <span className={getStatusBadgeClass(pod.status?.phase)}>{pod.status?.phase || 'Unknown'}</span>
+                </td>
+                <td className="py-1.5 px-3 w-[20%] truncate">{formatCreationTime(pod.metadata?.creationTimestamp)}</td>
+                <td className="py-1.5 px-3 w-[15%] truncate">{pod.status?.podIP || 'N/A'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 })
@@ -106,11 +126,59 @@ export const Route = createFileRoute('/')({
 
 export function IndexComponent() {
   const { data: pods, isLoading, error } = useQuery(trpc.pods.queryOptions())
+  const [searchQuery, setSearchQuery] = React.useState('')
+
+  const handleSearchChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(e.target.value)
+  }, [])
+
+  // Filter pods based on search query
+  const filteredPods = React.useMemo(() => {
+    if (!searchQuery.trim() || !pods) return pods
+
+    const query = searchQuery.toLowerCase()
+    return pods.filter(
+      (pod) =>
+        pod.metadata?.name?.toLowerCase().includes(query) ||
+        pod.metadata?.namespace?.toLowerCase().includes(query) ||
+        pod.status?.phase?.toLowerCase().includes(query),
+    )
+  }, [pods, searchQuery])
 
   return (
     <div className="container mx-auto py-6 px-4">
-      <h1 className="text-2xl font-bold mb-6 text-zinc-100">Kubernetes Pods</h1>
-      <PodTable pods={pods} isLoading={isLoading} error={error} />
+      <div className="flex justify-between items-center mb-6">
+        <div className="relative w-64">
+          <input
+            type="text"
+            placeholder="Search pods..."
+            value={searchQuery}
+            onChange={handleSearchChange}
+            className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-500"
+            aria-label="Search pods"
+          />
+          <svg
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-zinc-400"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <title>Search</title>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+            />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold text-zinc-100">Kubernetes Pods</h1>
+      </div>
+      <div className="w-full">
+        <PodTable pods={filteredPods} isLoading={isLoading} error={error} />
+      </div>
     </div>
   )
 }
