@@ -32,6 +32,15 @@ The script:
 - Automatically runs the container locally for testing after a successful build
 - Verifies application health with a curl request to the /health endpoint
 
+### Prerequisites
+
+Before using the build script, ensure you have:
+
+- Docker installed with Buildx enabled (comes with Docker Desktop 2.2.0+)
+- Docker logged in to your container registry
+- Permissions to push to the target repository
+- curl installed on your local machine for health checks
+
 ## Usage
 
 ### Building the Image

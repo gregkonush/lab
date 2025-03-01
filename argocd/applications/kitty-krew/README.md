@@ -4,7 +4,7 @@ This directory contains the Kubernetes manifests for deploying the Kitty Krew ap
 
 ## Structure
 
-```
+```text
 kitty-krew/
 ├── base/              # Base resources
 │   ├── configmap.yaml # Common configuration
