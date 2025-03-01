@@ -1,15 +1,16 @@
 {
   "recommendations": [
+    "biomejs.biome",
+    "bradlc.vscode-tailwindcss",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "firsttris.vscode-jest-runner",
+    "github.vscode-github-actions",
+    "github.vscode-pull-request-github",
     "HashiCorp.terraform",
     "ms-kubernetes-tools.vscode-kubernetes-tools",
-    "bradlc.vscode-tailwindcss",
-    "biomejs.biome",
-    "esbenp.prettier-vscode",
-    "yoavbls.pretty-ts-errors",
-    "nrwl.angular-console",
-    "dbaeumer.vscode-eslint",
     "ms-playwright.playwright",
-    "firsttris.vscode-jest-runner",
-    "github.vscode-pull-request-github"
+    "nrwl.angular-console",
+    "yoavbls.pretty-ts-errors"
   ]
 }
