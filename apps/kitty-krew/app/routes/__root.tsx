@@ -20,7 +20,7 @@ function RootComponent() {
 
   return (
     <>
-      <div className="min-h-screen flex flex-col antialiased text-zinc-400 items-center justify-center w-full">
+      <div className="min-h-screen flex flex-col antialiased text-zinc-400 w-full">
         <Outlet />
       </div>
       <TanStackRouterDevtools position="bottom-left" />
