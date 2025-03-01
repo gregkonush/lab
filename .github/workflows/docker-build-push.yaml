@@ -3,10 +3,11 @@ name: Docker Build and Push
 on:
   push:
     branches:
-      - 'main'
+      - "main"
     paths:
-      - 'apps/proompteng/**'
-      - 'apps/findbobastore/**'
+      - "apps/proompteng/**"
+      - "apps/findbobastore/**"
+      - "apps/kitty-krew/**"
 
 jobs:
   version:
@@ -55,3 +56,15 @@ jobs:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
       docker_secrets: mapbox_access_token=${{ secrets.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN }}
+
+  build-kitty-krew:
+    needs: version
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: kitty-krew
+      dockerfile: ./apps/kitty-krew/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}

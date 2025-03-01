@@ -2,6 +2,4 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - overlays/dev # Default to dev overlay, can be changed to prod if needed
-
-# The ApplicationSet will set namespace appropriately
+  - overlays/dev

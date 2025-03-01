@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
 spec:
   goTemplate: true
-  goTemplateOptions: ['missingkey=error']
+  goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
         repoURL: https://github.com/gregkonush/lab.git
@@ -19,13 +19,13 @@ spec:
         - /spec/syncPolicy
   template:
     metadata:
-      name: '{{.path.basename}}'
+      name: "{{.path.basename}}"
     spec:
       project: default
       source:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
-        path: '{{.path.path}}'
+        path: "{{.path.path}}"
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{if eq .path.basename "longhorn"}}longhorn-system{{else}}{{.path.basename}}{{end}}'
@@ -60,6 +60,14 @@ spec:
         argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
         argocd-image-updater.argoproj.io/git-branch: main
         argocd-image-updater.argoproj.io/write-back-target: "kustomization:/argocd/applications/findbobastore"
+    {{- else if eq .path.basename "kitty-krew" }}
+    metadata:
+      annotations:
+        argocd-image-updater.argoproj.io/image-list: kitty-krew=kalmyk.duckdns.org/lab/kitty-krew
+        argocd-image-updater.argoproj.io/kitty-krew: semver
+        argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
+        argocd-image-updater.argoproj.io/git-branch: main
+        argocd-image-updater.argoproj.io/write-back-target: "kustomization:/argocd/applications/kitty-krew"
     {{- else }}
     spec:
       source:
