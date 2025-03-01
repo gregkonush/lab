@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: kitty-krew
-          image: kitty-krew:latest
+          image: kalmyk.duckdns.org/lab/kitty-krew
           ports:
             - containerPort: 3000
           resources:

@@ -12,5 +12,4 @@ patchesStrategicMerge:
 
 images:
   - name: kitty-krew
-    newName: ghcr.io/example/kitty-krew
-    newTag: stable
+    newName: kalmyk.duckdns.org/lab/kitty-krew
