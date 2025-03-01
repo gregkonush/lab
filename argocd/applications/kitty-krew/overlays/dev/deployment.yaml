@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitty-krew
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: kitty-krew
+          resources:
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: NODE_ENV
+              value: "development"
