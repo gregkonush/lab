@@ -30,6 +30,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: kitty-krew-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
           livenessProbe:
             httpGet:
               path: /health
