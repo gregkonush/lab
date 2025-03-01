@@ -3,6 +3,7 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - namespace.yaml
 
 namespace: kitty-krew-dev
 
