@@ -69,6 +69,10 @@ jobs:
         with:
           bun-version: latest
 
-      - run: bun install --frozen-lockfile
+      - name: Install dependencies
+        working-directory: apps/kitty-krew
+        run: bun install --frozen-lockfile
 
-      - run: bun run build
+      - name: Build kitty-krew app
+        working-directory: apps/kitty-krew
+        run: bun run build
