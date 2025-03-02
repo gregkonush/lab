@@ -127,52 +127,112 @@ export const Route = createFileRoute('/')({
 export function IndexComponent() {
   const { data: pods, isLoading, error } = useQuery(trpc.pods.queryOptions())
   const [searchQuery, setSearchQuery] = React.useState('')
+  const [namespaceFilter, setNamespaceFilter] = React.useState<string>('all')
 
   const handleSearchChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value)
   }, [])
 
-  // Filter pods based on search query
-  const filteredPods = React.useMemo(() => {
-    if (!searchQuery.trim() || !pods) return pods
+  const handleNamespaceChange = React.useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+    setNamespaceFilter(e.target.value)
+  }, [])
 
-    const query = searchQuery.toLowerCase()
-    return pods.filter(
-      (pod) =>
-        pod.metadata?.name?.toLowerCase().includes(query) ||
-        pod.metadata?.namespace?.toLowerCase().includes(query) ||
-        pod.status?.phase?.toLowerCase().includes(query),
-    )
-  }, [pods, searchQuery])
+  // Extract unique namespaces for filter dropdown
+  const namespaces = React.useMemo(() => {
+    if (!pods) return []
+    const namespaceSet = new Set<string>()
+
+    for (const pod of pods) {
+      if (pod.metadata?.namespace) {
+        namespaceSet.add(pod.metadata.namespace)
+      }
+    }
+
+    return Array.from(namespaceSet).sort()
+  }, [pods])
+
+  // Filter pods based on search query and namespace filter
+  const filteredPods = React.useMemo(() => {
+    if (!pods) return []
+
+    return pods.filter((pod) => {
+      // Apply namespace filter
+      if (namespaceFilter !== 'all' && pod.metadata?.namespace !== namespaceFilter) {
+        return false
+      }
+
+      // Apply search filter if there's a query
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase()
+        return (
+          pod.metadata?.name?.toLowerCase().includes(query) ||
+          pod.metadata?.namespace?.toLowerCase().includes(query) ||
+          pod.status?.phase?.toLowerCase().includes(query)
+        )
+      }
+
+      return true
+    })
+  }, [pods, searchQuery, namespaceFilter])
 
   return (
     <div className="container mx-auto py-6 px-4">
       <div className="flex justify-between items-center mb-6">
-        <div className="relative w-64">
-          <input
-            type="text"
-            placeholder="Search pods..."
-            value={searchQuery}
-            onChange={handleSearchChange}
-            className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-500"
-            aria-label="Search pods"
-          />
-          <svg
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-zinc-400"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            aria-hidden="true"
-          >
-            <title>Search</title>
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+        <div className="flex gap-4 items-center">
+          <div className="relative w-64">
+            <input
+              type="text"
+              placeholder="Search pods..."
+              value={searchQuery}
+              onChange={handleSearchChange}
+              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-500"
+              aria-label="Search pods"
             />
-          </svg>
+            <svg
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-zinc-400"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <title>Search</title>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
+          <div className="w-48 relative">
+            <select
+              value={namespaceFilter}
+              onChange={handleNamespaceChange}
+              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 appearance-none pr-8"
+              aria-label="Filter by namespace"
+            >
+              <option value="all">All namespaces</option>
+              {namespaces.map((namespace) => (
+                <option key={namespace} value={namespace}>
+                  {namespace}
+                </option>
+              ))}
+            </select>
+            <svg
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-zinc-400 pointer-events-none"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                fillRule="evenodd"
+                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </div>
         </div>
         <h1 className="text-2xl font-bold text-zinc-100">Kubernetes Pods</h1>
       </div>
