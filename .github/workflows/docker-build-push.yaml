@@ -18,7 +18,7 @@ jobs:
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
-      kitty-krew: ${{ steps.filter.outputs.kitty_krew }}
+      kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,7 +32,7 @@ jobs:
               - 'apps/proompteng/**'
             findbobastore:
               - 'apps/findbobastore/**'
-            kitty_krew:
+            kitty-krew:
               - 'apps/kitty-krew/**'
 
   version:
@@ -87,7 +87,7 @@ jobs:
 
   build-kitty-krew:
     needs: [changes, version]
-    if: ${{ needs.changes.outputs.kitty_krew == 'true' }}
+    if: ${{ needs.changes.outputs.kitty-krew == 'true' }}
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: kitty-krew
