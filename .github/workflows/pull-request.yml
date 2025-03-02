@@ -11,7 +11,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check_changed_files:
+    runs-on: ubuntu-latest
+    outputs:
+      proompteng: ${{ steps.filter.outputs.proompteng }}
+      findbobastore: ${{ steps.filter.outputs.findbobastore }}
+      kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
+      packages: ${{ steps.filter.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            proompteng:
+              - 'apps/proompteng/**'
+            findbobastore:
+              - 'apps/findbobastore/**'
+            kitty-krew:
+              - 'apps/kitty-krew/**'
+            packages:
+              - 'packages/**'
+
   proompteng:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.proompteng == 'true' || needs.check_changed_files.outputs.packages == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
@@ -36,7 +60,8 @@ jobs:
       - run: pnpm --filter proompteng build
 
   findbobastore:
-    if: false
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.findbobastore == 'true' || needs.check_changed_files.outputs.packages == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +86,8 @@ jobs:
       - run: pnpm --filter findbobastore build
 
   kitty-krew:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.kitty-krew == 'true' || needs.check_changed_files.outputs.packages == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
