@@ -9,7 +9,14 @@ const appRouter = t.router({
   pods: t.procedure.query(async () => {
     try {
       const kc = new k8s.KubeConfig()
-      kc.loadFromDefault()
+
+      // Check environment to use appropriate config loading
+      if (process.env.NODE_ENV === 'production') {
+        kc.loadFromCluster()
+      } else {
+        kc.loadFromDefault()
+      }
+
       const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
       const response = await k8sApi.listPodForAllNamespaces()
       return response.items
