@@ -13,6 +13,8 @@ export const podRouter = router({
       // Check environment to use appropriate config loading
       if (process.env.NODE_ENV === 'production') {
         logger.info('Loading Kubernetes config from cluster')
+        // Temporarily disable TLS certificate validation for self-signed certificates
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
         kc.loadFromCluster()
 
         // Load self-signed certificate if available
@@ -99,6 +101,11 @@ export const podRouter = router({
         message: error instanceof Error ? error.message : 'Failed to fetch pods',
         cause: error,
       })
+    } finally {
+      // Restore TLS certificate validation if it was changed
+      if (process.env.NODE_ENV === 'production') {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
+      }
     }
   }),
 })
