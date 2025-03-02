@@ -2,18 +2,15 @@ FROM oven/bun:latest AS builder
 
 WORKDIR /app
 
-# Copy package.json and bun.lockb (if available)
-COPY package.json ./
-COPY bun.lockb* ./
-
-# Install dependencies
+# Copy package files and install dependencies
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Copy application code
 COPY . .
 
 # Build the application
-RUN bun vinxi build
+RUN bun run build
 
 # Production image
 FROM oven/bun:latest
@@ -25,7 +22,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 # Copy only necessary files from builder
-COPY --from=builder /app/.output ./output
+COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
@@ -33,4 +30,4 @@ COPY --from=builder /app/package.json ./package.json
 EXPOSE 3000
 
 # Run the application
-CMD ["bun", "run", "./output/server/index.mjs"]
+CMD ["bun", "run", "start"]
