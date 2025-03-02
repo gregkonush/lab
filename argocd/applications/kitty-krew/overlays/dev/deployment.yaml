@@ -8,7 +8,11 @@ spec:
       app: kitty-krew
   replicas: 1
   template:
+    metadata:
+      labels:
+        app: kitty-krew
     spec:
+      serviceAccountName: kitty-krew-sa
       imagePullSecrets:
         - name: registry
       containers:

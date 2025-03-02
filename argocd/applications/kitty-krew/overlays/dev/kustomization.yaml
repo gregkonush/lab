@@ -5,6 +5,9 @@ resources:
   - ../../base
   - namespace.yaml
   - secrets.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
 
 namespace: kitty-krew-dev
 
