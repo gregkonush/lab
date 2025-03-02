@@ -13,7 +13,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 # Build the application
-RUN bun run build
+RUN bun run vinxi build
 
 # Production image
 FROM oven/bun:latest
