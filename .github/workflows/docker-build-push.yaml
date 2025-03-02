@@ -1,17 +1,43 @@
 name: Docker Build and Push
 
 on:
-  push:
-    branches:
-      - "main"
+  pull_request:
     paths:
-      - "apps/proompteng/**"
-      - "apps/findbobastore/**"
-      - "apps/kitty-krew/**"
+      - "apps/**"
+      - "packages/**"
+  # push:
+  #   branches:
+  #     - "main"
+  #   paths:
+  #     - "apps/**"
+  #     - "packages/**"
 
 jobs:
+  changes:
+    runs-on: arc-arm64
+    outputs:
+      proompteng: ${{ steps.filter.outputs.proompteng }}
+      findbobastore: ${{ steps.filter.outputs.findbobastore }}
+      kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for file changes
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            proompteng:
+              - 'apps/proompteng/**'
+            findbobastore:
+              - 'apps/findbobastore/**'
+            kitty-krew:
+              - 'apps/kitty-krew/**'
+
   version:
     runs-on: arc-arm64
+    needs: changes
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
       changelog: ${{ steps.tag_version.outputs.changelog }}
@@ -33,7 +59,8 @@ jobs:
           body: ${{ steps.tag_version.outputs.changelog }}
 
   build-proompteng:
-    needs: version
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.proompteng == 'true' }}
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: proompteng
@@ -45,7 +72,8 @@ jobs:
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   build-findbobastore:
-    needs: version
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.findbobastore == 'true' }}
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: findbobastore
@@ -58,7 +86,8 @@ jobs:
       docker_secrets: mapbox_access_token=${{ secrets.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN }}
 
   build-kitty-krew:
-    needs: version
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.kitty-krew == 'true' }}
     uses: ./.github/workflows/docker-build-common.yaml
     with:
       image_name: kitty-krew
