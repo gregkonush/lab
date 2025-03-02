@@ -12,8 +12,8 @@ RUN bun install --frozen-lockfile
 # Copy application code
 COPY . .
 
-# Build the application (uncomment if needed)
-# RUN bun run build
+# Build the application
+RUN bun run build
 
 # Production image
 FROM oven/bun:latest
@@ -24,12 +24,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Copy from builder stage
+# Copy only necessary files from builder
+COPY --from=builder /app/.output ./output
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app .
+COPY --from=builder /app/package.json ./package.json
 
 # Expose port
 EXPOSE 3000
 
 # Run the application
-CMD ["bun", "run", "start"]
+CMD ["bun", "run", "./output/server/index.mjs"]
