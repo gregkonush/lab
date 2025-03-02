@@ -3,6 +3,7 @@ import * as k8s from '@kubernetes/client-node'
 import * as fs from 'node:fs'
 import { router, publicProcedure } from '../trpc'
 import { podListSchema } from '~/common/schemas/pod'
+import logger from '~/utils/logger'
 
 export const podRouter = router({
   list: publicProcedure.query(async ({ ctx }) => {
@@ -20,12 +21,17 @@ export const podRouter = router({
           if (cluster) {
             cluster.caFile = certPath
             // Set CA data in a way that works with the client
-            const cert = fs.readFileSync(certPath, 'utf8')
-            kc.addCluster({
-              ...cluster,
-              caData: cert,
-              server: cluster.server,
-            })
+            try {
+              const cert = fs.readFileSync(certPath, 'utf8')
+              kc.addCluster({
+                ...cluster,
+                caData: cert,
+                server: cluster.server,
+              })
+            } catch (err) {
+              logger.error(`Failed to read certificate from ${certPath}:`, err)
+              // Continue with existing configuration
+            }
           }
         }
       } else {
