@@ -52,6 +52,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create a GitHub release
+        id: create_release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ steps.tag_version.outputs.new_tag }}
@@ -97,3 +98,14 @@ jobs:
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  cleanup-release:
+    runs-on: arc-arm64
+    needs: [version, build-proompteng, build-findbobastore, build-kitty-krew]
+    if: failure()
+    steps:
+      - name: Delete release if any build failed
+        run: gh release delete ${{ needs.version.outputs.new_tag }} --cleanup-tag --yes
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
