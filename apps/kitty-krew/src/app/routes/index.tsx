@@ -2,24 +2,7 @@ import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { trpc } from '../router'
-
-// Define pod interface based on Kubernetes types
-interface PodMetadata {
-  name?: string
-  namespace?: string
-  creationTimestamp?: string
-  uid?: string
-}
-
-interface PodStatus {
-  phase?: string
-  podIP?: string
-}
-
-interface Pod {
-  metadata?: PodMetadata
-  status?: PodStatus
-}
+import type { Pod, PodMetadata, PodStatus } from '~/common/schemas/pod'
 
 interface PodTableProps {
   pods?: Pod[]
@@ -125,7 +108,7 @@ export const Route = createFileRoute('/')({
 })
 
 export function IndexComponent() {
-  const { data: pods, isLoading, error } = useQuery(trpc.pods.queryOptions())
+  const { data: pods, isLoading, error } = useQuery(trpc.pod.list.queryOptions())
   const [searchQuery, setSearchQuery] = React.useState('')
   const [namespaceFilter, setNamespaceFilter] = React.useState<string>('all')
 
