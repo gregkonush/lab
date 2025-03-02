@@ -1,13 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - "test"
-  # pull_request:
-  #   paths:
-  #     - "apps/**"
-  #     - "packages/**"
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,7 +17,6 @@ jobs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
-      packages: ${{ steps.filter.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v2
@@ -38,7 +34,7 @@ jobs:
 
   proompteng:
     needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.proompteng == 'true' || needs.check_changed_files.outputs.packages == 'true' }}
+    if: ${{ needs.check_changed_files.outputs.proompteng == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +60,7 @@ jobs:
 
   findbobastore:
     needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.findbobastore == 'true' || needs.check_changed_files.outputs.packages == 'true' }}
+    if: ${{ needs.check_changed_files.outputs.findbobastore == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +86,7 @@ jobs:
 
   kitty-krew:
     needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.kitty-krew == 'true' || needs.check_changed_files.outputs.packages == 'true' }}
+    if: ${{ needs.check_changed_files.outputs.kitty-krew == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
