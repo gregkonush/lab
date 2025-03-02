@@ -19,10 +19,13 @@
     "@trpc/client": "^11.0.0-rc.818",
     "@trpc/server": "^11.0.0-rc.818",
     "@trpc/tanstack-react-query": "^11.0.0-rc.818",
+    "@types/winston": "^2.4.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "superjson": "^2.2.2",
     "tailwindcss": "^4.0.9",
     "vinxi": "0.5.3",
+    "winston": "^3.17.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -30,6 +33,7 @@
     "@types/bun": "latest",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
-    "@vitejs/plugin-react": "^4.3.4"
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite-tsconfig-paths": "^5.1.4"
   }
 }
