@@ -1,4 +1,4 @@
-FROM oven/bun:latest as builder
+FROM oven/bun:latest AS builder
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 # Build the application
-RUN bun run vinxi build
+RUN bun vinxi build
 
 # Production image
 FROM oven/bun:latest
