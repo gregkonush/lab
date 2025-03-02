@@ -10,6 +10,7 @@ namespace: kitty-krew-dev
 patchesStrategicMerge:
   - configmap.yaml
   - deployment.yaml
+  - secrets.yaml
 
 images:
   - name: kitty-krew

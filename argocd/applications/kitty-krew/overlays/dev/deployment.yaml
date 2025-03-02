@@ -3,9 +3,14 @@ kind: Deployment
 metadata:
   name: kitty-krew
 spec:
+  selector:
+    matchLabels:
+      app: kitty-krew
   replicas: 1
   template:
     spec:
+      imagePullSecrets:
+        - name: registry
       containers:
         - name: kitty-krew
           resources:
