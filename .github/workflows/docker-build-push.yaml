@@ -92,7 +92,7 @@ jobs:
     with:
       image_name: kitty-krew
       dockerfile: ./apps/kitty-krew/Dockerfile
-      context: .
+      context: ./apps/kitty-krew
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
