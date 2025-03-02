@@ -2,7 +2,6 @@ import { createApp } from 'vinxi'
 import reactRefresh from '@vitejs/plugin-react'
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite'
 import tailwindcss from '@tailwindcss/vite'
-import { resolve } from 'node:path'
 import tsconfigPaths from 'vite-tsconfig-paths'
 
 export default createApp({

@@ -16,14 +16,13 @@ const t = initTRPC.context<Context>().create({
   /**
    * @see https://trpc.io/docs/v11/data-transformers
    */
-  // transformer,
+  transformer,
   /**
    * @see https://trpc.io/docs/v11/error-formatting
    */
   errorFormatter({ shape }) {
     return shape
   },
-  transformer,
 })
 
 /**
