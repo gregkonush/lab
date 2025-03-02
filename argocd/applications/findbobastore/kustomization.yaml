@@ -7,4 +7,4 @@ resources:
 - ingress.yaml
 images:
 - name: kalmyk.duckdns.org/lab/findbobastore
-  newTag: 0.138.0
+  newTag: 0.139.0
