@@ -18,6 +18,21 @@ Key features:
 - Health checks for Kubernetes readiness/liveness probes
 - Proper environment variable configuration
 
+### GitHub Actions CI/CD Workflow
+
+The application is automatically built and deployed using GitHub Actions:
+
+- Workflow: `.github/workflows/docker-build-push.yaml`
+- Trigger: Pull requests modifying files in `apps/kitty-krew/**`
+- Context: Set to `./apps/kitty-krew` to ensure proper build context
+- Output: Docker image pushed to the registry with version tag
+
+**Important**:
+
+- The workflow uses the context parameter `./apps/kitty-krew` to ensure correct path resolution
+- The Dockerfile is written to work specifically with this context path
+- When editing Dockerfile, maintain paths relative to the app directory, not the workspace root
+
 ### Build Script
 
 A build script is provided at `scripts/build-kitty-krew.sh` to simplify the build and push process.
@@ -121,3 +136,13 @@ curl http://localhost:3000/health
 ```
 
 Access the application at [http://localhost:3000](http://localhost:3000)
+
+## Troubleshooting Docker Builds
+
+If you encounter build issues:
+
+1. **Check context**: Ensure the Docker build context is correctly set to `./apps/kitty-krew` in workflows
+2. **Path resolution**: The Dockerfile paths must be relative to the app directory, not the workspace root
+3. **Logging information**: The Dockerfile includes echo statements for troubleshooting
+4. **Build inspection**: Review logs for each build stage to identify where failures occur
+5. **Script output**: For local builds, check the output from the build script for errors
