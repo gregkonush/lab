@@ -4,13 +4,13 @@ kind: Kustomization
 resources:
   - ../../base
   - namespace.yaml
+  - secrets.yaml
 
 namespace: kitty-krew-dev
 
-patchesStrategicMerge:
-  - configmap.yaml
-  - deployment.yaml
-  - secrets.yaml
+patches:
+  - path: configmap.yaml
+  - path: deployment.yaml
 
 images:
   - name: kitty-krew
