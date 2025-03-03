@@ -13,10 +13,9 @@ interface PodTableProps {
 // Memoized PodTable component
 const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
   // Safely format the creation time
-  const formatCreationTime = React.useCallback((dateString?: string): string => {
-    if (!dateString) return 'N/A'
-    // Format to match the screenshot (MM/DD/YYYY, hh:mm:ss AM/PM)
-    const date = new Date(dateString)
+  const formatCreationTime = React.useCallback((dateInput?: Date | string): string => {
+    if (!dateInput) return 'N/A'
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput)
     return `${date.toLocaleDateString()}, ${date.toLocaleTimeString()}`
   }, [])
 
