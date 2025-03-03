@@ -112,8 +112,8 @@ export function transformPodData(pod: k8s.V1Pod): Pod {
     },
     status: {
       phase: pod.status?.phase || '',
-      podIp: pod.status?.podIp || '',
-      hostIp: pod.status?.hostIp || '',
+      podIp: pod.status?.podIP || '',
+      hostIp: pod.status?.hostIP || '',
     },
     spec: {
       nodeName: pod.spec?.nodeName || '',
