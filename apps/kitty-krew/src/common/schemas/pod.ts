@@ -3,7 +3,18 @@ import { z } from 'zod'
 export const podMetadataSchema = z.object({
   name: z.string().optional(),
   namespace: z.string().optional(),
-  creationTimestamp: z.date().optional(),
+  creationTimestamp: z.preprocess(
+    (val) => (val instanceof Date ? val : new Date(String(val))),
+    z
+      .date()
+      .refine((date) => !Number.isNaN(date.getTime()), {
+        message: 'Invalid date format for creationTimestamp',
+      })
+      .refine((date) => date <= new Date(), {
+        message: 'creationTimestamp cannot be in the future',
+      })
+      .optional(),
+  ),
   uid: z.string().optional(),
 })
 
