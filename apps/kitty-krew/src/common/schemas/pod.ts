@@ -39,6 +39,10 @@ export const containerSchema = z.object({
 export const podSpecSchema = z.object({
   nodeName: z.string().optional(),
   containers: z.array(containerSchema).optional(),
+  restartPolicy: z.string().optional(),
+  serviceAccountName: z.string().optional(),
+  dnsPolicy: z.string().optional(),
+  priority: z.number().optional(),
 })
 
 export const podStatusSchema = z.object({

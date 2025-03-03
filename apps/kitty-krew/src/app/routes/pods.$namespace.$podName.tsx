@@ -136,6 +136,22 @@ export function PodDetailsComponent() {
                 <span className="text-zinc-400">Node Name:</span>
                 <span className="text-zinc-200">{pod.spec?.nodeName || 'N/A'}</span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Restart Policy:</span>
+                <span className="text-zinc-200">{pod.spec?.restartPolicy || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Service Account:</span>
+                <span className="text-zinc-200">{pod.spec?.serviceAccountName || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">DNS Policy:</span>
+                <span className="text-zinc-200">{pod.spec?.dnsPolicy || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Priority:</span>
+                <span className="text-zinc-200">{pod.spec?.priority !== undefined ? pod.spec.priority : 'N/A'}</span>
+              </div>
             </div>
           </div>
 
