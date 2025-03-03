@@ -10,9 +10,16 @@ export const podMetadataSchema = z.object({
       .refine((date) => !Number.isNaN(date.getTime()), {
         message: 'Invalid date format for creationTimestamp',
       })
-      .refine((date) => date <= new Date(), {
-        message: 'creationTimestamp cannot be in the future',
-      })
+      .refine(
+        (date) => {
+          const now = new Date()
+          const allowedSkew = 60 * 1000 // Allow 1 minute of clock skew
+          return date <= new Date(now.getTime() + allowedSkew)
+        },
+        {
+          message: 'creationTimestamp cannot be too far in the future',
+        },
+      )
       .optional(),
   ),
   uid: z.string().optional(),
