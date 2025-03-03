@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { trpc } from '../router'
 import type { Pod, PodMetadata, PodStatus } from '~/common/schemas/pod'
@@ -84,7 +84,19 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
                 key={`${pod.metadata?.namespace}-${pod.metadata?.name}`}
                 className="border-b border-zinc-800 hover:bg-zinc-900 transition-colors"
               >
-                <td className="py-1.5 px-3 font-medium w-[30%] truncate">{pod.metadata?.name || 'N/A'}</td>
+                <td className="py-1.5 px-3 font-medium w-[30%] truncate">
+                  {pod.metadata?.name ? (
+                    <Link
+                      to="/pods/$podName"
+                      params={{ podName: pod.metadata.name }}
+                      className="text-zinc-100 hover:text-zinc-300 transition-colors"
+                    >
+                      {pod.metadata.name}
+                    </Link>
+                  ) : (
+                    'N/A'
+                  )}
+                </td>
                 <td className="py-1.5 px-3 w-[20%] truncate">{pod.metadata?.namespace || 'N/A'}</td>
                 <td className="py-1.5 px-3 w-[15%]">
                   <span className={getStatusBadgeClass(pod.status?.phase)}>{pod.status?.phase || 'Unknown'}</span>

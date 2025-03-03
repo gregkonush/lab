@@ -12,12 +12,19 @@
 
 import { Route as rootRoute } from './routes/__root'
 import { Route as IndexImport } from './routes/index'
+import { Route as PodsPodNameImport } from './routes/pods.$podName'
 
 // Create/Update Routes
 
 const IndexRoute = IndexImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRoute,
+} as any)
+
+const PodsPodNameRoute = PodsPodNameImport.update({
+  id: '/pods/$podName',
+  path: '/pods/$podName',
   getParentRoute: () => rootRoute,
 } as any)
 
@@ -32,6 +39,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexImport
       parentRoute: typeof rootRoute
     }
+    '/pods/$podName': {
+      id: '/pods/$podName'
+      path: '/pods/$podName'
+      fullPath: '/pods/$podName'
+      preLoaderRoute: typeof PodsPodNameImport
+      parentRoute: typeof rootRoute
+    }
   }
 }
 
@@ -39,35 +53,42 @@ declare module '@tanstack/react-router' {
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/pods/$podName': typeof PodsPodNameRoute
 }
 
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/pods/$podName': typeof PodsPodNameRoute
 }
 
 export interface FileRoutesById {
   __root__: typeof rootRoute
   '/': typeof IndexRoute
+  '/pods/$podName': typeof PodsPodNameRoute
 }
 
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/pods/$podName'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/pods/$podName'
+  id: '__root__' | '/' | '/pods/$podName'
   fileRoutesById: FileRoutesById
 }
 
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PodsPodNameRoute: typeof PodsPodNameRoute
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PodsPodNameRoute: PodsPodNameRoute,
 }
 
-export const routeTree = rootRoute._addFileChildren(rootRouteChildren)._addFileTypes<FileRouteTypes>()
+export const routeTree = rootRoute
+  ._addFileChildren(rootRouteChildren)
+  ._addFileTypes<FileRouteTypes>()
 
 /* ROUTE_MANIFEST_START
 {
@@ -75,11 +96,15 @@ export const routeTree = rootRoute._addFileChildren(rootRouteChildren)._addFileT
     "__root__": {
       "filePath": "__root.tsx",
       "children": [
-        "/"
+        "/",
+        "/pods/$podName"
       ]
     },
     "/": {
       "filePath": "index.tsx"
+    },
+    "/pods/$podName": {
+      "filePath": "pods.$podName.tsx"
     }
   }
 }

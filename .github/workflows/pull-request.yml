@@ -107,6 +107,10 @@ jobs:
         working-directory: apps/kitty-krew
         run: bun biome format
 
+      - name: Type check
+        working-directory: apps/kitty-krew
+        run: bun tsc --noEmit
+
       - name: Build kitty-krew app
         working-directory: apps/kitty-krew
         run: bun run build

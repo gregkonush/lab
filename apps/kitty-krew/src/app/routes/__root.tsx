@@ -3,7 +3,7 @@ import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 
 import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
-import type { AppRouter } from '../../trpc-server.handler'
+import type { AppRouter } from '~/server/routers/_app'
 import type { QueryClient } from '@tanstack/react-query'
 
 export interface RouterAppContext {
