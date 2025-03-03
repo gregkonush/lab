@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node'
 import * as fs from 'node:fs'
+import { promises as fsPromises } from 'node:fs'
 import logger from '~/utils/logger'
 import type { Pod } from '~/common/schemas/pod'
 
@@ -10,7 +11,9 @@ import type { Pod } from '~/common/schemas/pod'
 async function configureSelfSignedCertificate(kc: k8s.KubeConfig): Promise<void> {
   const certPath = process.env.K8S_CERT_PATH || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
-  if (!fs.existsSync(certPath)) {
+  try {
+    await fsPromises.access(certPath)
+  } catch (err) {
     logger.warn(`Certificate file not found at ${certPath}`)
     return
   }
@@ -25,7 +28,7 @@ async function configureSelfSignedCertificate(kc: k8s.KubeConfig): Promise<void>
   cluster.caFile = certPath
 
   try {
-    const cert = fs.readFileSync(certPath, 'utf8')
+    const cert = await fsPromises.readFile(certPath, 'utf8')
     logger.info('Certificate loaded successfully')
 
     const currentContext = kc.getCurrentContext()
