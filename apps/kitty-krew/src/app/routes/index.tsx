@@ -1,8 +1,10 @@
-import * as React from 'react'
+import React from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { trpc } from '~/app/router.tsx'
 import type { Pod } from '~/common/schemas/pod.ts'
+import { StatusBadge } from '~/components/status-badge'
+import { MultiSelect } from '~/components/multi-select'
 
 interface PodTableProps {
   pods?: Pod[]
@@ -19,29 +21,13 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
     return `${date.toLocaleDateString()}, ${date.toLocaleTimeString()}`
   }, [])
 
-  // Get status badge styling
-  const getStatusBadgeClass = React.useCallback((status?: string): string => {
-    const baseClasses = 'px-2 py-0.5 rounded-full text-xs font-medium'
-
-    switch (status) {
-      case 'Running':
-        return `${baseClasses} bg-green-700 text-green-100`
-      case 'Pending':
-        return `${baseClasses} bg-yellow-700 text-yellow-100`
-      case 'Failed':
-        return `${baseClasses} bg-red-700 text-red-100`
-      case 'Succeeded':
-        return `${baseClasses} bg-blue-700 text-blue-100`
-      default:
-        return `${baseClasses} bg-zinc-700 text-zinc-100`
-    }
-  }, [])
-
   // Render pods with loading and error states
   if (isLoading)
     return (
       <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
-        <div className="w-full py-2 text-sm text-zinc-300 flex items-center justify-center h-full">Loading pods...</div>
+        <div className="w-full py-2 text-sm text-zinc-400/80 flex items-center justify-center h-full">
+          Loading pods...
+        </div>
       </div>
     )
 
@@ -57,7 +43,9 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
   if (!pods?.length)
     return (
       <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
-        <div className="w-full py-2 text-sm text-zinc-300 flex items-center justify-center h-full">No pods found</div>
+        <div className="w-full py-2 text-sm text-zinc-400/80 flex items-center justify-center h-full">
+          No pods found
+        </div>
       </div>
     )
 
@@ -65,7 +53,7 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
     <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
       <div className="w-full">
         <table className="w-full text-left table-fixed">
-          <thead className="bg-zinc-900 text-zinc-100 border-b border-zinc-700">
+          <thead className="bg-zinc-800/50 text-zinc-400/90 border-b border-zinc-700">
             <tr>
               <th className="py-2 px-3 font-medium w-[30%]">Name</th>
               <th className="py-2 px-3 font-medium w-[20%]">Namespace</th>
@@ -78,7 +66,7 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
       </div>
       <div className="overflow-y-auto h-[calc(100vh-12rem-6px)]">
         <table className="w-full text-left table-fixed">
-          <tbody className="bg-zinc-950 text-zinc-300">
+          <tbody className="bg-zinc-700/10 text-zinc-400/70">
             {pods.map((pod) => (
               <tr
                 key={`${pod.metadata?.namespace}-${pod.metadata?.name}`}
@@ -92,7 +80,7 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
                         podName: pod.metadata.name,
                         namespace: pod.metadata?.namespace || 'default',
                       }}
-                      className="text-zinc-100 hover:text-zinc-300 transition-colors"
+                      className="text-zinc-300 hover:text-zinc-400/80 transition-colors cursor-default"
                     >
                       {pod.metadata.name}
                     </Link>
@@ -102,7 +90,7 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
                 </td>
                 <td className="py-1.5 px-3 w-[20%] truncate">{pod.metadata?.namespace || 'N/A'}</td>
                 <td className="py-1.5 px-3 w-[15%]">
-                  <span className={getStatusBadgeClass(pod.status?.phase)}>{pod.status?.phase || 'Unknown'}</span>
+                  <StatusBadge status={pod.status?.phase} />
                 </td>
                 <td className="py-1.5 px-3 w-[20%] truncate">{formatCreationTime(pod.metadata?.creationTimestamp)}</td>
                 <td className="py-1.5 px-3 w-[15%] truncate">{pod.status?.podIp || 'N/A'}</td>
@@ -124,14 +112,20 @@ export const Route = createFileRoute('/')({
 export function IndexComponent() {
   const { data: pods, isLoading, error } = useQuery(trpc.pod.list.queryOptions())
   const [searchQuery, setSearchQuery] = React.useState('')
-  const [namespaceFilter, setNamespaceFilter] = React.useState<string>('all')
+  const [namespaceFilter, setNamespaceFilter] = React.useState<string[]>(['all'])
 
   const handleSearchChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value)
   }, [])
 
-  const handleNamespaceChange = React.useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    setNamespaceFilter(e.target.value)
+  const handleNamespaceChange = React.useCallback((value: string | string[]) => {
+    // Ensure value is always an array
+    let namespaces = Array.isArray(value) ? value : [value]
+    // If any namespace other than 'all' is selected, remove 'all'
+    if (namespaces.includes('all') && namespaces.length > 1) {
+      namespaces = namespaces.filter((ns) => ns !== 'all')
+    }
+    setNamespaceFilter(namespaces)
   }, [])
 
   // Extract unique namespaces for filter dropdown
@@ -148,17 +142,23 @@ export function IndexComponent() {
     return Array.from(namespaceSet).sort()
   }, [pods])
 
+  // Convert namespaces to the format expected by MultiSelect
+  const namespaceOptions = React.useMemo(() => {
+    return [
+      { value: 'all', label: 'All namespaces' },
+      ...namespaces.map((namespace) => ({ value: namespace, label: namespace })),
+    ]
+  }, [namespaces])
+
   // Filter pods based on search query and namespace filter
   const filteredPods = React.useMemo(() => {
     if (!pods) return []
-
+    // If 'all' is selected, ignore namespace filtering
+    const filterAll = namespaceFilter.includes('all')
     return pods.filter((pod) => {
-      // Apply namespace filter
-      if (namespaceFilter !== 'all' && pod.metadata?.namespace !== namespaceFilter) {
+      if (!filterAll && pod.metadata?.namespace && !namespaceFilter.includes(pod.metadata.namespace)) {
         return false
       }
-
-      // Apply search filter if there's a query
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase()
         return (
@@ -167,7 +167,6 @@ export function IndexComponent() {
           pod.status?.phase?.toLowerCase().includes(query)
         )
       }
-
       return true
     })
   }, [pods, searchQuery, namespaceFilter])
@@ -182,7 +181,7 @@ export function IndexComponent() {
               placeholder="Search pods..."
               value={searchQuery}
               onChange={handleSearchChange}
-              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-500"
+              className="w-full px-3 py-2 bg-zinc-800 text-zinc-400/90 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-400/50"
               aria-label="Search pods"
             />
             <svg
@@ -202,36 +201,16 @@ export function IndexComponent() {
               />
             </svg>
           </div>
-          <div className="w-48 relative">
-            <select
+          <div className="w-64">
+            <MultiSelect
               value={namespaceFilter}
               onChange={handleNamespaceChange}
-              className="w-full px-3 py-2 bg-zinc-800 text-zinc-200 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 appearance-none pr-8"
+              options={namespaceOptions}
               aria-label="Filter by namespace"
-            >
-              <option value="all">All namespaces</option>
-              {namespaces.map((namespace) => (
-                <option key={namespace} value={namespace}>
-                  {namespace}
-                </option>
-              ))}
-            </select>
-            <svg
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-zinc-400 pointer-events-none"
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <path
-                fillRule="evenodd"
-                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                clipRule="evenodd"
-              />
-            </svg>
+            />
           </div>
         </div>
-        <h1 className="text-2xl font-bold text-zinc-100">Kubernetes Pods</h1>
+        <h1 className="text-2xl font-bold text-zinc-400">Kubernetes Pods</h1>
       </div>
       <div className="w-full">
         <PodTable pods={filteredPods} isLoading={isLoading} error={error} />
