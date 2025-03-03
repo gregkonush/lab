@@ -29,11 +29,6 @@ export const podRouter = router({
         message: error instanceof Error ? error.message : 'Failed to fetch pods',
         cause: error,
       })
-    } finally {
-      // Restore TLS certificate validation if it was changed
-      if (process.env.NODE_ENV === 'production') {
-        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
-      }
     }
   }),
 
@@ -84,11 +79,6 @@ export const podRouter = router({
           message: error instanceof Error ? error.message : `Failed to fetch pod ${podName}`,
           cause: error,
         })
-      } finally {
-        // Restore TLS certificate validation if it was changed
-        if (process.env.NODE_ENV === 'production') {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
-        }
       }
     }),
 })

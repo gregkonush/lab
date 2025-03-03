@@ -72,8 +72,8 @@ export async function createK8sClient(): Promise<k8s.CoreV1Api> {
     // Check environment to use appropriate config loading
     if (process.env.NODE_ENV === 'production') {
       logger.info('Loading Kubernetes config from cluster')
-      // Temporarily disable TLS certificate validation for self-signed certificates
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+      // Configure the Kubernetes client to use the specified certificate
+      // instead of disabling TLS validation globally
       kc.loadFromCluster()
 
       // Configure self-signed certificate if available
