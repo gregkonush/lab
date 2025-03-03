@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const podMetadataSchema = z.object({
   name: z.string().optional(),
   namespace: z.string().optional(),
-  creationTimestamp: z.string().optional(),
+  creationTimestamp: z.date().optional(),
   uid: z.string().optional(),
 })
 
