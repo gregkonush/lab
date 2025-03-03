@@ -100,7 +100,7 @@ export function transformPodData(pod: k8s.V1Pod): Pod {
       containers:
         pod.spec?.containers?.map((container) => ({
           name: container.name,
-          image: container.image,
+          image: container.image || '',
           ports: container.ports?.map((port) => ({
             containerPort: port.containerPort,
             protocol: port.protocol,

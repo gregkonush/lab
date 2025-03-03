@@ -12,7 +12,7 @@
 
 import { Route as rootRoute } from './routes/__root'
 import { Route as IndexImport } from './routes/index'
-import { Route as PodsPodNameImport } from './routes/pods.$podName'
+import { Route as PodsNamespacePodNameImport } from './routes/pods.$namespace.$podName'
 
 // Create/Update Routes
 
@@ -22,9 +22,9 @@ const IndexRoute = IndexImport.update({
   getParentRoute: () => rootRoute,
 } as any)
 
-const PodsPodNameRoute = PodsPodNameImport.update({
-  id: '/pods/$podName',
-  path: '/pods/$podName',
+const PodsNamespacePodNameRoute = PodsNamespacePodNameImport.update({
+  id: '/pods/$namespace/$podName',
+  path: '/pods/$namespace/$podName',
   getParentRoute: () => rootRoute,
 } as any)
 
@@ -39,11 +39,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexImport
       parentRoute: typeof rootRoute
     }
-    '/pods/$podName': {
-      id: '/pods/$podName'
-      path: '/pods/$podName'
-      fullPath: '/pods/$podName'
-      preLoaderRoute: typeof PodsPodNameImport
+    '/pods/$namespace/$podName': {
+      id: '/pods/$namespace/$podName'
+      path: '/pods/$namespace/$podName'
+      fullPath: '/pods/$namespace/$podName'
+      preLoaderRoute: typeof PodsNamespacePodNameImport
       parentRoute: typeof rootRoute
     }
   }
@@ -53,37 +53,37 @@ declare module '@tanstack/react-router' {
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/pods/$podName': typeof PodsPodNameRoute
+  '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
 
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/pods/$podName': typeof PodsPodNameRoute
+  '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
 
 export interface FileRoutesById {
   __root__: typeof rootRoute
   '/': typeof IndexRoute
-  '/pods/$podName': typeof PodsPodNameRoute
+  '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
 
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/pods/$podName'
+  fullPaths: '/' | '/pods/$namespace/$podName'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/pods/$podName'
-  id: '__root__' | '/' | '/pods/$podName'
+  to: '/' | '/pods/$namespace/$podName'
+  id: '__root__' | '/' | '/pods/$namespace/$podName'
   fileRoutesById: FileRoutesById
 }
 
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  PodsPodNameRoute: typeof PodsPodNameRoute
+  PodsNamespacePodNameRoute: typeof PodsNamespacePodNameRoute
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  PodsPodNameRoute: PodsPodNameRoute,
+  PodsNamespacePodNameRoute: PodsNamespacePodNameRoute,
 }
 
 export const routeTree = rootRoute
@@ -97,14 +97,14 @@ export const routeTree = rootRoute
       "filePath": "__root.tsx",
       "children": [
         "/",
-        "/pods/$podName"
+        "/pods/$namespace/$podName"
       ]
     },
     "/": {
       "filePath": "index.tsx"
     },
-    "/pods/$podName": {
-      "filePath": "pods.$podName.tsx"
+    "/pods/$namespace/$podName": {
+      "filePath": "pods.$namespace.$podName.tsx"
     }
   }
 }

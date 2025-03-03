@@ -37,49 +37,58 @@ export const podRouter = router({
     }
   }),
 
-  byName: publicProcedure.input(z.object({ podName: z.string() })).query(async ({ input, ctx }) => {
-    try {
-      // Get the Kubernetes client
-      const k8sApi = await createK8sClient()
+  byName: publicProcedure
+    .input(
+      z.object({
+        podName: z.string(),
+        namespace: z.string(),
+      }),
+    )
+    .query(async ({ input: { podName, namespace }, ctx }) => {
+      try {
+        // Get the Kubernetes client
+        const k8sApi = await createK8sClient()
 
-      // Fetch all pods since we don't know the namespace from just the name
-      logger.info('Fetching pods from all namespaces')
-      const allPods = await k8sApi.listPodForAllNamespaces()
+        // Use direct GET request with namespace for efficiency
+        logger.info(`Fetching pod ${podName} in namespace ${namespace}`)
+        try {
+          const response = await k8sApi.readNamespacedPod({
+            name: podName,
+            namespace,
+          })
+          const pod = response
 
-      // Find the pod with the specified name
-      const pod = allPods.items.find((pod) => pod.metadata?.name === input.podName)
+          logger.info(`Found pod ${podName}`)
 
-      if (!pod) {
+          // Transform the pod data to match our schema
+          const transformedPod = transformPodData(pod)
+
+          // Validate with zod schema
+          return podSchema.parse(transformedPod)
+        } catch (err) {
+          // If the pod is not found in the specified namespace, throw a NOT_FOUND error
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `Pod ${podName} not found in namespace ${namespace}`,
+          })
+        }
+      } catch (error) {
+        logger.error(`Failed to fetch pod ${podName}:`, error)
+
+        if (error instanceof TRPCError) {
+          throw error
+        }
+
         throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: `Pod with name ${input.podName} not found`,
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : `Failed to fetch pod ${podName}`,
+          cause: error,
         })
+      } finally {
+        // Restore TLS certificate validation if it was changed
+        if (process.env.NODE_ENV === 'production') {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
+        }
       }
-
-      logger.info(`Found pod ${input.podName}`)
-
-      // Transform the pod data to match our schema
-      const transformedPod = transformPodData(pod)
-
-      // Validate with zod schema
-      return podSchema.parse(transformedPod)
-    } catch (error) {
-      logger.error(`Failed to fetch pod ${input.podName}:`, error)
-
-      if (error instanceof TRPCError) {
-        throw error
-      }
-
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: error instanceof Error ? error.message : `Failed to fetch pod ${input.podName}`,
-        cause: error,
-      })
-    } finally {
-      // Restore TLS certificate validation if it was changed
-      if (process.env.NODE_ENV === 'production') {
-        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '1'
-      }
-    }
-  }),
+    }),
 })

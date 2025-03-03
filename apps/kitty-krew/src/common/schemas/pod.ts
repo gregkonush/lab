@@ -26,13 +26,13 @@ export const podMetadataSchema = z.object({
 })
 
 export const containerPortSchema = z.object({
-  containerPort: z.number(),
+  containerPort: z.number().int().min(1).max(65535),
   protocol: z.string().optional(),
 })
 
 export const containerSchema = z.object({
-  name: z.string(),
-  image: z.string().optional(),
+  name: z.string().min(1),
+  image: z.string().min(1),
   ports: z.array(containerPortSchema).optional(),
 })
 

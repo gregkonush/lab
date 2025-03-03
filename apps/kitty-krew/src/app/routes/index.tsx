@@ -87,8 +87,11 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
                 <td className="py-1.5 px-3 font-medium w-[30%] truncate">
                   {pod.metadata?.name ? (
                     <Link
-                      to="/pods/$podName"
-                      params={{ podName: pod.metadata.name }}
+                      to="/pods/$namespace/$podName"
+                      params={{
+                        podName: pod.metadata.name,
+                        namespace: pod.metadata?.namespace || 'default',
+                      }}
                       className="text-zinc-100 hover:text-zinc-300 transition-colors"
                     >
                       {pod.metadata.name}
