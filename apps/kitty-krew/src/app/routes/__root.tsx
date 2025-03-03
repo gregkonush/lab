@@ -1,5 +1,5 @@
+import React from 'react'
 import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 
 import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
@@ -10,6 +10,15 @@ export interface RouterAppContext {
   trpc: TRPCOptionsProxy<AppRouter>
   queryClient: QueryClient
 }
+
+const TanStackRouterDevtools =
+  process.env.NODE_ENV === 'production'
+    ? () => null
+    : React.lazy(() =>
+        import('@tanstack/router-devtools').then((res) => ({
+          default: res.TanStackRouterDevtools,
+        })),
+      )
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
   component: RootComponent,
