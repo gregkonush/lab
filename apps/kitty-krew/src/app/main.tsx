@@ -6,7 +6,7 @@ import { RouterProvider } from '@tanstack/react-router'
 
 import './main.css'
 
-import { createRouter } from './router'
+import { createRouter } from './router.tsx'
 
 // Set up a Router instance
 const router = createRouter()

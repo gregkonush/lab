@@ -12,12 +12,19 @@
 
 import { Route as rootRoute } from './routes/__root'
 import { Route as IndexImport } from './routes/index'
+import { Route as PodsNamespacePodNameImport } from './routes/pods.$namespace.$podName'
 
 // Create/Update Routes
 
 const IndexRoute = IndexImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRoute,
+} as any)
+
+const PodsNamespacePodNameRoute = PodsNamespacePodNameImport.update({
+  id: '/pods/$namespace/$podName',
+  path: '/pods/$namespace/$podName',
   getParentRoute: () => rootRoute,
 } as any)
 
@@ -32,6 +39,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexImport
       parentRoute: typeof rootRoute
     }
+    '/pods/$namespace/$podName': {
+      id: '/pods/$namespace/$podName'
+      path: '/pods/$namespace/$podName'
+      fullPath: '/pods/$namespace/$podName'
+      preLoaderRoute: typeof PodsNamespacePodNameImport
+      parentRoute: typeof rootRoute
+    }
   }
 }
 
@@ -39,35 +53,42 @@ declare module '@tanstack/react-router' {
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
 
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
 
 export interface FileRoutesById {
   __root__: typeof rootRoute
   '/': typeof IndexRoute
+  '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
 
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/pods/$namespace/$podName'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/pods/$namespace/$podName'
+  id: '__root__' | '/' | '/pods/$namespace/$podName'
   fileRoutesById: FileRoutesById
 }
 
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PodsNamespacePodNameRoute: typeof PodsNamespacePodNameRoute
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PodsNamespacePodNameRoute: PodsNamespacePodNameRoute,
 }
 
-export const routeTree = rootRoute._addFileChildren(rootRouteChildren)._addFileTypes<FileRouteTypes>()
+export const routeTree = rootRoute
+  ._addFileChildren(rootRouteChildren)
+  ._addFileTypes<FileRouteTypes>()
 
 /* ROUTE_MANIFEST_START
 {
@@ -75,11 +96,15 @@ export const routeTree = rootRoute._addFileChildren(rootRouteChildren)._addFileT
     "__root__": {
       "filePath": "__root.tsx",
       "children": [
-        "/"
+        "/",
+        "/pods/$namespace/$podName"
       ]
     },
     "/": {
       "filePath": "index.tsx"
+    },
+    "/pods/$namespace/$podName": {
+      "filePath": "pods.$namespace.$podName.tsx"
     }
   }
 }

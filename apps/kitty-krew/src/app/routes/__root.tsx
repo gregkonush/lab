@@ -1,9 +1,9 @@
-import { Outlet, createRootRouteWithContext, useRouterState } from '@tanstack/react-router'
+import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 
 import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
-import type { AppRouter } from '../../trpc-server.handler'
+import type { AppRouter } from '~/server/routers/_app'
 import type { QueryClient } from '@tanstack/react-query'
 
 export interface RouterAppContext {
@@ -16,8 +16,6 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 })
 
 function RootComponent() {
-  const isFetching = useRouterState({ select: (s) => s.isLoading })
-
   return (
     <>
       <div className="min-h-screen flex flex-col antialiased text-zinc-400 w-full">
