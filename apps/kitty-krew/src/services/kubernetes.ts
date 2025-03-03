@@ -4,6 +4,61 @@ import logger from '~/utils/logger'
 import type { Pod } from '~/common/schemas/pod'
 
 /**
+ * Loads and configures the self-signed certificate for the Kubernetes client
+ * @param kc The KubeConfig instance to configure
+ */
+async function configureSelfSignedCertificate(kc: k8s.KubeConfig): Promise<void> {
+  const certPath = process.env.K8S_CERT_PATH || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+
+  if (!fs.existsSync(certPath)) {
+    logger.warn(`Certificate file not found at ${certPath}`)
+    return
+  }
+
+  logger.info(`Certificate file found at ${certPath}`)
+  const cluster = kc.getCurrentCluster()
+  if (!cluster) {
+    logger.warn('No current cluster found in KubeConfig')
+    return
+  }
+
+  cluster.caFile = certPath
+
+  try {
+    const cert = fs.readFileSync(certPath, 'utf8')
+    logger.info('Certificate loaded successfully')
+
+    const currentContext = kc.getCurrentContext()
+    const contextObject = kc.getContextObject(currentContext)
+
+    if (!contextObject?.cluster) {
+      logger.warn('No cluster found in current context')
+      return
+    }
+
+    const existingCluster = kc.getCluster(contextObject.cluster)
+    if (!existingCluster) {
+      logger.warn(`Cluster ${contextObject.cluster} not found in KubeConfig`)
+      return
+    }
+
+    // Create a new cluster config with the updated CA data
+    const updatedCluster = {
+      ...existingCluster,
+      caData: cert,
+    }
+
+    // Remove the existing cluster and add the updated one
+    kc.clusters = kc.clusters.filter((c) => c.name !== contextObject.cluster)
+    kc.addCluster(updatedCluster)
+    logger.info(`Updated CA data for cluster: ${contextObject.cluster}`)
+  } catch (err) {
+    logger.error(`Failed to read certificate from ${certPath}:`, err)
+    // Continue with existing configuration
+  }
+}
+
+/**
  * Creates and configures a Kubernetes API client
  * @returns A configured Kubernetes CoreV1Api client
  */
@@ -18,46 +73,8 @@ export async function createK8sClient(): Promise<k8s.CoreV1Api> {
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
       kc.loadFromCluster()
 
-      // Load self-signed certificate if available
-      const certPath = process.env.K8S_CERT_PATH || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
-      if (fs.existsSync(certPath)) {
-        logger.info(`Certificate file found at ${certPath}`)
-        const cluster = kc.getCurrentCluster()
-        if (cluster) {
-          cluster.caFile = certPath
-          // Set CA data in a way that works with the client
-          try {
-            const cert = fs.readFileSync(certPath, 'utf8')
-            logger.info('Certificate loaded successfully')
-
-            // Update the existing cluster instead of adding a new one
-            const currentContext = kc.getCurrentContext()
-            const contextObject = kc.getContextObject(currentContext)
-
-            if (contextObject?.cluster) {
-              // Instead of modifying the read-only property, create a new cluster config
-              const existingCluster = kc.getCluster(contextObject.cluster)
-              if (existingCluster) {
-                // Create a new cluster config with the updated CA data
-                const updatedCluster = {
-                  ...existingCluster,
-                  caData: cert,
-                }
-
-                // Remove the existing cluster and add the updated one
-                kc.clusters = kc.clusters.filter((c) => c.name !== contextObject.cluster)
-                kc.addCluster(updatedCluster)
-                logger.info(`Updated CA data for cluster: ${contextObject.cluster}`)
-              }
-            }
-          } catch (err) {
-            logger.error(`Failed to read certificate from ${certPath}:`, err)
-            // Continue with existing configuration
-          }
-        }
-      } else {
-        logger.warn(`Certificate file not found at ${certPath}`)
-      }
+      // Configure self-signed certificate if available
+      await configureSelfSignedCertificate(kc)
     } else {
       logger.info('Loading Kubernetes config from default settings')
       kc.loadFromDefault()
