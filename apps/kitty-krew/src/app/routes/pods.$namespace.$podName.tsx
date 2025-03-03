@@ -1,8 +1,8 @@
 import type * as React from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { trpc } from '../router'
-import type { Container, ContainerPort } from '~/common/schemas/pod'
+import { trpc } from '~/app/router.tsx'
+import type { Container, ContainerPort } from '~/common/schemas/pod.ts'
 
 export const Route = createFileRoute('/pods/$namespace/$podName')({
   component: PodDetailsComponent,
@@ -119,11 +119,11 @@ export function PodDetailsComponent() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Pod IP:</span>
-                  <span className="text-zinc-200">{pod.status?.podIP || 'N/A'}</span>
+                  <span className="text-zinc-200">{pod.status?.podIp || 'N/A'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Host IP:</span>
-                  <span className="text-zinc-200">{pod.status?.hostIP || 'N/A'}</span>
+                  <span className="text-zinc-200">{pod.status?.hostIp || 'N/A'}</span>
                 </div>
               </div>
             </div>

@@ -1,8 +1,8 @@
 import * as React from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { trpc } from '../router'
-import type { Pod, PodMetadata, PodStatus } from '~/common/schemas/pod'
+import { trpc } from '~/app/router.tsx'
+import type { Pod } from '~/common/schemas/pod.ts'
 
 interface PodTableProps {
   pods?: Pod[]
@@ -105,7 +105,7 @@ const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
                   <span className={getStatusBadgeClass(pod.status?.phase)}>{pod.status?.phase || 'Unknown'}</span>
                 </td>
                 <td className="py-1.5 px-3 w-[20%] truncate">{formatCreationTime(pod.metadata?.creationTimestamp)}</td>
-                <td className="py-1.5 px-3 w-[15%] truncate">{pod.status?.podIP || 'N/A'}</td>
+                <td className="py-1.5 px-3 w-[15%] truncate">{pod.status?.podIp || 'N/A'}</td>
               </tr>
             ))}
           </tbody>

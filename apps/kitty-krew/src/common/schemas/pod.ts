@@ -47,8 +47,8 @@ export const podSpecSchema = z.object({
 
 export const podStatusSchema = z.object({
   phase: z.string().optional(),
-  podIP: z.string().optional(),
-  hostIP: z.string().optional(),
+  podIp: z.string().optional(),
+  hostIp: z.string().optional(),
 })
 
 export const podSchema = z.object({

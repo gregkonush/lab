@@ -6,9 +6,9 @@ import { createTRPCOptionsProxy } from '@trpc/tanstack-react-query'
 // Import the generated route tree
 import { routeTree } from './routeTree.gen'
 
-import { Spinner } from '../components/spinner'
-import type { AppRouter } from '~/server/routers/_app'
-import { transformer } from '~/utils/transformer'
+import { Spinner } from '../components/spinner.tsx'
+import type { AppRouter } from '~/server/routers/_app.ts'
+import { transformer } from '~/utils/transformer.ts'
 
 export const queryClient = new QueryClient()
 

@@ -1,4 +1,4 @@
-import { Outlet, createRootRouteWithContext, useRouterState } from '@tanstack/react-router'
+import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 
@@ -16,11 +16,9 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 })
 
 function RootComponent() {
-  const isFetching = useRouterState({ select: (s) => s.isLoading })
-
   return (
     <>
-      <div className="min-h-screen flex flex-col antialiased text-zinc-400 w-full">
+      <div class="min-h-screen flex flex-col antialiased text-zinc-400 w-full">
         <Outlet />
       </div>
       <TanStackRouterDevtools position="bottom-left" />

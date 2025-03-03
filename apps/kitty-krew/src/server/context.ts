@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-import type * as trpcNext from '@trpc/server/adapters/next'
 import type { FetchCreateContextFnOptions } from '@trpc/server/adapters/fetch'
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -22,7 +20,7 @@ export type Context = Awaited<ReturnType<typeof createContextInner>>
  * Creates context for an incoming request
  * @see https://trpc.io/docs/v11/context
  */
-export async function createContext(opts: FetchCreateContextFnOptions): Promise<Context> {
+export async function createContext(_opts: FetchCreateContextFnOptions): Promise<Context> {
   // for API-response caching see https://trpc.io/docs/v11/caching
 
   return await createContextInner({})

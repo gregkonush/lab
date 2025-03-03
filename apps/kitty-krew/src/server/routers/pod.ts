@@ -1,13 +1,12 @@
 import { TRPCError } from '@trpc/server'
-import * as k8s from '@kubernetes/client-node'
 import { z } from 'zod'
-import { router, publicProcedure } from '../trpc'
-import { podListSchema, podSchema } from '~/common/schemas/pod'
-import logger from '~/utils/logger'
-import { createK8sClient, transformPodData } from '~/services/kubernetes'
+import { router, publicProcedure } from '../trpc.ts'
+import { podListSchema, podSchema } from '~/common/schemas/pod.ts'
+import { logger } from '~/utils/logger.ts'
+import { createK8sClient, transformPodData } from '~/services/kubernetes.ts'
 
 export const podRouter = router({
-  list: publicProcedure.query(async ({ ctx }) => {
+  list: publicProcedure.query(async () => {
     try {
       // Get the Kubernetes client
       const k8sApi = await createK8sClient()
@@ -39,7 +38,7 @@ export const podRouter = router({
         namespace: z.string(),
       }),
     )
-    .query(async ({ input: { podName, namespace }, ctx }) => {
+    .query(async ({ input: { podName, namespace } }) => {
       try {
         // Get the Kubernetes client
         const k8sApi = await createK8sClient()
@@ -60,7 +59,7 @@ export const podRouter = router({
 
           // Validate with zod schema
           return podSchema.parse(transformedPod)
-        } catch (err) {
+        } catch (_err) {
           // If the pod is not found in the specified namespace, throw a NOT_FOUND error
           throw new TRPCError({
             code: 'NOT_FOUND',

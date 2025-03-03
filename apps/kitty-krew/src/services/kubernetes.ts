@@ -1,8 +1,7 @@
 import * as k8s from '@kubernetes/client-node'
-import * as fs from 'node:fs'
 import { promises as fsPromises } from 'node:fs'
-import logger from '~/utils/logger'
-import type { Pod } from '~/common/schemas/pod'
+import { logger } from '~/utils/logger.ts'
+import type { Pod } from '~/common/schemas/pod.ts'
 
 /**
  * Loads and configures the self-signed certificate for the Kubernetes client
@@ -12,8 +11,9 @@ async function configureSelfSignedCertificate(kc: k8s.KubeConfig): Promise<void>
   const certPath = process.env.K8S_CERT_PATH || '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
 
   try {
+    logger.info(`Checking for certificate at ${certPath}`)
     await fsPromises.access(certPath)
-  } catch (err) {
+  } catch (_err) {
     logger.warn(`Certificate file not found at ${certPath}`)
     return
   }
@@ -98,7 +98,7 @@ export async function createK8sClient(): Promise<k8s.CoreV1Api> {
  */
 export function transformPodData(pod: k8s.V1Pod): Pod {
   // Process the creation timestamp to match our schema
-  let creationTimestamp: Date | undefined = undefined
+  let creationTimestamp: Date | undefined
   if (pod.metadata?.creationTimestamp) {
     creationTimestamp = new Date(pod.metadata.creationTimestamp)
   }
@@ -112,8 +112,8 @@ export function transformPodData(pod: k8s.V1Pod): Pod {
     },
     status: {
       phase: pod.status?.phase || '',
-      podIP: pod.status?.podIP || '',
-      hostIP: pod.status?.hostIP || '',
+      podIp: pod.status?.podIp || '',
+      hostIp: pod.status?.hostIp || '',
     },
     spec: {
       nodeName: pod.spec?.nodeName || '',
