@@ -8,6 +8,41 @@ export const Route = createFileRoute('/pods/$namespace/$podName')({
   component: PodDetailsComponent,
 })
 
+// Extract the common header component
+function PodDetailsHeader({ title }: { title: string }) {
+  return (
+    <div className="flex justify-between items-center mb-6">
+      <Link to="/" className="flex items-center text-zinc-300 hover:text-zinc-100 transition-colors">
+        <svg
+          className="h-5 w-5 mr-2"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <title>Back Arrow</title>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Back to Pods
+      </Link>
+      <h1 className="text-2xl font-bold text-zinc-100">{title}</h1>
+    </div>
+  )
+}
+
+// Extract the container layout
+function PodDetailsContainer({ children }: { children: React.ReactNode }) {
+  return <div className="container mx-auto py-6 px-4">{children}</div>
+}
+
+// Extract the content container
+function PodDetailsContent({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">{children}</div>
+  )
+}
+
 export function PodDetailsComponent() {
   const { podName, namespace } = Route.useParams()
   const {
@@ -23,83 +58,34 @@ export function PodDetailsComponent() {
 
   if (isLoading) {
     return (
-      <div className="container mx-auto py-6 px-4">
-        <div className="flex justify-between items-center mb-6">
-          <Link to="/" className="flex items-center text-zinc-300 hover:text-zinc-100 transition-colors">
-            <svg
-              className="h-5 w-5 mr-2"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <title>Back Arrow</title>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to Pods
-          </Link>
-          <h1 className="text-2xl font-bold text-zinc-100">Pod Details</h1>
-        </div>
-        <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+      <PodDetailsContainer>
+        <PodDetailsHeader title="Pod Details" />
+        <PodDetailsContent>
           <div className="w-full py-2 text-sm text-zinc-300 flex items-center justify-center h-full">
             Loading pod details...
           </div>
-        </div>
-      </div>
+        </PodDetailsContent>
+      </PodDetailsContainer>
     )
   }
 
   if (error || !pod) {
     return (
-      <div className="container mx-auto py-6 px-4">
-        <div className="flex justify-between items-center mb-6">
-          <Link to="/" className="flex items-center text-zinc-300 hover:text-zinc-100 transition-colors">
-            <svg
-              className="h-5 w-5 mr-2"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              aria-hidden="true"
-            >
-              <title>Back Arrow</title>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to Pods
-          </Link>
-          <h1 className="text-2xl font-bold text-zinc-100">Pod Details</h1>
-        </div>
-        <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+      <PodDetailsContainer>
+        <PodDetailsHeader title="Pod Details" />
+        <PodDetailsContent>
           <div className="w-full py-2 text-red-400 flex items-center justify-center h-full">
             {error instanceof Error ? error.message : 'Failed to load pod details'}
           </div>
-        </div>
-      </div>
+        </PodDetailsContent>
+      </PodDetailsContainer>
     )
   }
 
   return (
-    <div className="container mx-auto py-6 px-4">
-      <div className="flex justify-between items-center mb-6">
-        <Link to="/" className="flex items-center text-zinc-300 hover:text-zinc-100 transition-colors">
-          <svg
-            className="h-5 w-5 mr-2"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            aria-hidden="true"
-          >
-            <title>Back Arrow</title>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to Pods
-        </Link>
-        <h1 className="text-2xl font-bold text-zinc-100">Pod: {pod.metadata?.name || 'Unknown'}</h1>
-      </div>
-
-      <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
+    <PodDetailsContainer>
+      <PodDetailsHeader title={`Pod: ${pod.metadata?.name || 'Unknown'}`} />
+      <PodDetailsContent>
         <div className="p-6 overflow-y-auto h-full">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
             <div className="bg-zinc-900 p-4 rounded-md border border-zinc-700">
@@ -188,7 +174,7 @@ export function PodDetailsComponent() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </PodDetailsContent>
+    </PodDetailsContainer>
   )
 }
