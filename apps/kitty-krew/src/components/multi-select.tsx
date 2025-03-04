@@ -11,7 +11,6 @@ interface MultiSelectProps {
   onChange: (value: string[]) => void
   placeholder?: string
   className?: string
-  maxDisplayItems?: number
 }
 
 export function MultiSelect({
@@ -20,7 +19,6 @@ export function MultiSelect({
   onChange,
   placeholder = 'Select options...',
   className = '',
-  maxDisplayItems = 2,
 }: MultiSelectProps) {
   const [isOpen, setIsOpen] = React.useState(false)
   const [searchInput, setSearchInput] = React.useState('')
