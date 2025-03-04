@@ -28,6 +28,7 @@ export function MultiSelect({
   const containerRef = React.useRef<HTMLDivElement>(null)
   const searchInputRef = React.useRef<HTMLInputElement>(null)
   const optionRefs = React.useRef<(HTMLButtonElement | null)[]>([])
+  const triggerButtonRef = React.useRef<HTMLButtonElement>(null)
 
   // Filter options based on search input
   const filteredOptions = React.useMemo(() => {
@@ -97,6 +98,8 @@ export function MultiSelect({
         setIsOpen(false)
         setSearchInput('')
         setFocusedIndex(-1)
+        triggerButtonRef.current?.focus()
+        event.preventDefault()
         break
       case 'Tab':
         if (event.shiftKey && focusedIndex <= 0) {
@@ -125,6 +128,54 @@ export function MultiSelect({
       case 'ArrowUp':
         event.preventDefault()
         setFocusedIndex((prev) => Math.max(-1, prev - 1))
+        break
+      case 'Home':
+        event.preventDefault()
+        setFocusedIndex(0)
+        break
+      case 'End':
+        event.preventDefault()
+        setFocusedIndex(filteredOptionsLength - 1)
+        break
+      default:
+        break
+    }
+  }
+
+  const handleTriggerKeyDown = (event: React.KeyboardEvent) => {
+    switch (event.key) {
+      case 'Enter':
+      case ' ':
+      case 'ArrowDown':
+        event.preventDefault()
+        if (!isOpen) {
+          setIsOpen(true)
+          setTimeout(() => {
+            searchInputRef.current?.focus()
+          }, 0)
+        } else if (event.key === 'ArrowDown') {
+          setFocusedIndex(0)
+        }
+        break
+      case 'ArrowUp':
+        event.preventDefault()
+        if (!isOpen) {
+          setIsOpen(true)
+          setTimeout(() => {
+            const lastIndex = filteredOptions.length - 1
+            setFocusedIndex(lastIndex)
+          }, 0)
+        } else {
+          setFocusedIndex(filteredOptions.length - 1)
+        }
+        break
+      case 'Escape':
+        if (isOpen) {
+          event.preventDefault()
+          setIsOpen(false)
+          setSearchInput('')
+          setFocusedIndex(-1)
+        }
         break
       default:
         break
@@ -176,11 +227,14 @@ export function MultiSelect({
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <button
+        ref={triggerButtonRef}
         type="button"
         onClick={toggleDropdown}
+        onKeyDown={handleTriggerKeyDown}
         className="w-full h-[38px] px-3 py-1.5 bg-zinc-800 text-zinc-400/90 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 flex items-center justify-between"
-        aria-haspopup="listbox"
+        aria-controls="multi-select-dropdown"
         aria-expanded={isOpen}
+        aria-haspopup="listbox"
       >
         <span className="text-zinc-400/90 truncate text-sm">
           {selectedOptions.length > 0 ? `${selectedOptions.length} selected` : placeholder}
@@ -200,6 +254,7 @@ export function MultiSelect({
 
       {isOpen && (
         <dialog
+          id="multi-select-dropdown"
           className="absolute z-10 mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-md shadow-lg max-h-60 overflow-auto"
           aria-label="Options"
           open
@@ -214,6 +269,8 @@ export function MultiSelect({
                 onKeyDown={(e) => handleKeyDown(e)}
                 placeholder="Search..."
                 className="w-full px-3 py-1 bg-zinc-700 text-zinc-300 rounded-md border border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-500 placeholder:text-zinc-400/50 placeholder:text-sm text-sm"
+                aria-controls="multi-select-options"
+                aria-autocomplete="list"
               />
               <svg
                 className="absolute right-2 top-1/2 transform -translate-y-1/2 h-3 w-3 text-zinc-400"
@@ -233,7 +290,7 @@ export function MultiSelect({
               </svg>
             </div>
           </div>
-          <div className="py-1">
+          <div id="multi-select-options" className="py-1">
             {filteredOptions.length > 0 ? (
               filteredOptions.map((option, index) => (
                 <button
@@ -245,6 +302,8 @@ export function MultiSelect({
                   className={`text-sm w-full px-3 py-2 flex items-center hover:bg-zinc-700 cursor-pointer text-left ${
                     focusedIndex === index ? 'bg-zinc-700' : ''
                   }`}
+                  aria-selected={value.includes(option.value)}
+                  tabIndex={-1}
                 >
                   <div className="mr-2 h-4 w-4 border border-zinc-500 rounded flex items-center justify-center">
                     {value.includes(option.value) && (

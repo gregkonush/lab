@@ -6,6 +6,9 @@ const statusVariants = {
   Pending: 'bg-yellow-700 text-yellow-100',
   Failed: 'bg-red-700 text-red-100',
   Succeeded: 'bg-blue-700 text-blue-100',
+  CrashLoopBackOff: 'bg-red-700 text-red-100',
+  Terminating: 'bg-orange-700 text-orange-100',
+  Evicted: 'bg-purple-700 text-purple-100',
   default: 'bg-zinc-700 text-zinc-100',
 }
 
