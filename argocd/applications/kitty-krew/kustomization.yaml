@@ -4,4 +4,4 @@ resources:
 - overlays/dev
 images:
 - name: kalmyk.duckdns.org/lab/kitty-krew
-  newTag: 0.150.0
+  newTag: 0.151.0
