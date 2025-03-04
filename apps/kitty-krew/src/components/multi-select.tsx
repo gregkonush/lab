@@ -67,16 +67,16 @@ export function MultiSelect({
       newValue = [...value, optionValue]
     }
 
-    // Handle special case for 'all' option
-    if (optionValue === 'all') {
-      newValue = ['all']
-    } else if (newValue.includes('all')) {
-      newValue = newValue.filter((v) => v !== 'all')
+    // Handle special case for '*' option (represents "all")
+    if (optionValue === '*') {
+      newValue = ['*']
+    } else if (newValue.includes('*')) {
+      newValue = newValue.filter((v) => v !== '*')
     }
 
-    // If no options selected, default to 'all'
+    // If no options selected, default to '*' (represents "all")
     if (newValue.length === 0) {
-      newValue = ['all']
+      newValue = ['*']
     }
 
     onChange(newValue)
