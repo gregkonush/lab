@@ -1,115 +1,277 @@
-import { useState, useRef, useEffect } from 'react'
+import React from 'react'
+
+interface Option {
+  value: string
+  label: string
+}
 
 interface MultiSelectProps {
-  value: string | string[]
-  onChange: (value: string | string[]) => void
-  options: { value: string; label: string }[]
+  options: Option[]
+  value: string[]
+  onChange: (value: string[]) => void
   placeholder?: string
   className?: string
-  'aria-label'?: string
-  size?: number
+  maxDisplayItems?: number
 }
 
 export function MultiSelect({
+  options,
   value,
   onChange,
-  options,
-  placeholder = 'Select option',
+  placeholder = 'Select options...',
   className = '',
-  'aria-label': ariaLabel,
+  maxDisplayItems = 2,
 }: MultiSelectProps) {
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [isOpen, setIsOpen] = React.useState(false)
+  const [searchInput, setSearchInput] = React.useState('')
+  const [focusedIndex, setFocusedIndex] = React.useState(-1)
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const searchInputRef = React.useRef<HTMLInputElement>(null)
+  const optionRefs = React.useRef<(HTMLButtonElement | null)[]>([])
 
-  const originalIsArray = Array.isArray(value)
-  // Coerce value to array for multiple selections
-  const selectedValues = originalIsArray ? value : value ? [value] : []
+  // Filter options based on search input
+  const filteredOptions = React.useMemo(() => {
+    if (!searchInput.trim()) return options
 
-  // Remove option from selection
-  const removeOption = (val: string) => {
-    const newValues = selectedValues.filter((v) => v !== val)
-    if (originalIsArray) {
-      onChange(newValues)
+    const searchTerm = searchInput.toLowerCase()
+    return options.filter((option) => option.label.toLowerCase().includes(searchTerm))
+  }, [options, searchInput])
+
+  // Reset option refs when filtered options change
+  React.useEffect(() => {
+    optionRefs.current = optionRefs.current.slice(0, filteredOptions.length)
+  }, [filteredOptions.length])
+
+  const toggleDropdown = () => {
+    setIsOpen(!isOpen)
+    if (!isOpen) {
+      // Focus search input when dropdown opens
+      setTimeout(() => {
+        searchInputRef.current?.focus()
+        setFocusedIndex(-1)
+      }, 0)
     } else {
-      onChange(newValues[0] || '')
+      // Clear search when dropdown closes
+      setSearchInput('')
+      setFocusedIndex(-1)
     }
   }
 
-  // Add option on click, close dropdown
-  const addOption = (val: string) => {
-    const newValues = [...selectedValues, val]
-    if (originalIsArray) {
-      onChange(newValues)
+  const handleOptionClick = (optionValue: string) => {
+    let newValue: string[]
+
+    if (value.includes(optionValue)) {
+      newValue = value.filter((v) => v !== optionValue)
     } else {
-      onChange(newValues[0] || '')
+      newValue = [...value, optionValue]
     }
-    setIsDropdownOpen(false)
+
+    // Handle special case for 'all' option
+    if (optionValue === 'all') {
+      newValue = ['all']
+    } else if (newValue.includes('all')) {
+      newValue = newValue.filter((v) => v !== 'all')
+    }
+
+    // If no options selected, default to 'all'
+    if (newValue.length === 0) {
+      newValue = ['all']
+    }
+
+    onChange(newValue)
+    // Don't close dropdown after selection
   }
 
-  // Filter available options
-  const availableOptions = options.filter((opt) => !selectedValues.includes(opt.value))
+  const handleKeyDown = (event: React.KeyboardEvent, optionValue?: string) => {
+    const filteredOptionsLength = filteredOptions.length
 
-  // Get label for a given value
-  const getLabel = (val: string) => {
-    const option = options.find((opt) => opt.value === val)
-    return option ? option.label : val
+    switch (event.key) {
+      case 'Enter':
+      case ' ':
+        if (optionValue) {
+          handleOptionClick(optionValue)
+          event.preventDefault()
+        }
+        break
+      case 'Escape':
+        setIsOpen(false)
+        setSearchInput('')
+        setFocusedIndex(-1)
+        break
+      case 'Tab':
+        if (event.shiftKey && focusedIndex <= 0) {
+          // If shift+tab on first option or search, close dropdown
+          setIsOpen(false)
+          setSearchInput('')
+          setFocusedIndex(-1)
+        } else if (!event.shiftKey && focusedIndex === filteredOptionsLength - 1) {
+          // If tab on last option, close dropdown
+          setIsOpen(false)
+          setSearchInput('')
+          setFocusedIndex(-1)
+        } else {
+          // Otherwise, prevent default to keep focus trapped
+          event.preventDefault()
+          const newIndex = event.shiftKey
+            ? Math.max(-1, focusedIndex - 1)
+            : Math.min(filteredOptionsLength - 1, focusedIndex + 1)
+          setFocusedIndex(newIndex)
+        }
+        break
+      case 'ArrowDown':
+        event.preventDefault()
+        setFocusedIndex((prev) => Math.min(filteredOptionsLength - 1, prev + 1))
+        break
+      case 'ArrowUp':
+        event.preventDefault()
+        setFocusedIndex((prev) => Math.max(-1, prev - 1))
+        break
+      default:
+        break
+    }
   }
 
-  // Close dropdown on outside click
-  useEffect(() => {
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchInput(e.target.value)
+    setFocusedIndex(-1)
+  }
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsDropdownOpen(false)
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+        setSearchInput('')
+        setFocusedIndex(-1)
       }
     }
+
     document.addEventListener('mousedown', handleClickOutside)
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [])
 
+  // Set up option refs
+  const setOptionRef = React.useCallback((element: HTMLButtonElement | null, index: number) => {
+    optionRefs.current[index] = element
+  }, [])
+
+  // Focus the correct element when focusedIndex changes
+  React.useEffect(() => {
+    if (!isOpen) return
+
+    if (focusedIndex === -1) {
+      searchInputRef.current?.focus()
+    } else {
+      optionRefs.current[focusedIndex]?.focus()
+    }
+  }, [focusedIndex, isOpen])
+
+  // Get selected options for display
+  const selectedOptions = React.useMemo(() => {
+    return options.filter((option) => value.includes(option.value))
+  }, [options, value])
+
   return (
-    <div className={`relative rounded-md bg-zinc-800 ${className} group`} aria-label={ariaLabel} ref={dropdownRef}>
-      {selectedValues.length > 0 && (
-        <div className="absolute top-2 left-2 flex flex-wrap gap-1 max-w-[calc(100%-16px)] max-h-[24px] group-hover:max-h-[80px] overflow-hidden group-hover:overflow-y-auto transition-all duration-200 pr-2">
-          {selectedValues.map((val) => (
-            <span key={val} className="inline-flex items-center bg-zinc-700 text-zinc-100 rounded px-2 py-1 text-xs">
-              {getLabel(val)}
-              <button
-                type="button"
-                onClick={() => removeOption(val)}
-                className="ml-1 text-zinc-400 hover:text-zinc-200 focus:outline-none"
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={toggleDropdown}
+        className="w-full h-[38px] px-3 py-1.5 bg-zinc-800 text-zinc-400/90 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 flex items-center justify-between"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+      >
+        <span className="text-zinc-400/90 truncate text-sm">
+          {selectedOptions.length > 0 ? `${selectedOptions.length} selected` : placeholder}
+        </span>
+        <svg
+          className="h-4 w-4 text-zinc-400"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <title>Toggle dropdown</title>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <dialog
+          className="absolute z-10 mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-md shadow-lg max-h-60 overflow-auto"
+          aria-label="Options"
+          open
+        >
+          <div className="p-2 border-b border-zinc-700">
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchInput}
+                onChange={handleSearchChange}
+                onKeyDown={(e) => handleKeyDown(e)}
+                placeholder="Search..."
+                className="w-full px-3 py-1 bg-zinc-700 text-zinc-300 rounded-md border border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-500 placeholder:text-zinc-400/50 placeholder:text-sm text-sm"
+              />
+              <svg
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-3 w-3 text-zinc-400"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
               >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <input
-        type="text"
-        readOnly
-        onFocus={() => setIsDropdownOpen(true)}
-        onClick={() => setIsDropdownOpen(true)}
-        placeholder={selectedValues.length ? '' : placeholder}
-        className={`w-full px-2 bg-transparent text-zinc-400 text-xs outline-none border border-zinc-700 rounded text-center min-h-10 h-auto ${
-          selectedValues.length > 0 ? 'pt-10 pb-1' : 'py-1'
-        }`}
-      />
-      {isDropdownOpen && (
-        <div className="absolute mt-1 w-64 bg-zinc-800 border border-zinc-700 rounded shadow-lg z-10">
-          {availableOptions.map((opt) => (
-            <button
-              type="button"
-              key={opt.value}
-              onClick={() => addOption(opt.value)}
-              className="w-full text-left px-2 py-1 text-xs text-zinc-100 hover:bg-zinc-700 cursor-pointer"
-            >
-              {opt.label}
-            </button>
-          ))}
-          {availableOptions.length === 0 && <div className="px-2 py-1 text-xs text-zinc-400">No options available</div>}
-        </div>
+                <title>Search</title>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                />
+              </svg>
+            </div>
+          </div>
+          <div className="py-1">
+            {filteredOptions.length > 0 ? (
+              filteredOptions.map((option, index) => (
+                <button
+                  key={option.value}
+                  ref={(el) => setOptionRef(el, index)}
+                  type="button"
+                  onClick={() => handleOptionClick(option.value)}
+                  onKeyDown={(e) => handleKeyDown(e, option.value)}
+                  className={`text-sm w-full px-3 py-2 flex items-center hover:bg-zinc-700 cursor-pointer text-left ${
+                    focusedIndex === index ? 'bg-zinc-700' : ''
+                  }`}
+                >
+                  <div className="mr-2 h-4 w-4 border border-zinc-500 rounded flex items-center justify-center">
+                    {value.includes(option.value) && (
+                      <svg
+                        className="h-3 w-3 text-zinc-300"
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 20 20"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <title>Selected</title>
+                        <path
+                          fillRule="evenodd"
+                          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <span className="text-zinc-300">{option.label}</span>
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-zinc-400 text-sm">No options found</div>
+            )}
+          </div>
+        </dialog>
       )}
     </div>
   )

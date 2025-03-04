@@ -118,14 +118,8 @@ export function IndexComponent() {
     setSearchQuery(e.target.value)
   }, [])
 
-  const handleNamespaceChange = React.useCallback((value: string | string[]) => {
-    // Ensure value is always an array
-    let namespaces = Array.isArray(value) ? value : [value]
-    // If any namespace other than 'all' is selected, remove 'all'
-    if (namespaces.includes('all') && namespaces.length > 1) {
-      namespaces = namespaces.filter((ns) => ns !== 'all')
-    }
-    setNamespaceFilter(namespaces)
+  const handleNamespaceChange = React.useCallback((value: string[]) => {
+    setNamespaceFilter(value)
   }, [])
 
   // Extract unique namespaces for filter dropdown
@@ -173,7 +167,7 @@ export function IndexComponent() {
 
   return (
     <div className="container mx-auto py-6 px-4">
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4">
         <div className="flex gap-4 items-center">
           <div className="relative w-64">
             <input
@@ -181,7 +175,7 @@ export function IndexComponent() {
               placeholder="Search pods..."
               value={searchQuery}
               onChange={handleSearchChange}
-              className="w-full px-3 py-2 bg-zinc-800 text-zinc-400/90 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-400/50"
+              className="w-full h-[38px] px-3 py-2 bg-zinc-800 text-zinc-400/90 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 placeholder:text-zinc-400/50 placeholder:text-sm"
               aria-label="Search pods"
             />
             <svg
@@ -203,10 +197,10 @@ export function IndexComponent() {
           </div>
           <div className="w-64">
             <MultiSelect
+              options={namespaceOptions}
               value={namespaceFilter}
               onChange={handleNamespaceChange}
-              options={namespaceOptions}
-              aria-label="Filter by namespace"
+              placeholder="Filter by namespace"
             />
           </div>
         </div>
