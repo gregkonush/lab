@@ -112,7 +112,7 @@ export const Route = createFileRoute('/')({
 export function IndexComponent() {
   const { data: pods, isLoading, error } = useQuery(trpc.pod.list.queryOptions())
   const [searchQuery, setSearchQuery] = React.useState('')
-  const [namespaceFilter, setNamespaceFilter] = React.useState<string[]>(['all'])
+  const [namespaceFilter, setNamespaceFilter] = React.useState<string[]>(['*'])
 
   const handleSearchChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value)
@@ -139,7 +139,7 @@ export function IndexComponent() {
   // Convert namespaces to the format expected by MultiSelect
   const namespaceOptions = React.useMemo(() => {
     return [
-      { value: 'all', label: 'All namespaces' },
+      { value: '*', label: 'All namespaces' },
       ...namespaces.map((namespace) => ({ value: namespace, label: namespace })),
     ]
   }, [namespaces])
@@ -147,8 +147,8 @@ export function IndexComponent() {
   // Filter pods based on search query and namespace filter
   const filteredPods = React.useMemo(() => {
     if (!pods) return []
-    // If 'all' is selected, ignore namespace filtering
-    const filterAll = namespaceFilter.includes('all')
+    // If '*' is selected, ignore namespace filtering
+    const filterAll = namespaceFilter.includes('*')
     return pods.filter((pod) => {
       if (!filterAll && pod.metadata?.namespace && !namespaceFilter.includes(pod.metadata.namespace)) {
         return false
