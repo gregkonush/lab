@@ -12,7 +12,7 @@ export const Route = createFileRoute('/pods/$namespace/$podName')({
 function PodDetailsHeader({ title }: { title: string }) {
   return (
     <div className="flex justify-between items-center mb-6">
-      <Link to="/" className="flex items-center text-zinc-300 hover:text-zinc-100 transition-colors">
+      <Link to="/" className="flex items-center text-zinc-400/80 hover:text-zinc-400 transition-colors cursor-default">
         <svg
           className="h-5 w-5 mr-2"
           xmlns="http://www.w3.org/2000/svg"
@@ -26,7 +26,7 @@ function PodDetailsHeader({ title }: { title: string }) {
         </svg>
         Back to Pods
       </Link>
-      <h1 className="text-2xl font-bold text-zinc-100">{title}</h1>
+      <h1 className="text-2xl font-bold text-zinc-300">{title}</h1>
     </div>
   )
 }
@@ -61,7 +61,7 @@ export function PodDetailsComponent() {
       <PodDetailsContainer>
         <PodDetailsHeader title="Pod Details" />
         <PodDetailsContent>
-          <div className="w-full py-2 text-sm text-zinc-300 flex items-center justify-center h-full">
+          <div className="w-full py-2 text-sm text-zinc-400/80 flex items-center justify-center h-full">
             Loading pod details...
           </div>
         </PodDetailsContent>
@@ -88,101 +88,105 @@ export function PodDetailsComponent() {
       <PodDetailsContent>
         <div className="p-6 overflow-y-auto h-full">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="bg-zinc-900 p-4 rounded-md border border-zinc-700">
-              <h2 className="text-lg font-medium text-zinc-100 mb-3">Metadata</h2>
+            <div className="bg-zinc-700/10 p-4 rounded-md border border-zinc-700">
+              <h2 className="text-lg font-medium text-zinc-300 mb-3">Metadata</h2>
               <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Namespace:</span>
-                  <span className="text-zinc-200">{pod.metadata?.namespace || 'N/A'}</span>
+                <div className="grid grid-cols-2 gap-4">
+                  <span className="text-zinc-400/70">Namespace:</span>
+                  <span className="text-zinc-300 text-right">{pod.metadata?.namespace || 'N/A'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Created:</span>
-                  <span className="text-zinc-200">
+                <div className="grid grid-cols-2 gap-4">
+                  <span className="text-zinc-400/70">Created:</span>
+                  <span className="text-zinc-300 text-right">
                     {pod.metadata?.creationTimestamp
                       ? new Date(pod.metadata.creationTimestamp).toLocaleString()
                       : 'N/A'}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">UID:</span>
-                  <span className="text-zinc-200">{pod.metadata?.uid || 'N/A'}</span>
+                <div className="grid grid-cols-2 gap-4">
+                  <span className="text-zinc-400/70">UID:</span>
+                  <span className="text-zinc-300 text-right">{pod.metadata?.uid || 'N/A'}</span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-zinc-900 p-4 rounded-md border border-zinc-700">
-              <h2 className="text-lg font-medium text-zinc-100 mb-3">Status</h2>
+            <div className="bg-zinc-700/10 p-4 rounded-md border border-zinc-700">
+              <h2 className="text-lg font-medium text-zinc-300 mb-3">Status</h2>
               <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Phase:</span>
-                  <span className="text-zinc-200">{pod.status?.phase || 'N/A'}</span>
+                <div className="grid grid-cols-2 gap-4">
+                  <span className="text-zinc-400/70">Phase:</span>
+                  <span className="text-zinc-300 text-right">{pod.status?.phase || 'N/A'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Pod IP:</span>
-                  <span className="text-zinc-200">{pod.status?.podIp || 'N/A'}</span>
+                <div className="grid grid-cols-2 gap-4">
+                  <span className="text-zinc-400/70">Pod IP:</span>
+                  <span className="text-zinc-300 text-right">{pod.status?.podIp || 'N/A'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-400">Host IP:</span>
-                  <span className="text-zinc-200">{pod.status?.hostIp || 'N/A'}</span>
+                <div className="grid grid-cols-2 gap-4">
+                  <span className="text-zinc-400/70">Host IP:</span>
+                  <span className="text-zinc-300 text-right">{pod.status?.hostIp || 'N/A'}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-zinc-900 p-4 rounded-md border border-zinc-700 mb-6">
-            <h2 className="text-lg font-medium text-zinc-100 mb-3">Spec</h2>
+          <div className="bg-zinc-700/10 p-4 rounded-md border border-zinc-700 mb-6">
+            <h2 className="text-lg font-medium text-zinc-300 mb-3">Spec</h2>
             <div className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Node Name:</span>
-                <span className="text-zinc-200">{pod.spec?.nodeName || 'N/A'}</span>
+              <div className="grid grid-cols-2 gap-4">
+                <span className="text-zinc-400/70">Node Name:</span>
+                <span className="text-zinc-300 text-right">{pod.spec?.nodeName || 'N/A'}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Restart Policy:</span>
-                <span className="text-zinc-200">{pod.spec?.restartPolicy || 'N/A'}</span>
+              <div className="grid grid-cols-2 gap-4">
+                <span className="text-zinc-400/70">Restart Policy:</span>
+                <span className="text-zinc-300 text-right">{pod.spec?.restartPolicy || 'N/A'}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Service Account:</span>
-                <span className="text-zinc-200">{pod.spec?.serviceAccountName || 'N/A'}</span>
+              <div className="grid grid-cols-2 gap-4">
+                <span className="text-zinc-400/70">Service Account:</span>
+                <span className="text-zinc-300 text-right">{pod.spec?.serviceAccountName || 'N/A'}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">DNS Policy:</span>
-                <span className="text-zinc-200">{pod.spec?.dnsPolicy || 'N/A'}</span>
+              <div className="grid grid-cols-2 gap-4">
+                <span className="text-zinc-400/70">DNS Policy:</span>
+                <span className="text-zinc-300 text-right">{pod.spec?.dnsPolicy || 'N/A'}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-400">Priority:</span>
-                <span className="text-zinc-200">{pod.spec?.priority !== undefined ? pod.spec.priority : 'N/A'}</span>
+              <div className="grid grid-cols-2 gap-4">
+                <span className="text-zinc-400/70">Priority:</span>
+                <span className="text-zinc-300 text-right">
+                  {pod.spec?.priority !== undefined ? pod.spec.priority : 'N/A'}
+                </span>
               </div>
             </div>
           </div>
 
           {pod.spec?.containers && (
-            <div className="bg-zinc-900 p-4 rounded-md border border-zinc-700">
-              <h2 className="text-lg font-medium text-zinc-100 mb-3">Containers</h2>
+            <div className="bg-zinc-700/10 p-4 rounded-md border border-zinc-700">
+              <h2 className="text-lg font-medium text-zinc-300 mb-3">Containers</h2>
               <div className="space-y-4">
                 {pod.spec.containers.map((container: Container) => (
-                  <div key={container.name} className="bg-zinc-950 p-4 rounded-md border border-zinc-800">
-                    <h3 className="text-md font-medium text-zinc-100 mb-2">{container.name}</h3>
+                  <div key={container.name} className="bg-zinc-700/10 p-4 rounded-md border border-zinc-700">
+                    <h3 className="text-md font-medium text-zinc-300 mb-2">{container.name}</h3>
                     <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-zinc-400">Image:</span>
-                        <span className="text-zinc-200">{container.image || 'N/A'}</span>
-                      </div>
-                      {container.ports && container.ports.length > 0 && (
-                        <div>
-                          <span className="text-zinc-400">Ports:</span>
-                          <div className="mt-1 flex flex-wrap gap-2">
-                            {container.ports.map((port: ContainerPort) => (
-                              <span
-                                key={`${port.containerPort}-${port.protocol || 'TCP'}`}
-                                className="px-2 py-1 bg-zinc-800 rounded text-xs"
-                              >
-                                {port.containerPort}
-                                {port.protocol ? `/${port.protocol}` : ''}
-                              </span>
-                            ))}
-                          </div>
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-4">
+                          <span className="text-zinc-400/70">Image:</span>
+                          <span className="text-zinc-300 text-right">{container.image || 'N/A'}</span>
                         </div>
-                      )}
+                        {container.ports && container.ports.length > 0 && (
+                          <div>
+                            <span className="text-zinc-400/70">Ports:</span>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {container.ports.map((port: ContainerPort) => (
+                                <span
+                                  key={`${port.containerPort}-${port.protocol || 'TCP'}`}
+                                  className="px-2 py-1 bg-zinc-800 rounded text-xs text-zinc-400/80"
+                                >
+                                  {port.containerPort}
+                                  {port.protocol ? `/${port.protocol}` : ''}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
