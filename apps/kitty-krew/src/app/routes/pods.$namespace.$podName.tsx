@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import type { ReactNode } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { trpc } from '~/app/router.tsx'
@@ -30,11 +31,11 @@ function PodDetailsHeader({ title }: { title: string }) {
   )
 }
 
-function PodDetailsContainer({ children }: { children: React.ReactNode }) {
+function PodDetailsContainer({ children }: { children: ReactNode }) {
   return <div className="container mx-auto py-6 px-4">{children}</div>
 }
 
-function PodDetailsContent({ children }: { children: React.ReactNode }) {
+function PodDetailsContent({ children }: { children: ReactNode }) {
   return (
     <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">{children}</div>
   )
@@ -212,8 +213,6 @@ export function PodDetailsComponent() {
 
     // Clear previous logs before starting streaming
     setStreamedLogs([])
-
-    const abortController = new AbortController()
 
     // Use EventSource for Server-Sent Events instead of fetch API
     const eventSource = new EventSource(
