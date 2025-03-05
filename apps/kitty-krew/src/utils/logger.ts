@@ -22,9 +22,13 @@ export const logger = winston.createLogger({
       filename: 'logs/error.log',
       level: 'error',
       handleExceptions: true,
+      maxsize: 5242880, // 5MB
+      maxFiles: 5,
     }),
     new winston.transports.File({
       filename: 'logs/combined.log',
+      maxsize: 10485760, // 10MB
+      maxFiles: 3,
     }),
   ],
 })
@@ -33,3 +37,11 @@ export const logger = winston.createLogger({
 process.on('beforeExit', () => {
   logger.end()
 })
+
+// Handle termination signals
+for (const signal of ['SIGINT', 'SIGTERM'] as NodeJS.Signals[]) {
+  process.on(signal, () => {
+    logger.info(`Received ${signal}, shutting down gracefully`)
+    logger.end()
+  })
+}
