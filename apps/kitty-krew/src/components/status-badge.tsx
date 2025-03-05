@@ -13,7 +13,7 @@ const statusVariants = {
 }
 
 const statusBadgeVariants = cva(
-  'py-0.5 rounded-full text-xs font-medium flex items-center justify-center gap-0.5 whitespace-nowrap',
+  'py-0.5 px-4 max-w-fit rounded-full text-xs font-medium flex items-center justify-center gap-0.5 whitespace-nowrap',
   {
     variants: {
       status: statusVariants,
