@@ -13,5 +13,23 @@ export const logger = winston.createLogger({
     process.env.NODE_ENV === 'development' ? colorize() : winston.format.uncolorize(),
     logFormat,
   ),
-  transports: [new winston.transports.Console()],
+  transports: [
+    new winston.transports.Console({
+      stderrLevels: ['error'],
+      consoleWarnLevels: ['warn'],
+    }),
+    new winston.transports.File({
+      filename: 'logs/error.log',
+      level: 'error',
+      handleExceptions: true,
+    }),
+    new winston.transports.File({
+      filename: 'logs/combined.log',
+    }),
+  ],
+})
+
+// This ensures logs are properly flushed when app is terminated
+process.on('beforeExit', () => {
+  logger.end()
 })

@@ -1,4 +1,4 @@
-import type * as React from 'react'
+import React, { useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { trpc } from '~/app/router.tsx'
@@ -43,8 +43,34 @@ function PodDetailsContent({ children }: { children: React.ReactNode }) {
   )
 }
 
+function LogViewer({ logs }: { logs: string | null | undefined }) {
+  const logContainerRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
+    }
+  }, [])
+
+  if (!logs) {
+    return (
+      <div className="bg-zinc-900 p-4 rounded-md border border-zinc-700 h-64 mt-6 flex items-center justify-center">
+        <span className="text-zinc-400/80">No logs available</span>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={logContainerRef} className="bg-zinc-900 p-4 rounded-md border border-zinc-700 overflow-auto h-64">
+      <pre className="text-zinc-300 text-xs whitespace-pre-wrap">{logs}</pre>
+    </div>
+  )
+}
+
 export function PodDetailsComponent() {
   const { podName, namespace } = Route.useParams()
+  const [selectedContainer, setSelectedContainer] = useState<string>('')
+
   const {
     data: pod,
     isLoading,
@@ -55,6 +81,26 @@ export function PodDetailsComponent() {
       namespace,
     }),
   )
+
+  // Set first container as default when pod data loads
+  React.useEffect(() => {
+    if (pod?.spec?.containers && pod.spec.containers.length > 0 && !selectedContainer) {
+      setSelectedContainer(pod.spec.containers[0].name)
+    }
+  }, [pod, selectedContainer])
+
+  const {
+    data: logs,
+    isLoading: isLoadingLogs,
+    error: logsError,
+  } = useQuery({
+    ...trpc.pod.logs.queryOptions({
+      podName,
+      namespace,
+      container: selectedContainer,
+    }),
+    enabled: !!selectedContainer,
+  })
 
   if (isLoading) {
     return (
@@ -193,6 +239,45 @@ export function PodDetailsComponent() {
               </div>
             </div>
           )}
+
+          <div className="bg-zinc-700/10 p-4 rounded-md border border-zinc-700 mt-6">
+            <h2 className="text-lg font-medium text-zinc-300 mb-3">Logs</h2>
+
+            {pod?.spec?.containers && pod.spec.containers.length > 0 ? (
+              <div>
+                <div className="flex border-b border-zinc-700 mb-4">
+                  {pod.spec.containers.map((container: Container) => (
+                    <button
+                      key={container.name}
+                      type="button"
+                      onClick={() => setSelectedContainer(container.name)}
+                      className={`px-4 py-2 text-sm font-medium ${
+                        selectedContainer === container.name
+                          ? 'text-zinc-200 border-b-2 border-zinc-400 -mb-px'
+                          : 'text-zinc-400/70 hover:text-zinc-300'
+                      }`}
+                    >
+                      {container.name}
+                    </button>
+                  ))}
+                </div>
+
+                {!selectedContainer ? (
+                  <div className="text-zinc-400/80">Select a container to view logs</div>
+                ) : isLoadingLogs ? (
+                  <div className="text-zinc-400/80 py-4">Loading logs...</div>
+                ) : logsError ? (
+                  <div className="text-red-400 py-4">
+                    {logsError instanceof Error ? logsError.message : 'Failed to load logs'}
+                  </div>
+                ) : (
+                  <LogViewer logs={logs} />
+                )}
+              </div>
+            ) : (
+              <div className="text-zinc-400/80">No containers found</div>
+            )}
+          </div>
         </div>
       </PodDetailsContent>
     </PodDetailsContainer>

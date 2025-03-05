@@ -80,4 +80,34 @@ export const podRouter = router({
         })
       }
     }),
+  logs: publicProcedure
+    .input(
+      z.object({
+        podName: z.string(),
+        namespace: z.string(),
+        container: z.string().optional(),
+      }),
+    )
+    .query(async ({ input: { podName, namespace, container } }) => {
+      try {
+        const k8sApi = await createK8sClient()
+        logger.info(
+          `Fetching logs for pod ${podName} in namespace ${namespace}${container ? ` container ${container}` : ''}`,
+        )
+        const response = await k8sApi.readNamespacedPodLog({
+          name: podName,
+          namespace,
+          container,
+          tailLines: 100,
+        })
+        return response
+      } catch (error) {
+        logger.error(`Failed to fetch logs for pod ${podName}:`, error)
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : `Failed to fetch logs for pod ${podName}`,
+          cause: error,
+        })
+      }
+    }),
 })

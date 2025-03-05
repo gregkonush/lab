@@ -27,5 +27,7 @@ spec:
           env:
             - name: NODE_ENV
               value: "development"
+            - name: LOG_LEVEL
+              value: "debug"
             - name: NODE_EXTRA_CA_CERTS
               value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
