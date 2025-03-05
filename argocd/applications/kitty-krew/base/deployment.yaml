@@ -27,9 +27,14 @@ spec:
           env:
             - name: NODE_ENV
               value: "production"
+            - name: LOG_LEVEL
+              value: "info"
           envFrom:
             - configMapRef:
                 name: kitty-krew-config
+          volumeMounts:
+            - name: logs-volume
+              mountPath: /app/logs
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
@@ -46,3 +51,6 @@ spec:
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 5
+      volumes:
+        - name: logs-volume
+          emptyDir: {}

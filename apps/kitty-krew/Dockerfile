@@ -20,11 +20,15 @@ WORKDIR /app
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV LOG_LEVEL=info
 
 # Copy only necessary files from builder
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
+
+# Create logs directory and set permissions
+RUN mkdir -p logs && chmod 755 logs
 
 # Expose port
 EXPOSE 3000
