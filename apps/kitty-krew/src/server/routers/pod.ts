@@ -4,9 +4,6 @@ import { router, publicProcedure } from '../trpc.ts'
 import { podListSchema, podSchema } from '~/common/schemas/pod.ts'
 import { logger } from '~/utils/logger.ts'
 import { createK8sClient, transformPodData } from '~/services/kubernetes.ts'
-import { observable } from '@trpc/server/observable'
-import { CoreV1Api } from '@kubernetes/client-node'
-import { PassThrough } from 'node:stream'
 import { tracked } from '@trpc/server'
 
 export const podRouter = router({

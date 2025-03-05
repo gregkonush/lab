@@ -39,7 +39,7 @@ process.on('beforeExit', () => {
 })
 
 // Handle termination signals
-for (const signal of ['SIGINT', 'SIGTERM'] as NodeJS.Signals[]) {
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as NodeJS.Signals[]) {
   process.on(signal, () => {
     logger.info(`Received ${signal}, shutting down gracefully`)
     logger.end()
