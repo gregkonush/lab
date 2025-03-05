@@ -28,7 +28,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
 # Create logs directory and set permissions
-RUN mkdir -p logs && chmod 777 logs
+RUN mkdir -p logs && chmod 755 logs
 
 # Expose port
 EXPOSE 3000
