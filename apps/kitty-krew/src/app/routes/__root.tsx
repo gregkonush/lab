@@ -1,6 +1,7 @@
 import React from 'react'
 import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { CommandPalette } from '~/components/command-palette'
 
 import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
 import type { AppRouter } from '~/server/routers/_app'
@@ -28,6 +29,7 @@ function RootComponent() {
   return (
     <>
       <div className="min-h-screen flex flex-col antialiased text-zinc-400 w-full">
+        <CommandPalette />
         <Outlet />
       </div>
       <TanStackRouterDevtools position="bottom-left" />
