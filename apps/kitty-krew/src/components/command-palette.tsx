@@ -14,7 +14,11 @@ export function CommandPalette() {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const commandPaletteRef = useRef<HTMLDivElement>(null)
 
-  const { data: pods, isLoading } = useQuery({
+  const {
+    data: pods,
+    isLoading,
+    error,
+  } = useQuery({
     ...trpc.pod.list.queryOptions(),
     enabled: isOpen,
     staleTime: 10000, // 10 seconds
@@ -109,6 +113,8 @@ export function CommandPalette() {
     <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center pt-[20vh]">
       <div
         ref={commandPaletteRef}
+        aria-modal="true"
+        aria-label="Command palette"
         className="w-full max-w-2xl bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden"
       >
         <div className="relative">
@@ -119,6 +125,7 @@ export function CommandPalette() {
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search for pods..."
+            aria-label="Search for pods"
             className="w-full p-4 bg-zinc-900 text-zinc-200 placeholder-zinc-500 border-b border-zinc-700 focus:outline-none focus:ring-0"
             autoComplete="off"
           />
@@ -135,6 +142,12 @@ export function CommandPalette() {
             </div>
           )}
 
+          {error && (
+            <div className="p-4 text-center text-zinc-500">
+              <span className="text-red-400">Failed to load pods. Please try again.</span>
+            </div>
+          )}
+
           {!isLoading && filteredPods.length === 0 && (
             <div className="p-4 text-center text-zinc-500">
               {searchQuery ? 'No pods match your search' : 'Type to search for pods'}
@@ -142,16 +155,23 @@ export function CommandPalette() {
           )}
 
           {!isLoading && filteredPods.length > 0 && (
-            <ul className="divide-y divide-zinc-800">
+            <div className="divide-y divide-zinc-800" aria-label="Pod search results">
               {filteredPods.map((pod, index) => (
                 <button
                   type="button"
                   key={`${pod.metadata?.namespace}/${pod.metadata?.name}`}
+                  aria-selected={index === selectedIndex}
                   className={cn(
                     'w-full text-left px-4 py-3 cursor-pointer flex justify-between items-center hover:bg-zinc-800 transition-colors',
                     index === selectedIndex && 'bg-zinc-800',
                   )}
                   onClick={() => navigateToPod(pod)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      navigateToPod(pod)
+                    }
+                  }}
                 >
                   <div className="flex flex-col">
                     <span className="text-zinc-200 font-medium">{pod.metadata?.name}</span>
@@ -160,7 +180,7 @@ export function CommandPalette() {
                   <StatusBadge status={pod.status?.phase || ''} />
                 </button>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>
