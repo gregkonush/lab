@@ -192,10 +192,11 @@ export function PodDetailsComponent() {
 
   // Set first container as default when pod data loads
   useEffect(() => {
-    if (pod?.spec?.containers && pod.spec.containers.length > 0 && !selectedContainer) {
+    if (pod?.spec?.containers && pod.spec.containers.length > 0) {
+      // Always set to first container when pod data loads, regardless of previous selection
       setSelectedContainer(pod.spec.containers[0].name)
     }
-  }, [pod?.spec?.containers, selectedContainer])
+  }, [pod?.spec?.containers])
 
   // Reset streaming logs when changing containers
   useEffect(() => {
