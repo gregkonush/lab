@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { trpc } from '~/app/router.tsx'
 import { cn } from '~/utils/cn'
@@ -20,13 +20,18 @@ export function CommandPalette() {
     staleTime: 10000, // 10 seconds
   })
 
-  const filteredPods = pods
-    ? pods.filter(
-        (pod) =>
-          pod.metadata?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          pod.metadata?.namespace?.toLowerCase().includes(searchQuery.toLowerCase()),
-      )
-    : []
+  const filteredPods = useMemo(() => {
+    // Reset selected index when the search results change
+    setSelectedIndex(0)
+
+    return pods
+      ? pods.filter(
+          (pod) =>
+            pod.metadata?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            pod.metadata?.namespace?.toLowerCase().includes(searchQuery.toLowerCase()),
+        )
+      : []
+  }, [pods, searchQuery])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -51,10 +56,6 @@ export function CommandPalette() {
       inputRef.current.focus()
     }
   }, [isOpen])
-
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [])
 
   useEffect(() => {
     // Handle click outside to close
@@ -82,8 +83,10 @@ export function CommandPalette() {
       setSelectedIndex((prev) => (prev > 0 ? prev - 1 : 0))
     } else if (e.key === 'Enter' && filteredPods.length > 0) {
       e.preventDefault()
-      const selectedPod = filteredPods[selectedIndex]
-      navigateToPod(selectedPod)
+      if (selectedIndex >= 0 && selectedIndex < filteredPods.length) {
+        const selectedPod = filteredPods[selectedIndex]
+        navigateToPod(selectedPod)
+      }
     }
   }
 
