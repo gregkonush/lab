@@ -1,10 +1,11 @@
+import type * as React from 'react'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { trpc } from '~/app/router.tsx'
-import { cn } from '~/utils/cn'
-import { StatusBadge } from './status-badge'
+import { cn } from '~/utils/cn.ts'
+import { StatusBadge } from './status-badge.tsx'
 import { useQuery } from '@tanstack/react-query'
-import type { Pod } from '~/common/schemas/pod'
+import type { Pod } from '~/common/schemas/pod.ts'
 
 export function CommandPalette() {
   const navigate = useNavigate()
@@ -25,9 +26,6 @@ export function CommandPalette() {
   })
 
   const filteredPods = useMemo(() => {
-    // Reset selected index when the search results change
-    setSelectedIndex(0)
-
     return pods
       ? pods.filter(
           (pod) =>
@@ -36,6 +34,17 @@ export function CommandPalette() {
         )
       : []
   }, [pods, searchQuery])
+
+  useEffect(() => {
+    setSelectedIndex(0)
+  }, [])
+
+  // Clear search query when command palette is closed
+  useEffect(() => {
+    if (!isOpen) {
+      setSearchQuery('')
+    }
+  }, [isOpen])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -155,11 +164,27 @@ export function CommandPalette() {
           )}
 
           {!isLoading && filteredPods.length > 0 && (
-            <div className="divide-y divide-zinc-800" aria-label="Pod search results">
+            <div
+              className="divide-y divide-zinc-800"
+              // biome-ignore lint/a11y/useSemanticElements: Using custom listbox UI
+              role="listbox"
+              tabIndex={0}
+              aria-label="Pod search results"
+              aria-activedescendant={
+                filteredPods[selectedIndex]?.metadata?.name
+                  ? `pod-${filteredPods[selectedIndex].metadata.namespace}-${filteredPods[selectedIndex].metadata.name}`
+                  : undefined
+              }
+            >
+              <span className="sr-only">Use up and down arrow keys to navigate, Enter to select a pod.</span>
               {filteredPods.map((pod, index) => (
                 <button
                   type="button"
                   key={`${pod.metadata?.namespace}/${pod.metadata?.name}`}
+                  id={`pod-${pod.metadata?.namespace}-${pod.metadata?.name}`}
+                  // biome-ignore lint/a11y/useSemanticElements: Using custom option UI
+                  role="option"
+                  // eslint-disable-next-line jsx-a11y/no-interactive-element-to-noninteractive-role
                   aria-selected={index === selectedIndex}
                   className={cn(
                     'w-full text-left px-4 py-3 cursor-pointer flex justify-between items-center hover:bg-zinc-800 transition-colors',
