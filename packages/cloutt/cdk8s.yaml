@@ -2,4 +2,3 @@ language: typescript
 app: bun main.ts
 imports:
   - k8s
-  - ../../argocd/applications/kitty-krew/overlays/dev/secrets.yaml
