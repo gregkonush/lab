@@ -28,7 +28,6 @@ function parseDiff(diffText: string) {
 
       // Find hunk headers to properly track positions
       const hunkHeaders = []
-      let currentLine = 0
       let additions = 0
       let deletions = 0
       let inHunk = false
@@ -67,7 +66,6 @@ function parseDiff(diffText: string) {
           const match = line.match(/\+(\d+)/)
           if (match?.[1]) {
             hunkStartLine = Number.parseInt(match[1], 10)
-            currentLine = hunkStartLine - 1 // Will be incremented for the first content line
             console.log(`[GitHub] Found hunk header at line ${j}: ${line}, starting at line ${hunkStartLine}`)
           } else {
             console.log(`[GitHub] Found hunk header at line ${j} but couldn't parse line number: ${line}`)
@@ -79,12 +77,10 @@ function parseDiff(diffText: string) {
           // Count additions and deletions
           if (line.startsWith('+') && !line.startsWith('+++')) {
             additions++
-            currentLine++
           } else if (line.startsWith('-') && !line.startsWith('---')) {
             deletions++
           } else if (!line.startsWith('\\') && !line.startsWith('---') && !line.startsWith('+++')) {
             // Context line (unchanged)
-            currentLine++
           }
         }
       }
@@ -113,7 +109,7 @@ function parseDiff(diffText: string) {
 }
 
 // Helper function to find line positions in diff
-function findPositionInDiff(diffText: string, filePath: string, lineNumber: number): number | undefined {
+export function findPositionInDiff(diffText: string, filePath: string, lineNumber: number): number | undefined {
   console.log(`[GitHub] Finding position in diff for ${filePath}:${lineNumber}`)
   console.log(`[GitHub] Diff text length: ${diffText.length} bytes`)
 
@@ -165,7 +161,6 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
     console.log(`  Line ${i}: ${lines[i].substring(0, 100)}${lines[i].length > 100 ? '...' : ''}`)
   }
 
-  let currentLine = 0
   let position = 0
   let inHunk = false
   const debugLines: string[] = []
@@ -187,10 +182,9 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
       if (match?.[1] && match?.[2]) {
         const startLine = Number.parseInt(match[1], 10)
         const lineCount = Number.parseInt(match[2], 10)
-        currentLine = startLine - 1 // Will be incremented for the first content line
         maxLineInFile = Math.max(maxLineInFile, startLine + lineCount - 1)
         console.log(
-          `[GitHub] Found hunk header at position ${i}: ${line}, resetting to line ${currentLine + 1}, hunk covers up to line ${startLine + lineCount - 1}`,
+          `[GitHub] Found hunk header at position ${i}: ${line}, resetting to line ${startLine}, hunk covers up to line ${startLine + lineCount - 1}`,
         )
       } else {
         console.log(`[GitHub] Found hunk header at position ${i} but couldn't parse line number: ${line}`)
@@ -211,18 +205,15 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
 
     // Count lines in the new file
     if (line.startsWith('+') || (!line.startsWith('-') && !line.startsWith('\\'))) {
-      currentLine++
       position++
-      maxLineInFile = Math.max(maxLineInFile, currentLine)
+      maxLineInFile = Math.max(maxLineInFile, position)
 
       // Store some context for debugging
-      if (Math.abs(currentLine - lineNumber) <= 5) {
-        debugLines.push(
-          `Line ${currentLine} (position ${position}): ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`,
-        )
+      if (Math.abs(position - lineNumber) <= 5) {
+        debugLines.push(`Line ${position}: ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`)
       }
 
-      if (currentLine === lineNumber) {
+      if (position === lineNumber) {
         console.log(`[GitHub] Found position ${position} for line ${lineNumber} in ${filePath}`)
         console.log(`[GitHub] Last hunk header: ${lastHunkHeader}`)
         console.log(`[GitHub] Context around line ${lineNumber}:`)
@@ -239,7 +230,7 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
 
   console.log(`[GitHub] Could not find position for line ${lineNumber} in ${filePath}`)
   console.log(
-    `[GitHub] Last line reached: ${currentLine}, max line in file: ${maxLineInFile}, last hunk header: ${lastHunkHeader}`,
+    `[GitHub] Last line reached: ${position}, max line in file: ${maxLineInFile}, last hunk header: ${lastHunkHeader}`,
   )
 
   if (lineNumber > maxLineInFile) {
@@ -278,16 +269,13 @@ export const githubTools = {
       owner: z.string(),
       repo: z.string(),
       pullNumber: z.number(),
-      side: z.enum(['RIGHT', 'LEFT']).optional(),
       position: z.number().optional(),
     }),
     outputSchema: z.object({
       success: z.boolean(),
       message: z.string().optional(),
     }),
-    execute: async ({
-      context: { file, lineNumber, comment, owner, repo, pullNumber: pull_number, side = 'RIGHT', position },
-    }) => {
+    execute: async ({ context: { file, lineNumber, comment, owner, repo, pullNumber: pull_number } }) => {
       console.log(`[GitHub] Getting PR ${owner}/${repo}#${pull_number}`)
       try {
         const { data: pr } = await octokit.rest.pulls.get({
@@ -298,7 +286,7 @@ export const githubTools = {
         console.log(`[GitHub] Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
 
         // We'll use line and side parameters instead of position
-        console.log(`[GitHub] Creating review comment on ${file}:${lineNumber}, side: ${side}`)
+        console.log(`[GitHub] Creating review comment on ${file}:${lineNumber}`)
         console.log(
           `[GitHub] Comment content (first 100 chars): ${comment.substring(0, 100)}${comment.length > 100 ? '...' : ''}`,
         )
@@ -310,7 +298,7 @@ export const githubTools = {
           commit_id: pr.head.sha,
           path: file,
           line: lineNumber,
-          side,
+          side: 'RIGHT',
           body: comment,
         })
 
