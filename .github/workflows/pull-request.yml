@@ -145,6 +145,8 @@ jobs:
         working-directory: apps/reviewer
         run: bun tsc --noEmit
 
+      - run: echo "PATH=$HOME/.bun/bin:$PATH" >> $GITHUB_ENV
+
       - name: Build reviewer app
         working-directory: apps/reviewer
-        run: bunx mastra build
+        run: bun install -g pnpm && bunx mastra build
