@@ -150,4 +150,4 @@ jobs:
 
       - name: Build reviewer app
         working-directory: apps/reviewer
-        run: bun run build
+        run: bun run npm run build
