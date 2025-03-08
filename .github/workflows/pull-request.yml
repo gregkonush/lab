@@ -29,6 +29,8 @@ jobs:
               - 'apps/findbobastore/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
+            reviseur:
+              - 'apps/reviseur/**'
             packages:
               - 'packages/**'
 
@@ -87,6 +89,37 @@ jobs:
   kitty-krew:
     needs: check_changed_files
     if: ${{ needs.check_changed_files.outputs.kitty-krew == 'true' }}
+    runs-on: arc-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: apps/kitty-krew
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        working-directory: apps/kitty-krew
+        run: bun biome lint
+
+      - name: Format check
+        working-directory: apps/kitty-krew
+        run: bun biome format
+
+      - name: Type check
+        working-directory: apps/kitty-krew
+        run: bun tsc --noEmit
+
+      - name: Build kitty-krew app
+        working-directory: apps/kitty-krew
+        run: bun run build
+
+  reviseur:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.reviseur == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4

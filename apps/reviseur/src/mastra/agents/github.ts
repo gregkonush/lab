@@ -28,7 +28,6 @@ function parseDiff(diffText: string) {
 
       // Find hunk headers to properly track positions
       const hunkHeaders = []
-      let currentLine = 0
       let additions = 0
       let deletions = 0
       let inHunk = false
@@ -67,7 +66,6 @@ function parseDiff(diffText: string) {
           const match = line.match(/\+(\d+)/)
           if (match?.[1]) {
             hunkStartLine = Number.parseInt(match[1], 10)
-            currentLine = hunkStartLine - 1 // Will be incremented for the first content line
             console.log(`[GitHub] Found hunk header at line ${j}: ${line}, starting at line ${hunkStartLine}`)
           } else {
             console.log(`[GitHub] Found hunk header at line ${j} but couldn't parse line number: ${line}`)
@@ -79,12 +77,10 @@ function parseDiff(diffText: string) {
           // Count additions and deletions
           if (line.startsWith('+') && !line.startsWith('+++')) {
             additions++
-            currentLine++
           } else if (line.startsWith('-') && !line.startsWith('---')) {
             deletions++
           } else if (!line.startsWith('\\') && !line.startsWith('---') && !line.startsWith('+++')) {
             // Context line (unchanged)
-            currentLine++
           }
         }
       }
@@ -112,161 +108,6 @@ function parseDiff(diffText: string) {
   return files
 }
 
-// Helper function to find line positions in diff
-function findPositionInDiff(diffText: string, filePath: string, lineNumber: number): number | undefined {
-  console.log(`[GitHub] Finding position in diff for ${filePath}:${lineNumber}`)
-  console.log(`[GitHub] Diff text length: ${diffText.length} bytes`)
-
-  // Log a sample of the diff for debugging
-  console.log(`[GitHub] Diff sample (first 500 chars): ${diffText.substring(0, 500)}...`)
-
-  const files = parseDiff(diffText)
-  console.log(`[GitHub] Parsed ${files.length} files from diff`)
-
-  const fileDiff = files.find((file) => file.path === filePath)
-  if (!fileDiff) {
-    console.log(`[GitHub] File ${filePath} not found in diff`)
-    // Log all available file paths for debugging
-    console.log(`[GitHub] Available files in diff: ${files.map((f) => f.path).join(', ')}`)
-    return undefined
-  }
-
-  console.log(
-    `[GitHub] Found file ${filePath} in diff with ${fileDiff.additions} additions, ${fileDiff.deletions} deletions`,
-  )
-
-  // Handle edge cases
-  if (fileDiff.isEmpty) {
-    console.log(`[GitHub] File ${filePath} has no changes in the diff`)
-    return undefined
-  }
-
-  if (fileDiff.isDeleted) {
-    console.log(`[GitHub] File ${filePath} is deleted in this PR, cannot comment on line ${lineNumber}`)
-    return undefined
-  }
-
-  if (fileDiff.onlyDeletions) {
-    console.log(`[GitHub] File ${filePath} only has deletions, cannot comment on line ${lineNumber} in the new version`)
-    return undefined
-  }
-
-  if (fileDiff.isNewFile && lineNumber > fileDiff.additions) {
-    console.log(`[GitHub] Line ${lineNumber} is beyond the end of new file ${filePath} (${fileDiff.additions} lines)`)
-    return undefined
-  }
-
-  const lines = fileDiff.diff.split('\n')
-  console.log(`[GitHub] Diff for ${filePath} has ${lines.length} lines`)
-
-  // Log the first few lines of the file diff for debugging
-  console.log(`[GitHub] First 10 lines of diff for ${filePath}:`)
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
-    console.log(`  Line ${i}: ${lines[i].substring(0, 100)}${lines[i].length > 100 ? '...' : ''}`)
-  }
-
-  let currentLine = 0
-  let position = 0
-  let inHunk = false
-  const debugLines: string[] = []
-  let lastHunkHeader = ''
-  let maxLineInFile = 0
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Track hunk headers to reset position counting
-    if (line.startsWith('@@')) {
-      inHunk = true
-      position = i
-      lastHunkHeader = line
-
-      // Extract the starting line number from the hunk header
-      // Format: @@ -old_start,old_count +new_start,new_count @@
-      const match = line.match(/\+(\d+),(\d+)/)
-      if (match?.[1] && match?.[2]) {
-        const startLine = Number.parseInt(match[1], 10)
-        const lineCount = Number.parseInt(match[2], 10)
-        currentLine = startLine - 1 // Will be incremented for the first content line
-        maxLineInFile = Math.max(maxLineInFile, startLine + lineCount - 1)
-        console.log(
-          `[GitHub] Found hunk header at position ${i}: ${line}, resetting to line ${currentLine + 1}, hunk covers up to line ${startLine + lineCount - 1}`,
-        )
-      } else {
-        console.log(`[GitHub] Found hunk header at position ${i} but couldn't parse line number: ${line}`)
-      }
-      continue
-    }
-
-    // Skip diff header lines
-    if (
-      line.startsWith('diff --git') ||
-      line.startsWith('index ') ||
-      line.startsWith('---') ||
-      line.startsWith('+++') ||
-      !inHunk
-    ) {
-      continue
-    }
-
-    // Count lines in the new file
-    if (line.startsWith('+') || (!line.startsWith('-') && !line.startsWith('\\'))) {
-      currentLine++
-      position++
-      maxLineInFile = Math.max(maxLineInFile, currentLine)
-
-      // Store some context for debugging
-      if (Math.abs(currentLine - lineNumber) <= 5) {
-        debugLines.push(
-          `Line ${currentLine} (position ${position}): ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`,
-        )
-      }
-
-      if (currentLine === lineNumber) {
-        console.log(`[GitHub] Found position ${position} for line ${lineNumber} in ${filePath}`)
-        console.log(`[GitHub] Last hunk header: ${lastHunkHeader}`)
-        console.log(`[GitHub] Context around line ${lineNumber}:`)
-        for (const l of debugLines) {
-          console.log(`  ${l}`)
-        }
-        return position
-      }
-    } else if (line.startsWith('-')) {
-      // Deletion lines count for position but not for current line
-      position++
-    }
-  }
-
-  console.log(`[GitHub] Could not find position for line ${lineNumber} in ${filePath}`)
-  console.log(
-    `[GitHub] Last line reached: ${currentLine}, max line in file: ${maxLineInFile}, last hunk header: ${lastHunkHeader}`,
-  )
-
-  if (lineNumber > maxLineInFile) {
-    console.log(`[GitHub] Line ${lineNumber} is beyond the end of file ${filePath} (${maxLineInFile} lines)`)
-  }
-
-  if (debugLines.length > 0) {
-    console.log('[GitHub] Last context lines:')
-    for (const l of debugLines) {
-      console.log(`  ${l}`)
-    }
-  } else {
-    console.log('[GitHub] No context lines found near target line')
-  }
-
-  // Log the last few lines of the file diff for debugging
-  const lastLines = Math.min(5, lines.length)
-  console.log(`[GitHub] Last ${lastLines} lines of diff for ${filePath}:`)
-  for (let i = lines.length - lastLines; i < lines.length; i++) {
-    if (i >= 0) {
-      console.log(`  Line ${i}: ${lines[i].substring(0, 100)}${lines[i].length > 100 ? '...' : ''}`)
-    }
-  }
-
-  return undefined
-}
-
 export const githubTools = {
   commentOnLineNumber: createTool({
     id: 'commentOnLineNumber',
@@ -286,7 +127,7 @@ export const githubTools = {
       message: z.string().optional(),
     }),
     execute: async ({
-      context: { file, lineNumber, comment, owner, repo, pullNumber: pull_number, side = 'RIGHT', position },
+      context: { file, lineNumber, comment, owner, repo, pullNumber: pull_number, side = 'RIGHT', position: _position },
     }) => {
       console.log(`[GitHub] Getting PR ${owner}/${repo}#${pull_number}`)
       try {
