@@ -188,7 +188,7 @@ function processFileDiff(fileHeader: string, path: string): FileDiff | null {
     const { isNewFile, isDeleted } = extractFileStatus(diffLines)
 
     // Process hunk headers and count changes
-    const { hunkHeaders, additions, deletions, hunkStartLine } = processHunks(diffLines)
+    const { hunkHeaders, additions, deletions } = processHunks(diffLines)
 
     logger.debug(`File ${path} has ${additions} additions, ${deletions} deletions, ${hunkHeaders.length} hunks`)
 
@@ -255,13 +255,11 @@ function processHunks(diffLines: string[]): {
   hunkHeaders: HunkHeader[]
   additions: number
   deletions: number
-  hunkStartLine: number
 } {
   const hunkHeaders: HunkHeader[] = []
   let additions = 0
   let deletions = 0
   let inHunk = false
-  let hunkStartLine = 0
 
   // Process each line
   for (let j = 0; j < diffLines.length; j++) {
@@ -274,16 +272,6 @@ function processHunks(diffLines: string[]): {
         index: j,
         content: line,
       })
-
-      // Extract the starting line number using regex
-      // Format: @@ -old_start,old_count +new_start,new_count @@
-      const match = line.match(/\+(\d+)/)
-      if (match?.[1]) {
-        hunkStartLine = Number.parseInt(match[1], 10)
-        logger.debug(`Found hunk header starting at line ${hunkStartLine}`)
-      } else {
-        logger.warn(`Could not parse line number from hunk header: ${line}`)
-      }
       continue
     }
 
@@ -299,7 +287,7 @@ function processHunks(diffLines: string[]): {
     }
   }
 
-  return { hunkHeaders, additions, deletions, hunkStartLine }
+  return { hunkHeaders, additions, deletions }
 }
 
 export const githubTools = {

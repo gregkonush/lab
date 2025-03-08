@@ -147,4 +147,4 @@ jobs:
 
       - name: Build reviseur app
         working-directory: apps/reviseur
-        run: bun run mastra build
+        run: bun run pnpm build
