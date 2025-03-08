@@ -8,104 +8,235 @@ const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 })
 
-// Helper function to parse diff text
-function parseDiff(diffText: string) {
-  console.log(`[GitHub] Parsing diff text of length ${diffText.length}`)
-  const files = []
-  const fileHeaders = diffText.split('diff --git ')
-  console.log(`[GitHub] Found ${fileHeaders.length - 1} file headers in diff`)
+/**
+ * Simple logger with namespacing and log levels
+ */
+class Logger {
+  private namespace: string
+  private logLevels = ['debug', 'info', 'warn', 'error'] as const
+  private currentLevel: (typeof this.logLevels)[number] = 'info'
 
-  // Skip the first empty element
-  for (let i = 1; i < fileHeaders.length; i++) {
-    const fileHeader = fileHeaders[i]
-    const fileNameMatch = fileHeader.match(/a\/(.*?) b\//)
-
-    if (fileNameMatch?.[1]) {
-      const path = fileNameMatch[1]
-      console.log(`[GitHub] Processing diff for file: ${path}`)
-      const diffLines = fileHeader.split('\n')
-      console.log(`[GitHub] Diff for ${path} has ${diffLines.length} lines`)
-
-      // Find hunk headers to properly track positions
-      const hunkHeaders = []
-      let additions = 0
-      let deletions = 0
-      let inHunk = false
-      let hunkStartLine = 0
-      let isNewFile = false
-      let isDeleted = false
-
-      // Check if file is new or deleted
-      for (let j = 0; j < Math.min(10, diffLines.length); j++) {
-        if (diffLines[j].includes('new file mode')) {
-          isNewFile = true
-          console.log(`[GitHub] ${path} is a new file`)
-          break
-        }
-        if (diffLines[j].includes('deleted file mode')) {
-          isDeleted = true
-          console.log(`[GitHub] ${path} is a deleted file`)
-          break
-        }
-      }
-
-      // Process each line to count additions/deletions and track positions
-      for (let j = 0; j < diffLines.length; j++) {
-        const line = diffLines[j]
-
-        // Track hunk headers
-        if (line.startsWith('@@')) {
-          inHunk = true
-          hunkHeaders.push({
-            index: j,
-            content: line,
-          })
-
-          // Extract the starting line number from the hunk header
-          // Format: @@ -old_start,old_count +new_start,new_count @@
-          const match = line.match(/\+(\d+)/)
-          if (match?.[1]) {
-            hunkStartLine = Number.parseInt(match[1], 10)
-            console.log(`[GitHub] Found hunk header at line ${j}: ${line}, starting at line ${hunkStartLine}`)
-          } else {
-            console.log(`[GitHub] Found hunk header at line ${j} but couldn't parse line number: ${line}`)
-          }
-          continue
-        }
-
-        if (inHunk) {
-          // Count additions and deletions
-          if (line.startsWith('+') && !line.startsWith('+++')) {
-            additions++
-          } else if (line.startsWith('-') && !line.startsWith('---')) {
-            deletions++
-          } else if (!line.startsWith('\\') && !line.startsWith('---') && !line.startsWith('+++')) {
-            // Context line (unchanged)
-          }
-        }
-      }
-
-      console.log(
-        `[GitHub] File ${path} has ${additions} additions, ${deletions} deletions, ${hunkHeaders.length} hunks`,
-      )
-      files.push({
-        path,
-        diff: fileHeader,
-        additions,
-        deletions,
-        changes: additions + deletions,
-        hunkHeaders,
-        isNewFile,
-        isDeleted,
-        isEmpty: additions === 0 && deletions === 0,
-        onlyDeletions: additions === 0 && deletions > 0,
-      })
-    } else {
-      console.log(`[GitHub] Could not extract file path from header: ${fileHeader.substring(0, 100)}...`)
+  constructor(namespace: string, level?: (typeof Logger.prototype.logLevels)[number]) {
+    this.namespace = namespace
+    if (level) {
+      this.currentLevel = level
     }
   }
 
+  private shouldLog(level: (typeof this.logLevels)[number]): boolean {
+    const levelIndex = this.logLevels.indexOf(level)
+    const currentLevelIndex = this.logLevels.indexOf(this.currentLevel)
+    return levelIndex >= currentLevelIndex
+  }
+
+  debug(message: string, ...args: unknown[]): void {
+    if (this.shouldLog('debug')) {
+      console.log(`[${this.namespace}] [DEBUG] ${message}`, ...args)
+    }
+  }
+
+  info(message: string, ...args: unknown[]): void {
+    if (this.shouldLog('info')) {
+      console.log(`[${this.namespace}] ${message}`, ...args)
+    }
+  }
+
+  warn(message: string, ...args: unknown[]): void {
+    if (this.shouldLog('warn')) {
+      console.warn(`[${this.namespace}] [WARN] ${message}`, ...args)
+    }
+  }
+
+  error(message: string, ...args: unknown[]): void {
+    if (this.shouldLog('error')) {
+      console.error(`[${this.namespace}] [ERROR] ${message}`, ...args)
+    }
+  }
+}
+
+// Create a logger instance for GitHub
+const logger = new Logger('GitHub')
+
+// Define TypeScript interfaces for the diff parsing
+interface HunkHeader {
+  index: number
+  content: string
+}
+
+interface FileDiff {
+  path: string
+  diff: string
+  additions: number
+  deletions: number
+  changes: number
+  hunkHeaders: HunkHeader[]
+  isNewFile: boolean
+  isDeleted: boolean
+  isEmpty: boolean
+  onlyDeletions: boolean
+}
+
+/**
+ * Parses a Git diff string into structured file change data
+ * @param diffText - The raw git diff text to parse
+ * @returns Array of parsed file diffs
+ */
+function parseDiff(diffText: string): FileDiff[] {
+  logger.debug(`Parsing diff text of length ${diffText.length}`)
+
+  if (!diffText || diffText.trim() === '') {
+    logger.warn('Empty diff text provided')
+    return []
+  }
+
+  const files: FileDiff[] = []
+  try {
+    // Split by diff headers but don't process empty sections
+    const fileHeaders = diffText.split('diff --git ').filter(Boolean)
+    logger.debug(`Found ${fileHeaders.length} file headers in diff`)
+
+    for (const fileHeader of fileHeaders) {
+      // Extract file path with regex
+      const fileNameMatch = fileHeader.match(/a\/(.*?) b\//)
+      if (!fileNameMatch?.[1]) {
+        logger.warn(`Could not extract file path from header: ${fileHeader.substring(0, 100)}...`)
+        continue
+      }
+
+      const path = fileNameMatch[1]
+      logger.debug(`Processing diff for file: ${path}`)
+
+      // Process the diff to extract metadata
+      const result = processFileDiff(fileHeader, path)
+      if (result) {
+        files.push(result)
+      }
+    }
+  } catch (error) {
+    logger.error('Error parsing diff:', error instanceof Error ? error.message : String(error))
+  }
+
   return files
+}
+
+/**
+ * Process a single file diff to extract metadata
+ * @param fileHeader - The file diff text
+ * @param path - The file path
+ * @returns Processed file diff or null if processing failed
+ */
+function processFileDiff(fileHeader: string, path: string): FileDiff | null {
+  try {
+    const diffLines = fileHeader.split('\n')
+
+    // Extract file status (new/deleted)
+    const { isNewFile, isDeleted } = extractFileStatus(diffLines)
+
+    // Process hunk headers and count changes
+    const { hunkHeaders, additions, deletions, hunkStartLine } = processHunks(diffLines)
+
+    logger.debug(`File ${path} has ${additions} additions, ${deletions} deletions, ${hunkHeaders.length} hunks`)
+
+    return {
+      path,
+      diff: fileHeader,
+      additions,
+      deletions,
+      changes: additions + deletions,
+      hunkHeaders,
+      isNewFile,
+      isDeleted,
+      isEmpty: additions === 0 && deletions === 0,
+      onlyDeletions: additions === 0 && deletions > 0,
+    }
+  } catch (error) {
+    logger.error(`Error processing diff for ${path}:`, error instanceof Error ? error.message : String(error))
+    return null
+  }
+}
+
+/**
+ * Extract the file status from diff lines
+ * @param diffLines - Array of diff lines
+ * @returns Object with isNewFile and isDeleted flags
+ */
+function extractFileStatus(diffLines: string[]): { isNewFile: boolean; isDeleted: boolean } {
+  let isNewFile = false
+  let isDeleted = false
+
+  // Check only first few lines for file status
+  const statusCheckLines = Math.min(10, diffLines.length)
+  for (let j = 0; j < statusCheckLines; j++) {
+    const line = diffLines[j]
+    if (line.includes('new file mode')) {
+      isNewFile = true
+      logger.debug('File is a new file')
+      break
+    }
+    if (line.includes('deleted file mode')) {
+      isDeleted = true
+      logger.debug('File is a deleted file')
+      break
+    }
+  }
+
+  return { isNewFile, isDeleted }
+}
+
+/**
+ * Process hunks in the diff to extract statistics and metadata
+ * @param diffLines - Array of diff lines
+ * @returns Object with hunk headers, counts, and line number info
+ */
+function processHunks(diffLines: string[]): {
+  hunkHeaders: HunkHeader[]
+  additions: number
+  deletions: number
+  hunkStartLine: number
+} {
+  const hunkHeaders: HunkHeader[] = []
+  let additions = 0
+  let deletions = 0
+  let inHunk = false
+  let hunkStartLine = 0
+
+  // Process each line
+  for (let j = 0; j < diffLines.length; j++) {
+    const line = diffLines[j]
+
+    // Track hunk headers (lines starting with @@)
+    if (line.startsWith('@@')) {
+      inHunk = true
+      hunkHeaders.push({
+        index: j,
+        content: line,
+      })
+
+      // Extract the starting line number using regex
+      // Format: @@ -old_start,old_count +new_start,new_count @@
+      const match = line.match(/\+(\d+)/)
+      if (match?.[1]) {
+        hunkStartLine = Number.parseInt(match[1], 10)
+        logger.debug(`Found hunk header starting at line ${hunkStartLine}`)
+      } else {
+        logger.warn(`Could not parse line number from hunk header: ${line}`)
+      }
+      continue
+    }
+
+    // Only count lines if in a hunk section
+    if (inHunk) {
+      // Count additions (lines starting with +) and deletions (lines starting with -)
+      // Skip metadata lines (+++, ---)
+      if (line.startsWith('+') && !line.startsWith('+++')) {
+        additions++
+      } else if (line.startsWith('-') && !line.startsWith('---')) {
+        deletions++
+      }
+    }
+  }
+
+  return { hunkHeaders, additions, deletions, hunkStartLine }
 }
 
 export const githubTools = {
@@ -129,19 +260,19 @@ export const githubTools = {
     execute: async ({
       context: { file, lineNumber, comment, owner, repo, pullNumber: pull_number, side = 'RIGHT', position: _position },
     }) => {
-      console.log(`[GitHub] Getting PR ${owner}/${repo}#${pull_number}`)
+      logger.info(`Getting PR ${owner}/${repo}#${pull_number}`)
       try {
         const { data: pr } = await octokit.rest.pulls.get({
           owner,
           repo,
           pull_number,
         })
-        console.log(`[GitHub] Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
+        logger.info(`Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
 
         // We'll use line and side parameters instead of position
-        console.log(`[GitHub] Creating review comment on ${file}:${lineNumber}, side: ${side}`)
-        console.log(
-          `[GitHub] Comment content (first 100 chars): ${comment.substring(0, 100)}${comment.length > 100 ? '...' : ''}`,
+        logger.info(`Creating review comment on ${file}:${lineNumber}, side: ${side}`)
+        logger.debug(
+          `Comment content (first 100 chars): ${comment.substring(0, 100)}${comment.length > 100 ? '...' : ''}`,
         )
 
         const response = await octokit.rest.pulls.createReviewComment({
@@ -155,20 +286,20 @@ export const githubTools = {
           body: comment,
         })
 
-        console.log(`[GitHub] Successfully created comment with ID: ${response.data.id}`)
-        console.log(`[GitHub] Comment URL: ${response.data.html_url}`)
+        logger.info(`Successfully created comment with ID: ${response.data.id}`)
+        logger.info(`Comment URL: ${response.data.html_url}`)
 
         return {
           success: true,
           message: `Comment added to ${file}:${lineNumber}`,
         }
       } catch (error: unknown) {
-        console.error('[GitHub] Error commenting on line:', error)
+        logger.error('Error commenting on line:', error)
         if (error instanceof Error) {
-          console.error(`[GitHub] Error details: ${error.message}`)
+          logger.error(`Error details: ${error.message}`)
           if ('response' in error) {
             // @ts-ignore
-            console.error(`[GitHub] API response: ${JSON.stringify(error.response?.data)}`)
+            logger.error(`API response: ${JSON.stringify(error.response?.data)}`)
           }
         }
         return {

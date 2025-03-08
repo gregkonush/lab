@@ -17,6 +17,7 @@ jobs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
+      reviseur: ${{ steps.filter.outputs.reviseur }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -129,21 +130,21 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        working-directory: apps/kitty-krew
+        working-directory: apps/reviseur
         run: bun install --frozen-lockfile
 
       - name: Lint
-        working-directory: apps/kitty-krew
+        working-directory: apps/reviseur
         run: bun biome lint
 
       - name: Format check
-        working-directory: apps/kitty-krew
+        working-directory: apps/reviseur
         run: bun biome format
 
       - name: Type check
-        working-directory: apps/kitty-krew
+        working-directory: apps/reviseur
         run: bun tsc --noEmit
 
-      - name: Build kitty-krew app
-        working-directory: apps/kitty-krew
+      - name: Build reviseur app
+        working-directory: apps/reviseur
         run: bun run build

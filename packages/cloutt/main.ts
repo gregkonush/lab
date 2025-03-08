@@ -10,15 +10,17 @@ if (require.main === module) {
   new RootKustomization(kustomizationManifest, 'kustomization', { overlays: ['overlays/dev'] })
   kustomizationManifest.synth()
 
+  const appName = 'reviseur'
+
   const overlays = new App({
     outdir: 'dist/base',
     outputFileExtension: '.yaml',
     yamlOutputType: YamlOutputType.FILE_PER_RESOURCE,
   })
   new KustomizationBase(overlays, 'kustomization', {
-    name: 'kitty-krew',
+    name: appName,
     replicas: 1,
-    image: 'kalmyk.duckdns.org/lab/kitty-krew',
+    image: `kalmyk.duckdns.org/lab/${appName}`,
     containerPort: 3000,
     cpuRequest: 100,
     cpuLimit: 500,
