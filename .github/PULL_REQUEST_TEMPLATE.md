@@ -1,7 +1,17 @@
 ## Description
 
-<!-- Provide a concise description of the changes in this PR with bullet list points -->
+<!--
+LLM INSTRUCTIONS:
+- List 3-5 bullet points describing the changes
+- Be specific about what was added, modified, or fixed
+- Include the purpose/benefit of each change
+- Keep description concise and terse
+-->
 
 ## Screenshots (if applicable)
 
-<!-- Add screenshots to demonstrate the changes visually -->
+<!--
+LLM INSTRUCTIONS:
+- Indicate what screenshots would demonstrate
+- Delete this section if not applicable
+-->
