@@ -91,26 +91,76 @@ function parseDiff(diffText: string): FileDiff[] {
 
   const files: FileDiff[] = []
   try {
-    // Split by diff headers but don't process empty sections
-    const fileHeaders = diffText.split('diff --git ').filter(Boolean)
+    // Reset the diff delimiters properly
+    const fileDelimiter = 'diff --git '
+    const sections = diffText.split(fileDelimiter)
+
+    // Skip the first element if it's empty
+    const fileHeaders = sections[0] === '' ? sections.slice(1) : sections
     logger.debug(`Found ${fileHeaders.length} file headers in diff`)
 
     for (const fileHeader of fileHeaders) {
-      // Extract file path with regex
-      const fileNameMatch = fileHeader.match(/a\/(.*?) b\//)
-      if (!fileNameMatch?.[1]) {
+      let filePath: string | null = null
+
+      // Try different regex patterns to extract the file path
+      // Pattern 1: Standard git diff format
+      const pattern1Match = fileHeader.match(/a\/([^\s]+)\s+b\/([^\s]+)/)
+      if (pattern1Match?.[1]) {
+        filePath = pattern1Match[1]
+        logger.debug(`Extracted file path using standard pattern: ${filePath}`)
+      }
+
+      // Pattern 2: Alternative format with just the file path at start of line
+      if (!filePath) {
+        const pattern2Match = fileHeader.match(/^([^\s]+)\s+/)
+        if (pattern2Match?.[1]) {
+          filePath = pattern2Match[1]
+          logger.debug(`Extracted file path using alternative pattern 1: ${filePath}`)
+        }
+      }
+
+      // Pattern 3: Look for +++ b/filepath
+      if (!filePath) {
+        const lines = fileHeader.split('\n')
+        for (const line of lines) {
+          if (line.startsWith('+++ b/')) {
+            filePath = line.substring(6)
+            logger.debug(`Extracted file path from +++ line: ${filePath}`)
+            break
+          }
+        }
+      }
+
+      // Pattern 4: Look for --- a/filepath
+      if (!filePath) {
+        const lines = fileHeader.split('\n')
+        for (const line of lines) {
+          if (line.startsWith('--- a/')) {
+            filePath = line.substring(6)
+            logger.debug(`Extracted file path from --- line: ${filePath}`)
+            break
+          }
+        }
+      }
+
+      if (!filePath) {
+        // Log a detailed debug message to help diagnose the issue
         logger.warn(`Could not extract file path from header: ${fileHeader.substring(0, 100)}...`)
+        logger.debug(`First few lines of header: ${JSON.stringify(fileHeader.split('\n').slice(0, 3))}`)
         continue
       }
 
-      const path = fileNameMatch[1]
-      logger.debug(`Processing diff for file: ${path}`)
+      logger.debug(`Processing diff for file: ${filePath}`)
 
       // Process the diff to extract metadata
-      const result = processFileDiff(fileHeader, path)
+      const result = processFileDiff(fileHeader, filePath)
       if (result) {
         files.push(result)
       }
+    }
+
+    if (files.length === 0) {
+      logger.warn('No valid file diffs found in the provided diff text')
     }
   } catch (error) {
     logger.error('Error parsing diff:', error instanceof Error ? error.message : String(error))
@@ -127,7 +177,12 @@ function parseDiff(diffText: string): FileDiff[] {
  */
 function processFileDiff(fileHeader: string, path: string): FileDiff | null {
   try {
+    // Split the diff into lines for processing
     const diffLines = fileHeader.split('\n')
+    if (diffLines.length === 0) {
+      logger.warn(`Empty diff for file ${path}`)
+      return null
+    }
 
     // Extract file status (new/deleted)
     const { isNewFile, isDeleted } = extractFileStatus(diffLines)
@@ -137,6 +192,7 @@ function processFileDiff(fileHeader: string, path: string): FileDiff | null {
 
     logger.debug(`File ${path} has ${additions} additions, ${deletions} deletions, ${hunkHeaders.length} hunks`)
 
+    // Create and return the FileDiff object
     return {
       path,
       diff: fileHeader,
@@ -151,6 +207,13 @@ function processFileDiff(fileHeader: string, path: string): FileDiff | null {
     }
   } catch (error) {
     logger.error(`Error processing diff for ${path}:`, error instanceof Error ? error.message : String(error))
+
+    // Debug log to help diagnose issues
+    if (fileHeader.length > 0) {
+      const previewLength = Math.min(200, fileHeader.length)
+      logger.debug(`Diff preview for ${path} (first ${previewLength} chars): ${fileHeader.substring(0, previewLength)}`)
+    }
+
     return null
   }
 }
@@ -346,8 +409,8 @@ export const githubTools = {
     execute: async ({
       context: { owner, repo, pullNumber: pull_number, comments, reviewBody = '', event = 'COMMENT' },
     }) => {
-      console.log(`[GitHub] Creating batch review with ${comments.length} comments for ${owner}/${repo}#${pull_number}`)
-      console.log(`[GitHub] Review event: ${event}, body length: ${reviewBody.length} chars`)
+      logger.info(`Creating batch review with ${comments.length} comments for ${owner}/${repo}#${pull_number}`)
+      logger.info(`Review event: ${event}, body length: ${reviewBody.length} chars`)
 
       try {
         const { data: pr } = await octokit.rest.pulls.get({
@@ -355,7 +418,7 @@ export const githubTools = {
           repo,
           pull_number,
         })
-        console.log(`[GitHub] Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
+        logger.info(`Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
 
         // Get the list of files in the PR to validate comment paths
         const { data: prFiles } = await octokit.rest.pulls.listFiles({
@@ -377,7 +440,7 @@ export const githubTools = {
           ]),
         )
 
-        console.log(`[GitHub] PR has ${prFiles.length} files`)
+        logger.info(`PR has ${prFiles.length} files`)
 
         // Validate comments against PR files
         const skippedComments = []
@@ -387,7 +450,7 @@ export const githubTools = {
           const fileInfo = fileMap.get(comment.path)
 
           if (!fileInfo) {
-            console.log(`[GitHub] Skipping comment on ${comment.path}:${comment.line} - file not in PR`)
+            logger.info(`Skipping comment on ${comment.path}:${comment.line} - file not in PR`)
             skippedComments.push({
               path: comment.path,
               line: comment.line,
@@ -397,7 +460,7 @@ export const githubTools = {
           }
 
           if (fileInfo.status === 'removed') {
-            console.log(`[GitHub] Skipping comment on ${comment.path}:${comment.line} - file was deleted`)
+            logger.info(`Skipping comment on ${comment.path}:${comment.line} - file was deleted`)
             skippedComments.push({
               path: comment.path,
               line: comment.line,
@@ -407,9 +470,7 @@ export const githubTools = {
           }
 
           if (fileInfo.status === 'added' && comment.side === 'LEFT') {
-            console.log(
-              `[GitHub] Skipping comment on ${comment.path}:${comment.line} - cannot comment on LEFT side of new file`,
-            )
+            logger.info(`Skipping comment on ${comment.path}:${comment.line} - cannot comment on LEFT side of new file`)
             skippedComments.push({
               path: comment.path,
               line: comment.line,
@@ -419,7 +480,7 @@ export const githubTools = {
           }
 
           if (fileInfo.additions === 0 && comment.side === 'RIGHT') {
-            console.log(`[GitHub] Skipping comment on ${comment.path}:${comment.line} - file has no additions`)
+            logger.info(`Skipping comment on ${comment.path}:${comment.line} - file has no additions`)
             skippedComments.push({
               path: comment.path,
               line: comment.line,
@@ -437,20 +498,56 @@ export const githubTools = {
           })
         }
 
-        console.log(`[GitHub] Found ${validComments.length} valid comments, skipped ${skippedComments.length}`)
+        logger.info(`Found ${validComments.length} valid comments, skipped ${skippedComments.length}`)
 
         if (validComments.length === 0) {
-          console.log('[GitHub] No valid comments found, aborting review creation')
+          logger.info('No valid comments found, creating position-less review instead')
+
+          // Create a review with just a body that includes all the comments
+          const consolidatedBody = reviewBody || 'Review comments:'
+
+          // Group comments by file
+          const fileComments = new Map<string, string[]>()
+
+          for (const comment of comments) {
+            if (!fileComments.has(comment.path)) {
+              fileComments.set(comment.path, [])
+            }
+            fileComments.get(comment.path)?.push(`Line ${comment.line}: ${comment.body}`)
+          }
+
+          // Format the consolidated body
+          let fullReviewBody = `${consolidatedBody}\n\n`
+
+          for (const [path, commentList] of fileComments.entries()) {
+            fullReviewBody += `### ${path}\n\n`
+            for (const comment of commentList) {
+              fullReviewBody += `- ${comment}\n`
+            }
+            fullReviewBody += '\n'
+          }
+
+          // Submit a position-less review
+          logger.info('Submitting position-less review')
+          await octokit.rest.pulls.createReview({
+            owner,
+            repo,
+            pull_number,
+            commit_id: pr.head.sha,
+            body: fullReviewBody,
+            event,
+          })
+
           return {
-            success: false,
-            message: 'Could not find valid positions for any comments',
-            commentCount: 0,
+            success: true,
+            message: 'Created position-less review with consolidated comments',
+            commentCount: comments.length,
             skippedComments,
           }
         }
 
         // Create a review with all comments
-        console.log(`[GitHub] Creating review with ${validComments.length} comments`)
+        logger.info(`Creating review with ${validComments.length} comments`)
         const response = await octokit.rest.pulls.createReview({
           owner,
           repo,
@@ -461,8 +558,8 @@ export const githubTools = {
           comments: validComments,
         })
 
-        console.log(`[GitHub] Successfully created review with ID: ${response.data.id}`)
-        console.log(`[GitHub] Submitting review for ${owner}/${repo}#${pull_number} with event ${event}`)
+        logger.info(`Successfully created review with ID: ${response.data.id}`)
+        logger.info(`Submitting review for ${owner}/${repo}#${pull_number} with event ${event}`)
 
         return {
           success: true,
@@ -471,12 +568,12 @@ export const githubTools = {
           skippedComments: skippedComments.length > 0 ? skippedComments : undefined,
         }
       } catch (error: unknown) {
-        console.error('[GitHub] Error creating batch comments:', error)
+        logger.error('Error creating batch comments:', error)
         if (error instanceof Error) {
-          console.error(`[GitHub] Error details: ${error.message}`)
+          logger.error(`Error details: ${error.message}`)
           if ('response' in error) {
             // @ts-ignore
-            console.error(`[GitHub] API response: ${JSON.stringify(error.response?.data)}`)
+            logger.error(`API response: ${JSON.stringify(error.response?.data)}`)
           }
         }
         return {
@@ -504,7 +601,7 @@ export const githubTools = {
       message: z.string().optional(),
     }),
     execute: async ({ context: { body, event, owner, repo, pullNumber: pull_number } }) => {
-      console.log(`[GitHub] Submitting review for ${owner}/${repo}#${pull_number} with event ${event}`)
+      logger.info(`Submitting review for ${owner}/${repo}#${pull_number} with event ${event}`)
       try {
         await octokit.rest.pulls.createReview({
           owner,
@@ -519,7 +616,7 @@ export const githubTools = {
           message: `Review submitted with event: ${event}`,
         }
       } catch (error: unknown) {
-        console.error('[GitHub] Error submitting review:', error)
+        logger.error('Error submitting review:', error)
         return {
           success: false,
           message: error instanceof Error ? error.message : String(error),
@@ -546,7 +643,7 @@ export const githubTools = {
       error: z.string().optional(),
     }),
     execute: async ({ context: { owner, repo, pullNumber: pull_number, filePath } }) => {
-      console.log(`[GitHub] Getting diff for file ${filePath} in ${owner}/${repo}#${pull_number}`)
+      logger.info(`Getting diff for file ${filePath} in ${owner}/${repo}#${pull_number}`)
 
       try {
         // Check if file exists in PR
@@ -556,9 +653,9 @@ export const githubTools = {
           pull_number,
         })
 
-        const fileExists = files.some((file) => file.filename === filePath)
-        if (!fileExists) {
-          console.log(`[GitHub] File ${filePath} not found in PR ${owner}/${repo}#${pull_number}`)
+        const fileInfo = files.find((file) => file.filename === filePath)
+        if (!fileInfo) {
+          logger.warn(`File ${filePath} not found in PR ${owner}/${repo}#${pull_number}`)
           return {
             path: filePath,
             error: 'File not found in PR',
@@ -577,27 +674,68 @@ export const githubTools = {
 
         // Parse the diff to extract just the requested file
         const diffText = data.toString()
-        const fileDiffs = parseDiff(diffText)
-        const fileDiff = fileDiffs.find((diff) => diff.path === filePath)
+        logger.debug(`Received diff of ${diffText.length} characters`)
 
-        if (!fileDiff) {
-          console.log(`[GitHub] Diff for ${filePath} not found in PR ${owner}/${repo}#${pull_number}`)
+        try {
+          const fileDiffs = parseDiff(diffText)
+          logger.info(`Parsed ${fileDiffs.length} files from diff`)
+
+          // Find the requested file in the parsed diffs
+          const fileDiff = fileDiffs.find((diff) => diff.path === filePath)
+
+          if (!fileDiff) {
+            logger.warn(`Diff for ${filePath} not found in PR ${owner}/${repo}#${pull_number}`)
+
+            // For debugging purposes, log the paths we did find
+            if (fileDiffs.length > 0) {
+              logger.debug(`Found diffs for: ${fileDiffs.map((d) => d.path).join(', ')}`)
+            }
+
+            // Fallback: Create synthetic diff from file stats
+            logger.info(`Creating synthetic diff from file stats for ${filePath}`)
+
+            const { additions, deletions, changes } = fileInfo
+
+            // Create a simple diff representation based on file statistics
+            const syntheticDiff = {
+              path: filePath,
+              diff: `Synthetic diff for ${filePath}\nAdditions: ${additions}, Deletions: ${deletions}, Changes: ${changes}`,
+              additions,
+              deletions,
+              changes,
+            }
+
+            logger.info(`Successfully created synthetic diff for ${filePath}`)
+            return syntheticDiff
+          }
+
+          logger.info(`Successfully retrieved diff for ${filePath}`)
           return {
             path: filePath,
-            error: 'Diff not found for file',
+            diff: fileDiff.diff,
+            additions: fileDiff.additions,
+            deletions: fileDiff.deletions,
+            changes: fileDiff.changes,
+          }
+        } catch (parseError) {
+          logger.error(`Error parsing diff: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
+
+          // Fallback: Create synthetic diff from file stats
+          logger.info(`Creating synthetic diff from file stats after parse error for ${filePath}`)
+
+          const { additions, deletions, changes } = fileInfo
+
+          return {
+            path: filePath,
+            diff: `Synthetic diff for ${filePath} (parse error fallback)`,
+            additions,
+            deletions,
+            changes,
+            error: `Failed to parse diff data: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
           }
         }
-
-        console.log(`[GitHub] Successfully retrieved diff for ${filePath}`)
-        return {
-          path: filePath,
-          diff: fileDiff.diff,
-          additions: fileDiff.additions,
-          deletions: fileDiff.deletions,
-          changes: fileDiff.changes,
-        }
       } catch (error: unknown) {
-        console.error(`[GitHub] Error getting diff for ${filePath}:`, error)
+        logger.error(`Error getting diff for ${filePath}:`, error)
         return {
           path: filePath,
           error: error instanceof Error ? error.message : String(error),
@@ -646,7 +784,7 @@ export const githubTools = {
         maxFileSize = 100000,
       },
     }) => {
-      console.log(`[GitHub] Getting changed files for ${owner}/${repo}#${pull_number} (page ${page})`)
+      logger.info(`Getting changed files for ${owner}/${repo}#${pull_number} (page ${page})`)
       const { data } = await octokit.rest.pulls.listFiles({
         owner,
         repo,
@@ -655,12 +793,12 @@ export const githubTools = {
         page,
       })
 
-      console.log(`[GitHub] Found ${data.length} files in PR ${owner}/${repo}#${pull_number}`)
+      logger.info(`Found ${data.length} files in PR ${owner}/${repo}#${pull_number}`)
 
       // Log file sizes to help diagnose issues
       for (const file of data) {
-        console.log(
-          `[GitHub] File: ${file.filename}, Size: ${file.changes} changes, ${file.additions} additions, ${file.deletions} deletions`,
+        logger.debug(
+          `File: ${file.filename}, Size: ${file.changes} changes, ${file.additions} additions, ${file.deletions} deletions`,
         )
       }
 
@@ -683,27 +821,25 @@ export const githubTools = {
 
         const beforeCount = filteredFiles.length
         filteredFiles = filteredFiles.filter((file) => !lockFilePatterns.some((pattern) => pattern.test(file.filename)))
-        console.log(`[GitHub] Filtered out ${beforeCount - filteredFiles.length} lock files`)
+        logger.info(`Filtered out ${beforeCount - filteredFiles.length} lock files`)
       }
 
       // Filter out large files
       const beforeSizeCount = filteredFiles.length
       filteredFiles = filteredFiles.filter((file) => file.changes <= maxFileSize)
-      console.log(
-        `[GitHub] Filtered out ${beforeSizeCount - filteredFiles.length} large files (>${maxFileSize} changes)`,
-      )
+      logger.info(`Filtered out ${beforeSizeCount - filteredFiles.length} large files (>${maxFileSize} changes)`)
 
       // Apply pagination after filtering
       const paginatedFiles = filteredFiles.slice(0, perPage)
-      console.log(`[GitHub] Returning ${paginatedFiles.length} files after pagination`)
+      logger.info(`Returning ${paginatedFiles.length} files after pagination`)
 
       const skippedFiles = data
         .filter((file) => !paginatedFiles.some((pf) => pf.filename === file.filename))
         .map((file) => `${file.filename} (${file.changes} changes)`)
 
-      console.log(`[GitHub] Skipped ${skippedFiles.length} files`)
+      logger.info(`Skipped ${skippedFiles.length} files`)
       if (skippedFiles.length > 0) {
-        console.log(`[GitHub] Skipped files: ${skippedFiles.join(', ')}`)
+        logger.debug(`Skipped files: ${skippedFiles.join(', ')}`)
       }
 
       // Return just the filenames and metadata
@@ -742,7 +878,7 @@ export const githubTools = {
       error: z.string().optional(),
     }),
     execute: async ({ context: { owner, repo, pullNumber: pull_number, filePath, ref } }) => {
-      console.log(`[GitHub] Getting content for file ${filePath} in ${owner}/${repo}#${pull_number}`)
+      logger.info(`Getting content for file ${filePath} in ${owner}/${repo}#${pull_number}`)
 
       try {
         // First get the PR to determine the head ref if not provided
@@ -766,7 +902,7 @@ export const githubTools = {
         if ('content' in data) {
           const content = Buffer.from(data.content, 'base64').toString('utf-8')
           const contentSize = content.length
-          console.log(`[GitHub] File content size for ${filePath}: ${contentSize} characters`)
+          logger.info(`File content size for ${filePath}: ${contentSize} characters`)
 
           return {
             path: filePath,
@@ -777,7 +913,7 @@ export const githubTools = {
 
         throw new Error(`${filePath} is not a file`)
       } catch (error: unknown) {
-        console.error(`[GitHub] Error getting content for ${filePath}:`, error)
+        logger.error(`Error getting content for ${filePath}:`, error)
         return {
           path: filePath,
           error: error instanceof Error ? error.message : String(error),
@@ -814,7 +950,7 @@ export const githubTools = {
       }),
     }),
     execute: async ({ context: { owner, repo, pullNumber: pull_number } }) => {
-      console.log(`[GitHub] Getting PR details for ${owner}/${repo}#${pull_number}`)
+      logger.info(`Getting PR details for ${owner}/${repo}#${pull_number}`)
       const { data } = await octokit.rest.pulls.get({
         owner,
         repo,
@@ -852,7 +988,7 @@ export const githubTools = {
       hasMore: z.boolean(),
     }),
     execute: async ({ context: { owner, repo, pullNumber: pull_number, page = 1, perPage = 30 } }) => {
-      console.log(`[GitHub] Getting review comments for ${owner}/${repo}#${pull_number} (page ${page})`)
+      logger.info(`Getting review comments for ${owner}/${repo}#${pull_number} (page ${page})`)
       try {
         const { data } = await octokit.rest.pulls.listReviewComments({
           owner,
@@ -881,7 +1017,7 @@ export const githubTools = {
           hasMore: data.length === perPage,
         }
       } catch (error: unknown) {
-        console.error('[GitHub] Error getting review comments:', error)
+        logger.error('Error getting review comments:', error)
         return {
           comments: [],
           page,
