@@ -17,7 +17,7 @@ jobs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
-      reviewer: ${{ steps.filter.outputs.reviewer }}
+      reviseur: ${{ steps.filter.outputs.reviseur }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -30,8 +30,8 @@ jobs:
               - 'apps/findbobastore/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
-            reviewer:
-              - 'apps/reviewer/**'
+            reviseur:
+              - 'apps/reviseur/**'
             packages:
               - 'packages/**'
 
@@ -118,9 +118,9 @@ jobs:
         working-directory: apps/kitty-krew
         run: bun run build
 
-  reviewer:
+  reviseur:
     needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.reviewer == 'true' }}
+    if: ${{ needs.check_changed_files.outputs.reviseur == 'true' }}
     runs-on: arc-arm64
     steps:
       - uses: actions/checkout@v4
@@ -133,7 +133,7 @@ jobs:
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
-        working-directory: apps/reviewer
+        working-directory: apps/reviseur
 
       - run: pnpm run build
-        working-directory: apps/reviewer
+        working-directory: apps/reviseur
