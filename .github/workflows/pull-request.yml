@@ -145,8 +145,9 @@ jobs:
         working-directory: apps/reviewer
         run: bun tsc --noEmit
 
-      - name: Install Hono globally
-        run: bun install -g hono
+      - name: Setup Hono submodules
+        working-directory: apps/reviewer
+        run: bun setup-hono.js
 
       - name: Build reviewer app
         working-directory: apps/reviewer
