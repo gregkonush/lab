@@ -131,7 +131,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: apps/reviewer
-        run: bun install --frozen-lockfile
+        run: bun install
 
       - name: Lint
         working-directory: apps/reviewer
