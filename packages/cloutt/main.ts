@@ -10,6 +10,7 @@ if (require.main === module) {
   new RootKustomization(kustomizationManifest, 'kustomization', { overlays: ['overlays/dev'] })
   kustomizationManifest.synth()
 
+  const appName = 'reviewer'
   const overlays = new App({
     outdir: 'dist/base',
     outputFileExtension: '.yaml',

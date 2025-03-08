@@ -231,7 +231,7 @@ importers:
         specifier: ^5
         version: 5.8.2
 
-  apps/reviewer:
+  apps/reviseur:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: ^1.1.15
