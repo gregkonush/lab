@@ -16,16 +16,8 @@
   "type": "module",
   "dependencies": {
     "@ai-sdk/anthropic": "^1.1.15",
-    "@mastra/core": "^0.5.0-alpha.9",
-    "hono": "^4.6.17",
-    "@hono/logger": "^1.2.1",
-    "@hono/body-limit": "^0.0.3",
-    "@hono/cors": "^0.1.0",
-    "@hono/html": "^0.2.0",
-    "@hono/http-exception": "^0.2.0",
-    "@hono/streaming": "^0.0.4",
-    "@hono/utils": "^0.0.1",
-    "mastra": "^0.2.9-alpha.9",
+    "@mastra/core": "^0.4.4",
+    "mastra": "^0.2.8",
     "octokit": "^4.1.2",
     "zod": "^3.24.2"
   },
