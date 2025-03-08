@@ -127,11 +127,11 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.2.4
+          bun-version: latest
 
       - name: Install dependencies
         working-directory: apps/reviewer
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Lint
         working-directory: apps/reviewer
@@ -144,6 +144,9 @@ jobs:
       - name: Type check
         working-directory: apps/reviewer
         run: bun tsc --noEmit
+
+      - name: Install Hono globally
+        run: bun install -g hono
 
       - name: Build reviewer app
         working-directory: apps/reviewer
