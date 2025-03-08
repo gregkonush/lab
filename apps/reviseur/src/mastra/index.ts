@@ -5,7 +5,7 @@ import { githubAgent } from './agents/github.ts'
 export const mastra = new Mastra({
   agents: { githubAgent },
   logger: createLogger({
-    name: 'Mastra',
-    level: 'info',
+    name: 'Github Agent',
+    level: 'debug',
   }),
 })

@@ -125,26 +125,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: 22.12.0
+          cache: "pnpm"
 
-      - name: Install dependencies
+      - run: pnpm install
         working-directory: apps/reviseur
-        run: bun install --frozen-lockfile
 
-      - name: Lint
+      - run: pnpm build
         working-directory: apps/reviseur
-        run: bun biome lint
-
-      - name: Format check
-        working-directory: apps/reviseur
-        run: bun biome format
-
-      - name: Type check
-        working-directory: apps/reviseur
-        run: bun tsc --noEmit
-
-      - name: Build reviseur app
-        working-directory: apps/reviseur
-        run: bun run pnpm build
