@@ -10,8 +10,10 @@ const octokit = new Octokit({
 
 // Helper function to parse diff text
 function parseDiff(diffText: string) {
+  console.log(`[GitHub] Parsing diff text of length ${diffText.length}`)
   const files = []
   const fileHeaders = diffText.split('diff --git ')
+  console.log(`[GitHub] Found ${fileHeaders.length - 1} file headers in diff`)
 
   // Skip the first empty element
   for (let i = 1; i < fileHeaders.length; i++) {
@@ -20,27 +22,90 @@ function parseDiff(diffText: string) {
 
     if (fileNameMatch?.[1]) {
       const path = fileNameMatch[1]
+      console.log(`[GitHub] Processing diff for file: ${path}`)
       const diffLines = fileHeader.split('\n')
+      console.log(`[GitHub] Diff for ${path} has ${diffLines.length} lines`)
 
-      // Count additions and deletions
+      // Find hunk headers to properly track positions
+      const hunkHeaders = []
+      let currentLine = 0
       let additions = 0
       let deletions = 0
+      let inHunk = false
+      let hunkStartLine = 0
+      let isNewFile = false
+      let isDeleted = false
 
-      for (const line of diffLines) {
-        if (line.startsWith('+') && !line.startsWith('+++')) {
-          additions++
-        } else if (line.startsWith('-') && !line.startsWith('---')) {
-          deletions++
+      // Check if file is new or deleted
+      for (let j = 0; j < Math.min(10, diffLines.length); j++) {
+        if (diffLines[j].includes('new file mode')) {
+          isNewFile = true
+          console.log(`[GitHub] ${path} is a new file`)
+          break
+        }
+        if (diffLines[j].includes('deleted file mode')) {
+          isDeleted = true
+          console.log(`[GitHub] ${path} is a deleted file`)
+          break
         }
       }
 
+      // Process each line to count additions/deletions and track positions
+      for (let j = 0; j < diffLines.length; j++) {
+        const line = diffLines[j]
+
+        // Track hunk headers
+        if (line.startsWith('@@')) {
+          inHunk = true
+          hunkHeaders.push({
+            index: j,
+            content: line,
+          })
+
+          // Extract the starting line number from the hunk header
+          // Format: @@ -old_start,old_count +new_start,new_count @@
+          const match = line.match(/\+(\d+)/)
+          if (match?.[1]) {
+            hunkStartLine = Number.parseInt(match[1], 10)
+            currentLine = hunkStartLine - 1 // Will be incremented for the first content line
+            console.log(`[GitHub] Found hunk header at line ${j}: ${line}, starting at line ${hunkStartLine}`)
+          } else {
+            console.log(`[GitHub] Found hunk header at line ${j} but couldn't parse line number: ${line}`)
+          }
+          continue
+        }
+
+        if (inHunk) {
+          // Count additions and deletions
+          if (line.startsWith('+') && !line.startsWith('+++')) {
+            additions++
+            currentLine++
+          } else if (line.startsWith('-') && !line.startsWith('---')) {
+            deletions++
+          } else if (!line.startsWith('\\') && !line.startsWith('---') && !line.startsWith('+++')) {
+            // Context line (unchanged)
+            currentLine++
+          }
+        }
+      }
+
+      console.log(
+        `[GitHub] File ${path} has ${additions} additions, ${deletions} deletions, ${hunkHeaders.length} hunks`,
+      )
       files.push({
         path,
         diff: fileHeader,
         additions,
         deletions,
         changes: additions + deletions,
+        hunkHeaders,
+        isNewFile,
+        isDeleted,
+        isEmpty: additions === 0 && deletions === 0,
+        onlyDeletions: additions === 0 && deletions > 0,
       })
+    } else {
+      console.log(`[GitHub] Could not extract file path from header: ${fileHeader.substring(0, 100)}...`)
     }
   }
 
@@ -50,6 +115,10 @@ function parseDiff(diffText: string) {
 // Helper function to find line positions in diff
 function findPositionInDiff(diffText: string, filePath: string, lineNumber: number): number | undefined {
   console.log(`[GitHub] Finding position in diff for ${filePath}:${lineNumber}`)
+  console.log(`[GitHub] Diff text length: ${diffText.length} bytes`)
+
+  // Log a sample of the diff for debugging
+  console.log(`[GitHub] Diff sample (first 500 chars): ${diffText.substring(0, 500)}...`)
 
   const files = parseDiff(diffText)
   console.log(`[GitHub] Parsed ${files.length} files from diff`)
@@ -57,6 +126,8 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
   const fileDiff = files.find((file) => file.path === filePath)
   if (!fileDiff) {
     console.log(`[GitHub] File ${filePath} not found in diff`)
+    // Log all available file paths for debugging
+    console.log(`[GitHub] Available files in diff: ${files.map((f) => f.path).join(', ')}`)
     return undefined
   }
 
@@ -64,17 +135,68 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
     `[GitHub] Found file ${filePath} in diff with ${fileDiff.additions} additions, ${fileDiff.deletions} deletions`,
   )
 
+  // Handle edge cases
+  if (fileDiff.isEmpty) {
+    console.log(`[GitHub] File ${filePath} has no changes in the diff`)
+    return undefined
+  }
+
+  if (fileDiff.isDeleted) {
+    console.log(`[GitHub] File ${filePath} is deleted in this PR, cannot comment on line ${lineNumber}`)
+    return undefined
+  }
+
+  if (fileDiff.onlyDeletions) {
+    console.log(`[GitHub] File ${filePath} only has deletions, cannot comment on line ${lineNumber} in the new version`)
+    return undefined
+  }
+
+  if (fileDiff.isNewFile && lineNumber > fileDiff.additions) {
+    console.log(`[GitHub] Line ${lineNumber} is beyond the end of new file ${filePath} (${fileDiff.additions} lines)`)
+    return undefined
+  }
+
   const lines = fileDiff.diff.split('\n')
   console.log(`[GitHub] Diff for ${filePath} has ${lines.length} lines`)
 
+  // Log the first few lines of the file diff for debugging
+  console.log(`[GitHub] First 10 lines of diff for ${filePath}:`)
+  for (let i = 0; i < Math.min(10, lines.length); i++) {
+    console.log(`  Line ${i}: ${lines[i].substring(0, 100)}${lines[i].length > 100 ? '...' : ''}`)
+  }
+
   let currentLine = 0
   let position = 0
-  const headerLines = 0
+  let inHunk = false
   const debugLines: string[] = []
+  let lastHunkHeader = ''
+  let maxLineInFile = 0
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    position++
+
+    // Track hunk headers to reset position counting
+    if (line.startsWith('@@')) {
+      inHunk = true
+      position = i
+      lastHunkHeader = line
+
+      // Extract the starting line number from the hunk header
+      // Format: @@ -old_start,old_count +new_start,new_count @@
+      const match = line.match(/\+(\d+),(\d+)/)
+      if (match?.[1] && match?.[2]) {
+        const startLine = Number.parseInt(match[1], 10)
+        const lineCount = Number.parseInt(match[2], 10)
+        currentLine = startLine - 1 // Will be incremented for the first content line
+        maxLineInFile = Math.max(maxLineInFile, startLine + lineCount - 1)
+        console.log(
+          `[GitHub] Found hunk header at position ${i}: ${line}, resetting to line ${currentLine + 1}, hunk covers up to line ${startLine + lineCount - 1}`,
+        )
+      } else {
+        console.log(`[GitHub] Found hunk header at position ${i} but couldn't parse line number: ${line}`)
+      }
+      continue
+    }
 
     // Skip diff header lines
     if (
@@ -82,39 +204,63 @@ function findPositionInDiff(diffText: string, filePath: string, lineNumber: numb
       line.startsWith('index ') ||
       line.startsWith('---') ||
       line.startsWith('+++') ||
-      line.startsWith('@@')
+      !inHunk
     ) {
       continue
     }
 
     // Count lines in the new file
-    if (!line.startsWith('-')) {
+    if (line.startsWith('+') || (!line.startsWith('-') && !line.startsWith('\\'))) {
       currentLine++
+      position++
+      maxLineInFile = Math.max(maxLineInFile, currentLine)
 
       // Store some context for debugging
-      if (Math.abs(currentLine - lineNumber) <= 3) {
+      if (Math.abs(currentLine - lineNumber) <= 5) {
         debugLines.push(
-          `Line ${currentLine} (position ${position}): ${line.substring(0, 50)}${line.length > 50 ? '...' : ''}`,
+          `Line ${currentLine} (position ${position}): ${line.substring(0, 100)}${line.length > 100 ? '...' : ''}`,
         )
       }
-    }
 
-    if (currentLine === lineNumber) {
-      console.log(`[GitHub] Found position ${position} for line ${lineNumber} in ${filePath}`)
-      console.log(`[GitHub] Context around line ${lineNumber}:`)
-      for (const l of debugLines) {
-        console.log(`  ${l}`)
+      if (currentLine === lineNumber) {
+        console.log(`[GitHub] Found position ${position} for line ${lineNumber} in ${filePath}`)
+        console.log(`[GitHub] Last hunk header: ${lastHunkHeader}`)
+        console.log(`[GitHub] Context around line ${lineNumber}:`)
+        for (const l of debugLines) {
+          console.log(`  ${l}`)
+        }
+        return position
       }
-      return position
+    } else if (line.startsWith('-')) {
+      // Deletion lines count for position but not for current line
+      position++
     }
   }
 
   console.log(`[GitHub] Could not find position for line ${lineNumber} in ${filePath}`)
-  console.log(`[GitHub] Last line reached: ${currentLine}, header lines: ${headerLines}`)
+  console.log(
+    `[GitHub] Last line reached: ${currentLine}, max line in file: ${maxLineInFile}, last hunk header: ${lastHunkHeader}`,
+  )
+
+  if (lineNumber > maxLineInFile) {
+    console.log(`[GitHub] Line ${lineNumber} is beyond the end of file ${filePath} (${maxLineInFile} lines)`)
+  }
+
   if (debugLines.length > 0) {
     console.log('[GitHub] Last context lines:')
     for (const l of debugLines) {
       console.log(`  ${l}`)
+    }
+  } else {
+    console.log('[GitHub] No context lines found near target line')
+  }
+
+  // Log the last few lines of the file diff for debugging
+  const lastLines = Math.min(5, lines.length)
+  console.log(`[GitHub] Last ${lastLines} lines of diff for ${filePath}:`)
+  for (let i = lines.length - lastLines; i < lines.length; i++) {
+    if (i >= 0) {
+      console.log(`  Line ${i}: ${lines[i].substring(0, 100)}${lines[i].length > 100 ? '...' : ''}`)
     }
   }
 
@@ -151,34 +297,8 @@ export const githubTools = {
         })
         console.log(`[GitHub] Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
 
-        // If position is not provided, try to find it in the diff
-        if (!position) {
-          console.log(`[GitHub] Finding position for ${file}:${lineNumber}`)
-          const { data: diffData } = await octokit.rest.pulls.get({
-            owner,
-            repo,
-            pull_number,
-            mediaType: {
-              format: 'diff',
-            },
-          })
-          console.log(
-            `[GitHub] Retrieved diff for PR ${owner}/${repo}#${pull_number}, size: ${diffData.toString().length} bytes`,
-          )
-
-          const diffText = diffData.toString()
-          position = findPositionInDiff(diffText, file, lineNumber)
-
-          if (!position) {
-            console.log(`[GitHub] Failed to find position for ${file}:${lineNumber} in the diff`)
-            return {
-              success: false,
-              message: `Could not find position for ${file}:${lineNumber} in the diff`,
-            }
-          }
-        }
-
-        console.log(`[GitHub] Creating review comment on ${file}:${lineNumber} at position ${position}, side: ${side}`)
+        // We'll use line and side parameters instead of position
+        console.log(`[GitHub] Creating review comment on ${file}:${lineNumber}, side: ${side}`)
         console.log(
           `[GitHub] Comment content (first 100 chars): ${comment.substring(0, 100)}${comment.length > 100 ? '...' : ''}`,
         )
@@ -191,7 +311,6 @@ export const githubTools = {
           path: file,
           line: lineNumber,
           side,
-          position,
           body: comment,
         })
 
@@ -242,6 +361,15 @@ export const githubTools = {
       success: z.boolean(),
       message: z.string().optional(),
       commentCount: z.number().optional(),
+      skippedComments: z
+        .array(
+          z.object({
+            path: z.string(),
+            line: z.number(),
+            reason: z.string(),
+          }),
+        )
+        .optional(),
     }),
     execute: async ({
       context: { owner, repo, pullNumber: pull_number, comments, reviewBody = '', event = 'COMMENT' },
@@ -257,59 +385,87 @@ export const githubTools = {
         })
         console.log(`[GitHub] Found PR ${owner}/${repo}#${pull_number}, head SHA: ${pr.head.sha}`)
 
-        // If positions are not provided for comments, try to find them in the diff
-        console.log('[GitHub] Retrieving diff to find positions for comments')
-        const { data: diffData } = await octokit.rest.pulls.get({
+        // Get the list of files in the PR to validate comment paths
+        const { data: prFiles } = await octokit.rest.pulls.listFiles({
           owner,
           repo,
           pull_number,
-          mediaType: {
-            format: 'diff',
-          },
         })
-        console.log(`[GitHub] Retrieved diff, size: ${diffData.toString().length} bytes`)
 
-        const diffText = diffData.toString()
+        // Create a map of file paths to their metadata for quick lookup
+        const fileMap = new Map(
+          prFiles.map((file) => [
+            file.filename,
+            {
+              status: file.status,
+              additions: file.additions,
+              deletions: file.deletions,
+              changes: file.changes,
+            },
+          ]),
+        )
 
-        // Prepare comments with positions
-        console.log(`[GitHub] Processing ${comments.length} comments to find positions`)
-        const commentsWithPositions = await Promise.all(
-          comments.map(async (comment, index) => {
+        console.log(`[GitHub] PR has ${prFiles.length} files`)
+
+        // Validate comments against PR files
+        const skippedComments = []
+        const validComments = []
+
+        for (const comment of comments) {
+          const fileInfo = fileMap.get(comment.path)
+
+          if (!fileInfo) {
+            console.log(`[GitHub] Skipping comment on ${comment.path}:${comment.line} - file not in PR`)
+            skippedComments.push({
+              path: comment.path,
+              line: comment.line,
+              reason: 'File not found in PR',
+            })
+            continue
+          }
+
+          if (fileInfo.status === 'removed') {
+            console.log(`[GitHub] Skipping comment on ${comment.path}:${comment.line} - file was deleted`)
+            skippedComments.push({
+              path: comment.path,
+              line: comment.line,
+              reason: 'File was deleted in PR',
+            })
+            continue
+          }
+
+          if (fileInfo.status === 'added' && comment.side === 'LEFT') {
             console.log(
-              `[GitHub] Processing comment ${index + 1}/${comments.length} for ${comment.path}:${comment.line}`,
+              `[GitHub] Skipping comment on ${comment.path}:${comment.line} - cannot comment on LEFT side of new file`,
             )
+            skippedComments.push({
+              path: comment.path,
+              line: comment.line,
+              reason: 'Cannot comment on LEFT side of new file',
+            })
+            continue
+          }
 
-            if (!comment.position) {
-              console.log(`[GitHub] Finding position for ${comment.path}:${comment.line}`)
-              const position = findPositionInDiff(diffText, comment.path, comment.line)
+          if (fileInfo.additions === 0 && comment.side === 'RIGHT') {
+            console.log(`[GitHub] Skipping comment on ${comment.path}:${comment.line} - file has no additions`)
+            skippedComments.push({
+              path: comment.path,
+              line: comment.line,
+              reason: 'File has no additions, cannot comment on RIGHT side',
+            })
+            continue
+          }
 
-              if (!position) {
-                console.warn(`[GitHub] Could not find position for ${comment.path}:${comment.line}`)
-                return null
-              }
+          // Comment seems valid, add it to the list
+          validComments.push({
+            path: comment.path,
+            line: comment.line,
+            side: comment.side || 'RIGHT',
+            body: comment.body,
+          })
+        }
 
-              console.log(`[GitHub] Found position ${position} for ${comment.path}:${comment.line}`)
-              return {
-                ...comment,
-                position,
-                side: comment.side || 'RIGHT',
-              }
-            }
-
-            console.log(`[GitHub] Using provided position ${comment.position} for ${comment.path}:${comment.line}`)
-            return {
-              ...comment,
-              side: comment.side || 'RIGHT',
-            }
-          }),
-        )
-
-        // Filter out comments where position couldn't be found
-        const validComments = commentsWithPositions.filter(
-          (comment): comment is NonNullable<typeof comment> => comment !== null,
-        )
-
-        console.log(`[GitHub] Found valid positions for ${validComments.length}/${comments.length} comments`)
+        console.log(`[GitHub] Found ${validComments.length} valid comments, skipped ${skippedComments.length}`)
 
         if (validComments.length === 0) {
           console.log('[GitHub] No valid comments found, aborting review creation')
@@ -317,6 +473,7 @@ export const githubTools = {
             success: false,
             message: 'Could not find valid positions for any comments',
             commentCount: 0,
+            skippedComments,
           }
         }
 
@@ -329,21 +486,17 @@ export const githubTools = {
           commit_id: pr.head.sha,
           body: reviewBody,
           event,
-          comments: validComments.map((comment) => ({
-            path: comment.path,
-            line: comment.line,
-            side: comment.side,
-            position: comment.position,
-            body: comment.body,
-          })),
+          comments: validComments,
         })
 
         console.log(`[GitHub] Successfully created review with ID: ${response.data.id}`)
+        console.log(`[GitHub] Submitting review for ${owner}/${repo}#${pull_number} with event ${event}`)
 
         return {
           success: true,
           message: `Created review with ${validComments.length} comments`,
           commentCount: validComments.length,
+          skippedComments: skippedComments.length > 0 ? skippedComments : undefined,
         }
       } catch (error: unknown) {
         console.error('[GitHub] Error creating batch comments:', error)
@@ -358,6 +511,7 @@ export const githubTools = {
           success: false,
           message: error instanceof Error ? error.message : String(error),
           commentCount: 0,
+          skippedComments: [],
         }
       }
     },
@@ -794,9 +948,11 @@ export const githubAgent = new Agent({
     - Clear with code examples when relevant
 
     For final review summaries:
-    - Categorize issues by severity (critical, major, minor)
-    - Highlight the most important changes needed
-    - Acknowledge positive aspects of the code
+    - Keep it brief and to the point (max 3-5 paragraphs)
+    - Categorize issues by severity (critical, major, minor) if there are many
+    - Focus only on the most important changes needed
+    - Use bullet points for clarity
+    - Avoid repeating details already mentioned in inline comments
     - Use the submitReview tool with the appropriate event type based on your findings
   `,
   model: anthropic('claude-3-5-sonnet-20241022'),
