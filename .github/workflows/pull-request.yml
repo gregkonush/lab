@@ -145,9 +145,6 @@ jobs:
         working-directory: apps/reviewer
         run: bun tsc --noEmit
 
-
-      - run: bun pm cache rm
-
       - name: Build reviewer app
         working-directory: apps/reviewer
-        run: bun run npm run build
+        run: bunx mastra build
