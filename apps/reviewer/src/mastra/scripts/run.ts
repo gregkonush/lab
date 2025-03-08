@@ -1,4 +1,4 @@
-import { githubAgent } from '../agents/github'
+import { githubAgent } from '../agents/github.js'
 
 const run = async () => {
   const result = await githubAgent.generate([

@@ -110,6 +110,8 @@
         "zod": "^3.24.2",
       },
       "devDependencies": {
+        "@biomejs/biome": "^1.9.4",
+        "@types/bun": "latest",
         "@types/node": "^22.13.9",
         "tsx": "^4.19.3",
         "typescript": "^5.8.2",

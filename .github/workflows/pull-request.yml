@@ -17,6 +17,7 @@ jobs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
+      reviewer: ${{ steps.filter.outputs.reviewer }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -29,6 +30,8 @@ jobs:
               - 'apps/findbobastore/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
+            reviewer:
+              - 'apps/reviewer/**'
             packages:
               - 'packages/**'
 
@@ -114,3 +117,23 @@ jobs:
       - name: Build kitty-krew app
         working-directory: apps/kitty-krew
         run: bun run build
+
+  reviewer:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.reviewer == 'true' }}
+    runs-on: arc-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/reviewer
+
+      - run: pnpm run build
+        working-directory: apps/reviewer
