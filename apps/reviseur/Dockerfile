@@ -10,6 +10,7 @@ FROM node:lts-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/reviseur/node_modules ./apps/reviseur/node_modules
+RUN corepack enable
 COPY . .
 RUN pnpm build:reviseur
 
@@ -18,4 +19,5 @@ WORKDIR /app
 
 COPY --from=builder /app/apps/reviseur/.mastra/output ./apps/reviseur
 
-RUN node index.mjs
+WORKDIR /app/apps/reviseur
+CMD ["node", "index.mjs"]

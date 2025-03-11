@@ -35,6 +35,8 @@ jobs:
               - 'apps/findbobastore/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
+            reviseur:
+              - 'apps/reviseur/**'
 
   version:
     runs-on: arc-arm64
