@@ -3,8 +3,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/proompteng/package.json ./apps/proompteng/
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
-RUN pnpm install --frozen-lockfile
+RUN corepack enable && pnpm install --frozen-lockfile
 
 FROM node:lts-alpine AS builder
 WORKDIR /app
