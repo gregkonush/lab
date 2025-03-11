@@ -10,6 +10,7 @@
     "dev:findbobastore": "pnpm --filter findbobastore dev",
     "build:proompteng": "pnpm --filter proompteng build",
     "build:findbobastore": "pnpm --filter findbobastore build",
+    "build:reviseur": "pnpm --filter reviseur build",
     "start:proompteng": "pnpm --filter proompteng start",
     "start:findbobastore": "pnpm --filter findbobastore start",
     "lint:proompteng": "pnpm --filter proompteng lint",
