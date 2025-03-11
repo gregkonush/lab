@@ -1,12 +1,15 @@
 name: Docker Build and Push
 
 on:
-  push:
-    branches:
-      - "main"
+  pull_request:
     paths:
-      - "apps/**"
-      - "packages/**"
+      - "apps/reviseur/**"
+  # push:
+  #   branches:
+  #     - "main"
+  #   paths:
+  #     - "apps/**"
+  #     - "packages/**"
 
 jobs:
   changes:
@@ -15,6 +18,8 @@ jobs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
+      reviseur: ${{ steps.filter.outputs.reviseur }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -90,6 +95,19 @@ jobs:
       image_name: kitty-krew
       dockerfile: ./apps/kitty-krew/Dockerfile
       context: ./apps/kitty-krew
+      new_tag: ${{ needs.version.outputs.new_tag }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-reviseur:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.reviseur == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: reviseur
+      dockerfile: ./apps/reviseur/Dockerfile
+      context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
     secrets:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
