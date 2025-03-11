@@ -1,15 +1,12 @@
 name: Docker Build and Push
 
 on:
-  pull_request:
+  push:
+    branches:
+      - "main"
     paths:
-      - "apps/reviseur/**"
-  # push:
-  #   branches:
-  #     - "main"
-  #   paths:
-  #     - "apps/**"
-  #     - "packages/**"
+      - "apps/**"
+      - "packages/**"
 
 jobs:
   changes:
