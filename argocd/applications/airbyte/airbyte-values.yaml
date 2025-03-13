@@ -5,4 +5,7 @@ webapp:
     enabled: true
     className: traefik
     hosts:
-      - airbyte.lan
+      - host: airbyte.lan
+        paths:
+          - path: /
+            pathType: Prefix
