@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: airbyte
 helmCharts:
   - name: airbyte
-    repo: https://airbyte.github.io/helm-charts
+    repo: https://airbytehq.github.io/helm-charts
     version: 1.5.1
     releaseName: airbyte
     namespace: airbyte
