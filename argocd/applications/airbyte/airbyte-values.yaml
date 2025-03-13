@@ -1,0 +1,8 @@
+global:
+  airbyteUrl: http://airbyte.lan
+webapp:
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - airbyte.lan
