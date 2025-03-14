@@ -830,7 +830,7 @@ export const githubTools = {
       }),
     }),
     execute: async ({ context: { owner, repo, pullNumber: pull_number } }) => {
-      console.log(`[GitHub] Getting PR details for ${owner}/${repo}#${pull_number}`)
+      console.log(`[GitHub] Getting PR details for repository ${owner}/${repo}#${pull_number}`)
       const { data } = await octokit.rest.pulls.get({
         owner,
         repo,
