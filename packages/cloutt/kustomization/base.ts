@@ -4,6 +4,7 @@ import { Chart } from 'cdk8s'
 import { z } from 'zod'
 import { KustomizationService } from './common/service'
 import { KustomizationDeployment } from './common/deployment'
+import { Kustomization } from './common/kustomization'
 
 const chartSchema = z.object({
   name: z.string(),
@@ -20,29 +21,42 @@ export class KustomizationBase extends Chart {
   constructor(scope: Construct, id: string, props: z.infer<typeof chartSchema>) {
     super(scope, id)
     chartSchema.parse(props)
-    new KustomizationDeployment(this, id, {
-      name: props.name,
-      replicas: props.replicas,
-      image: props.image,
-      containerPort: props.containerPort,
-      cpuRequest: props.cpuRequest,
-      cpuLimit: props.cpuLimit,
-      memoryRequest: props.memoryRequest,
-      memoryLimit: props.memoryLimit,
+    const { name, replicas, image, containerPort, cpuRequest, cpuLimit, memoryRequest, memoryLimit } = props
+    new Kustomization(this, `${id}-kustomization`, {
+      name,
+      resources: ['deployment.yaml', 'service.yaml'],
+      commonLabels: {
+        app: name,
+        'app.kubernetes.io/name': name,
+        'app.kubernetes.io/part-of': name,
+      },
+    })
+
+    console.log('Created kustomization manifest for base')
+
+    new KustomizationDeployment(this, `${id}-deployment`, {
+      name,
+      replicas,
+      image,
+      containerPort,
+      cpuRequest,
+      cpuLimit,
+      memoryRequest,
+      memoryLimit,
     })
 
     console.log('Created deployment manifest')
 
-    new KustomizationService(this, id, {
-      name: props.name,
+    new KustomizationService(this, `${id}-service`, {
+      name,
       type: ServiceType.CLUSTER_IP,
       selector: {
-        app: props.name,
+        app: name,
       },
       ports: [
         {
           port: 80,
-          targetPort: props.containerPort,
+          targetPort: containerPort,
           protocol: Protocol.TCP,
         },
       ],
