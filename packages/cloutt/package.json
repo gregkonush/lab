@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "import": "cdk8s import",
-    "synth": "cdk8s synth"
+    "synth": "cdk8s synth",
+    "build": "bun main.ts"
   },
   "dependencies": {
     "cdk8s": "^2.69.48",

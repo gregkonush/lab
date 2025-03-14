@@ -3,10 +3,12 @@ import { Kustomization } from './common/kustomization'
 import { Chart } from 'cdk8s'
 
 export class RootKustomization extends Chart {
-  constructor(scope: Construct, id: string, props: { overlays: string[] }) {
+  constructor(scope: Construct, id: string, props: { overlays: string[]; name: string }) {
     super(scope, id)
+    const { overlays, name } = props
     new Kustomization(this, id, {
-      resources: props.overlays,
+      name,
+      resources: overlays,
     })
   }
 }
