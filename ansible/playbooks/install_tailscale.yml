@@ -1,0 +1,40 @@
+---
+- name: Install Tailscale on Ubuntu
+  hosts: all
+  become: true
+  tasks:
+    - name: Add Tailscale package signing key
+      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+      args:
+        creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
+
+    - name: Add Tailscale repository for Ubuntu
+      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+      args:
+        creates: /etc/apt/sources.list.d/tailscale.list
+
+    - name: Install Tailscale package on Ubuntu
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Tailscale service
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        enabled: yes
+
+    - name: Run Tailscale UP with authkey from environment variable
+      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-dns=true --accept-routes=true"
+      register: tailscale_up
+      changed_when: "'is running' not in tailscale_up.stdout"
+      failed_when: false
+      when: lookup('env', 'TAILSCALE_AUTHKEY') != ""
+
+    - name: Run Tailscale UP without authkey (interactive authentication)
+      ansible.builtin.command: "tailscale up --accept-dns=true --accept-routes=true"
+      register: tailscale_up_no_key
+      changed_when: "'is running' not in tailscale_up_no_key.stdout"
+      failed_when: false
+      when: lookup('env', 'TAILSCALE_AUTHKEY') == ""
