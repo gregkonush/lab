@@ -307,6 +307,7 @@ bootcmd:
   - update-grub
 packages:
   - qemu-guest-agent
+  - curl
 write-files:
   - path: /etc/sysctl.d/60-nvme-optimizations.conf
     content: |
@@ -334,6 +335,12 @@ runcmd:
   - sysctl -p /etc/sysctl.d/60-nvme-optimizations.conf
   - udevadm control --reload-rules
   - udevadm trigger
+  # Install Tailscale
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+  - apt-get update
+  - apt-get install -y tailscale
+  - systemctl enable --now tailscaled
 bootcmd:
   - systemctl daemon-reload
 users:
@@ -363,6 +370,7 @@ package_upgrade: true
 package_reboot_if_required: true
 packages:
   - qemu-guest-agent
+  - curl
 runcmd:
   - systemctl enable --now qemu-guest-agent
   - install -m 0755 -d /etc/apt/keyrings
@@ -376,6 +384,12 @@ runcmd:
   - apt-get update
   - apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
   - systemctl enable --now docker
+  # Install Tailscale
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+  - apt-get update
+  - apt-get install -y tailscale
+  - systemctl enable --now tailscaled
   - echo 'alias k=kubectl' >> /home/kalmyk/.bashrc
   - mkdir -p /home/kalmyk/.ssh && chmod 700 /home/kalmyk/.ssh
   - touch /home/kalmyk/.ssh/authorized_keys && chmod 600 /home/kalmyk/.ssh/authorized_keys
