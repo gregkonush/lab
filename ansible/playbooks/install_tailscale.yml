@@ -26,7 +26,7 @@
         enabled: yes
 
     - name: Run Tailscale UP with authkey from environment variable
-      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-routes=true --exit-node=nuc --exit-node-allow-lan-access"
+      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-routes=true"
       register: tailscale_up
       changed_when: "'is running' not in tailscale_up.stdout"
       failed_when: false
