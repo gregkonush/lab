@@ -31,9 +31,3 @@
       changed_when: "'is running' not in tailscale_up.stdout"
       failed_when: false
       when: lookup('env', 'TAILSCALE_AUTHKEY') != ""
-
-    - name: Get Tailscale certificates
-      ansible.builtin.command: "tailscale cert {{ ansible_hostname }}.ide-newton.ts.net"
-      register: cert_result
-      changed_when: cert_result.rc == 0
-      failed_when: cert_result.rc != 0 and 'already exists' not in cert_result.stderr

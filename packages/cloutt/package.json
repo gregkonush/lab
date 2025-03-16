@@ -13,6 +13,7 @@
     "cdk8s": "^2.69.48",
     "cdk8s-plus-31": "^2.1.2",
     "constructs": "^10.4.2",
+    "js-yaml": "^4.1.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
