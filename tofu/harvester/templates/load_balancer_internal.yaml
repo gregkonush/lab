@@ -4,7 +4,8 @@ metadata:
   name: kube-load-balancer-internal
   namespace: default
 spec:
-  ipam: dhcp
+  ipam: pool
+  ipPool: kube-lb-pool-internal
   listeners:
     - name: https
       port: 443
