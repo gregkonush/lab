@@ -2,13 +2,13 @@
 # Manual edits may be lost in future updates.
 
 provider "registry.opentofu.org/harvester/harvester" {
-  version     = "0.6.4"
-  constraints = "0.6.4"
+  version     = "0.6.6"
+  constraints = ">= 0.6.6"
   hashes = [
-    "h1:UHghgGU7GUP5ljLeP1gI3F5nIcw9URAi9kIgEwdViI0=",
-    "zh:2b249034120f20629f57e2afdb44368fd1ec4b984f894b4dfd49aa8abff742d4",
-    "zh:2c557ab60bc824033258efd00189e4759cda8beef8a19d89fe0679caaee894ba",
-    "zh:2d25f0ccbfb348d96e6d82729451337b96d7c7e65eff96cc72ce7d0b139193d4",
-    "zh:a1bb9d05770dc991f83408b7cac77af7877da3ca7ae3ed1df76cb0a6d93d8934",
+    "h1:Dld+jbWomwVsaw2Bgkgkq9VW489bR3mFlZr/0wjNI20=",
+    "zh:148738a15c6f6c9e4bb44fa6dceedb45ba5261d731806b5b3cbd6bd67c176062",
+    "zh:4ce7bf2adb5557e7b78053dedf04f377240c67ad87894760c46a6bd2d2dfa6b6",
+    "zh:cfbcc4b63ff097532351afa24a28737369f47a58e9d8573ed10c641c644820a9",
+    "zh:e015d2379ae1c507536a589bafb6176035addad46609f5390f40b32e0b5fa7cc",
   ]
 }
