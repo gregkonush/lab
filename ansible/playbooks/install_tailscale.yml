@@ -26,15 +26,14 @@
         enabled: yes
 
     - name: Run Tailscale UP with authkey from environment variable
-      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-dns=true --accept-routes=true"
+      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-routes=true --exit-node=nuc --exit-node-allow-lan-access"
       register: tailscale_up
       changed_when: "'is running' not in tailscale_up.stdout"
       failed_when: false
       when: lookup('env', 'TAILSCALE_AUTHKEY') != ""
 
-    - name: Run Tailscale UP without authkey (interactive authentication)
-      ansible.builtin.command: "tailscale up --accept-dns=true --accept-routes=true"
-      register: tailscale_up_no_key
-      changed_when: "'is running' not in tailscale_up_no_key.stdout"
-      failed_when: false
-      when: lookup('env', 'TAILSCALE_AUTHKEY') == ""
+    - name: Get Tailscale certificates
+      ansible.builtin.command: "tailscale cert {{ ansible_hostname }}.ide-newton.ts.net"
+      register: cert_result
+      changed_when: cert_result.rc == 0
+      failed_when: cert_result.rc != 0 and 'already exists' not in cert_result.stderr
