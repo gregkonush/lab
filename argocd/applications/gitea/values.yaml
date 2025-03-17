@@ -24,3 +24,11 @@ gitea:
         paths:
           - path: /
             pathType: Prefix
+      - host: gitea.proompteng.ai
+        paths:
+          - path: /
+            pathType: Prefix
+      - host: gitea.lan
+        paths:
+          - path: /
+            pathType: Prefix
