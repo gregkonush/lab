@@ -12,21 +12,56 @@ interface PodTableProps {
   error: unknown
 }
 
-// Memoized PodTable component
 const PodTable = React.memo(({ pods, isLoading, error }: PodTableProps) => {
-  // Safely format the creation time
   const formatCreationTime = React.useCallback((dateInput?: Date | string): string => {
     if (!dateInput) return 'N/A'
     const date = dateInput instanceof Date ? dateInput : new Date(dateInput)
     return `${date.toLocaleDateString()}, ${date.toLocaleTimeString()}`
   }, [])
 
-  // Render pods with loading and error states
   if (isLoading)
     return (
       <div className="border border-zinc-700 text-sm overflow-hidden rounded-md h-[calc(100vh-10rem)]">
-        <div className="w-full py-2 text-sm text-zinc-400/80 flex items-center justify-center h-full">
-          Loading pods...
+        <div className="w-full">
+          <table className="w-full text-left table-fixed">
+            <thead className="bg-zinc-800/50 text-zinc-400/90 border-b border-zinc-700">
+              <tr>
+                <th className="py-2 px-3 font-medium w-[30%]">Name</th>
+                <th className="py-2 px-3 font-medium w-[20%]">Namespace</th>
+                <th className="py-2 px-3 font-medium w-[15%]">Status</th>
+                <th className="py-2 px-3 font-medium w-[20%]">Created</th>
+                <th className="py-2 px-3 font-medium w-[15%]">IP</th>
+              </tr>
+            </thead>
+          </table>
+        </div>
+        <div className="overflow-y-auto h-[calc(100vh-12rem-6px)]">
+          <table className="w-full text-left table-fixed">
+            <tbody className="bg-zinc-700/10 text-zinc-400/70">
+              {Array.from({ length: 30 }).map(() => (
+                <tr
+                  key={`skeleton-${Math.random().toString(36).substring(2, 9)}`}
+                  className="border-b border-zinc-800 animate-pulse"
+                >
+                  <td className="py-1.5 px-3 w-[30%]">
+                    <div className="h-4 bg-zinc-800 rounded w-4/5" />
+                  </td>
+                  <td className="py-1.5 px-3 w-[20%]">
+                    <div className="h-4 bg-zinc-800 rounded w-2/3" />
+                  </td>
+                  <td className="py-1.5 px-3 w-[15%]">
+                    <div className="h-4 bg-zinc-800 rounded w-1/2" />
+                  </td>
+                  <td className="py-1.5 px-3 w-[20%]">
+                    <div className="h-4 bg-zinc-800 rounded w-3/4" />
+                  </td>
+                  <td className="py-1.5 px-3 w-[15%]">
+                    <div className="h-4 bg-zinc-800 rounded w-2/3" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     )
