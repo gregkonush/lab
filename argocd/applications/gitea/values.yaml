@@ -24,7 +24,3 @@ gitea:
         paths:
           - path: /
             pathType: Prefix
-    tls:
-      - secretName: gitea-tls
-        hosts:
-          - kalmyk.duckdns.org
