@@ -28,7 +28,7 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
 function RootComponent() {
   return (
     <>
-      <div className="min-h-screen flex flex-col antialiased text-zinc-400 w-full">
+      <div className="min-h-screen flex flex-col antialiased text-zinc-300 w-full">
         <CommandPalette />
         <Outlet />
       </div>

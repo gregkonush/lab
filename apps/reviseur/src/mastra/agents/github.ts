@@ -22,7 +22,7 @@ function parseDiff(diffText: string) {
 
     if (fileNameMatch?.[1]) {
       const path = fileNameMatch[1]
-      console.log(`[GitHub] Processing diff for file: ${path}`)
+      console.log(`[GitHub] Processing diff for a file: ${path}`)
       const diffLines = fileHeader.split('\n')
       console.log(`[GitHub] Diff for ${path} has ${diffLines.length} lines`)
 
