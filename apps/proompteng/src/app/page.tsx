@@ -15,7 +15,7 @@ export default function Home() {
           {newsItems.map((item) => (
             <Card
               key={item.id}
-              className="relative flex flex-col h-72 hover:shadow-lg hover:scale-[1.01] transition-all duration-200 cursor-pointer bg-slate-950/80 hover:bg-gradient-to-br hover:from-slate-950 hover:to-indigo-900/10 overflow-hidden group"
+              className="relative flex flex-col h-72 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 cursor-pointer bg-slate-950/80 hover:bg-gradient-to-br hover:from-slate-950 hover:to-indigo-900/10 overflow-hidden group"
             >
               <InfinityBackground />
               <div className="relative z-10 flex flex-col h-full">
