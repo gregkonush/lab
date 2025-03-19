@@ -32,3 +32,7 @@ gitea:
         paths:
           - path: /
             pathType: Prefix
+      - host: git.kalmyk.us
+        paths:
+          - path: /
+            pathType: Prefix
