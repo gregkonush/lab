@@ -3,4 +3,7 @@ kind: Kustomization
 metadata:
   name: reviseur
 resources:
-  - overlays/dev
+- overlays/dev
+images:
+- name: kalmyk.duckdns.org/lab/reviseur
+  newTag: 0.164.0
