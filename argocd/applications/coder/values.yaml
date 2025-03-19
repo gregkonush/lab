@@ -12,3 +12,5 @@ coder:
       enable: true
       className: traefik
       host: coder.proompteng.ai
+    service:
+      type: ClusterIP
