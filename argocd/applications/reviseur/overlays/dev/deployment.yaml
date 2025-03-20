@@ -26,6 +26,17 @@ spec:
         - image: kalmyk.duckdns.org/lab/reviseur
           imagePullPolicy: Always
           name: reviseur
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: reviseur
+                  key: token
           ports:
             - containerPort: 4111
           resources:
