@@ -25,7 +25,7 @@ spec:
           imagePullPolicy: Always
           name: reviseur
           ports:
-            - containerPort: 3000
+            - containerPort: 4111
           resources:
             limits:
               cpu: 1000m
@@ -41,7 +41,7 @@ spec:
           startupProbe:
             failureThreshold: 3
             tcpSocket:
-              port: 3000
+              port: 4111
       dnsPolicy: ClusterFirst
       hostNetwork: false
       restartPolicy: Always
