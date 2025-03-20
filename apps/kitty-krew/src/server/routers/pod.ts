@@ -4,7 +4,6 @@ import { router, publicProcedure } from '../trpc.ts'
 import { podListSchema, podSchema } from '~/common/schemas/pod.ts'
 import { logger } from '~/utils/logger.ts'
 import { createK8sClient, transformPodData } from '~/services/kubernetes.ts'
-import { tracked } from '@trpc/server'
 
 export const podRouter = router({
   list: publicProcedure.query(async () => {
