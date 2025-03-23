@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - load-balancer.yaml
+  - base/secrets.yaml
 helmCharts:
   - name: dagster
     repo: https://dagster-io.github.io/helm
@@ -9,3 +10,46 @@ helmCharts:
     releaseName: dagster
     namespace: dagster
     includeCRDs: true
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: dagster-dagster-webserver
+      namespace: dagster
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: kalmyk.duckdns.org/lab/alchimie:latest
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: registry
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: dagster-daemon
+      namespace: dagster
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: kalmyk.duckdns.org/lab/alchimie:latest
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: registry
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: dagster-dagster-user-deployments-k8s-example-user-code-1
+      namespace: dagster
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: kalmyk.duckdns.org/lab/alchimie:latest
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: registry
