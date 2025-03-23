@@ -11,11 +11,14 @@ on:
 jobs:
   changes:
     runs-on: arc-arm64
+    permissions:
+      contents: read
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
       findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
+      alchimie: ${{ steps.filter.outputs.alchimie }}
 
     steps:
       - name: Checkout
@@ -34,9 +37,13 @@ jobs:
               - 'apps/kitty-krew/**'
             reviseur:
               - 'apps/reviseur/**'
+            alchimie:
+              - 'apps/alchimie/**'
 
   version:
     runs-on: arc-arm64
+    permissions:
+      contents: write
     needs: changes
     outputs:
       new_tag: ${{ steps.tag_version.outputs.new_tag }}
@@ -112,9 +119,33 @@ jobs:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
+  build-alchimie:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.alchimie == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: alchimie
+      dockerfile: ./apps/alchimie/Dockerfile
+      context: ./apps/alchimie
+      new_tag: ${{ needs.version.outputs.new_tag }}
+      platforms: linux/arm64
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
   cleanup-release:
     runs-on: arc-arm64
-    needs: [version, build-proompteng, build-findbobastore, build-kitty-krew]
+    permissions:
+      contents: write
+    needs:
+      [
+        version,
+        build-proompteng,
+        build-findbobastore,
+        build-kitty-krew,
+        build-reviseur,
+        build-alchimie,
+      ]
     if: failure()
     steps:
       - name: Delete release if any build failed
