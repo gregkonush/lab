@@ -124,7 +124,7 @@ jobs:
     if: ${{ needs.changes.outputs.alchimie == 'true' }}
     uses: ./.github/workflows/docker-build-common.yaml
     with:
-      image_name: dagster-celery-k8s-arm64
+      image_name: alchimie
       dockerfile: ./apps/alchimie/Dockerfile
       context: ./apps/alchimie
       new_tag: ${{ needs.version.outputs.new_tag }}
