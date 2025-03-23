@@ -44,7 +44,7 @@ echo "Platform: ARM64"
 echo "========================================="
 
 if docker buildx build --platform linux/arm64 \
-    --build-arg DAGSTER_VERSION=${DAGSTER_VERSION} \
+    --build-arg DAGSTER_VERSION="${DAGSTER_VERSION}" \
     -t "${FULL_IMAGE_NAME}" \
     -f "${DOCKERFILE}" "${CONTEXT_PATH}" --push; then
     echo "Docker image built and pushed successfully: ${FULL_IMAGE_NAME}"
