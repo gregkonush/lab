@@ -9,4 +9,3 @@ helmCharts:
     releaseName: dagster
     namespace: dagster
     includeCRDs: true
-    valuesFile: dagster-values.yaml
