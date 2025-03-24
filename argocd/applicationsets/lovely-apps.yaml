@@ -42,7 +42,8 @@ spec:
           group: apps
           namespace: gitea
           jsonPointers:
-            - /spec/volumeClaimTemplates/0
+            - /spec/volumeClaimTemplates/0/apiVersion
+            - /spec/volumeClaimTemplates/0/kind
   templatePatch: |
     {{- if eq .path.basename "proompteng" }}
     metadata:
