@@ -1,0 +1,26 @@
+---
+imagePullSecrets:
+  - name: registry
+
+dagsterWebserver:
+  image:
+    repository: kalmyk.duckdns.org/lab/alchimie
+    tag: latest
+    pullPolicy: Always
+
+dagster-user-deployments:
+  imagePullSecrets:
+    - name: registry
+  deployments:
+    - name: "k8s-example-user-code-1"
+      image:
+        repository: kalmyk.duckdns.org/lab/alchimie
+        tag: latest
+        pullPolicy: Always
+      dagsterApiGrpcArgs:
+
+dagsterDaemon:
+  image:
+    repository: kalmyk.duckdns.org/lab/alchimie
+    tag: latest
+    pullPolicy: Always
