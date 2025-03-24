@@ -17,7 +17,7 @@ dagster-user-deployments:
         repository: kalmyk.duckdns.org/lab/alchimie
         tag: latest
         pullPolicy: Always
-      dagsterApiGrpcArgs:
+      port: 3030
 
 dagsterDaemon:
   image:
