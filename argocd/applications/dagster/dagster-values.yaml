@@ -11,13 +11,7 @@ dagsterWebserver:
 dagster-user-deployments:
   imagePullSecrets:
     - name: registry
-  deployments:
-    - name: "k8s-example-user-code-1"
-      image:
-        repository: kalmyk.duckdns.org/lab/alchimie
-        tag: latest
-        pullPolicy: Always
-      port: 3030
+  deployments: []
 
 dagsterDaemon:
   image:
