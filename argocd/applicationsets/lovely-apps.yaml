@@ -41,9 +41,13 @@ spec:
         - kind: StatefulSet
           group: apps
           namespace: gitea
-          jsonPointers:
-            - /spec/volumeClaimTemplates/0/apiVersion
-            - /spec/volumeClaimTemplates/0/kind
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: dagster
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
   templatePatch: |
     {{- if eq .path.basename "proompteng" }}
     metadata:
