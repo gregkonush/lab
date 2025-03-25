@@ -185,3 +185,5 @@ dist
 .nx/workspace-data
 
 .turbo
+
+apps/alchimie/*.egg-info
