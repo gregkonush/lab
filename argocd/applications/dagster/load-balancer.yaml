@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: dagster-webserver-lb
   namespace: dagster
+  annotations:
+    tailscale.com/hostname: dagster
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
