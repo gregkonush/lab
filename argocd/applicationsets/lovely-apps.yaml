@@ -59,14 +59,15 @@ spec:
         - kind: DaemonSet
           name: istio-cni-node
           namespace: istio-system
-          jsonPointers:
-            - /spec/template/spec/containers/0/resources/limits/memory/divisor
-            - /spec/template/spec/containers/0/resources/limits/cpu/divisor
+          jqPathExpressions:
+            - '.spec.template.spec.containers[0].env[] | select(.name == "GOMEMLIMIT").valueFrom.resourceFieldRef.divisor'
+            - '.spec.template.spec.containers[0].env[] | select(.name == "GOMAXPROCS").valueFrom.resourceFieldRef.divisor'
         - kind: Deployment
           name: istiod
           namespace: istio-system
-          jsonPointers:
-            - /spec/template/spec/containers/0/resources/limits/memory/divisor
+          jqPathExpressions:
+            - '.spec.template.spec.containers[0].env[] | select(.name == "GOMEMLIMIT").valueFrom.resourceFieldRef.divisor'
+            - '.spec.template.spec.containers[0].env[] | select(.name == "GOMAXPROCS").valueFrom.resourceFieldRef.divisor'
   templatePatch: |
     {{- if eq .path.basename "proompteng" }}
     metadata:
