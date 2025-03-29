@@ -35,31 +35,26 @@ dagster-user-deployments:
           valueFrom:
             secretKeyRef:
               name: alchimie-cluster-app
-              namespace: alchimie
               key: host
         - name: POSTGRES_PORT
           valueFrom:
             secretKeyRef:
               name: alchimie-cluster-app
-              namespace: alchimie
               key: port
         - name: POSTGRES_DB
           valueFrom:
             secretKeyRef:
               name: alchimie-cluster-app
-              namespace: alchimie
               key: dbname
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
               name: alchimie-cluster-app
-              namespace: alchimie
               key: user
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: alchimie-cluster-app
-              namespace: alchimie
               key: password
 
 dagsterDaemon:
