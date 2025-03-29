@@ -48,6 +48,25 @@ spec:
           namespace: dagster
           jqPathExpressions:
             - .spec.volumeClaimTemplates
+        - kind: ValidatingWebhookConfiguration
+          name: istio-validator-istio-system
+          jsonPointers:
+            - /webhooks/0/failurePolicy
+        - kind: ValidatingWebhookConfiguration
+          name: istiod-default-validator
+          jsonPointers:
+            - /webhooks/0/failurePolicy
+        - kind: DaemonSet
+          name: istio-cni-node
+          namespace: istio-system
+          jsonPointers:
+            - /spec/template/spec/containers/0/resources/limits/memory/divisor
+            - /spec/template/spec/containers/0/resources/limits/cpu/divisor
+        - kind: Deployment
+          name: istiod
+          namespace: istio-system
+          jsonPointers:
+            - /spec/template/spec/containers/0/resources/limits/memory/divisor
   templatePatch: |
     {{- if eq .path.basename "proompteng" }}
     metadata:
