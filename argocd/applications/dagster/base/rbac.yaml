@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dagster-alchimie-secret-reader
+  namespace: alchimie
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["alchimie-cluster-app"]
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dagster-alchimie-secret-binding
+  namespace: alchimie
+subjects:
+  - kind: ServiceAccount
+    name: dagster-dagster-user-deployments-user-deployments
+    namespace: dagster
+roleRef:
+  kind: Role
+  name: dagster-alchimie-secret-reader
+  apiGroup: rbac.authorization.k8s.io
