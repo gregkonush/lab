@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - load-balancer.yaml
   - base/secrets.yaml
+  - base/rbac.yaml
 helmCharts:
   - name: dagster
     repo: https://dagster-io.github.io/helm
