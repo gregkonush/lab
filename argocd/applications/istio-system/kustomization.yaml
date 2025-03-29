@@ -29,8 +29,3 @@ helmCharts:
     version: 1.25.1
     releaseName: ztunnel
     namespace: istio-system
-  - name: gateway
-    repo: https://istio-release.storage.googleapis.com/charts
-    version: 1.25.1
-    releaseName: istio-ingress
-    namespace: istio-ingress
