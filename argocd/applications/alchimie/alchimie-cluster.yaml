@@ -1,8 +1,8 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: alchemie-cluster
-  namespace: alchemie
+  name: alchimie-cluster
+  namespace: alchimie
 spec:
   instances: 3
   storage:
@@ -11,7 +11,7 @@ spec:
   bootstrap:
     initdb:
       dataChecksums: true
-      database: alchemie
-      owner: alchemie
+      database: alchimie
+      owner: alchimie
       postInitTemplateSQL:
         - CREATE EXTENSION vector;
