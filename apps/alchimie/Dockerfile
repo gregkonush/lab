@@ -21,3 +21,11 @@ RUN python -m uv pip install \
     dagster-graphql \
     dagster-webserver \
     grpcio==1.57.0 # https://github.com/grpc/grpc/issues/38327
+
+COPY . /app
+
+WORKDIR /app
+
+ENV DAGSTER_HOME=/app
+
+RUN uv pip install --system ".[dev]"

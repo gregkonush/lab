@@ -11,7 +11,14 @@ dagsterWebserver:
 dagster-user-deployments:
   imagePullSecrets:
     - name: registry
-  deployments: []
+  deployments:
+    - name: alchimie
+      image:
+        repository: kalmyk.duckdns.org/lab/alchimie
+        tag: latest
+      dagsterApiGrpcArgs:
+        - "-f"
+        - "/app/alchimie/definitions.py"
 
 dagsterDaemon:
   image:
