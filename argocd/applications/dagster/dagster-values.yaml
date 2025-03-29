@@ -25,7 +25,6 @@ dagster-user-deployments:
         - name: postgres-secret
           secret:
             secretName: alchimie-cluster-app
-            namespace: alchimie
       volumeMounts:
         - name: postgres-secret
           mountPath: "/opt/dagster/postgres-secrets"
