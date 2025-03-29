@@ -13,9 +13,11 @@ dagster-user-deployments:
     - name: registry
   deployments:
     - name: alchimie
+      port: 3030
       image:
         repository: kalmyk.duckdns.org/lab/alchimie
         tag: latest
+        pullPolicy: Always
       dagsterApiGrpcArgs:
         - "-f"
         - "/app/alchimie/definitions.py"
