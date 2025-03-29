@@ -22,6 +22,8 @@ helmCharts:
     namespace: istio-system
     valuesInline:
       profile: ambient
+      global:
+        platform: k3s
   - name: ztunnel
     repo: https://istio-release.storage.googleapis.com/charts
     version: 1.25.1
