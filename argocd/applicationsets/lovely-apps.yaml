@@ -70,6 +70,16 @@ spec:
           name: istiod-default-validator
           jqPathExpressions:
             - .webhooks[].failurePolicy
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-eventing-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-serving-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
   templatePatch: |
     {{- if eq .path.basename "proompteng" }}
     metadata:
