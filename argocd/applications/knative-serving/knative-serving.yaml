@@ -3,3 +3,7 @@ kind: KnativeServing
 metadata:
   name: knative-serving
   namespace: knative-serving
+spec:
+  config:
+    deployment:
+      registries-skipping-tag-resolving: "kalmyk.duckdns.org"

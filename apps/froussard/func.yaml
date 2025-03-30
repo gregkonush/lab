@@ -1,7 +1,7 @@
 specVersion: 0.36.0
 name: froussard
 runtime: typescript
-registry: kalmyk.duckdns.org/lab
+image: kalmyk.duckdns.org/lab/froussard:v2
 created: 2025-03-30T10:30:06.936905-07:00
 build:
   builderImages:
@@ -9,8 +9,8 @@ build:
     s2i: registry.access.redhat.com/ubi8/nodejs-22-minimal
   builder: s2i
   buildEnvs:
-  - name: BP_NODE_RUN_SCRIPTS
-    value: build
+    - name: BP_NODE_RUN_SCRIPTS
+      value: build
 deploy:
   namespace: froussard
   serviceAccountName: froussard-sa
