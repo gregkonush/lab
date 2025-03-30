@@ -3,7 +3,7 @@
   "license": "MIT",
   "version": "0.0.1",
   "engines": {
-    "node": "22.12.0"
+    "node": "22.14.0"
   },
   "scripts": {
     "dev:proompteng": "pnpm --filter proompteng dev",
