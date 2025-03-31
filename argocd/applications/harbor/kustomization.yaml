@@ -4,7 +4,7 @@ namespace: harbor
 helmCharts:
   - name: harbor
     repo: https://helm.goharbor.io
-    version: 2.12.2
+    version: 1.16.2
     releaseName: harbor
     namespace: harbor
     includeCRDs: true
