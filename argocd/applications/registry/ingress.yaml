@@ -1,0 +1,17 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`xleb.duckdns.org`)
+      services:
+        - name: registry
+          port: 80
+  tls:
+    certResolver: default
