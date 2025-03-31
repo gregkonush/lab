@@ -6,12 +6,9 @@ metadata:
 spec:
   entryPoints:
     - web
-    - websecure
   routes:
     - kind: Rule
       match: Host(`xleb.duckdns.org`)
       services:
         - name: registry
           port: 80
-  tls:
-    certResolver: default
