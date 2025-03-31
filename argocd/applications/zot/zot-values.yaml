@@ -7,5 +7,3 @@ ingress:
     - host: xleb.duckdns.org
       paths:
         - path: /
-httpGet:
-  scheme: HTTPS
