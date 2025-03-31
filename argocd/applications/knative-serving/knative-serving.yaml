@@ -6,4 +6,4 @@ metadata:
 spec:
   config:
     deployment:
-      registries-skipping-tag-resolving: "kalmyk.duckdns.org"
+      registries-skipping-tag-resolving: "kalmyk.duckdns.org/lab"
