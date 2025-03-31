@@ -1,14 +1,17 @@
-apiVersion: traefik.containo.us/v1alpha1
-kind: IngressRoute
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
   name: registry
   namespace: registry
 spec:
-  entryPoints:
-    - web
-  routes:
-    - kind: Rule
-      match: Host(`xleb.duckdns.org`)
-      services:
-        - name: registry
-          port: 80
+  rules:
+    - host: xleb.duckdns.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: registry
+                port:
+                  number: 80
