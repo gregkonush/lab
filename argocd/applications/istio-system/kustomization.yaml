@@ -23,6 +23,7 @@ helmCharts:
     valuesInline:
       profile: ambient
       global:
+        # https://istio.io/latest/docs/ambient/install/platform-prerequisites/#k3s
         platform: k3s
   - name: ztunnel
     repo: https://istio-release.storage.googleapis.com/charts
