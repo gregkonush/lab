@@ -3,3 +3,5 @@ kind: Kustomization
 namespace: cert-manager
 resources:
   - https://github.com/cert-manager/cert-manager/releases/download/v1.17.1/cert-manager.yaml
+  - cluster-issuer-staging-traefik.yaml
+  - cluster-issuer-production-traefik.yaml
