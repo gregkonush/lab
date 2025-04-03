@@ -5,3 +5,5 @@ resources:
   - https://github.com/cert-manager/cert-manager/releases/download/v1.17.1/cert-manager.yaml
   - cluster-issuer-staging-traefik.yaml
   - cluster-issuer-production-traefik.yaml
+  - cainjector-leader-election-clusterrole.yaml
+  - cainjector-leader-election-clusterrolebinding.yaml
