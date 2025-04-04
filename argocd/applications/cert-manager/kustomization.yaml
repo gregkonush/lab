@@ -13,3 +13,6 @@ helmCharts:
       crds:
         enabled: true
         keep: false
+      global:
+        leaderElection:
+          namespace: cert-manager
