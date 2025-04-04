@@ -4,3 +4,4 @@ namespace: froussard
 resources:
   - serviceaccount.yaml
   - secrets.yaml
+  - certificate.yaml
