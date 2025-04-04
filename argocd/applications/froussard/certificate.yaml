@@ -1,0 +1,12 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: froussard-cert
+  namespace: froussard
+spec:
+  secretName: froussard-tls
+  dnsNames:
+    - "froussard.froussard.proompteng.ai"
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
