@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cert-manager
+helmCharts:
+  - name: cert-manager
+    repo: https://charts.jetstack.io
+    version: 1.13.2
+    releaseName: cert-manager
+    namespace: cert-manager
+    includeCRDs: true
+    valuesInline:
+      installCRDs: true
+      crds:
+        enabled: true
+        keep: false
