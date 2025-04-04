@@ -8,4 +8,9 @@ Knative Serving is configured to use cert-manager for TLS certificate provisioni
 
 The integration uses the Let's Encrypt production issuer with HTTP01 challenges handled by Traefik.
 
+**Important settings:**
+
+- External Domain TLS: `Enabled` - Automatically provision certificates for external domains
+- ClusterIssuer: `letsencrypt-prod` - Uses Let's Encrypt production with HTTP01 challenges
+
 **Reference:** [Knative cert-manager integration](https://knative.dev/docs/serving/encryption/configure-certmanager-integration/)

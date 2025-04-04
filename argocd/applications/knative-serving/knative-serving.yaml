@@ -19,3 +19,5 @@ spec:
       systemInternalIssuerRef: |
         kind: ClusterIssuer
         name: letsencrypt-prod
+    network:
+      external-domain-tls: "Enabled"
