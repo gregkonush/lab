@@ -9,3 +9,13 @@ spec:
       "proompteng.ai": ""
     deployment:
       registries-skipping-tag-resolving: "kalmyk.duckdns.org/lab"
+    certmanager:
+      issuerRef: |
+        kind: ClusterIssuer
+        name: letsencrypt-prod
+      clusterLocalIssuerRef: |
+        kind: ClusterIssuer
+        name: letsencrypt-prod
+      systemInternalIssuerRef: |
+        kind: ClusterIssuer
+        name: letsencrypt-prod
