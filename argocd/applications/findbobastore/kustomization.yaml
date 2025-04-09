@@ -4,7 +4,7 @@ resources:
   - secrets.yaml
   - deployment.yaml
   - service.yaml
-  - ingress.yaml
+  - ingressroute.yaml
 images:
   - name: kalmyk.duckdns.org/lab/findbobastore
     newTag: 0.164.0
