@@ -1,6 +1,0 @@
-ui:
-  dockerRegistryUrl: https://xleb.duckdns.org
-  ingress:
-    enabled: true
-    host: registry.lan
-    ingressClassName: traefik
