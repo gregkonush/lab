@@ -1,5 +1,5 @@
 ui:
-  dockerRegistryUrl: http://registry.registry.svc.cluster.local
+  dockerRegistryUrl: https://xleb.duckdns.org
   ingress:
     enabled: true
     host: registry.lan
