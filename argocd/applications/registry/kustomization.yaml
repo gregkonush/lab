@@ -6,3 +6,10 @@ resources:
   - service.yaml
   - ingress.yaml
   - pvc.yaml
+helmCharts:
+  - name: docker-registry-ui
+    repo: https://helm.joxit.dev
+    version: 1.1.3
+    releaseName: registry
+    namespace: registry
+    valuesFile: registry-ui-values.yaml
