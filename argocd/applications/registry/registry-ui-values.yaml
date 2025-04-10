@@ -1,0 +1,6 @@
+ui:
+  dockerRegistryUrl: http://registry.registry.svc.cluster.local
+  ingress:
+    enabled: true
+    host: registry.lan
+    ingressClassName: traefik
