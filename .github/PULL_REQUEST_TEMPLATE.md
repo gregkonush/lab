@@ -2,9 +2,9 @@
 
 <!--
 LLM INSTRUCTIONS:
+- Do no remove headings
 - List 3-5 bullet points describing the changes
 - Be specific about what was added, modified, or fixed
-- Include the purpose/benefit of each change
 - Keep description concise and terse
 -->
 
