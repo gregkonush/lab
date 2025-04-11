@@ -1,0 +1,10 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+spec:
+  components:
+    ingressGateways:
+      - name: knative-ingress-gateway
+        enabled: true
+        namespace: knative-serving
+        label:
+          istio: knative-ingress-gateway

@@ -7,8 +7,6 @@ spec:
   config:
     domain:
       "proompteng.ai": ""
-    deployment:
-      registries-skipping-tag-resolving: "kalmyk.duckdns.org/lab"
     certmanager:
       issuerRef: |
         kind: ClusterIssuer
@@ -21,3 +19,8 @@ spec:
         name: letsencrypt-prod
     network:
       external-domain-tls: "Enabled"
+    istio:
+      external-gateways: |
+        - name: knative-gateway
+          namespace: knative-serving
+          service: knative-ingress-gateway.knative-serving.svc.cluster.local
