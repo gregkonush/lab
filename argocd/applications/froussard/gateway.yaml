@@ -5,7 +5,7 @@ metadata:
   namespace: froussard
 spec:
   selector:
-    app: gateway
+    istio: ingressgateway
   servers:
     - port:
         number: 80

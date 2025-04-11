@@ -5,11 +5,6 @@ metadata:
   namespace: knative-serving
 spec:
   config:
-    istio:
-      local-gateways: |
-        - name: knative-local-gateway
-          namespace: istio-system
-          service: knative-local-gateway.istio-system.svc.cluster.local
     domain:
       "proompteng.ai": ""
     deployment:
