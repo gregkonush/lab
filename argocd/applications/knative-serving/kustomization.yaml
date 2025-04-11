@@ -3,5 +3,4 @@ kind: Kustomization
 namespace: knative-serving
 resources:
   - knative-serving.yaml
-  - knative-ingress-gateway.yaml
   - gateway.yaml
