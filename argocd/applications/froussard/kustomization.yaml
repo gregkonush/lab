@@ -5,3 +5,5 @@ resources:
   - serviceaccount.yaml
   - secrets.yaml
   - certificate.yaml
+  - gateway.yaml
+  - virtualservice.yaml
