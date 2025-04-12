@@ -2,7 +2,7 @@ terraform {
   required_providers {
     harvester = {
       source  = "harvester/harvester"
-      version = ">= 0.6.6"
+      version = ">= 0.6.7"
     }
   }
   backend "pg" {
@@ -278,7 +278,7 @@ resource "harvester_virtualmachine" "kube-cluster" {
   }
 
   ssh_keys = [
-    harvester_ssh_key.public-key.name
+    harvester_ssh_key.public-key.id
   ]
 }
 
@@ -447,6 +447,6 @@ resource "harvester_virtualmachine" "docker-host" {
   }
 
   ssh_keys = [
-    harvester_ssh_key.public-key.name
+    harvester_ssh_key.public-key.id
   ]
 }
