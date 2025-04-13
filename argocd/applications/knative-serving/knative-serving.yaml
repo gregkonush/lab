@@ -17,4 +17,3 @@ spec:
       systemInternalIssuerRef: |
         kind: ClusterIssuer
         name: letsencrypt-prod
-    network:
