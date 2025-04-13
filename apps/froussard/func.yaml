@@ -14,4 +14,4 @@ build:
     value: build
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:f0d48eb713e8528ee822e9c9e8c7fab88d427f71669be3b5491b5a66695cb31d
+  image: xleb.duckdns.org/froussard@sha256:1a281211e79e54e425953bbf6fb97e28ece5d1f83263e2a36a65352c319fbc1f
