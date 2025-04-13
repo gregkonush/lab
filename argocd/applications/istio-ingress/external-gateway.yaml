@@ -1,0 +1,15 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: knative-external-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: gateway
+  servers:
+    - port:
+        number: 80
+        protocol: HTTP
+        name: http
+      hosts:
+        - "*"
