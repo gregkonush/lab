@@ -14,7 +14,7 @@ spec:
         - name: argocd-server
           port: 80
     - kind: Rule
-      match: Host(`argocd.lan`) && Headers(`Content-Type`, `application/grpc`)
+      match: Host(`argocd.lan`) && Header(`Content-Type`, `application/grpc`)
       priority: 11
       services:
         - name: argocd-server
@@ -27,11 +27,9 @@ spec:
         - name: argocd-server
           port: 80
     - kind: Rule
-      match: Host(`argocd.proompteng.ai`) && Headers(`Content-Type`, `application/grpc`)
+      match: Host(`argocd.proompteng.ai`) && Header(`Content-Type`, `application/grpc`)
       priority: 11
       services:
         - name: argocd-server
           port: 80
           scheme: h2c
-  tls:
-    certResolver: default

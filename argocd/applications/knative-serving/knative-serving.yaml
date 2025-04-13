@@ -18,9 +18,4 @@ spec:
         kind: ClusterIssuer
         name: letsencrypt-prod
     network:
-      external-domain-tls: "Enabled"
-    istio:
-      external-gateways: |
-        - name: knative-gateway
-          namespace: knative-serving
-          service: knative-ingress-gateway.knative-serving.svc.cluster.local
+      ingress-class: traefik

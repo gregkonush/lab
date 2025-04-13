@@ -13,5 +13,3 @@ spec:
       services:
         - name: proompteng
           port: 80
-  tls:
-    certResolver: default

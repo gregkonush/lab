@@ -1,4 +1,4 @@
-specVersion: 0.36.0
+specVersion: 1.17.0
 name: froussard
 runtime: typescript
 registry: xleb.duckdns.org
@@ -14,4 +14,4 @@ build:
     value: build
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:2bc4878bfc23c05311292cde6c155d9c54d551db97895dfa78f7d8a3dbbf8c59
+  image: xleb.duckdns.org/froussard@sha256:f0d48eb713e8528ee822e9c9e8c7fab88d427f71669be3b5491b5a66695cb31d
