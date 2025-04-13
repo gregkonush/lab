@@ -12,5 +12,4 @@ spec:
       services:
         - name: backstage
           port: 7007
-  tls:
-    certResolver: default
+

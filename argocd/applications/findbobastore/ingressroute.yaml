@@ -13,5 +13,3 @@ spec:
       services:
         - name: findbobastore
           port: 80
-  tls:
-    certResolver: default
