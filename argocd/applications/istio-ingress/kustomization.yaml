@@ -7,3 +7,6 @@ helmCharts:
     version: 1.25.1
     releaseName: gateway
     namespace: istio-ingress
+    valuesInline:
+      service:
+        loadBalancerIP: "192.168.1.105"
