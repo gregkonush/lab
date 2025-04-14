@@ -1,0 +1,22 @@
+#!/bin/bash -e
+#
+# S2I run script for the 'baozi' image.
+# The run script executes the server that runs your application.
+#
+# For more information see the documentation:
+#	https://github.com/openshift/source-to-image/blob/master/docs/builder_image.md
+#
+
+# Execute the application using bun, checking for common entry points
+if [ -f "server.ts" ]; then
+  exec bun run server.ts
+elif [ -f "index.ts" ]; then
+  exec bun run index.ts
+elif [ -f "server.js" ]; then
+  exec bun run server.js
+elif [ -f "index.js" ]; then
+  exec bun run index.js
+else
+  echo "Error: Unable to find server.ts, index.ts, server.js, or index.js. Please ensure your application entry point is one of these."
+  exit 1
+fi

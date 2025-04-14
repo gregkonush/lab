@@ -231,3 +231,4 @@ dmypy.json
 .pytype/
 cython_debug/
 
+!apps/baozi/s2i/bin
