@@ -7,11 +7,8 @@ created: 2025-03-30T10:30:06.936905-07:00
 build:
   builderImages:
     platforms: linux/arm64
-    s2i: registry.access.redhat.com/ubi8/nodejs-22-minimal
+    s2i: xleb.duckdns.org/baozi
   builder: s2i
-  buildEnvs:
-  - name: BP_NODE_RUN_SCRIPTS
-    value: build
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:531b7fa6a6b50faac985fb3c281c6382bb5e99958ee01fe6239fd62b4fc04108
+  image: xleb.duckdns.org/froussard@sha256:d02b8a8fd0cb1f05d1316694c6b9524848318f51b7a7fade08fd57a3b878e6da

@@ -1,7 +1,10 @@
-BUILDER_IMAGE_NAME = baozi-s2i-builder
+BUILDER_IMAGE_NAME = baozi
 TEST_APP_IMAGE_NAME = baozi-test-app
 TEST_APP_CONTAINER_NAME = $(TEST_APP_IMAGE_NAME)-container
 S2I_CMD ?= s2i # Allows overriding the s2i command path if needed
+REGISTRY_URL = xleb.duckdns.org
+IMAGE_TAG ?= latest
+FULL_BUILDER_IMAGE_NAME = $(REGISTRY_URL)/$(BUILDER_IMAGE_NAME):$(IMAGE_TAG)
 
 .PHONY: all
 all: test
@@ -10,6 +13,13 @@ all: test
 build:
 	@echo "---> Building S2I builder image: $(BUILDER_IMAGE_NAME)"
 	docker build -t $(BUILDER_IMAGE_NAME) .
+
+.PHONY: push
+push: build
+	@echo "---> Tagging image $(BUILDER_IMAGE_NAME) as $(FULL_BUILDER_IMAGE_NAME)"
+	docker tag $(BUILDER_IMAGE_NAME) $(FULL_BUILDER_IMAGE_NAME)
+	@echo "---> Pushing image $(FULL_BUILDER_IMAGE_NAME) to registry"
+	docker push $(FULL_BUILDER_IMAGE_NAME)
 
 .PHONY: test
 test: build
