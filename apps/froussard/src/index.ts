@@ -1,44 +1,29 @@
-import type { Context, StructuredReturn } from 'faas-js-runtime'
+import { serve } from 'bun'
 
-/**
- * Your HTTP handling function, invoked with each request. This is an example
- * function that logs the incoming request and echoes its input to the caller.
- *
- * It can be invoked with `func invoke`
- * It can be tested with `npm test`
- *
- * It can be invoked with `func invoke`
- * It can be tested with `npm test`
- *
- * @param {Context} context a context object.
- * @param {object} context.body the request body if any
- * @param {object} context.query the query string deserialized as an object, if any
- * @param {object} context.log logging object with methods for 'info', 'warn', 'error', etc.
- * @param {object} context.headers the HTTP request headers
- * @param {string} context.method the HTTP request method
- * @param {string} context.httpVersion the HTTP protocol version
- * See: https://github.com/knative/func/blob/main/docs/guides/nodejs.md#the-context-object
- */
-const handle = async (context: Context, body: string): Promise<StructuredReturn> => {
-  // YOUR CODE HERE
-  context.log.info(`
------------------------------------------------------------
-Headers:
-${JSON.stringify(context.headers)}
+serve({
+  // Knative/func usually sets the PORT environment variable
+  port: process.env.PORT || 8080,
+  fetch(req) {
+    const url = new URL(req.url)
 
-Query:
-${JSON.stringify(context.query)}
+    // Readiness probe endpoint
+    if (url.pathname === '/health') {
+      console.log('Health check request received')
+      return new Response('OK', { status: 200 })
+    }
 
-Body:
-${JSON.stringify(body)}
------------------------------------------------------------
-`)
-  return {
-    body: body,
-    headers: {
-      'content-type': 'application/json',
-    },
-  }
-}
+    // Basic request logging
+    console.log(`Request: ${req.method} ${url.pathname}`)
 
-export { handle }
+    // Default response
+    return new Response(`Hello from Bun! You requested: ${url.pathname}`, {
+      headers: { 'Content-Type': 'text/plain' },
+    })
+  },
+  error(error: Error) {
+    console.error('Server error:', error)
+    return new Response('Internal Server Error', { status: 500 })
+  },
+})
+
+console.log(`Listening on port ${process.env.PORT || 8080}...`)
