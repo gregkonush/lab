@@ -13,9 +13,3 @@ spec:
         name: http
       hosts:
         - "*"
-    - port:
-        number: 443
-        protocol: HTTPS
-        name: https
-      hosts:
-        - "*"
