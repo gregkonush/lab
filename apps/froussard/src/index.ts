@@ -1,5 +1,5 @@
 import { Elysia } from 'elysia'
-import { createHmac } from 'node:crypto'
+import { Webhooks } from '@octokit/webhooks'
 
 const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET
 
@@ -8,7 +8,13 @@ if (!GITHUB_WEBHOOK_SECRET) {
   process.exit(1)
 }
 
+const webhooks = new Webhooks({ secret: GITHUB_WEBHOOK_SECRET })
+
 const app = new Elysia()
+  .get('/health/liveness', () => {
+    console.log('Liveness check request received')
+    return new Response('OK', { status: 200 })
+  })
   .get('/health/readiness', () => {
     console.log('Health check request received')
     return new Response('OK', { status: 200 })
@@ -20,31 +26,38 @@ const app = new Elysia()
     console.error('Server error:', error)
     return new Response('Internal Server Error', { status: 500 })
   })
-  .post('/webhooks/:provider', async ({ request, body, params }) => {
+  .post('/webhooks/:provider', async ({ request, params }) => {
     const provider = params.provider
+    console.log(`Received webhook for provider: ${provider}`)
+
+    const rawBody = await request.text()
 
     if (provider === 'github') {
+      console.log('Attempting GitHub webhook verification...')
+
       const signatureHeader = request.headers.get('x-hub-signature-256')
-      if (!signatureHeader) {
-        console.error('Missing x-hub-signature-256 header')
-        return new Response('Signature required', { status: 400 })
+      if (!signatureHeader || !(await webhooks.verify(rawBody, signatureHeader))) {
+        console.error('Webhook signature verification failed.')
+        return new Response('Unauthorized', { status: 401 })
       }
 
-      const rawBody = await request.text()
-      const expectedSignature = `sha256=${createHmac('sha256', GITHUB_WEBHOOK_SECRET).update(rawBody).digest('hex')}`
+      console.log('GitHub signature verified successfully.')
 
-      if (signatureHeader !== expectedSignature) {
-        console.error('Invalid signature')
-        return new Response('Invalid signature', { status: 403 })
+      let parsedBody: unknown
+      try {
+        parsedBody = JSON.parse(rawBody)
+        console.log('GitHub webhook event body:', parsedBody)
+      } catch (parseError) {
+        console.error('Error parsing GitHub webhook body:', parseError)
+        return new Response('Invalid JSON body', { status: 400 })
       }
 
-      console.log('GitHub webhook event received:', body)
-      return new Response(JSON.stringify(body), {
+      return new Response(JSON.stringify(parsedBody), {
         headers: { 'Content-Type': 'application/json' },
       })
     }
 
-    console.log(`Webhook event received for unsupported provider '${provider}':`, body)
+    console.log(`Webhook event received for unsupported provider '${provider}':`, rawBody)
     return new Response(`Provider '${provider}' not supported`, { status: 400 })
   })
   .listen(process.env.PORT || 8080)
