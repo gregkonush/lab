@@ -11,4 +11,8 @@ build:
   builder: s2i
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:d02b8a8fd0cb1f05d1316694c6b9524848318f51b7a7fade08fd57a3b878e6da
+  image: xleb.duckdns.org/froussard@sha256:eaa52e7b9221442d33cc3cad1c8293d1743679559c28a02f1837b1cff2c98ee7
+run:
+  envs:
+    - name: GITHUB_WEBHOOK_SECRET
+      value: "{{ secret:github-secret:webhook-secret }}"

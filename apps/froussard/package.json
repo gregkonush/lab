@@ -6,12 +6,13 @@
     "url": "https://github.com/gregkonush/lab"
   },
   "scripts": {},
-  "devDependencies": {
-    "typescript": "^5.8.2",
-    "@types/bun": "latest"
-  },
   "dependencies": {
-    "@types/node": "^20.14.9"
+    "@elysiajs/eden": "^1.2.0",
+    "elysia": "^1.2.25"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.9",
+    "typescript": "^5.8.2"
   },
   "module": "src/index.ts",
   "type": "module"
