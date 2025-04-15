@@ -8,6 +8,7 @@
   "scripts": {},
   "dependencies": {
     "@elysiajs/eden": "^1.2.0",
+    "@octokit/webhooks": "^13.8.0",
     "elysia": "^1.2.25"
   },
   "devDependencies": {

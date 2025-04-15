@@ -9,10 +9,10 @@ build:
     platforms: linux/arm64
     s2i: xleb.duckdns.org/baozi
   builder: s2i
-deploy:
-  namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:eaa52e7b9221442d33cc3cad1c8293d1743679559c28a02f1837b1cff2c98ee7
 run:
   envs:
-    - name: GITHUB_WEBHOOK_SECRET
-      value: "{{ secret:github-secret:webhook-secret }}"
+  - name: GITHUB_WEBHOOK_SECRET
+    value: '{{ secret:github-secret:webhook-secret }}'
+deploy:
+  namespace: froussard
+  image: xleb.duckdns.org/froussard@sha256:82fc3123fda55bb74948395420fcd796af3e2c88da4bd373eb59391eea67b794
