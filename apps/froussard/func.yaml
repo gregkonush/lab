@@ -15,4 +15,4 @@ run:
     value: '{{ secret:github-secret:webhook-secret }}'
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:4738ff9c2af83161b6411d6d48e83b772857c0f7d66ca5638f1183ad69c8b194
+  image: xleb.duckdns.org/froussard@sha256:f37df4d7c5080958fdd5b132b477349b989545ea5117b98b9b0526eb684cfa3a
