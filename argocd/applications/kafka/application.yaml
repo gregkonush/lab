@@ -22,3 +22,5 @@ spec:
     helm:
       releaseName: kafka
       skipCrds: false
+      valuesObject:
+        advertisedListeners: CLIENT://kafka.kafka.svc.cluster.local:9092
