@@ -12,6 +12,6 @@ helmCharts:
       ingress:
         enabled: true
         ingressClassName: tailscale
-        hosts:
-          - kafka-ui
-        path: "/"
+        host: kafka-ui
+        path: /
+        pathType: Prefix
