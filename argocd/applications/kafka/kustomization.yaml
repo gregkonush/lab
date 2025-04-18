@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - application.yaml
   - load-balancer.yaml
+  - kafbat-ui-access-kafka.yaml
 helmCharts:
   - name: kafka-ui
     repo: https://kafbat.github.io/helm-charts
@@ -13,7 +14,7 @@ helmCharts:
       yamlApplicationConfig:
         kafka:
           clusters:
-            - name: yaml
+            - name: kafka
               bootstrapServers: kafka:9092
         auth:
           type: disabled
