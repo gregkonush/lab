@@ -9,3 +9,15 @@ helmCharts:
     version: 1.5.0
     releaseName: kafka-ui
     namespace: kafka
+    valuesInline:
+      yamlApplicationConfig:
+        kafka:
+          clusters:
+            - name: yaml
+              bootstrapServers: kafka:9092
+        auth:
+          type: disabled
+        management:
+          health:
+            ldap:
+              enabled: false
