@@ -19,7 +19,7 @@ helmCharts:
               properties:
                 security.protocol: SASL_PLAINTEXT
                 sasl.mechanism: PLAIN
-                sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="user1" password="SHVUB9nR5B";
+                sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="user1" password="LtEOaucrOE";
         auth:
           type: disabled
         management:
