@@ -24,3 +24,9 @@ spec:
       skipCrds: false
       valuesObject:
         advertisedListeners: CLIENT://kafka.kafka.svc.cluster.local:9092
+        provisioning:
+          enabled: true
+          topics:
+            - name: github-webhook-events
+              partitions: 1
+              replicationFactor: 3
