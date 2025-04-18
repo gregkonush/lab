@@ -11,6 +11,14 @@ helmCharts:
     releaseName: kafka-ui
     namespace: kafka
     valuesInline:
+      envs:
+        secretMappings:
+          KAFKA_PASSWORD:
+            name: kafka-user-passwords
+            keyName: user1
+      env:
+        - name: KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG
+          value: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="user1" password="$(KAFKA_PASSWORD)";'
       yamlApplicationConfig:
         kafka:
           clusters:
@@ -19,7 +27,6 @@ helmCharts:
               properties:
                 security.protocol: SASL_PLAINTEXT
                 sasl.mechanism: PLAIN
-                sasl.jaas.config: org.apache.kafka.common.security.plain.PlainLoginModule required username="user1" password="LtEOaucrOE";
         auth:
           type: disabled
         management:
