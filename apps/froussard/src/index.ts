@@ -11,6 +11,9 @@ if (!GITHUB_WEBHOOK_SECRET) {
 const webhooks = new Webhooks({ secret: GITHUB_WEBHOOK_SECRET })
 
 const app = new Elysia()
+  .get('/', () => {
+    return new Response('OK', { status: 200 })
+  })
   .get('/health/liveness', () => {
     console.log('Liveness check request received')
     return new Response('OK', { status: 200 })
