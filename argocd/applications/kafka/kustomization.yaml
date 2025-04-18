@@ -16,6 +16,13 @@ helmCharts:
           clusters:
             - name: kafka
               bootstrapServers: kafka:9092
+              properties:
+                security.protocol: SASL_PLAINTEXT
+                sasl.mechanism: PLAIN
+              sasl:
+                mechanism: PLAIN
+                username: user1
+                password: "SHVUB9nR5B"
         auth:
           type: disabled
         management:
