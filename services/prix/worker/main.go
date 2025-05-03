@@ -9,6 +9,12 @@ import (
 )
 
 func main() {
+	// Initialize DB connection
+	if err := prix.InitDB(); err != nil {
+		log.Fatalln("Unable to initialize database connection", err)
+	}
+	defer prix.CloseDB()
+
 	c, err := client.Dial(client.Options{})
 	if err != nil {
 		log.Fatalln("Unable to create Temporal client", err)

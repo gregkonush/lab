@@ -6,16 +6,15 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-func ListRepos(ctx workflow.Context) ([]Repo, error) {
+func ListRepos(ctx workflow.Context) error {
 	ao := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Second,
+		StartToCloseTimeout: 1 * time.Minute, // Increase timeout for network + db ops
 	}
 	ctx = workflow.WithActivityOptions(ctx, ao)
 
-	var result []Repo
-	err := workflow.ExecuteActivity(ctx, SearchMostPopularRepos).Get(ctx, &result)
+	err := workflow.ExecuteActivity(ctx, SearchMostPopularRepos).Get(ctx, nil) // No result expected, just error
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return result, nil
+	return nil
 }
