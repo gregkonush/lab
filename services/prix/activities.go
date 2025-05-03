@@ -41,6 +41,11 @@ const DefaultPerPage = 100
 // It processes results page by page from the GitHub API.
 // Returns an error if the search or database operations fail.
 func SearchMostPopularRepos(ctx context.Context) error {
+	// Add a timeout for the overall operation
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	ghClient := github.NewClient(nil)
 	opts := &github.SearchOptions{
 		Sort:        "stars",
@@ -60,7 +65,8 @@ func SearchMostPopularRepos(ctx context.Context) error {
 	}
 
 	log.Printf("Found %d repos\n", *result.Total)
-	for { // Loop through all pages
+	maxRetries := 3 // Define max retries for API calls
+	for {           // Loop through all pages
 		for _, repo := range result.Repositories {
 			// Basic nil checks for essential fields used later
 			if repo == nil {
@@ -171,9 +177,30 @@ func SearchMostPopularRepos(ctx context.Context) error {
 			break // Exit loop if there are no more pages
 		}
 		opts.Page = resp.NextPage
-		result, resp, err = ghClient.Search.Repositories(ctx, "stars:>10000", opts)
+		// Apply same retry logic for pagination
+		for attempts := 0; attempts < maxRetries; attempts++ {
+			result, resp, err = ghClient.Search.Repositories(ctx, "stars:>10000", opts)
+			if err == nil {
+				break // Success
+			}
+
+			// Check if we hit rate limit
+			if _, ok := err.(*github.RateLimitError); ok {
+				log.Printf("Hit rate limit on page %d, waiting before retry %d/%d", opts.Page, attempts+1, maxRetries)
+				time.Sleep(time.Second * time.Duration(2<<attempts)) // Exponential backoff
+				continue
+			}
+
+			// Other errors, break the retry loop (don't retry non-rate-limit errors here)
+			log.Printf("Non-rate-limit error on page %d, attempt %d/%d: %v", opts.Page, attempts+1, maxRetries, err)
+			break
+		}
+
 		if err != nil {
-			log.Printf("Error searching repositories on page %d: %v", opts.Page, err)
+			log.Printf("Error searching repositories on page %d after %d attempts: %v", opts.Page, maxRetries, err)
+			if resp != nil {
+				log.Printf("Response status: %s", resp.Status)
+			}
 			return fmt.Errorf("failed to search repositories on page %d: %w", opts.Page, err)
 		}
 	}
