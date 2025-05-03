@@ -6,4 +6,4 @@ resources:
 - overlays/dev
 images:
 - name: kalmyk.duckdns.org/lab/reviseur
-  newTag: 0.165.0
+  newTag: 0.184.0
