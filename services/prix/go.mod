@@ -1,4 +1,4 @@
-module prix/app
+module github.com/gregkonush/lab/services/prix
 
 go 1.23.4
 

@@ -32,12 +32,20 @@ type GithubRepository struct {
 	UpdatedAt       time.Time  `db:"updated_at"`
 }
 
+// DefaultPerPage defines the default number of repos per page from GitHub API
+const DefaultPerPage = 100
+
+// SearchMostPopularRepos searches for GitHub repositories with more than 10,000 stars,
+// fetches their details (including README content), and upserts the information
+// into the `github_repositories` database table.
+// It processes results page by page from the GitHub API.
+// Returns an error if the search or database operations fail.
 func SearchMostPopularRepos(ctx context.Context) error {
 	ghClient := github.NewClient(nil)
 	opts := &github.SearchOptions{
 		Sort:        "stars",
 		Order:       "desc",
-		ListOptions: github.ListOptions{PerPage: 100},
+		ListOptions: github.ListOptions{PerPage: DefaultPerPage},
 	}
 	result, resp, err := ghClient.Search.Repositories(ctx, "stars:>10000", opts)
 	if err != nil {
@@ -54,20 +62,51 @@ func SearchMostPopularRepos(ctx context.Context) error {
 	log.Printf("Found %d repos\n", *result.Total)
 	for { // Loop through all pages
 		for _, repo := range result.Repositories {
+			// Basic nil checks for essential fields used later
+			if repo == nil {
+				log.Println("Skipping nil repository object")
+				continue
+			}
+			if repo.FullName == nil || repo.HTMLURL == nil || repo.ID == nil || repo.NodeID == nil || repo.Name == nil || repo.Owner == nil || repo.Owner.Login == nil {
+				repoIdStr := "unknown ID"
+				if repo.ID != nil { // ID might be nil itself, but we check it in the condition
+					repoIdStr = fmt.Sprintf("ID %d", *repo.ID)
+				}
+				log.Printf("Skipping repository (%s) due to missing essential information", repoIdStr)
+				continue
+			}
+
 			log.Printf("Processing repo: %s\n", *repo.FullName)
 
-			readme, _, err := ghClient.Repositories.GetReadme(ctx, *repo.Owner.Login, *repo.Name, nil)
+			var readme *github.RepositoryContent
 			var readmeDecoded *string
-			if err != nil {
-				log.Printf("Could not get README for %s: %v", *repo.FullName, err)
+
+			// Guard against nils specifically needed for GetReadme
+			if repo.Owner == nil || repo.Owner.Login == nil || repo.Name == nil {
+				log.Printf("Skipping GetReadme for repo %s: missing owner/name data", *repo.FullName)
+				// Continue processing without trying to fetch the README.
 			} else {
-				content, err := base64.StdEncoding.DecodeString(*readme.Content)
-				if err != nil {
-					log.Printf("Could not decode README content for %s: %v", *repo.FullName, err)
+				var getReadmeErr error // Use a different variable name to avoid shadowing
+				readme, _, getReadmeErr = ghClient.Repositories.GetReadme(ctx, *repo.Owner.Login, *repo.Name, nil)
+				if getReadmeErr != nil {
+					log.Printf("Could not get README for %s: %v", *repo.FullName, getReadmeErr)
+				} else if readme == nil || readme.Content == nil { // Also check if readme itself is nil
+					log.Printf("README content is nil or unavailable for %s", *repo.FullName)
 				} else {
-					contentStr := string(content)
-					readmeDecoded = &contentStr
+					content, decodeErr := base64.StdEncoding.DecodeString(*readme.Content)
+					if decodeErr != nil {
+						log.Printf("Could not decode README content for %s: %v", *repo.FullName, decodeErr)
+					} else {
+						contentStr := string(content)
+						readmeDecoded = &contentStr
+					}
 				}
+			}
+
+			// Use repo description as fallback if README couldn't be fetched/decoded
+			if readmeDecoded == nil && repo.Description != nil {
+				log.Printf("Using repo description as fallback for %s", *repo.FullName)
+				readmeDecoded = repo.Description
 			}
 
 			repoData := GithubRepository{
@@ -123,6 +162,8 @@ func SearchMostPopularRepos(ctx context.Context) error {
 
 			if err != nil {
 				log.Printf("Error upserting repo %s: %v", *repo.FullName, err)
+				// Fail the activity on DB error to allow Temporal retries
+				return fmt.Errorf("db upsert failed for repo %s: %w", *repo.FullName, err)
 			}
 		}
 

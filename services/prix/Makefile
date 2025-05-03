@@ -9,11 +9,12 @@ TEMPORAL_TASK_QUEUE := prix
 MIGRATIONS_PATH := db/migrations
 
 # Check if migrate tool is installed, if not, suggest installation
+check-migrate:
 ifeq ($(shell command -v migrate 2> /dev/null),)
-MIGRATE = $(error "migrate command not found. Install it with: brew install golang-migrate")
-else
-MIGRATE = migrate
+	$(error "migrate CLI not found. Install: https://github.com/golang-migrate/migrate/releases")
 endif
+
+MIGRATE = migrate
 
 # Check if tctl tool is installed, if not, suggest installation
 ifeq ($(shell command -v tctl 2> /dev/null),)

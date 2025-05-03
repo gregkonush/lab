@@ -2,7 +2,11 @@ package main
 
 import (
 	"log"
-	prix "prix/app"
+	"os"
+	"os/signal"
+	"syscall"
+
+	prix "github.com/gregkonush/lab/services/prix"
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -25,8 +29,25 @@ func main() {
 	w.RegisterWorkflow(prix.ListRepos)
 	w.RegisterActivity(prix.SearchMostPopularRepos)
 
-	err = w.Run(worker.InterruptCh())
-	if err != nil {
-		log.Fatalln("Unable to start Temporal worker", err)
-	}
+	// Start worker in a separate goroutine
+	go func() {
+		err = w.Run(worker.InterruptCh())
+		if err != nil {
+			log.Fatalf("Unable to start Temporal worker: %v", err)
+		}
+	}()
+
+	log.Println("Worker started. Press Ctrl+C to exit.")
+
+	// Wait for interrupt signal
+	interruptCh := make(chan os.Signal, 1)
+	signal.Notify(interruptCh, os.Interrupt, syscall.SIGTERM)
+	<-interruptCh
+
+	log.Println("Shutting down worker gracefully...")
+	// w.Run(worker.InterruptCh()) already handles graceful shutdown internally by stopping polling and waiting for activities to complete.
+	// The channel blocks until shutdown is complete.
+	// Adding an extra sleep might not be necessary unless there are specific non-Temporal cleanup tasks.
+	// time.Sleep(2 * time.Second) // Optional extra wait time
+	log.Println("Worker shutdown complete")
 }
