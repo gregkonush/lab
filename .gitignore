@@ -231,7 +231,7 @@ dmypy.json
 .pytype/
 cython_debug/
 
-!apps/baozi/s2i/bin
+!**/*/s2i/bin
 
 # Temporary files and directories
 tmp/
