@@ -1,3 +1,6 @@
+# $schema: https://raw.githubusercontent.com/knative/func/refs/tags/v1.17.0/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/refs/tags/v1.17.0/schema/func_yaml-schema.json
+---
 specVersion: 1.17.0
 name: nata
 runtime: typescript
@@ -9,6 +12,6 @@ build:
     platforms: linux/arm64
     s2i: xleb.duckdns.org/alpine
   builder: s2i
-run:
 deploy:
   namespace: froussard
+  image: xleb.duckdns.org/nata@sha256:584a30e1b1264fc573939e23296ed804f6a8bcf53f2fbd7cd213a403a156c8b2
