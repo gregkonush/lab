@@ -1,0 +1,14 @@
+specVersion: 1.17.0
+name: nata
+runtime: typescript
+registry: xleb.duckdns.org
+namespace: froussard
+created: 2025-03-30T10:30:06.936905-07:00
+build:
+  builderImages:
+    platforms: linux/arm64
+    s2i: xleb.duckdns.org/alpine
+  builder: s2i
+run:
+deploy:
+  namespace: froussard
