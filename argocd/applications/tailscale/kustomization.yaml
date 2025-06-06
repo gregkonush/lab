@@ -15,16 +15,3 @@ patches:
       - op: replace
         path: /spec/template/spec/volumes/0/secret/secretName
         value: operator-oauth-token
-  - path: base/clusterrole-patch.yaml
-    target:
-      kind: ClusterRole
-      name: tailscale-operator
-      group: rbac.authorization.k8s.io
-      version: v1
-  - path: base/role-patch.yaml
-    target:
-      kind: Role
-      name: operator
-      namespace: tailscale
-      group: rbac.authorization.k8s.io
-      version: v1
