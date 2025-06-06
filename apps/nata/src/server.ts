@@ -32,5 +32,5 @@ const port = Number(process.env.PORT) || 8080
 serve({
   fetch: app.fetch,
   port,
-  hostname: '127.0.0.1',
+  hostname: '0.0.0.0',
 })
