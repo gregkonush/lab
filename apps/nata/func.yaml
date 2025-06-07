@@ -1,6 +1,6 @@
-# $schema: https://raw.githubusercontent.com/knative/func/refs/tags/v1.17.0/schema/func_yaml-schema.json
-# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/refs/tags/v1.17.0/schema/func_yaml-schema.json
-specVersion: 1.17.0
+# $schema: https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
+specVersion: 0.45.1
 name: nata
 runtime: typescript
 registry: xleb.duckdns.org
