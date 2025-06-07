@@ -11,3 +11,8 @@ helmCharts:
     releaseName: temporal
     namespace: temporal
     includeCRDs: true
+    valuesInline:
+      prometheus:
+        enabled: false
+      grafana:
+        enabled: false
