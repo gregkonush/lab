@@ -9,4 +9,3 @@ helmCharts:
     version: 0.63.0
     repo: https://go.temporal.io/helm-charts
     namespace: temporal
-    valuesFile: values.yaml
