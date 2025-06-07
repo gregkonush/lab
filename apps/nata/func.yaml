@@ -9,11 +9,11 @@ created: 2025-03-30T10:30:06.936905-07:00
 build:
   builderImages:
     platforms: linux/arm64
-    s2i: xleb.duckdns.org/alpine
+    s2i: xleb.duckdns.org/base
   builder: s2i
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/nata@sha256:125b9500cc895c16121fbf07469fbd9eeaefaa179351031ab25844d6d9a7d22c
+  image: xleb.duckdns.org/nata@sha256:ca2686245ed323ad0045ce17688688607b7aa0c533b4c7288fa9b4c1954e80d2
   options:
     scale:
       min: 1

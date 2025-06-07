@@ -1,4 +1,4 @@
-FROM node:lts-alpine
+FROM node:lts
 
 LABEL maintainer="Greg Konush <greg.konush@gmail.com>"
 
@@ -14,8 +14,8 @@ LABEL io.k8s.description="Node.js LTS with pnpm S2I Builder" \
       io.openshift.s2i.scripts-url="image:///usr/libexec/s2i" \
       io.openshift.tags="builder,nodejs,pnpm,lts"
 
-RUN addgroup -S -g 1001 app && \
-    adduser -S -u 1001 -G app -h /opt/app-root -s /bin/false app && \
+RUN groupadd -r -g 1001 app && \
+    useradd -r -u 1001 -g app -d /opt/app-root -s /bin/false app && \
     mkdir -p /opt/app-root/src /opt/app-root/.local/share/pnpm && \
     chown -R app:app /opt/app-root && \
     corepack enable pnpm

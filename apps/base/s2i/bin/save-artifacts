@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash -e
 #
 # S2I save-artifacts script for the 'alpine' image.
 # The save-artifacts script streams a tar archive to standard output.

@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash -e
 #
 # S2I assemble script for the 'alpine' image.
 # The 'assemble' script builds your application source so that it is ready to run.
