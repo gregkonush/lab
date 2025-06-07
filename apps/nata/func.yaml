@@ -13,7 +13,7 @@ build:
   builder: s2i
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/nata@sha256:ca2686245ed323ad0045ce17688688607b7aa0c533b4c7288fa9b4c1954e80d2
+  image: xleb.duckdns.org/nata@sha256:bc5e9b6e548fa4cfc09e3ff91f5d1abbcc8fed8a438a756511635b417b4270f2
   options:
     scale:
       min: 1
