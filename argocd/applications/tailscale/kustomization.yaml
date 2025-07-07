@@ -27,6 +27,17 @@ patches:
             - update
             - patch
             - delete
+      - op: add
+        path: /rules/-
+        value:
+          apiGroups:
+            - ""
+          resources:
+            - nodes
+          verbs:
+            - get
+            - list
+            - watch
   - target:
       group: apps
       version: v1
