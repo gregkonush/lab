@@ -1,0 +1,165 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: milvus
+
+resources:
+  - external-service.yaml
+
+helmCharts:
+  - name: milvus
+    repo: https://zilliztech.github.io/milvus-helm
+    version: 4.2.56
+    releaseName: milvus
+    namespace: milvus
+    valuesInline:
+      cluster:
+        enabled: true
+      
+      image:
+        all:
+          repository: milvusdb/milvus
+          tag: v2.5.14
+          pullPolicy: IfNotPresent
+      
+      service:
+        type: LoadBalancer
+        port: 19530
+        portName: milvus
+        annotations:
+          metallb.universe.tf/address-pool: default
+      
+      proxy:
+        enabled: true
+        replicas: 1
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+      
+      mixCoordinator:
+        enabled: true
+        replicas: 1
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+      
+      rootCoordinator:
+        enabled: false
+      
+      queryCoordinator:
+        enabled: false
+      
+      indexCoordinator:
+        enabled: false
+      
+      dataCoordinator:
+        enabled: false
+      
+      queryNode:
+        enabled: true
+        replicas: 1
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+      
+      indexNode:
+        enabled: true
+        replicas: 1
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+      
+      dataNode:
+        enabled: true
+        replicas: 1
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 2Gi
+            cpu: 1000m
+      
+      attu:
+        enabled: true
+        image:
+          repository: zilliz/attu
+          tag: v2.5.3
+        service:
+          type: LoadBalancer
+          port: 3000
+          annotations:
+            metallb.universe.tf/address-pool: default
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 50m
+          limits:
+            memory: 256Mi
+            cpu: 250m
+      
+      etcd:
+        enabled: true
+        replicaCount: 1
+        persistence:
+          enabled: true
+          storageClass: longhorn
+          size: 10Gi
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+      
+      minio:
+        enabled: true
+        mode: distributed
+        persistence:
+          enabled: true
+          storageClass: longhorn
+          size: 50Gi
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 200m
+      
+      kafka:
+        enabled: true
+        replicaCount: 1
+        persistence:
+          enabled: true
+          storageClass: longhorn
+          size: 10Gi
+        heapOpts: "-Xmx1024m -Xms1024m"
+        zookeeper:
+          enabled: true
+          replicaCount: 1
+      
+      pulsar:
+        enabled: false
+      
+      pulsarv3:
+        enabled: false
+      
+      metrics:
+        enabled: true
+        serviceMonitor:
+          enabled: false
+      
+      log:
+        level: info
+        format: text
