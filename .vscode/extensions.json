@@ -4,13 +4,12 @@
     "bradlc.vscode-tailwindcss",
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
-    "firsttris.vscode-jest-runner",
     "github.vscode-github-actions",
     "github.vscode-pull-request-github",
     "HashiCorp.terraform",
     "ms-kubernetes-tools.vscode-kubernetes-tools",
     "ms-playwright.playwright",
     "nrwl.angular-console",
-    "yoavbls.pretty-ts-errors"
+    "yoavbls.pretty-ts-errors",
   ]
 }
