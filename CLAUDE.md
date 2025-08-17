@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 This is a comprehensive home cloud laboratory monorepo containing:
+
 - Multiple applications (Next.js, React, TypeScript, Python, Go)
 - Infrastructure as Code (OpenTofu/Terraform)
 - GitOps deployment configurations (ArgoCD)
@@ -14,6 +15,7 @@ This is a comprehensive home cloud laboratory monorepo containing:
 ## Common Development Commands
 
 ### Package Management & Dependencies
+
 ```bash
 # Install all dependencies
 pnpm install
@@ -26,6 +28,7 @@ pnpm run format
 ```
 
 ### Application Development
+
 ```bash
 # Start development servers
 pnpm run dev:proompteng
@@ -46,6 +49,7 @@ pnpm run lint:findbobastore
 ```
 
 ### Individual App Commands
+
 ```bash
 # For apps using vinxi (like kitty-krew)
 cd apps/kitty-krew
@@ -65,6 +69,7 @@ go test ./... # Run tests
 ```
 
 ### Infrastructure Management
+
 ```bash
 # Terraform/OpenTofu operations
 pnpm run tf:plan     # Plan infrastructure changes
@@ -86,6 +91,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 ## Architecture & Structure
 
 ### Monorepo Layout
+
 - `/apps/` - Independent applications with their own package.json
 - `/services/` - Go backend services
 - `/argocd/` - GitOps deployment manifests and ApplicationSets
@@ -94,6 +100,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - `/kubernetes/` - Cluster setup and management scripts
 
 ### Key Technologies
+
 - **Frontend**: Next.js 15, React 19, TanStack Router, tRPC, Tailwind CSS
 - **Backend**: Go 1.24, Node.js 22.14, Python 3.9-3.13
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka
@@ -101,12 +108,14 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Tooling**: PNPM 9.15.2, Biome, Turbo, Docker
 
 ### Application Patterns
+
 - **Next.js apps**: Use App Router, TypeScript, Tailwind CSS, shadcn/ui
 - **React apps**: TanStack Router with tRPC for type-safe APIs
 - **Python apps**: Dagster for data pipelines, UV for dependency management
 - **Go services**: Temporal workflows, PostgreSQL integration
 
 ### Infrastructure Patterns
+
 - **GitOps**: ArgoCD ApplicationSets with Kustomize overlays
 - **Multi-environment**: Dev/prod overlays in `/argocd/applications/*/overlays/`
 - **Service mesh**: Istio components for ingress and networking
@@ -115,19 +124,23 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 ## Development Notes
 
 ### Code Standards
+
 - Use Biome for formatting and linting (configured in biome.json)
 - Follow existing TypeScript patterns in each app
 - Maintain consistent indentation (2 spaces, single quotes)
 
 ### Container Registry
+
 - Private registry: `kalmyk.duckdns.org` (for ARM64 builds)
 - Build scripts available in `/scripts/` directory
 
 ### Kubernetes Contexts
+
 - Harvester cluster config: `~/.kube/altra.yaml`
 - Use `kubectl --kubeconfig ~/.kube/altra.yaml` for cluster operations
 
 ### Testing
+
 - Check individual app package.json for test commands
 - Go services: `go test ./...`
 - Python apps: `pytest` (when available)
