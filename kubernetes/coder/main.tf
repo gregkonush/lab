@@ -36,13 +36,9 @@ data "coder_parameter" "cpu" {
   name         = "cpu"
   display_name = "CPU"
   description  = "The number of CPU cores"
-  default      = "2"
+  default      = "4"
   icon         = "/icon/memory.svg"
   mutable      = true
-  option {
-    name  = "2 Cores"
-    value = "2"
-  }
   option {
     name  = "4 Cores"
     value = "4"
@@ -61,13 +57,9 @@ data "coder_parameter" "memory" {
   name         = "memory"
   display_name = "Memory"
   description  = "The amount of memory in GB"
-  default      = "2"
+  default      = "4"
   icon         = "/icon/memory.svg"
   mutable      = true
-  option {
-    name  = "2 GB"
-    value = "2"
-  }
   option {
     name  = "4 GB"
     value = "4"
@@ -86,7 +78,7 @@ data "coder_parameter" "home_disk_size" {
   name         = "home_disk_size"
   display_name = "Home disk size"
   description  = "The size of the home disk in GB"
-  default      = "10"
+  default      = "30"
   type         = "number"
   icon         = "/emojis/1f4be.png"
   mutable      = false
@@ -287,7 +279,7 @@ resource "kubernetes_deployment" "main" {
           name              = "dev"
           image             = "codercom/enterprise-base:ubuntu"
           image_pull_policy = "Always"
-          command           = ["sh", "-c", coder_agent.main.init_script]
+          command           = ["sh", "-c", replace(coder_agent.main.init_script, "coder-linux-amd64", "coder-linux-arm64")]
           security_context {
             run_as_user = "1000"
           }

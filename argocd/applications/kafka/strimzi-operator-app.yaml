@@ -7,13 +7,12 @@ spec:
   project: default
   destination:
     server: https://kubernetes.default.svc
-    namespace: strimzi-operator
+    namespace: kafka
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
-      - CreateNamespace=true
       - ServerSideApply=true
   source:
     repoURL: oci://quay.io/strimzi-helm
