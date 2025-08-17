@@ -3,6 +3,8 @@ kind: Application
 metadata:
   name: strimzi-operator
   namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   project: default
   destination:
@@ -22,3 +24,12 @@ spec:
       releaseName: strimzi
       valuesObject:
         watchAnyNamespace: true
+    plugin: null
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - IncludeCRDs=true
