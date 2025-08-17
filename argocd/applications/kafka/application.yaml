@@ -18,7 +18,7 @@ spec:
   source:
     repoURL: registry-1.docker.io/bitnamicharts
     chart: kafka
-    targetRevision: 32.2.2
+    targetRevision: 32.4.2
     helm:
       releaseName: kafka
       skipCrds: false

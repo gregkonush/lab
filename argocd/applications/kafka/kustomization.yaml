@@ -7,7 +7,7 @@ resources:
 helmCharts:
   - name: kafka-ui
     repo: https://kafbat.github.io/helm-charts
-    version: 1.5.0
+    version: 1.5.1
     releaseName: kafka-ui
     namespace: kafka
     valuesInline:
@@ -15,18 +15,19 @@ helmCharts:
         secretMappings:
           KAFKA_PASSWORD:
             name: kafka-user-passwords
-            keyName: user1
+            keyName: client-passwords
       env:
+        - name: KAFKA_CLUSTERS_0_NAME
+          value: kafka
+        - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+          value: kafka:9092
+        - name: KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL
+          value: SASL_PLAINTEXT
+        - name: KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM
+          value: SCRAM-SHA-512
         - name: KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG
-          value: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="user1" password="$(KAFKA_PASSWORD)";'
+          value: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="user1" password="$(KAFKA_PASSWORD)";'
       yamlApplicationConfig:
-        kafka:
-          clusters:
-            - name: kafka
-              bootstrapServers: kafka:9092
-              properties:
-                security.protocol: SASL_PLAINTEXT
-                sasl.mechanism: PLAIN
         auth:
           type: disabled
         management:
