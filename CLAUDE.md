@@ -61,10 +61,17 @@ pnpm start  # Start production server
 cd apps/alchimie
 uv sync     # Install dependencies
 uv run dagster dev  # Start Dagster development server
+uv run pytest  # Run tests
 
 # For Go services (like prix)
 cd services/prix
-go run .    # Run the service
+go run ./worker/main.go  # Run the worker
+go test ./... # Run tests
+make migrate-up  # Run database migrations
+
+# For Go services (like prt)
+cd services/prt
+go run main.go  # Run the service
 go test ./... # Run tests
 ```
 
@@ -98,21 +105,22 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - `/tofu/` - Infrastructure as Code (OpenTofu/Terraform)
 - `/ansible/` - Configuration management playbooks
 - `/kubernetes/` - Cluster setup and management scripts
+- `/scripts/` - Build and deployment scripts
 
 ### Key Technologies
 
 - **Frontend**: Next.js 15, React 19, TanStack Router, tRPC, Tailwind CSS
 - **Backend**: Go 1.24, Node.js 22.14, Python 3.9-3.13
-- **Data**: Dagster, Temporal, PostgreSQL, Kafka
+- **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes (K3s), ArgoCD, Harvester, Ansible
-- **Tooling**: PNPM 9.15.2, Biome, Turbo, Docker
+- **Tooling**: PNPM 9.15.2, Biome, Turbo, Docker, UV
 
 ### Application Patterns
 
-- **Next.js apps**: Use App Router, TypeScript, Tailwind CSS, shadcn/ui
-- **React apps**: TanStack Router with tRPC for type-safe APIs
-- **Python apps**: Dagster for data pipelines, UV for dependency management
-- **Go services**: Temporal workflows, PostgreSQL integration
+- **Next.js apps** (proompteng, findbobastore): Use App Router, TypeScript, Tailwind CSS, shadcn/ui components
+- **React apps** (kitty-krew): TanStack Router with tRPC for type-safe APIs, Vinxi for bundling
+- **Python apps** (alchimie): Dagster for data pipelines, UV for dependency management
+- **Go services** (prix, prt): Temporal workflows, PostgreSQL integration, database migrations
 
 ### Infrastructure Patterns
 
@@ -120,27 +128,45 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - **Multi-environment**: Dev/prod overlays in `/argocd/applications/*/overlays/`
 - **Service mesh**: Istio components for ingress and networking
 - **Storage**: Longhorn for persistent volumes, MinIO for object storage
+- **Messaging**: Kafka with Strimzi operator, Knative Eventing
+- **Databases**: CloudNative-PG for PostgreSQL, Milvus for vector storage
 
-## Development Notes
+## Code Standards
 
-### Code Standards
+### Formatting & Linting
 
 - Use Biome for formatting and linting (configured in biome.json)
-- Follow existing TypeScript patterns in each app
-- Maintain consistent indentation (2 spaces, single quotes)
+- Settings: 2 spaces indentation, single quotes, trailing commas, 120 char line width
+- Run `pnpm run format` to format all files
 
-### Container Registry
+### File Naming & Structure
 
-- Private registry: `kalmyk.duckdns.org` (for ARM64 builds)
-- Build scripts available in `/scripts/` directory
+- Use kebab-case for file names (especially .tsx files)
+- Follow existing patterns in each application
+- Component files should match their exported component name in kebab-case
 
-### Kubernetes Contexts
+### Styling (React/Next.js apps)
 
-- Harvester cluster config: `~/.kube/altra.yaml`
-- Use `kubectl --kubeconfig ~/.kube/altra.yaml` for cluster operations
+- Use Tailwind CSS utility classes exclusively
+- Use `cn()` utility for conditional classNames
+- Follow zinc color palette for consistency
+- Maintain responsive design with Tailwind's responsive prefixes
+- Never hardcode width/height values
 
 ### Testing
 
-- Check individual app package.json for test commands
+- Next.js/React apps: Check package.json for test commands
 - Go services: `go test ./...`
-- Python apps: `pytest` (when available)
+- Python apps: `uv run pytest`
+
+## Container Registry & Deployment
+
+- Private registry: `kalmyk.duckdns.org` (for ARM64 builds)
+- Build scripts in `/scripts/` directory (e.g., `build-kitty-krew.sh`)
+- ArgoCD manages deployments from Git
+
+## Kubernetes Context
+
+- Harvester cluster config: `~/.kube/altra.yaml`
+- Use `kubectl --kubeconfig ~/.kube/altra.yaml` for cluster operations
+- ArgoCD UI available after bootstrap
