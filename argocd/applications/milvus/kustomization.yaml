@@ -5,6 +5,7 @@ namespace: milvus
 resources:
   - external-service.yaml
   - milvus-kafka-sasl-secret.yaml
+  - minio-bucket-job.yaml
 
 helmCharts:
   - name: milvus
