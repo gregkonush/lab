@@ -1,9 +1,98 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: kafka
 resources:
-  - strimzi-operator-app.yaml
+  - https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.47.0/strimzi-crds-0.47.0.yaml
+  - https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.47.0/strimzi-cluster-operator-0.47.0.yaml
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
+patches:
+  # Make the operator watch all namespaces
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: strimzi-cluster-operator
+    patch: |-
+      spec:
+        template:
+          spec:
+            containers:
+              - name: strimzi-cluster-operator
+                env:
+                  - name: STRIMZI_NAMESPACE
+                    value: "*"
+  # Fix RBAC subjects namespace to match operator namespace
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator-kafka-client-delegation
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator-kafka-broker-delegation
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator-leader-election
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator-entity-operator-delegation
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator-watched
+    patch: |-
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
 helmCharts:
   - name: kafka-ui
     repo: https://kafbat.github.io/helm-charts
