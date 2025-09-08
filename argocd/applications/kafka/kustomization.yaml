@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kafka
 resources:
-  - github.com/strimzi/strimzi-kafka-operator/install/cluster-operator?ref=0.47.0
+  - github.com/strimzi/strimzi-kafka-operator//install/cluster-operator?ref=0.47.0
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
 patches:
