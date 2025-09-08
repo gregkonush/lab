@@ -32,3 +32,21 @@
 - **Commit style**: use conventional commits, include concise “why” in the message.
 
 *Agents should follow these guidelines when generating or modifying code.*
+
+## ArgoCD, kubectl, and git preferences
+
+- **kubectl**:
+  - Use the current/default kube context. Do not pass a kubeconfig path unless explicitly requested.
+  - Always scope with `-n <namespace>`; default to the app’s namespace (e.g., `kafka` for Kafka).
+  - Prefer concise, read-only queries first; avoid long-lived watchers. Use label selectors and jsonpath for precision.
+  - Use ephemeral `kubectl` actions only for restarts or debugging (e.g., `rollout restart`, `logs`). Avoid changing desired state via `kubectl apply` unless explicitly asked.
+
+- **ArgoCD (GitOps)**:
+  - Treat Git as the single source of truth; make edits under `argocd/` and let ArgoCD reconcile.
+  - Do not install charts with the Helm CLI; declare charts via Kustomize `helmCharts` (or existing GitOps mechanism) and pin versions.
+  - After file edits, the user will commit/push and sync the ArgoCD app. Only trigger sync/refresh on request.
+
+- **git**:
+  - Do not run git commands. Propose file edits only; the user will commit, push, and create PRs.
+  - Follow conventional commits style and include the “why” when suggesting messages.
+  - Never modify git configuration.
