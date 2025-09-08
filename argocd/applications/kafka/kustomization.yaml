@@ -14,10 +14,6 @@ patches:
       kind: Deployment
       name: strimzi-cluster-operator
     patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: strimzi-cluster-operator
       spec:
         template:
           spec:
@@ -33,10 +29,6 @@ patches:
       kind: ClusterRoleBinding
       name: strimzi-cluster-operator
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: ClusterRoleBinding
-      metadata:
-        name: strimzi-cluster-operator
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
@@ -47,10 +39,6 @@ patches:
       kind: ClusterRoleBinding
       name: strimzi-cluster-operator-kafka-client-delegation
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: ClusterRoleBinding
-      metadata:
-        name: strimzi-cluster-operator-kafka-client-delegation
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
@@ -61,10 +49,6 @@ patches:
       kind: ClusterRoleBinding
       name: strimzi-cluster-operator-kafka-broker-delegation
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: ClusterRoleBinding
-      metadata:
-        name: strimzi-cluster-operator-kafka-broker-delegation
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
@@ -75,10 +59,6 @@ patches:
       kind: RoleBinding
       name: strimzi-cluster-operator
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: strimzi-cluster-operator
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
@@ -89,10 +69,6 @@ patches:
       kind: RoleBinding
       name: strimzi-cluster-operator-leader-election
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: strimzi-cluster-operator-leader-election
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
@@ -103,10 +79,6 @@ patches:
       kind: RoleBinding
       name: strimzi-cluster-operator-entity-operator-delegation
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: strimzi-cluster-operator-entity-operator-delegation
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
@@ -117,10 +89,6 @@ patches:
       kind: RoleBinding
       name: strimzi-cluster-operator-watched
     patch: |-
-      apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: strimzi-cluster-operator-watched
       subjects:
         - kind: ServiceAccount
           name: strimzi-cluster-operator
