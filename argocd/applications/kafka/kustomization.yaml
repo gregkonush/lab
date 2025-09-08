@@ -2,8 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kafka
 resources:
-  - https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.47.0/strimzi-crds-0.47.0.yaml
-  - https://github.com/strimzi/strimzi-kafka-operator/releases/download/0.47.0/strimzi-cluster-operator-0.47.0.yaml
+  - github.com/strimzi/strimzi-kafka-operator/install/cluster-operator?ref=0.47.0
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
 patches:
