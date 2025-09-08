@@ -147,22 +147,19 @@ helmCharts:
     namespace: kafka
     valuesInline:
       envs:
-        env:
-          - name: KAFKA_CLUSTERS_0_NAME
-            value: kafka
-          - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
-            value: kafka-kafka-bootstrap:9092
-          - name: KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL
-            value: SASL_PLAINTEXT
-          - name: KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM
-            value: SCRAM-SHA-512
-          - name: KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG
-            value: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="user1" password="$(KAFKA_PASSWORD)";'
         secretMappings:
           KAFKA_PASSWORD:
             name: user1
             keyName: password
       yamlApplicationConfig:
+        kafka:
+          clusters:
+            - name: kafka
+              bootstrapServers: kafka-kafka-bootstrap:9092
+              properties:
+                security.protocol: SASL_PLAINTEXT
+                sasl.mechanism: SCRAM-SHA-512
+                sasl.jaas.config: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="user1" password="${KAFKA_PASSWORD}";'
         auth:
           type: disabled
         management:
