@@ -30,6 +30,7 @@ resources:
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/049-Crd-kafkarebalance.yaml
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/050-ConfigMap-strimzi-cluster-operator.yaml
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/060-Deployment-strimzi-cluster-operator.yaml
+  - strimzi-operator-watched-crb.yaml
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
 patches:
