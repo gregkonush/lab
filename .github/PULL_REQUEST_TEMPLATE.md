@@ -6,6 +6,8 @@ LLM INSTRUCTIONS:
 - List 3-5 bullet points describing the changes
 - Be specific about what was added, modified, or fixed
 - Keep description concise and terse
+- Avoid using generic non-specific language
+- Avoid using statements that you sure are not true
 -->
 
 ## Screenshots (if applicable)
