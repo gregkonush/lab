@@ -3,3 +3,4 @@ kind: Kustomization
 namespace: eclair
 resources:
   - domain-mapping.yaml
+  - cluster-domain-claim.yaml
