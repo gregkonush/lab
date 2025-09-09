@@ -1,0 +1,19 @@
+# $schema: https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
+specVersion: 1.17.0
+name: eclair
+runtime: go
+registry: kalmyk.duckdns.org/lab
+namespace: eclair
+created: 2025-09-09T00:00:00Z
+build:
+  builderImages:
+    platforms: linux/arm64
+  builder: pack
+run:
+  envs: []
+deploy:
+  namespace: eclair
+  options:
+    scale:
+      min: 1
