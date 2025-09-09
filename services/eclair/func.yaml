@@ -1,19 +1,18 @@
-# $schema: https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
-# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
+# $schema: https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
 specVersion: 1.17.0
 name: eclair
 runtime: go
-registry: kalmyk.duckdns.org/lab
+registry: xleb.duckdns.org
 namespace: eclair
 created: 2025-09-09T00:00:00Z
 build:
   builderImages:
     platforms: linux/arm64
-  builder: pack
-run:
-  envs: []
+  builder: s2i
 deploy:
   namespace: eclair
+  image: xleb.duckdns.org/eclair@sha256:17e934d8fa5926b7518676b1268e2e405e3e7af3ec1031d9d5f1cbc644a2a669
   options:
     scale:
       min: 1
