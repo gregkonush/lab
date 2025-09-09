@@ -1,3 +1,3 @@
-module github.com/gregkonush/lab/services/eclair
+module function
 
-go 1.24.1
+go 1.22.0
