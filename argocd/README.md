@@ -99,3 +99,25 @@ kubectl kustomize argocd/applications/kitty-krew
 # Preview production overlay
 kubectl kustomize argocd/applications/kitty-krew/overlays/prod
 ```
+
+### Private Docker registry credentials (with 1Password CLI)
+
+- **Install 1Password CLI (macOS)**
+
+```bash
+brew install 1password-cli
+op --version
+# Sign in (interactive) so `op read` works in your shell
+op signin
+```
+
+- **Create registry secret in the `argocd` namespace**
+
+```bash
+kubectl create secret docker-registry registry \
+  --docker-server=https://kalmyk.duckdns.org \
+  --docker-username=lab \
+  --docker-password="$(op read op://vault_name/secret_name/field_name)" \
+  --namespace=argocd \
+  --dry-run=client -o yaml
+```

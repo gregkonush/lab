@@ -3,7 +3,7 @@
 ## Build / Lint / Test Commands
 
 - `pnpm install` – install all workspace dependencies.
-- `pnpm run dev:<app>` – start dev server (`proompteng`, `findbobastore`).
+- `pnpm run dev:<app>` – start dev server (e.g., `proompteng`).
 - `pnpm run build:<app>` – production build for the specified app.
 - `pnpm run start:<app>` – run the built app.
 - `pnpm run lint:<app>` – run `next lint` for the app.

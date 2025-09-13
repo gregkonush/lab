@@ -32,20 +32,16 @@ pnpm run format
 ```bash
 # Start development servers
 pnpm run dev:proompteng
-pnpm run dev:findbobastore
 
 # Build applications
 pnpm run build:proompteng
-pnpm run build:findbobastore
 pnpm run build:reviseur
 
 # Start production servers
 pnpm run start:proompteng
-pnpm run start:findbobastore
 
 # Lint applications
 pnpm run lint:proompteng
-pnpm run lint:findbobastore
 ```
 
 ### Individual App Commands
@@ -117,7 +113,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 ### Application Patterns
 
-- **Next.js apps** (proompteng, findbobastore): Use App Router, TypeScript, Tailwind CSS, shadcn/ui components
+- **Next.js apps** (proompteng): Use App Router, TypeScript, Tailwind CSS, shadcn/ui components
 - **React apps** (kitty-krew): TanStack Router with tRPC for type-safe APIs, Vinxi for bundling
 - **Python apps** (alchimie): Dagster for data pipelines, UV for dependency management
 - **Go services** (prix, prt): Temporal workflows, PostgreSQL integration, database migrations
