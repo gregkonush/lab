@@ -15,7 +15,6 @@ jobs:
       contents: read
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
-      findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
       alchimie: ${{ steps.filter.outputs.alchimie }}
@@ -31,8 +30,6 @@ jobs:
           filters: |
             proompteng:
               - 'apps/proompteng/**'
-            findbobastore:
-              - 'apps/findbobastore/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
             reviseur:
@@ -79,19 +76,7 @@ jobs:
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
-  build-findbobastore:
-    needs: [changes, version]
-    if: ${{ needs.changes.outputs.findbobastore == 'true' }}
-    uses: ./.github/workflows/docker-build-common.yaml
-    with:
-      image_name: findbobastore
-      dockerfile: ./apps/findbobastore/Dockerfile
-      context: .
-      new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-      docker_secrets: mapbox_access_token=${{ secrets.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN }}
+  
 
   build-kitty-krew:
     needs: [changes, version]
@@ -141,7 +126,6 @@ jobs:
       [
         version,
         build-proompteng,
-        build-findbobastore,
         build-kitty-krew,
         build-reviseur,
         build-alchimie,

@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
-      findbobastore: ${{ steps.filter.outputs.findbobastore }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
     steps:
@@ -26,8 +25,6 @@ jobs:
           filters: |
             proompteng:
               - 'apps/proompteng/**'
-            findbobastore:
-              - 'apps/findbobastore/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
             reviseur:
@@ -61,31 +58,7 @@ jobs:
 
       - run: pnpm --filter proompteng build
 
-  findbobastore:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.findbobastore == 'true' }}
-    runs-on: arc-arm64
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.12.0
-          cache: "pnpm"
-
-      - run: pnpm install --frozen-lockfile
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/apps/findbobastore/.next/cache
-          key: ${{ runner.os }}-nextjs-findbobastore-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-findbobastore-${{ hashFiles('**/pnpm-lock.yaml') }}-
-
-      - run: pnpm --filter findbobastore build
+  
 
   kitty-krew:
     needs: check_changed_files
