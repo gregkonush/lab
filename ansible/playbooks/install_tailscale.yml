@@ -3,13 +3,13 @@
   hosts: all
   become: true
   tasks:
-    - name: Add Tailscale package signing key
-      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+    - name: Add Tailscale package signing key (Ubuntu Noble 24.04)
+      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
       args:
         creates: /usr/share/keyrings/tailscale-archive-keyring.gpg
 
-    - name: Add Tailscale repository for Ubuntu
-      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+    - name: Add Tailscale repository for Ubuntu Noble
+      ansible.builtin.shell: curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
       args:
         creates: /etc/apt/sources.list.d/tailscale.list
 
