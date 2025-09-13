@@ -192,25 +192,12 @@ locals {
   }
 }
 
-resource "harvester_image" "ubuntu-focal" {
-  name               = "ubuntu-focal"
-  display_name       = "Ubuntu 20 Focal LTS"
+resource "harvester_image" "ubuntu-noble" {
+  name               = "ubuntu-noble"
+  display_name       = "Ubuntu 24 Noble LTS"
   source_type        = "download"
   namespace          = "harvester-public"
-  url                = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-arm64.img"
-  storage_class_name = harvester_storageclass.single-node-longhorn.name
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "harvester_image" "ubuntu-jammy" {
-  name               = "ubuntu-jammy"
-  display_name       = "Ubuntu 22 Jammy LTS"
-  source_type        = "download"
-  namespace          = "harvester-public"
-  url                = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img"
+  url                = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img"
   storage_class_name = harvester_storageclass.single-node-longhorn.name
 
   lifecycle {
@@ -259,7 +246,7 @@ resource "harvester_virtualmachine" "kube-cluster" {
     size        = "100Gi"
     bus         = "virtio"
     boot_order  = 1
-    image       = harvester_image.ubuntu-jammy.id
+    image       = harvester_image.ubuntu-noble.id
     auto_delete = true
   }
 
@@ -275,6 +262,12 @@ resource "harvester_virtualmachine" "kube-cluster" {
   cloudinit {
     user_data_secret_name    = harvester_cloudinit_secret.ubuntu-plain.name
     network_data_secret_name = harvester_cloudinit_secret.ubuntu-plain.name
+  }
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
   }
 
   ssh_keys = [
@@ -304,16 +297,36 @@ package_upgrade: true
 package_reboot_if_required: true
 bootcmd:
   - sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="/&discard=off /' /etc/default/grub
+  - sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="/&transparent_hugepage=never /' /etc/default/grub
   - update-grub
 packages:
   - qemu-guest-agent
   - curl
+  - chrony
+  - ethtool
 write-files:
-  - path: /etc/sysctl.d/60-nvme-optimizations.conf
+  - path: /etc/sysctl.d/60-k8s-perf.conf
     content: |
-      vm.max_map_count = 262144
-      fs.file-max = 65536
-      vm.swappiness = 10
+      fs.inotify.max_user_watches = 1048576
+      fs.inotify.max_user_instances = 8192
+      fs.file-max = 2097152
+      vm.max_map_count = 524288
+      vm.swappiness = 0
+      kernel.numa_balancing = 0
+      net.core.somaxconn = 4096
+      net.core.netdev_max_backlog = 250000
+      net.core.rmem_max = 134217728
+      net.core.wmem_max = 134217728
+      net.ipv4.tcp_rmem = 4096 87380 134217728
+      net.ipv4.tcp_wmem = 4096 65536 134217728
+      net.ipv4.tcp_congestion_control = bbr
+      net.ipv4.ip_forward = 1
+      net.ipv4.neigh.default.gc_thresh1 = 4096
+      net.ipv4.neigh.default.gc_thresh2 = 8192
+      net.ipv4.neigh.default.gc_thresh3 = 16384
+      net.ipv4.conf.all.rp_filter = 0
+      net.ipv4.conf.default.rp_filter = 0
+      net.bridge.bridge-nf-call-iptables = 1
   - path: /etc/udev/rules.d/60-scheduler-nvme.rules
     content: |
       # Set I/O scheduler to 'none' for NVMe devices
@@ -326,23 +339,82 @@ write-files:
     content: |
       [Service]
       ExecStart=
+  - path: /etc/systemd/system/cpu-performance.service
+    content: |
+      [Unit]
+      Description=Set CPU governor to performance
+      After=multi-user.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do [ -f "$g" ] && echo performance > "$g" || true; done'
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/disable-thp.service
+    content: |
+      [Unit]
+      Description=Disable Transparent Huge Pages
+      After=multi-user.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'echo never > /sys/kernel/mm/transparent_hugepage/enabled; echo never > /sys/kernel/mm/transparent_hugepage/defrag'
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/journald.conf.d/99-performance.conf
+    content: |
+      [Journal]
+      SystemMaxUse=1G
+      RuntimeMaxUse=1G
+  - path: /usr/local/sbin/nic-tune.sh
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+      for IFACE in $(ls /sys/class/net); do
+        [ "$IFACE" = "lo" ] && continue
+        ethtool -K "$IFACE" gro on gso on tso on 2>/dev/null || true
+      done
+  - path: /etc/systemd/system/nic-tune.service
+    content: |
+      [Unit]
+      Description=Tune NIC offloads for performance
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/nic-tune.sh
+
+      [Install]
+      WantedBy=multi-user.target
 runcmd:
+  - systemctl daemon-reload
   - systemctl enable --now qemu-guest-agent
   - systemctl mask fstrim.timer
   - systemctl stop fstrim.timer
   - systemctl mask fstrim.service
   - systemctl stop fstrim.service
-  - sysctl -p /etc/sysctl.d/60-nvme-optimizations.conf
+  - sysctl --system
   - udevadm control --reload-rules
   - udevadm trigger
+  - modprobe br_netfilter || true
+  - swapoff -a
+  - sed -ri 's/^(\S+\s+\S+\s+swap\s+\S+\s+\S+\s*\S*)/# \1/g' /etc/fstab
+  - systemctl enable --now cpu-performance.service
+  - systemctl enable --now disable-thp.service
+  - systemctl enable --now nic-tune.service
+  - systemctl restart systemd-journald
   # Install Tailscale
-  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
   - apt-get update
   - apt-get install -y tailscale
   - systemctl enable --now tailscaled
-bootcmd:
-  - systemctl daemon-reload
+# bootcmd removed (daemon-reload moved to runcmd)
 users:
   - name: kalmyk
     groups: [adm, cdrom, dip, plugdev, lxd, sudo]
@@ -385,8 +457,8 @@ runcmd:
   - apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
   - systemctl enable --now docker
   # Install Tailscale
-  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+  - curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | sudo tee /etc/apt/sources.list.d/tailscale.list
   - apt-get update
   - apt-get install -y tailscale
   - systemctl enable --now tailscaled
@@ -428,7 +500,7 @@ resource "harvester_virtualmachine" "docker-host" {
     size        = "100Gi"
     bus         = "virtio"
     boot_order  = 1
-    image       = harvester_image.ubuntu-jammy.id
+    image       = harvester_image.ubuntu-noble.id
     auto_delete = true
   }
 
@@ -444,6 +516,12 @@ resource "harvester_virtualmachine" "docker-host" {
   cloudinit {
     user_data_secret_name    = harvester_cloudinit_secret.ubuntu-docker.name
     network_data_secret_name = harvester_cloudinit_secret.ubuntu-docker.name
+  }
+
+  timeouts {
+    create = "30m"
+    update = "30m"
+    delete = "30m"
   }
 
   ssh_keys = [
