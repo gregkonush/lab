@@ -10,8 +10,9 @@
         enabled: yes
 
     - name: Bring Tailscale up with authkey (if provided)
-      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-routes=true"
+      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-routes=true --hostname={{ inventory_hostname }}"
       register: tailscale_up
-      changed_when: "'is running' not in tailscale_up.stdout"
+      no_log: true
+      changed_when: false
       failed_when: false
       when: lookup('env', 'TAILSCALE_AUTHKEY') != ""
