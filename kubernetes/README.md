@@ -26,27 +26,21 @@ Install a new cluster
 
 ## Bootstrap GitOps (ArgoCD) – step by step
 
-1) Install Sealed Secrets CRD (required by ArgoCD base kustomization):
-
-```bash
-kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.32.1/controller.yaml
-```
-
-2) Apply ArgoCD base (HA install, image updater, Traefik IngressRoute, secrets):
+1) Apply ArgoCD base (HA install, image updater, Traefik IngressRoute, secrets):
 
 ```bash
 kubectl apply -k argocd/applications/argocd
 kubectl -n argocd get pods
 ```
 
-3) Wait until ArgoCD is ready before proceeding:
+2) Wait until ArgoCD is ready before proceeding:
 
 ```bash
 kubectl -n argocd rollout status deploy/argocd-server --timeout=180s
 kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=180s
 ```
 
-4) Install MetalLB (provides External IPs for LoadBalancer Services like K3s Traefik):
+3) Install MetalLB (provides External IPs for LoadBalancer Services like K3s Traefik):
 
 ```bash
 kubectl apply -k argocd/applications/metallb-system
@@ -58,7 +52,7 @@ Notes:
 - Edit `argocd/applications/metallb-system/ipaddresspool.yaml` to match your LAN range and avoid static IPs. Current pool: `192.168.1.100-192.168.1.149`.
 - The K3s Traefik Service (`kube-system/traefik`) is type LoadBalancer and will be Pending until MetalLB assigns an External IP. After this step it should have an IP, e.g., `192.168.1.100`.
 
-5) Apply the root Application (ApplicationSet) to sync the rest of the stack:
+4) Apply the root Application (ApplicationSet) to sync the rest of the stack:
 
 ```bash
 kubectl apply -f argocd/root.yaml
@@ -67,7 +61,7 @@ kubectl -n argocd get applications.argoproj.io
 
 If the first apply fails with “no matches for kind Application … ensure CRDs are installed first”, wait ~30–60s and retry.
 
-6) Monitor sync and platform components:
+5) Monitor sync and platform components:
 
 ```bash
 kubectl -n argocd get apps,applicationsets
