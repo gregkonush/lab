@@ -6,7 +6,7 @@ k3sup install --host 192.168.1.150 \
 --cluster \
 --local-path $HOME/.kube/config \
 --context default \
---k3s-extra-args "--disable servicelb" \
+--k3s-extra-args "--disable servicelb --kube-proxy-arg=proxy-mode=ipvs --kube-proxy-arg=ipvs-scheduler=wrr --kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0-1 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=serialize-image-pulls=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule" \
 --ssh-key $HOME/.ssh/id_ed25519
 
 echo "Fetching the server's node-token into memory"
@@ -21,7 +21,7 @@ k3sup join \
 --server \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
---k3s-extra-args "--disable servicelb" \
+--k3s-extra-args "--disable servicelb --kube-proxy-arg=proxy-mode=ipvs --kube-proxy-arg=ipvs-scheduler=wrr --kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0-1 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=serialize-image-pulls=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up additional server: 3"
@@ -31,7 +31,7 @@ k3sup join \
 --server \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
---k3s-extra-args "--disable servicelb" \
+--k3s-extra-args "--disable servicelb --kube-proxy-arg=proxy-mode=ipvs --kube-proxy-arg=ipvs-scheduler=wrr --kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0-1 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=serialize-image-pulls=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 1"
@@ -40,6 +40,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=serialize-image-pulls=false" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 2"
@@ -48,6 +49,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 3"
@@ -56,6 +58,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 4"
@@ -64,6 +67,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 5"
@@ -72,6 +76,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 6"
@@ -80,6 +85,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 7"
@@ -88,6 +94,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 8"
@@ -96,6 +103,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 9"
@@ -104,6 +112,7 @@ k3sup join \
 --server-host 192.168.1.150 \
 --node-token "$NODE_TOKEN" \
 --user kalmyk \
+--k3s-extra-args "--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0 --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3" \
 --ssh-key $HOME/.ssh/id_ed25519 &
 
 echo "Setting up worker: 10"
