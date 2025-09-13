@@ -1,10 +1,10 @@
 apiVersion: v2
-appVersion: 0.0.3
+appVersion: 0.0.4
 description: Gitea is a painless self-hosted Git service
 name: gitea
-version: 11.0.1
+version: 12.2.0
 type: application
 dependencies:
   - name: gitea
-    version: 11.0.1
+    version: 12.2.0
     repository: https://dl.gitea.com/charts
