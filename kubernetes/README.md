@@ -26,21 +26,21 @@ Install a new cluster
 
 ## Bootstrap GitOps (ArgoCD) – step by step
 
-1) Apply ArgoCD base (HA install, image updater, Traefik IngressRoute, secrets):
+1. Apply ArgoCD base (HA install, image updater, Traefik IngressRoute, secrets):
 
 ```bash
 kubectl apply -k argocd/applications/argocd
 kubectl -n argocd get pods
 ```
 
-2) Wait until ArgoCD is ready before proceeding:
+2. Wait until ArgoCD is ready before proceeding:
 
 ```bash
 kubectl -n argocd rollout status deploy/argocd-server --timeout=180s
 kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=180s
 ```
 
-3) Install MetalLB (provides External IPs for LoadBalancer Services like K3s Traefik):
+3. Install MetalLB (provides External IPs for LoadBalancer Services like K3s Traefik):
 
 ```bash
 kubectl apply -k argocd/applications/metallb-system
@@ -49,19 +49,18 @@ kubectl -n metallb-system rollout status ds/speaker --timeout=300s
 ```
 
 Notes:
+
 - Edit `argocd/applications/metallb-system/ipaddresspool.yaml` to match your LAN range and avoid static IPs. Current pool: `192.168.1.100-192.168.1.149`.
 - The K3s Traefik Service (`kube-system/traefik`) is type LoadBalancer and will be Pending until MetalLB assigns an External IP. After this step it should have an IP, e.g., `192.168.1.100`.
 
-4) Apply the root Application (ApplicationSet) to sync the rest of the stack:
+4. Apply the root Application (ApplicationSet) to sync the rest of the stack:
 
 ```bash
 kubectl apply -f argocd/root.yaml
 kubectl -n argocd get applications.argoproj.io
 ```
 
-If the first apply fails with “no matches for kind Application … ensure CRDs are installed first”, wait ~30–60s and retry.
-
-5) Monitor sync and platform components:
+5. Monitor sync and platform components:
 
 ```bash
 kubectl -n argocd get apps,applicationsets
@@ -107,7 +106,7 @@ Verify kube‑proxy mode on a node:
 kubectl -n kube-system get ds kube-proxy -o yaml | rg -n "--proxy-mode|--ipvs-scheduler"
 ```
 
-## Harvester VMs with OpenTofu (plan/apply with throttling)
+## Harvester VMs with OpenTofu (plan/apply with parallelism)
 
 For creating the Ubuntu VMs in Harvester via OpenTofu:
 
@@ -115,12 +114,13 @@ For creating the Ubuntu VMs in Harvester via OpenTofu:
 # Plan
 tofu -chdir='./tofu/harvester' plan
 
-# Apply with throttling to avoid provider timeouts
-tofu -chdir='./tofu/harvester' apply -auto-approve -parallelism=3
+# Apply with higher parallelism for faster ops
+tofu -chdir='./tofu/harvester' apply -auto-approve -parallelism=30
 ```
 
 Notes:
-- If you see context deadline exceeded, lower `-parallelism` further (e.g. 2) or apply in batches using `-target`.
+
+- If you see timeouts, reduce `-parallelism` (e.g., 10 or 5) or apply in batches using `-target`.
 - zsh users: when using `-target`, quote or escape brackets to avoid globbing, e.g.:
   ```bash
   noglob tofu -chdir='./tofu/harvester' apply -auto-approve \
