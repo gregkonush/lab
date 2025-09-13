@@ -1,6 +1,6 @@
-# Tailscale Installation Playbook for Ubuntu
+# Tailscale Playbooks for Ubuntu
 
-This playbook installs Tailscale on Ubuntu hosts defined in the inventory file, following the official Tailscale installation method for Ubuntu.
+These playbooks help manage Tailscale on Ubuntu hosts. One installs Tailscale (Ubuntu 24.04 Noble), the other only starts/enables and authenticates an already-installed Tailscale (useful after Harvester bootstrap).
 
 ## Prerequisites
 
@@ -20,20 +20,47 @@ ansible-playbook -i ../inventory/hosts.ini install_tailscale.yml
 # Run with automatic authentication using an authkey
 export TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx
 ansible-playbook -i ../inventory/hosts.ini install_tailscale.yml
+
+### Start/Enable/Auth only (no installation)
+
+If Tailscale was installed during Harvester bootstrap, use this playbook to ensure the service is running and authenticate with an auth key:
+
+```bash
+# Start and enable tailscaled, authenticate with authkey
+export TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxx
+ansible-playbook -i ../inventory/hosts.ini start_enable_tailscale.yml
+```
+
+#### First-time SSH host keys (auto-accept)
+
+To bypass the first-time SSH prompt and auto-accept host keys on your kube hosts:
+
+```bash
+ANSIBLE_HOST_KEY_CHECKING=False \
+ansible-playbook -i ../inventory/hosts.ini -u kalmyk -b \
+  start_enable_tailscale.yml \
+  -l 'kube_masters:kube_workers' -f 30 \
+  --ssh-extra-args '-o StrictHostKeyChecking=accept-new'
+```
 ```
 
 You can get an auth key from the [Tailscale Admin Console](https://login.tailscale.com/admin/settings/keys).
 
 ## Playbook Details
 
-The playbook:
+install_tailscale.yml:
 
 1. Adds the official Tailscale package signing key
-2. Adds the Tailscale repository for Ubuntu
+2. Adds the Tailscale repository for Ubuntu Noble (24.04)
 3. Installs the Tailscale package
 4. Starts and enables the Tailscale service
 5. Runs `tailscale up` with the authkey from TAILSCALE_AUTHKEY environment variable (if set)
    or without an authkey (interactive authentication) if not set
+
+start_enable_tailscale.yml:
+
+1. Ensures `tailscaled` service is enabled and started
+2. Optionally runs `tailscale up` if `TAILSCALE_AUTHKEY` is provided
 
 ## Post-Installation
 
@@ -42,4 +69,4 @@ If not using an authkey, after installation, you'll need to authenticate each no
 1. Check the logs on each node to find the authentication URL
 2. Complete the authentication in a web browser using the URL
 
-The official Tailscale installation documentation used: https://tailscale.com/kb/1187/install-ubuntu-2204
+Official docs: https://tailscale.com/kb/1187/install-ubuntu-2404

@@ -1,0 +1,18 @@
+---
+- name: Start and authorize Tailscale (no install)
+  hosts: all
+  become: true
+  tasks:
+    - name: Ensure tailscaled service is enabled and started
+      ansible.builtin.systemd:
+        name: tailscaled
+        state: started
+        enabled: yes
+
+    - name: Bring Tailscale up with authkey (if provided)
+      ansible.builtin.command: "tailscale up --authkey={{ lookup('env', 'TAILSCALE_AUTHKEY') }} --accept-routes=true --hostname={{ inventory_hostname }}"
+      register: tailscale_up
+      no_log: true
+      changed_when: false
+      failed_when: false
+      when: lookup('env', 'TAILSCALE_AUTHKEY') != ""
