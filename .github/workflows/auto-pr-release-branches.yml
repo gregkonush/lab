@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - 'release/**'
+    paths:
+      - 'argocd/applications/*/kustomization.yaml'
 
 permissions:
   contents: read
@@ -11,26 +13,31 @@ permissions:
 
 concurrency:
   group: auto-pr-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   create-pr:
+    # Only run when the push contains an image-updater commit
+    if: contains(github.event.head_commit.message, 'automatic update')
     runs-on: ubuntu-latest
     steps:
       - name: Ensure GitHub CLI is available
         run: gh --version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Create PR if not exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           HEAD_BRANCH="${GITHUB_REF_NAME}"
           BASE_BRANCH="main"
 
           existing_pr_number=$(gh pr list \
+            -R "$GH_REPO" \
             --head "$HEAD_BRANCH" \
             --base "$BASE_BRANCH" \
             --state open \
@@ -46,6 +53,7 @@ jobs:
           short_name=${HEAD_BRANCH#release/}
 
           gh pr create \
+            -R "$GH_REPO" \
             --base "$BASE_BRANCH" \
             --head "$HEAD_BRANCH" \
             --title "chore(${short_name}): automated release PR" \
