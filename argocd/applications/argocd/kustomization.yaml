@@ -8,6 +8,7 @@ resources:
   - base/ingressroute.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/manifests/install.yaml
   - base/secrets.yaml
+  - base/image-updater-git-ssh.yaml
 
 patches:
   - path: overlays/argocd-cm.yaml

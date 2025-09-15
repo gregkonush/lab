@@ -1,0 +1,52 @@
+name: Auto PR for release branches
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure GitHub CLI is available
+        run: gh --version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create PR if not exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          HEAD_BRANCH="${GITHUB_REF_NAME}"
+          BASE_BRANCH="main"
+
+          existing_pr_number=$(gh pr list \
+            --head "$HEAD_BRANCH" \
+            --base "$BASE_BRANCH" \
+            --state open \
+            --json number \
+            --jq '.[0].number' || true)
+
+          if [ -n "${existing_pr_number:-}" ]; then
+            echo "Open PR already exists: #$existing_pr_number"
+            exit 0
+          fi
+
+          # Derive a concise title from the branch name
+          short_name=${HEAD_BRANCH#release/}
+
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$HEAD_BRANCH" \
+            --title "chore(${short_name}): automated release PR" \
+            --body "Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${short_name}."
