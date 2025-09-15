@@ -16,42 +16,41 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL("https://proompteng.ai"),
   title: {
-    default:
-      "AI Agent Deployment Platform — Framework‑Agnostic | ProomptEng AI",
-    template: "%s — ProomptEng AI",
+    default: "deploy ai agents to production",
+    template: "%s — proompteng",
   },
   description:
-    "Deploy, observe, and govern AI agents across languages and clouds. Framework‑agnostic, production‑ready.",
-  applicationName: "ProomptEng AI",
+    "deploy, observe, and govern ai agents across languages and clouds. framework‑agnostic, production‑ready.",
+  applicationName: "proompteng",
   keywords: [
-    "AI agent deployment platform",
-    "framework‑agnostic AI agents",
+    "ai agent deployment platform",
+    "framework‑agnostic ai agents",
     "agent observability",
-    "AI guardrails",
-    "production AI agents",
-    "RAG and vector stores",
+    "ai guardrails",
+    "production ai agents",
+    "rag and vector stores",
   ],
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     url: "/",
-    siteName: "ProomptEng AI",
-    title: "AI Agent Deployment Platform — Framework‑Agnostic | ProomptEng AI",
+    siteName: "proompteng",
+    title: "deploy ai agents to production",
     description:
-      "Deploy, observe, and govern AI agents across languages and clouds.",
+      "deploy, observe, and govern ai agents across languages and clouds.",
     images: [
       {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "ProomptEng AI",
+        alt: "proompteng",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "ProomptEng AI",
-    description: "Framework‑agnostic AI agent platform.",
+    title: "proompteng",
+    description: "framework‑agnostic ai agent platform.",
     images: ["/opengraph-image"],
   },
   robots: { index: true, follow: true },
@@ -82,13 +81,13 @@ export default function RootLayout({
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: "ProomptEng AI",
+    name: "proompteng",
     url: "https://proompteng.ai",
     description:
-      "Framework‑agnostic AI platform to build, deploy, and operate AI agents.",
+      "framework‑agnostic ai platform to build, deploy, and operate ai agents.",
     publisher: {
       "@type": "Organization",
-      name: "ProomptEng AI",
+      name: "proompteng",
       url: "https://proompteng.ai",
       logo: {
         "@type": "ImageObject",
@@ -100,13 +99,13 @@ export default function RootLayout({
   const productLd = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    name: "ProomptEng AI",
-    applicationCategory: "AI Platform",
-    operatingSystem: "Any",
+    name: "proompteng",
+    applicationCategory: "ai platform",
+    operatingSystem: "any",
     offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
     url: "https://proompteng.ai",
     description:
-      "Deploy, observe, and govern AI agents across languages and clouds.",
+      "deploy, observe, and govern ai agents across languages and clouds.",
   };
   const faqLd = {
     "@context": "https://schema.org",
@@ -114,18 +113,18 @@ export default function RootLayout({
     mainEntity: [
       {
         "@type": "Question",
-        name: "Does ProomptEng require a specific framework?",
+        name: "does proompteng require a specific framework?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "No. It works with any language or framework.",
+          text: "no. it works with any language or framework.",
         },
       },
       {
         "@type": "Question",
-        name: "Can I deploy on‑premise?",
+        name: "can i deploy on‑premise?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes. Run in your cloud or on‑prem environments.",
+          text: "yes. run in your cloud or on‑prem environments.",
         },
       },
     ],

@@ -15,8 +15,10 @@ export default function InfoCard({
   return (
     <article
       className={cn(
-        "group relative overflow-hidden rounded-xl border bg-card p-6 text-card-foreground transition-all duration-300 ease-out",
-        "hover:-translate-y-0.5 hover:shadow-md hover:border-ring/40",
+        "group relative overflow-hidden rounded-xl border bg-card p-6 text-card-foreground",
+        "transition-transform transition-colors duration-300 ease-out will-change-transform",
+        "hover:-translate-y-0.5 hover:shadow-md hover:border-ring/30",
+        "motion-reduce:transform-none motion-reduce:transition-none motion-reduce:hover:translate-y-0",
         className,
       )}
     >
@@ -30,15 +32,48 @@ export default function InfoCard({
           "group-hover:opacity-100",
         )}
       />
+      {/* Subtle color wash on hover (blue → pink) */}
+      <div
+        aria-hidden
+        className={cn(
+          "absolute inset-0 z-0 opacity-0 transition-opacity duration-300",
+          "bg-gradient-to-br from-sky-500/10 via-indigo-500/5 to-pink-500/10",
+          "group-hover:opacity-80",
+        )}
+      />
+
+      {/* Sheen sweep */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden"
+      >
+        <div
+          className={cn(
+            "absolute -inset-y-8 -left-1/3 w-2/3 rotate-12",
+            "bg-gradient-to-r from-transparent via-zinc-700/5 to-transparent",
+            "opacity-0 translate-x-0 transition-all duration-700 ease-out",
+            "group-hover:opacity-100 group-hover:translate-x-[100%]",
+          )}
+        />
+      </div>
 
       {/* Content */}
-      <h3 className="text-base font-semibold">{title}</h3>
-      <p className="mt-1 text-sm text-muted-foreground">{text}</p>
+      <h3 className="relative z-[1] text-base font-semibold">{title}</h3>
+      <p className="relative z-[1] mt-1 text-sm text-muted-foreground">
+        {text}
+      </p>
 
-      {/* Icon - absolute, subtle, animated */}
+      {/* Icon - oversized, vertically centered; only left half visible */}
       {icon ? (
-        <div className="absolute right-4 top-4 text-muted-foreground/40 transition-transform duration-300 ease-out group-hover:translate-x-0.5 group-hover:-rotate-3">
-          <Icon name={icon} className="size-7" strokeWidth={1.25} />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 right-0 -translate-y-1/2 translate-x-1/2 text-muted-foreground/10 group-hover:text-muted-foreground/15 z-0 transition-transform duration-700 ease-out group-hover:translate-x-[35%] motion-reduce:transition-none motion-reduce:translate-x-1/2"
+        >
+          <Icon
+            name={icon}
+            className="size-[180px] sm:size-[220px] md:size-[260px]"
+            strokeWidth={1.25}
+          />
         </div>
       ) : null}
 

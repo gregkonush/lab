@@ -24,7 +24,7 @@ export default function OgImage() {
         fontWeight: 600,
       }}
     >
-      Proompteng — AI Infrastructure for Agents
+      proompteng — ai infrastructure for agents
     </div>,
     {
       ...size,

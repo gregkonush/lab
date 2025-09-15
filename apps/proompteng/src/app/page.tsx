@@ -16,20 +16,20 @@ export default function Home() {
           {/** Remove/replace extra content sections to keep the page concise **/}
           {/** <ContentCards id="how" title="How it works" items={FEATURES} /> **/}
           {/** <ContentCards id="architecture" title="Architecture overview" items={INTEGRATIONS} /> **/}
-          {/** <ContentCards id="security" title="Security and compliance" items={SECURITY} /> **/}
+          {/** <ContentCards id="security" title="security and compliance" items={SECURITY} /> **/}
           {/** <ContentCards id="observability" title="Observability and guardrails" items={OBSERVABILITY} /> **/}
         </main>
         <footer className="border-t py-8 mt-12 text-center text-sm text-muted-foreground">
           <div className="mb-2 flex flex-wrap items-center justify-center gap-4">
             {[
-              { label: "Docs", href: "/docs" },
-              { label: "Terraform", href: "https://github.com/gregkonush/lab" },
-              { label: "Helm", href: "https://github.com/gregkonush/lab" },
-              { label: "Status", href: "#" },
-              { label: "Security", href: "#" },
-              { label: "Changelog", href: "#" },
-              { label: "Careers", href: "#" },
-              { label: "Contact", href: "#" },
+              { label: "docs", href: "/docs" },
+              { label: "terraform", href: "https://github.com/gregkonush/lab" },
+              { label: "helm", href: "https://github.com/gregkonush/lab" },
+              { label: "status", href: "#" },
+              { label: "security", href: "#" },
+              { label: "changelog", href: "#" },
+              { label: "careers", href: "#" },
+              { label: "contact", href: "#" },
             ].map((item) => (
               <Link
                 key={item.label}
@@ -40,7 +40,7 @@ export default function Home() {
               </Link>
             ))}
           </div>
-          <p>© {new Date().getFullYear()} ProomptEng AI.</p>
+          <p>© {new Date().getFullYear()} proompteng.</p>
         </footer>
       </div>
     </div>

@@ -8,10 +8,10 @@ export default function BenefitsGrid() {
         id="benefits-heading"
         className="text-center text-2xl sm:text-3xl font-semibold tracking-tight"
       >
-        Why teams choose ProomptEng
+        why teams choose proompteng
       </h2>
       <p className="mx-auto mt-2 max-w-3xl text-center text-sm text-muted-foreground">
-        Ship agents faster with a platform that’s productive on day one and
+        ship agents faster with a platform that’s productive on day one and
         dependable at scale.
       </p>
       <div className="mt-6 grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
