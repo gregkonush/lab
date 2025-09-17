@@ -6,6 +6,20 @@ on:
       - 'release/**'
     paths:
       - 'argocd/applications/*/kustomization.yaml'
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Release app'
+        type: choice
+        required: true
+        default: proompteng
+        options:
+          - proompteng
+          - kitty-krew
+          - reviseur
+      head_branch:
+        description: 'Override branch name (leave blank to use release/<app>)'
+        required: false
 
 permissions:
   contents: write
@@ -17,8 +31,8 @@ concurrency:
 
 jobs:
   create-pr:
-    # Only run when the push contains an image-updater commit
-    if: contains(github.event.head_commit.message, 'automatic update')
+    # Run automatically for image-updater commits or manually via workflow_dispatch
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, 'automatic update'))
     runs-on: ubuntu-latest
     steps:
       - name: Ensure GitHub CLI is available
@@ -31,9 +45,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          APP_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.app || '' }}
+          HEAD_BRANCH_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.head_branch || '' }}
         run: |
           set -euo pipefail
-          HEAD_BRANCH="${GITHUB_REF_NAME}"
+          if [ -n "${HEAD_BRANCH_INPUT}" ]; then
+            HEAD_BRANCH="${HEAD_BRANCH_INPUT}"
+          elif [ -n "${APP_INPUT}" ]; then
+            HEAD_BRANCH="release/${APP_INPUT}"
+          else
+            HEAD_BRANCH="${GITHUB_REF_NAME}"
+          fi
           BASE_BRANCH="main"
 
           existing_pr_number=$(gh pr list \
