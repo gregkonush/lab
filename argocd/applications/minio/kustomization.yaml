@@ -4,3 +4,6 @@ namespace: minio
 
 resources:
   - github.com/minio/operator?ref=v7.1.1
+  - milvus-minio-creds.yaml
+  - tenant.yaml
+  - minio-service.yaml
