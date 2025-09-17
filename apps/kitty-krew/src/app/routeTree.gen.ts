@@ -8,9 +8,14 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
+import { createServerRootRoute } from '@tanstack/react-start/server'
+
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PodsNamespacePodNameRouteImport } from './routes/pods.$namespace.$podName'
+import { ServerRoute as TrpcServerRouteImport } from './routes/trpc'
+
+const rootServerRouteImport = createServerRootRoute()
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -21,6 +26,11 @@ const PodsNamespacePodNameRoute = PodsNamespacePodNameRouteImport.update({
   id: '/pods/$namespace/$podName',
   path: '/pods/$namespace/$podName',
   getParentRoute: () => rootRouteImport,
+} as any)
+const TrpcServerRoute = TrpcServerRouteImport.update({
+  id: '/trpc',
+  path: '/trpc',
+  getParentRoute: () => rootServerRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -48,6 +58,27 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PodsNamespacePodNameRoute: typeof PodsNamespacePodNameRoute
 }
+export interface FileServerRoutesByFullPath {
+  '/trpc': typeof TrpcServerRoute
+}
+export interface FileServerRoutesByTo {
+  '/trpc': typeof TrpcServerRoute
+}
+export interface FileServerRoutesById {
+  __root__: typeof rootServerRouteImport
+  '/trpc': typeof TrpcServerRoute
+}
+export interface FileServerRouteTypes {
+  fileServerRoutesByFullPath: FileServerRoutesByFullPath
+  fullPaths: '/trpc'
+  fileServerRoutesByTo: FileServerRoutesByTo
+  to: '/trpc'
+  id: '__root__' | '/trpc'
+  fileServerRoutesById: FileServerRoutesById
+}
+export interface RootServerRouteChildren {
+  TrpcServerRoute: typeof TrpcServerRoute
+}
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
@@ -67,6 +98,17 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+declare module '@tanstack/react-start/server' {
+  interface ServerFileRoutesByPath {
+    '/trpc': {
+      id: '/trpc'
+      path: '/trpc'
+      fullPath: '/trpc'
+      preLoaderRoute: typeof TrpcServerRouteImport
+      parentRoute: typeof rootServerRouteImport
+    }
+  }
+}
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -75,3 +117,9 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+const rootServerRouteChildren: RootServerRouteChildren = {
+  TrpcServerRoute: TrpcServerRoute,
+}
+export const serverRouteTree = rootServerRouteImport
+  ._addFileChildren(rootServerRouteChildren)
+  ._addFileTypes<FileServerRouteTypes>()
