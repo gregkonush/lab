@@ -47,11 +47,12 @@ pnpm run lint:proompteng
 ### Individual App Commands
 
 ```bash
-# For apps using vinxi (like kitty-krew)
+# For TanStack Start apps (kitty-krew)
 cd apps/kitty-krew
-pnpm dev    # Start development server
-pnpm build  # Build for production
-pnpm start  # Start production server
+bun install # Install dependencies
+bun run dev    # Start development server
+bun run build  # Build for production
+bun run start  # Start production server
 
 # For Python apps (like alchimie)
 cd apps/alchimie
@@ -114,7 +115,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 ### Application Patterns
 
 - **Next.js apps** (proompteng): Use App Router, TypeScript, Tailwind CSS, shadcn/ui components
-- **React apps** (kitty-krew): TanStack Router with tRPC for type-safe APIs, Vinxi for bundling
+- **React apps** (kitty-krew): TanStack Start with TanStack Router and tRPC for type-safe APIs
 - **Python apps** (alchimie): Dagster for data pipelines, UV for dependency management
 - **Go services** (prix, prt): Temporal workflows, PostgreSQL integration, database migrations
 
