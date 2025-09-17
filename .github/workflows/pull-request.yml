@@ -39,6 +39,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/apps/proompteng/.next/cache
+          key: ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('apps/proompteng/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -47,14 +55,6 @@ jobs:
           cache: "pnpm"
 
       - run: pnpm install --frozen-lockfile
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/apps/proompteng/.next/cache
-          key: ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-proompteng-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
       - run: pnpm --filter proompteng build
 
