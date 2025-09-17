@@ -13,6 +13,7 @@ export const logger = winston.createLogger({
     process.env.NODE_ENV === 'development' ? colorize() : winston.format.uncolorize(),
     logFormat,
   ),
+  exitOnError: false,
   transports: [
     new winston.transports.Console({
       stderrLevels: ['error'],
@@ -33,15 +34,37 @@ export const logger = winston.createLogger({
   ],
 })
 
-// This ensures logs are properly flushed when app is terminated
-process.on('beforeExit', () => {
-  logger.end()
-})
+let isShuttingDown = false
 
-// Handle termination signals
-for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as NodeJS.Signals[]) {
-  process.on(signal, () => {
-    logger.info(`Received ${signal}, shutting down gracefully`)
+async function flushAndExit(signal: NodeJS.Signals) {
+  if (isShuttingDown) {
+    return
+  }
+
+  isShuttingDown = true
+
+  logger.info(`Received ${signal}, shutting down gracefully`)
+
+  await new Promise<void>((resolve) => {
+    logger.once('finish', resolve)
     logger.end()
+  })
+
+  for (const transport of logger.transports) {
+    const maybeClosable = transport as { close?: () => void }
+    if (typeof maybeClosable.close === 'function') {
+      maybeClosable.close()
+    }
+  }
+
+  process.exit(0)
+}
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as NodeJS.Signals[]) {
+  process.once(signal, () => {
+    flushAndExit(signal).catch((error) => {
+      console.error('Failed to shutdown logger', error)
+      process.exit(1)
+    })
   })
 }
