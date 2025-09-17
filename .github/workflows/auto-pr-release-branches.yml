@@ -42,7 +42,7 @@ jobs:
             --base "$BASE_BRANCH" \
             --state open \
             --json number \
-            --jq '.[0].number' || true)
+            --jq '.[0].number // empty' || true)
 
           if [ -n "${existing_pr_number:-}" ]; then
             echo "Open PR already exists: #$existing_pr_number"
