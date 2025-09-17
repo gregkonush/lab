@@ -16,7 +16,7 @@ export const trpc = createTRPCOptionsProxy<AppRouter>({
   client: createTRPCClient({
     links: [
       unstable_httpBatchStreamLink({
-        // since we are using Vinxi, the server is running on the same port,
+        // Since we are using TanStack Start, the server runs on the same port,
         // this means in dev the url is `http://localhost:3000/trpc`
         // and since its from the same origin, we don't need to explicitly set the full URL
         url: '/trpc',

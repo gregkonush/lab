@@ -8,65 +8,34 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-// Import Routes
+import { Route as rootRouteImport } from './routes/__root'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as PodsNamespacePodNameRouteImport } from './routes/pods.$namespace.$podName'
 
-import { Route as rootRoute } from './routes/__root'
-import { Route as IndexImport } from './routes/index'
-import { Route as PodsNamespacePodNameImport } from './routes/pods.$namespace.$podName'
-
-// Create/Update Routes
-
-const IndexRoute = IndexImport.update({
+const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => rootRouteImport,
 } as any)
-
-const PodsNamespacePodNameRoute = PodsNamespacePodNameImport.update({
+const PodsNamespacePodNameRoute = PodsNamespacePodNameRouteImport.update({
   id: '/pods/$namespace/$podName',
   path: '/pods/$namespace/$podName',
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => rootRouteImport,
 } as any)
-
-// Populate the FileRoutesByPath interface
-
-declare module '@tanstack/react-router' {
-  interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexImport
-      parentRoute: typeof rootRoute
-    }
-    '/pods/$namespace/$podName': {
-      id: '/pods/$namespace/$podName'
-      path: '/pods/$namespace/$podName'
-      fullPath: '/pods/$namespace/$podName'
-      preLoaderRoute: typeof PodsNamespacePodNameImport
-      parentRoute: typeof rootRoute
-    }
-  }
-}
-
-// Create and export the route tree
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
-
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
-
 export interface FileRoutesById {
-  __root__: typeof rootRoute
+  __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/pods/$namespace/$podName': typeof PodsNamespacePodNameRoute
 }
-
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths: '/' | '/pods/$namespace/$podName'
@@ -75,37 +44,34 @@ export interface FileRouteTypes {
   id: '__root__' | '/' | '/pods/$namespace/$podName'
   fileRoutesById: FileRoutesById
 }
-
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PodsNamespacePodNameRoute: typeof PodsNamespacePodNameRoute
+}
+
+declare module '@tanstack/react-router' {
+  interface FileRoutesByPath {
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pods/$namespace/$podName': {
+      id: '/pods/$namespace/$podName'
+      path: '/pods/$namespace/$podName'
+      fullPath: '/pods/$namespace/$podName'
+      preLoaderRoute: typeof PodsNamespacePodNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+  }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PodsNamespacePodNameRoute: PodsNamespacePodNameRoute,
 }
-
-export const routeTree = rootRoute
+export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-/* ROUTE_MANIFEST_START
-{
-  "routes": {
-    "__root__": {
-      "filePath": "__root.tsx",
-      "children": [
-        "/",
-        "/pods/$namespace/$podName"
-      ]
-    },
-    "/": {
-      "filePath": "index.tsx"
-    },
-    "/pods/$namespace/$podName": {
-      "filePath": "pods.$namespace.$podName.tsx"
-    }
-  }
-}
-ROUTE_MANIFEST_END */
