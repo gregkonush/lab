@@ -37,8 +37,8 @@ export default function InfoCard({
         aria-hidden
         className={cn(
           "absolute inset-0 z-0 opacity-0 transition-opacity duration-300",
-          "bg-gradient-to-br from-sky-500/10 via-indigo-500/5 to-pink-500/10",
-          "group-hover:opacity-80",
+          "bg-gradient-to-br from-indigo-500/8 via-blue-500/5 to-indigo-600/10",
+          "group-hover:opacity-70",
         )}
       />
 
