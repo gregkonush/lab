@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: convex-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: convex-backend
+  template:
+    metadata:
+      labels:
+        app: convex-backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/get-convex/convex-backend:latest
+          ports:
+            - containerPort: 3210
+              name: api-ws
+            - containerPort: 3211
+              name: api-http
+          envFrom:
+            - configMapRef:
+                name: convex-backend-config
+            - secretRef:
+                name: convex-backend-secrets
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: user
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: password
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: host
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: port
+            - name: DATABASE_URL
+              value: postgresql://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)
+            - name: POSTGRES_DATABASE
+              value: convex_self_hosted
+            - name: POSTGRES_SSL
+              value: "true"
