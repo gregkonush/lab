@@ -1,0 +1,15 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: convex-db
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 30Gi
+  bootstrap:
+    initdb:
+      database: convex_self_hosted
+      owner: convex
+  monitoring:
+    enablePodMonitor: true
