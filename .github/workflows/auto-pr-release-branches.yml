@@ -31,6 +31,9 @@ concurrency:
 
 jobs:
   create-pr:
+    permissions:
+      contents: write
+      pull-requests: write
     # Run automatically for image-updater commits or manually via workflow_dispatch
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, 'automatic update'))
     runs-on: ubuntu-latest
@@ -74,9 +77,30 @@ jobs:
           # Derive a concise title from the branch name
           short_name=${HEAD_BRANCH#release/}
 
-          gh pr create \
-            -R "$GH_REPO" \
-            --base "$BASE_BRANCH" \
-            --head "$HEAD_BRANCH" \
-            --title "chore(${short_name}): automated release PR" \
-            --body "Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${short_name}."
+          pr_title="chore(${short_name}): automated release PR"
+          pr_body="Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${short_name}."
+
+          response_file=$(mktemp)
+          err_file=$(mktemp)
+          if gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GH_REPO}/pulls" \
+            -f base="$BASE_BRANCH" \
+            -f head="$HEAD_BRANCH" \
+            -f title="$pr_title" \
+            -f body="$pr_body" \
+            --jq '.number' > "$response_file" 2>"$err_file"; then
+            new_pr_number=$(cat "$response_file")
+            echo "Created PR #$new_pr_number"
+          else
+            status=$?
+            err_output=$(cat "$err_file")
+            if echo "$err_output" | grep -qi 'already exists'; then
+              echo "A PR already exists for $HEAD_BRANCH but was not detected as open."
+              exit 0
+            fi
+            echo "$err_output"
+            exit $status
+          fi
+          rm -f "$response_file" "$err_file"
