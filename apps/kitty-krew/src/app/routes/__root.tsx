@@ -1,11 +1,13 @@
 import React from 'react'
-import { Outlet, createRootRouteWithContext } from '@tanstack/react-router'
+import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { CommandPalette } from '~/components/command-palette'
 
 import type { TRPCOptionsProxy } from '@trpc/tanstack-react-query'
 import type { AppRouter } from '~/server/routers/_app'
 import type { QueryClient } from '@tanstack/react-query'
+
+import '../main.css'
 
 export interface RouterAppContext {
   trpc: TRPCOptionsProxy<AppRouter>
@@ -23,6 +25,15 @@ const TanStackRouterDevtools =
 
 export const Route = createRootRouteWithContext<RouterAppContext>()({
   component: RootComponent,
+  shellComponent: RootDocument,
+  head: () => ({
+    links: [
+      {
+        rel: 'icon',
+        href: '/favicon.ico',
+      },
+    ],
+  }),
 })
 
 function RootComponent() {
@@ -35,5 +46,19 @@ function RootComponent() {
       <TanStackRouterDevtools position="bottom-left" />
       <ReactQueryDevtools position="bottom" buttonPosition="bottom-right" />
     </>
+  )
+}
+
+function RootDocument({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <Scripts />
+      </body>
+    </html>
   )
 }
