@@ -1,0 +1,28 @@
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: milvus-minio
+  namespace: minio
+spec:
+  image: quay.io/minio/minio:RELEASE.2025-02-18T18-03-45Z
+  mountPath: /export
+  requestAutoCert: false
+  credsSecret:
+    name: milvus-minio-creds
+  exposeServices:
+    minio: true
+    console: false
+  pools:
+    - name: pool-0
+      servers: 1
+      volumesPerServer: 4
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+          storageClassName: longhorn
