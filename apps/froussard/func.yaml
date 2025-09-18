@@ -15,6 +15,14 @@ run:
   envs:
   - name: GITHUB_WEBHOOK_SECRET
     value: '{{ secret:github-secret:webhook-secret }}'
+  - name: KAFKA_BROKERS
+    value: 'kafka-kafka-bootstrap.kafka:9092'
+  - name: KAFKA_TOPIC
+    value: 'github-webhooks'
+  - name: KAFKA_USERNAME
+    value: '{{ secret:froussard-kafka:username }}'
+  - name: KAFKA_PASSWORD
+    value: '{{ secret:froussard-kafka:password }}'
 deploy:
   namespace: froussard
   image: xleb.duckdns.org/froussard@sha256:40221be772d1b855f5c75f6913c5719cac37846c9a96ecf139fd0f541fb7d330

@@ -4,27 +4,34 @@ metadata:
   name: milvus-minio
   namespace: minio
 spec:
-  image: quay.io/minio/minio:RELEASE.2025-02-18T18-03-45Z
+  image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
   mountPath: /export
   requestAutoCert: false
   exposeServices:
     minio: true
     console: false
-  env:
-    - name: MINIO_ROOT_USER
-      valueFrom:
-        secretKeyRef:
-          name: milvus-minio-creds
-          key: accesskey
-    - name: MINIO_ROOT_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: milvus-minio-creds
-          key: secretkey
+  configuration:
+    name: milvus-minio-creds
   pools:
     - name: pool-0
       servers: 1
       volumesPerServer: 4
+      containerSecurityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       volumeClaimTemplate:
         metadata:
           name: data
