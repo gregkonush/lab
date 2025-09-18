@@ -7,11 +7,20 @@ spec:
   image: quay.io/minio/minio:RELEASE.2025-02-18T18-03-45Z
   mountPath: /export
   requestAutoCert: false
-  credsSecret:
-    name: milvus-minio-creds
   exposeServices:
     minio: true
     console: false
+  env:
+    - name: MINIO_ROOT_USER
+      valueFrom:
+        secretKeyRef:
+          name: milvus-minio-creds
+          key: accesskey
+    - name: MINIO_ROOT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: milvus-minio-creds
+          key: secretkey
   pools:
     - name: pool-0
       servers: 1

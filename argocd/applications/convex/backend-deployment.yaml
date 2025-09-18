@@ -46,16 +46,20 @@ spec:
                 secretKeyRef:
                   name: convex-db-app
                   key: port
-            - name: DATABASE_URL
-              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)
             - name: POSTGRES_DATABASE
               value: convex_self_hosted
+            - name: PGDATABASE
+              value: $(POSTGRES_DATABASE)
+            - name: PGSSLROOTCERT
+              value: /etc/postgres-ca/ca.crt
+            - name: POSTGRES_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/$(PGDATABASE)?sslmode=verify-full&sslrootcert=$(PGSSLROOTCERT)
+            - name: DATABASE_URL
+              value: $(POSTGRES_URL)
             - name: POSTGRES_SSL
               value: "true"
             - name: PGSSLMODE
               value: verify-full
-            - name: PGSSLROOTCERT
-              value: /etc/postgres-ca/ca.crt
           volumeMounts:
             - name: convex-db-ca
               mountPath: /etc/postgres-ca

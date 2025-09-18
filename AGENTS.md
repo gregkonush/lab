@@ -1,19 +1,37 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Apps under `apps/<app>` (Next.js/Turbo) hold UI surfaces; shared TS utilities live in `packages/backend`, and CDK8s manifests in `packages/cloutt`. Go microservices sit in `services/<service>` with `main.go` plus tests. Infra-as-code is split between `tofu/harvester` (OpenTofu), `kubernetes/` manifests, and Argo definitions under `argocd/`. Automation scripts are in `scripts/`, while Ansible playbooks stay in `ansible/`.
+- `apps/<app>` contains Next.js/Turbo UIs; keep UI fixtures and tests alongside components.
+- Shared TS utilities stay in `packages/backend`; CDK8s blueprints sit in `packages/cloutt`.
+- Go services live in `services/<service>` with `main.go` and adjacent `*_test.go` files.
+- Infra-as-code spans `tofu/harvester` (OpenTofu), `kubernetes/` manifests, `argocd/` app specs, plus automation in `scripts/` and Ansible plays in `ansible/`.
 
 ## Build, Test & Development Commands
-Bootstrap with `pnpm install` (requires Node 22.19.0) and use `go mod tidy` inside Go services. Run a Next dev server via `pnpm run dev:proompteng` or swap the suffix for other apps. Ship builds with `pnpm run build:<app>` and verify with `pnpm run start:<app>`. Run linting through `pnpm run lint:<app>` and repo-wide formatting via `pnpm run format`. Execute Go workflows with `go test ./...` / `go build ./...`. Infra teams use `pnpm run tf:plan`, `pnpm run tf:apply`, and `pnpm run ansible` for cluster provisioning.
+- Install dependencies with `pnpm install` (Node 22.19.0) and run `go mod tidy` inside each Go service.
+- Start UIs with `pnpm run dev:proompteng`; swap the suffix for sibling apps.
+- Build and smoke test via `pnpm run build:<app>` then `pnpm run start:<app>`.
+- Format and lint using `pnpm run format` and `pnpm run lint:<app>`.
+- Run backend workflows through `go test ./...` and `go build ./...`.
+- Infra flow: `pnpm run tf:plan` (review), `pnpm run tf:apply` (approved), and `pnpm run ansible` for playbooks.
 
 ## Coding Style & Naming Conventions
-Biome enforces two-space indentation, single quotes, trailing commas, and a 120-char line cap; run it before committing. Keep filenames in kebab-case (`dialog-panel.tsx`, `cron-worker.go`). Organize imports as standard -> third-party -> internal with blank lines between groups. React components rely on Tailwind utilities via `cn()`, and payload validation belongs in `schemas/` with Zod. Go errors should wrap context using `fmt.Errorf("operation failed: %w", err)`.
+- Run Biome before commits; it enforces two-space indentation, single quotes, trailing commas, and 120-character lines.
+- Name files in kebab-case (`dialog-panel.tsx`, `cron-worker.go`).
+- Order imports standard → third-party → internal with blank lines between groups.
+- Compose React UI with Tailwind utilities via `cn()` and keep schema validation in `schemas/` using Zod.
+- Wrap Go errors as `fmt.Errorf("operation failed: %w", err)`.
 
 ## Testing Guidelines
-Place Go specs as `*_test.go` next to the source and scope targeted runs with `go test ./services/prt -run TestHandleRoot`. TypeScript tests should live as `*.test.ts` files; execute them within the owning workspace (for example `pnpm --filter cloutt exec jest`). Aim for quick unit coverage first, then note any manual verification steps in PRs.
+- Keep Go tests as `*_test.go` next to implementation; narrow runs with `go test ./services/prt -run TestHandleRoot`.
+- Write TypeScript tests as `*.test.ts`; trigger scoped runs with `pnpm --filter cloutt exec jest` or the appropriate workspace filter.
+- Target fast unit coverage first, then log manual QA steps in PR descriptions.
 
 ## Commit & Pull Request Guidelines
-Adopt Conventional Commits (`feat: add prix cache`) and explain the "why" in the commit body when needed. PRs should outline the change, reference related issues, attach screenshots for UI changes, and list verification steps (`go test`, `pnpm run lint:<app>`). Keep scope tight and flag follow-ups with TODOs.
+- Adopt Conventional Commits (e.g. `feat: add prix cache`); use bodies for extra context or breaking notes.
+- PRs should summarize the change, link issues, list verification (`go test`, `pnpm run lint:<app>`), and attach UI screenshots when visuals shift.
+- Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
 
-## Infrastructure & Operations Notes
-Cluster state is managed by ArgoCD, so change manifests in `argocd/` or `kubernetes/` and let reconciliation apply them. OpenTofu runs from `tofu/harvester`; always pair `tf:plan` reports with approvals before `tf:apply`. Use `kubectl -n <namespace> get ...` for read-only checks and document any rollouts in the PR.
+## Security & Operations Notes
+- ArgoCD reconciles desired state; edit manifests in `argocd/` or `kubernetes/` and let automation deploy.
+- Pair Terraform plans from `pnpm run tf:plan` with review before `pnpm run tf:apply`; note outcomes after applies.
+- Prefer read-only `kubectl -n <namespace> get ...` for production checks and capture findings in runbooks.
