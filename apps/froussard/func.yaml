@@ -25,7 +25,7 @@ run:
     value: '{{ secret:froussard-kafka:password }}'
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:453e8eb30139640039b0c233b0a9e598e9724cc9b32f19bccdf657407ce9e1fb
+  image: xleb.duckdns.org/froussard@sha256:8f4b5a26e47f7d94c23a915342723a4fcbca2a58716ba8a2fa6943aa1186b960
   options:
     scale:
       min: 1
