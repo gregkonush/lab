@@ -146,8 +146,17 @@ const app = new Elysia()
       console.log('Attempting GitHub webhook verification...')
 
       const signatureHeader = request.headers.get('x-hub-signature-256')
-      if (!signatureHeader || !(await webhooks.verify(rawBody, signatureHeader))) {
-        console.error('Webhook signature verification failed.')
+      if (!signatureHeader) {
+        console.error('Missing x-hub-signature-256 header. Available headers:', Array.from(request.headers.keys()))
+        return new Response('Unauthorized', { status: 401 })
+      }
+
+      const deliveryId = request.headers.get('x-github-delivery') ?? 'unknown'
+
+      if (!(await webhooks.verify(rawBody, signatureHeader))) {
+        console.error(
+          `Webhook signature verification failed for delivery ${deliveryId}. Signature header: ${signatureHeader}`,
+        )
         return new Response('Unauthorized', { status: 401 })
       }
 
