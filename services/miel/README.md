@@ -10,15 +10,16 @@ A Go service that integrates with the Alpaca Trading API to backtest simple trad
 
 ```
 services/miel/
+├── Dockerfile     # Multi-stage build for the ARM64 container image
 ├── internal/
-│   ├── alpaca/     # Lightweight wrappers around Alpaca trading and market data clients
-│   ├── backtest/   # Strategy engine and backtest result types
-│   ├── config/     # Environment variable driven configuration loader
-│   ├── server/     # Gin HTTP server wiring and handlers
-│   └── trading/    # Trading service with input validation helpers
-├── main.go         # Service entrypoint and HTTP server bootstrap
-├── go.mod / go.sum # Module definition and dependencies
-└── README.md       # This file
+│   ├── alpaca/    # Lightweight wrappers around Alpaca trading and market data clients
+│   ├── backtest/  # Strategy engine and backtest result types
+│   ├── config/    # Environment variable driven configuration loader
+│   ├── server/    # Gin HTTP server wiring and handlers
+│   └── trading/   # Trading service with input validation helpers
+├── main.go        # Service entrypoint and HTTP server bootstrap
+├── go.mod / go.sum
+└── README.md
 ```
 
 ## Configuration
@@ -55,6 +56,16 @@ export ALPACA_API_KEY=... \
 
 go run ./...
 ```
+
+## Building & Publishing
+
+Use the helper script to build and push an ARM64 image to the registry:
+
+```bash
+./scripts/build-miel.sh 0.1.0   # optional tag argument
+```
+
+The Dockerfile is multi-stage and emits a distroless image sized for the ARM-based cluster.
 
 ## HTTP API
 
@@ -98,9 +109,9 @@ Response mirrors Alpaca’s order payload.
 
 ## Deployment
 
-- Build a container image from the service root (`services/miel`).
-- Configure Kubernetes manifests (Deployment, Service, Secret) and register the application with Argo CD following the repository’s conventions.
-- Inject environment-specific Alpaca credentials using Kubernetes Secrets (e.g. `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`).
+- Argo CD manifests live in `argocd/applications/miel` and expect the image `kalmyk.duckdns.org/lab/miel:<tag>`.
+- Provide a `Secret` named `miel-secrets` in the `miel` namespace with keys `alpaca-api-key` and `alpaca-secret-key` before syncing.
+- Optional non-secret overrides can be applied by editing `configmap.yaml` or layering a Kustomize overlay.
 
 ## Next Steps
 
