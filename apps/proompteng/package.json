@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "pnpm --filter @proompteng/backend run codegen",
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "biome check",
