@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import Script from "next/script";
+import Providers from "@/components/providers";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -171,28 +172,30 @@ export default function RootLayout({
       <body
         className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} antialiased`}
       >
-        <Script
-          id="ld+json-website"
-          type="application/ld+json"
-          strategy="afterInteractive"
-        >
-          {JSON.stringify(jsonLd)}
-        </Script>
-        <Script
-          id="ld+json-product"
-          type="application/ld+json"
-          strategy="afterInteractive"
-        >
-          {JSON.stringify(productLd)}
-        </Script>
-        <Script
-          id="ld+json-faq"
-          type="application/ld+json"
-          strategy="afterInteractive"
-        >
-          {JSON.stringify(faqLd)}
-        </Script>
-        {children}
+        <Providers>
+          <Script
+            id="ld+json-website"
+            type="application/ld+json"
+            strategy="afterInteractive"
+          >
+            {JSON.stringify(jsonLd)}
+          </Script>
+          <Script
+            id="ld+json-product"
+            type="application/ld+json"
+            strategy="afterInteractive"
+          >
+            {JSON.stringify(productLd)}
+          </Script>
+          <Script
+            id="ld+json-faq"
+            type="application/ld+json"
+            strategy="afterInteractive"
+          >
+            {JSON.stringify(faqLd)}
+          </Script>
+          {children}
+        </Providers>
       </body>
     </html>
   );

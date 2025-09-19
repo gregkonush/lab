@@ -1,6 +1,9 @@
 import Link from "next/link";
+
+import { MODEL_CATALOG } from "@/app/config";
 import BenefitsGrid from "@/components/benefits-grid";
 import ClosingCta from "@/components/closing-cta";
+import ContentCards from "@/components/content-cards";
 import FaqList from "@/components/faq-list";
 import FeatureShowcase from "@/components/feature-showcase";
 import Hero from "@/components/hero";
@@ -18,6 +21,7 @@ export default function Home() {
         { label: "platform", href: "#platform" },
         { label: "governance", href: "#governance" },
         { label: "playbook", href: "#playbook" },
+        { label: "login", href: "/app" },
       ],
     },
     {
@@ -55,6 +59,11 @@ export default function Home() {
             <Metrics />
             <BenefitsGrid />
             <FeatureShowcase />
+            <ContentCards
+              id="models"
+              title="model catalog"
+              items={MODEL_CATALOG}
+            />
             <PlaybookTimeline />
             <Testimonial />
             <FaqList />
