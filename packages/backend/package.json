@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "codegen": "convex codegen",
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success",
     "seed:models": "convex run models:seed"
