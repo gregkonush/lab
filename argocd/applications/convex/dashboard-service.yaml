@@ -10,6 +10,6 @@ spec:
   selector:
     app: convex-dashboard
   ports:
-    - name: http
+    - name: http-web
       port: 80
       targetPort: http
