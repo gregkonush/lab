@@ -148,6 +148,49 @@ export const INTEGRATIONS: CardItem[] = [
     title: "providers",
     text: "openai, gemini, azure, and oss via adapters.",
   },
+  {
+    icon: "Server",
+    title: "self-hosted weights",
+    text: "llama 3.1 405b, mistral large, qwen2, nemotron via on-prem deploys.",
+  },
+  {
+    icon: "Activity",
+    title: "domain copilots",
+    text: "financial, legal, healthcare tuned models with policy enforcement.",
+  },
+];
+
+export const MODEL_CATALOG: CardItem[] = [
+  {
+    icon: "Brain",
+    title: "openai o1-preview",
+    text: "reasoning-grade model with native tool use and long context support.",
+  },
+  {
+    icon: "Brain",
+    title: "claude 3.5 sonnet",
+    text: "balanced flagship with 200k context and audit-ready compliance scores.",
+  },
+  {
+    icon: "Server",
+    title: "deepseek r1",
+    text: "open reasoning weights optimized for complex workflows and cost efficiency.",
+  },
+  {
+    icon: "Boxes",
+    title: "gemini 2.0 flash",
+    text: "multimodal stack for real-time agents with streaming outputs.",
+  },
+  {
+    icon: "Server",
+    title: "llama 3.1 70b",
+    text: "self-hostable model with tuned guardrails and policy routing support.",
+  },
+  {
+    icon: "Database",
+    title: "voyage multipass",
+    text: "high-signal embeddings and rerankers for hybrid rag pipelines.",
+  },
 ];
 
 export const SECURITY: CardItem[] = [

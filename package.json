@@ -6,7 +6,7 @@
     "node": "22.19.0"
   },
   "scripts": {
-    "dev:proompteng": "pnpm --filter proompteng dev",
+    "dev:proompteng": "pnpm -r --parallel --filter proompteng --filter @proompteng/backend dev",
     "build:proompteng": "pnpm --filter proompteng build",
     "build:reviseur": "pnpm --filter reviseur build",
     "start:proompteng": "pnpm --filter proompteng start",
@@ -20,18 +20,23 @@
     "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates",
     "k:install": "./kubernetes/install.sh",
     "k:bootstrap": "kubectl apply -k argocd/applications/argocd",
-    "prepare": "husky"
+    "prepare": "husky",
+    "dev:convex": "pnpm --filter @proompteng/backend dev",
+    "dev:setup:convex": "pnpm --filter @proompteng/backend dev:setup",
+    "seed:models": "pnpm --filter @proompteng/backend seed:models"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
-    "@tailwindcss/forms": "^0.5.10",
     "husky": "9.1.7",
     "typescript": "5.7.3"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,css,md}": "biome format --write"
   },
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
   "dependencies": {
     "@headlessui/react": "^2.2.6"
