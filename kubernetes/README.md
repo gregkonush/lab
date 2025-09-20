@@ -88,12 +88,6 @@ Agent flags (applied via `k3sup join` for workers):
 
 - Same kubelet args as above (CPU/NUMA/log rotation). Agents do not set kube‑proxy args.
 
-Notes for your current setup:
-
-- We do NOT disable kube‑proxy or Flannel because there is no eBPF CNI (e.g., Cilium) defined in `argocd/`. Service networking continues to rely on kube‑proxy.
-- We keep Traefik enabled because several apps use Traefik `IngressRoute` CRDs.
-- We do NOT pass `--disable local-storage` yet because `argocd/applications/arc/application.yaml` still uses `storageClassName: "local-path"`. After migrating ARC to Longhorn, you can consider disabling local‑path.
-
 IPVS prerequisites (Ubuntu usually has these modules):
 
 ```bash

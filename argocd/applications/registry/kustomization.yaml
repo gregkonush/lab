@@ -4,5 +4,5 @@ namespace: registry
 resources:
   - deployment.yaml
   - service.yaml
-  - ingress.yaml
   - pvc.yaml
+  - tailscale-loadbalancer.yaml
