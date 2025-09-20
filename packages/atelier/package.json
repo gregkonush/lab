@@ -1,0 +1,14 @@
+{
+  "name": "@proompteng/atelier",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "create-default-namespace": "bun run src/create-default-namespace.ts"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.6",
+    "@kubernetes/client-node": "^1.0.0",
+    "@temporalio/client": "^1.13.0"
+  }
+}
