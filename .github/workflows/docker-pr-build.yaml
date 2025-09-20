@@ -47,9 +47,6 @@ jobs:
       dockerfile: ./apps/proompteng/Dockerfile
       context: .
       new_tag: pr-${{ github.event.number }}-${{ github.sha }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   build-kitty-krew:
     needs: changes
@@ -60,9 +57,6 @@ jobs:
       dockerfile: ./apps/kitty-krew/Dockerfile
       context: ./apps/kitty-krew
       new_tag: pr-${{ github.event.number }}-${{ github.sha }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   build-reviseur:
     needs: changes
@@ -73,9 +67,6 @@ jobs:
       dockerfile: ./apps/reviseur/Dockerfile
       context: .
       new_tag: pr-${{ github.event.number }}-${{ github.sha }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   build-alchimie:
     needs: changes
@@ -87,6 +78,3 @@ jobs:
       context: ./apps/alchimie
       new_tag: pr-${{ github.event.number }}-${{ github.sha }}
       platforms: linux/arm64
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
