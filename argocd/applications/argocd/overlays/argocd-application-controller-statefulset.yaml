@@ -11,10 +11,6 @@ spec:
           env:
             - name: ARGOCD_CONTROLLER_REPLICAS
               value: "3"
-            - name: ARGOCD_K8S_CLIENT_QPS
-              value: "100"
-            - name: ARGOCD_K8S_CLIENT_BURST
-              value: "200"
           resources:
             requests:
               cpu: "750m"
