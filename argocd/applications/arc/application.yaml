@@ -61,8 +61,6 @@ spec:
                           key: TS_AUTHKEY
                     - name: TS_HOSTNAME_PREFIX
                       value: arc-runner
-                    - name: TS_TAGS
-                      value: tag:ci
                   securityContext:
                     privileged: true
                     capabilities:
@@ -89,7 +87,6 @@ spec:
                         --hostname="${TS_HOSTNAME_PREFIX}-${HOSTNAME}" \
                         --accept-dns=true \
                         --accept-routes=true \
-                        --advertise-tags="${TS_TAGS}" \
                         --reset
                       trap 'tailscale --socket=/var/run/tailscale/tailscaled.sock logout' EXIT
                       wait
