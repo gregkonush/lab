@@ -1,0 +1,13 @@
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: tailscale-auth
+  namespace: arc
+spec:
+  encryptedData:
+    TS_AUTHKEY: AgB21wm289TIM8QBYAFUr56n5vskxyiiEKpRCsdiyWQx/nAK4yLlwIDoFjVLxRzFwbPtDtfXY5L18WAtVXOLHVlm1j40isSLjAAGjOg6NSdzk5yksK/8v5dy4joEJExmRsDqaYOFH57Wu4YF3/80ozl5YoUSF4nc6B+xjcqvy9UKq8eIFe1rq26pCnr7c62bYYgqlcAQLp8ru1tNBxS9LhSPJzhQRwhmmsiR4hUby8qcmp40V8zUTpSK99jP80hC40pM1M8XHS58vgB+I8ErFq4X3C+ymxMPN/tw9TzYxRMaP0MksNHNWG3xiZdLoTRiGFEkKXtm5LgKWvWpwGbpK8oIp65bbkaXfVt96pX+DCglO0KFoZyxo60irFcUB0L5KKLh0qMl43q9gKnoe+S4ncHdwRlXAA2oyvRLA4H26nJgec1K+kjkgHGcuNP21OIRFAQjKHqkKkdJJxpsjGVUte01nNJZMoNbjZnsNxnKxELme/Rql5sJbgw3uj3sByZthNm80fkADJdJSvBCGIgUVLb5EcgmK2ihdBlOrh48W2/QZfodTfdGFDyynEFgcclVHgD9kuJvl7PIGmUP60dRoQUDUx0ZJHfH1T3fR0seVxUPPcliiYngDudxg4nJMXWzkNmoLimd+1l8Mn2qSPvchT7xWdOhQzpDIsFGT7wWW0AvU4/JZbNEDNp5izUHoE15TDlzUFH7p4KuaD2nJUptt+Ab7xyG5lN36+S4tiX1u0BHsl4bfzS+ROnV1yFaNa9HjBDWLg47XPn+lYNF42Va6E59
+  template:
+    metadata:
+      name: tailscale-auth
+      namespace: arc
