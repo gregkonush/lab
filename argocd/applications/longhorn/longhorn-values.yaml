@@ -5,6 +5,9 @@ ingress:
   ingressClassName: traefik
   host: longhorn.lan
 defaultSettings:
-  storageReservedPercentageForDefaultDisk: 15
-  storageMinimalAvailablePercentage: 20
-  defaultReplicaCount: 1
+  storageReservedPercentageForDefaultDisk: 30
+  storageMinimalAvailablePercentage: 25
+  defaultReplicaCount: 3
+  replicaAutoBalance: best-effort
+  replicaSoftAntiAffinity: false
+  allowVolumeCreationWithDegradedAvailability: false
