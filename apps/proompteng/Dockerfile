@@ -13,6 +13,7 @@ RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/proompteng/node_modules ./apps/proompteng/node_modules
 COPY . .
+RUN pnpm install --filter @proompteng/backend --offline --ignore-scripts
 RUN pnpm build:proompteng
 
 FROM node:lts-alpine AS runner
