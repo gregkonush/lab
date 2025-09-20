@@ -5,16 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.9,<3.13"
 dependencies = [
-    "dagster",
-    "dagster-k8s",
-    "psycopg2-binary>=2.9.9",
-    "polars>=0.20.10",
+    "dagster==1.11.11",
+    "dagster-k8s==0.27.11",
+    "psycopg2-binary==2.9.10",
+    "polars==1.33.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "dagster-webserver",
-    "pytest",
+    "dagster-webserver==1.11.11",
+    "pytest==8.4.2",
 ]
 
 [build-system]
