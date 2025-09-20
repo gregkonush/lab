@@ -4,6 +4,7 @@ namespace: tailscale
 resources:
   - https://raw.githubusercontent.com/tailscale/tailscale/refs/tags/v1.88.1/cmd/k8s-operator/deploy/manifests/operator.yaml
   - base/secrets.yaml
+  - base/coredns-patch.yaml
 
 patches:
   - target:
