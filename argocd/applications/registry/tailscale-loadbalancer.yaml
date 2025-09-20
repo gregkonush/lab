@@ -5,7 +5,7 @@ metadata:
   namespace: registry
   annotations:
     tailscale.com/hostname: registry
-    tailscale.com/tags: '["tag:k8s"]'
+    tailscale.com/tags: tag:k8s
 spec:
   type: LoadBalancer
   loadBalancerClass: tailscale
