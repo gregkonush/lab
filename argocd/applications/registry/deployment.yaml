@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: registry
-          image: registry:2
+          image: registry:3
           resources:
             limits:
               cpu: "1"
