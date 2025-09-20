@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea-http-tailscale
+  namespace: gitea
+spec:
+  selector:
+    app.kubernetes.io/instance: gitea
+    app.kubernetes.io/name: gitea
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 3000
