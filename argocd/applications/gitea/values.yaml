@@ -2,6 +2,8 @@ gitea:
   global:
     storageClass: longhorn
   replicaCount: 1
+  strategy:
+    type: Recreate
   gitea:
     admin:
       existingSecret: gitea-admin-secret
