@@ -94,37 +94,37 @@ function LiveAgentsList() {
 
   if (!agents.length) {
     return (
-      <Card className="border-border/60 bg-card/80">
-        <CardHeader>
-          <CardTitle className="text-lg">No agents yet</CardTitle>
-          <CardDescription>
-            As soon as you deploy an agent through Proompteng it will appear
-            here with live status and routing data.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="rounded-2xl border border-dashed border-border/60 bg-card/20 p-6 text-sm text-muted-foreground">
+        <p className="text-base font-semibold text-foreground">No agents yet</p>
+        <p className="mt-2">
+          Deploy an agent through Proompteng to see live status, routing data,
+          and tags in this list.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/60 bg-card/40">
       {agents.map((agent) => (
-        <Card key={agent._id} className="border-border/60 bg-card/80">
-          <CardHeader className="space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="rounded-lg border border-border/40 bg-primary/10 p-2">
-                <Icon name="Activity" className="size-5" />
-              </div>
-              <div className="space-y-1">
-                <CardTitle className="text-lg">{agent.name}</CardTitle>
-                <CardDescription className="text-xs uppercase tracking-[0.25em]">
-                  model {agent.modelSlug} · status {agent.status}
-                </CardDescription>
-              </div>
+        <li key={agent._id} className="flex flex-col gap-3 p-5 transition hover:bg-card/60">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg border border-border/40 bg-primary/10 p-2">
+              <Icon name="Activity" className="size-5" />
             </div>
-            <p className="text-sm text-muted-foreground line-clamp-3">
-              {agent.description || "No description provided."}
-            </p>
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-foreground">
+                {agent.name}
+              </p>
+              <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
+                model {agent.modelSlug} · status {agent.status}
+              </p>
+            </div>
+          </div>
+          <p className="text-sm text-muted-foreground line-clamp-3">
+            {agent.description || "No description provided."}
+          </p>
+          {agent.tags.length ? (
             <div className="flex flex-wrap gap-1">
               {agent.tags.map((tag) => (
                 <Badge key={`${agent._id}-${tag}`} variant="outline">
@@ -132,38 +132,36 @@ function LiveAgentsList() {
                 </Badge>
               ))}
             </div>
-          </CardHeader>
-        </Card>
+          ) : null}
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
 function AgentsSkeleton() {
   const placeholders = ["alpha", "beta", "gamma", "delta"];
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/40 bg-card/20">
       {placeholders.map((key) => (
-        <Card key={key} className="border-border/60 bg-card/80">
-          <CardHeader className="space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="rounded-lg border border-border/40 bg-muted/40 p-2">
-                <div className="h-5 w-5 animate-pulse rounded-sm bg-muted" />
-              </div>
-              <div className="space-y-2">
-                <div className="h-4 w-32 animate-pulse rounded bg-muted" />
-                <div className="h-3 w-24 animate-pulse rounded bg-muted" />
-              </div>
+        <li key={key} className="flex flex-col gap-3 p-5">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg border border-border/30 bg-muted/40 p-2">
+              <div className="h-5 w-5 animate-pulse rounded-sm bg-muted" />
             </div>
-            <div className="h-20 w-full animate-pulse rounded bg-muted" />
-            <div className="flex gap-1">
-              <div className="h-6 w-16 animate-pulse rounded bg-muted" />
-              <div className="h-6 w-12 animate-pulse rounded bg-muted" />
+            <div className="space-y-2">
+              <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+              <div className="h-3 w-24 animate-pulse rounded bg-muted" />
             </div>
-          </CardHeader>
-        </Card>
+          </div>
+          <div className="h-20 w-full animate-pulse rounded bg-muted" />
+          <div className="flex gap-1">
+            <div className="h-6 w-16 animate-pulse rounded bg-muted" />
+            <div className="h-6 w-12 animate-pulse rounded bg-muted" />
+          </div>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
