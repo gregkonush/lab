@@ -3,10 +3,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: argocd
 resources:
-  - https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/ha/install.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.6/manifests/ha/install.yaml
   - base/namespace.yaml
   - base/ingressroute.yaml
-  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/manifests/install.yaml
+  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v0.16.0/manifests/install.yaml
   - base/secrets.yaml
   - base/image-updater-git-ssh.yaml
 
@@ -18,3 +18,15 @@ patches:
       kind: Deployment
       name: argocd-repo-server
   - path: overlays/argocd-image-updater-config.yaml
+  - path: overlays/argocd-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-server
+  - path: overlays/argocd-repo-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-application-controller-statefulset.yaml
+    target:
+      kind: StatefulSet
+      name: argocd-application-controller

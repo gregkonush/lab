@@ -4,3 +4,7 @@ ingress:
   enabled: true
   ingressClassName: traefik
   host: longhorn.lan
+defaultSettings:
+  storageReservedPercentageForDefaultDisk: 15
+  storageMinimalAvailablePercentage: 20
+  defaultReplicaCount: 1
