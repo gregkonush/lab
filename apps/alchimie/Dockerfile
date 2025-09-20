@@ -1,9 +1,9 @@
-ARG BASE_IMAGE=python:3.10-slim
+ARG BASE_IMAGE=python:3.12-slim
 ARG PLATFORM=linux/arm64
 
 FROM --platform=${PLATFORM} ${BASE_IMAGE}
 
-ARG DAGSTER_VERSION=1.10.6
+ARG DAGSTER_VERSION=1.11.11
 
 # All packages are hard-pinned to `dagster`, so setting the version on just `DAGSTER` will ensure
 # compatible versions.
@@ -20,7 +20,7 @@ RUN python -m uv pip install \
     dagster-gcp \
     dagster-graphql \
     dagster-webserver \
-    grpcio==1.57.0 # https://github.com/grpc/grpc/issues/38327
+    grpcio==1.75.0 # Align with Dagster 1.11.11 runtime expectations
 
 COPY . /app
 

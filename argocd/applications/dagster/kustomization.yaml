@@ -6,7 +6,7 @@ resources:
 helmCharts:
   - name: dagster
     repo: https://dagster-io.github.io/helm
-    version: 1.10.6
+    version: 1.11.11
     releaseName: dagster
     namespace: dagster
     includeCRDs: true
