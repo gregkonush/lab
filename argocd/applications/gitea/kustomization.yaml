@@ -3,3 +3,5 @@ kind: Kustomization
 namespace: gitea
 resources:
   - gitea-admin-secret.yaml
+  - tailscale-service.yaml
+  - tailscale-ingress.yaml
