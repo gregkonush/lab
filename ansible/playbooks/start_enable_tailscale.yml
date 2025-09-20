@@ -34,7 +34,7 @@
       ansible.builtin.command: >-
         tailscale up
         --authkey={{ tailscale_authkey }}
-        --accept-routes=true
+        --accept-routes=false
         --advertise-routes={{ tailscale_advertised_routes }}
         --advertise-tags={{ tailscale_advertise_tags }}
         --hostname={{ inventory_hostname }}
@@ -47,7 +47,7 @@
     - name: Ensure Tailscale keeps advertising cluster routes
       ansible.builtin.command: >-
         tailscale set
-        --accept-routes=true
+        --accept-routes=false
         --advertise-routes={{ tailscale_advertised_routes }}
       register: tailscale_set
       changed_when: false
