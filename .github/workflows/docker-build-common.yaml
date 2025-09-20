@@ -23,13 +23,6 @@ on:
         required: false
         type: string
         default: 'linux/arm64'
-    secrets:
-      REGISTRY_USERNAME:
-        required: true
-      REGISTRY_TOKEN:
-        required: true
-      docker_secrets:
-        required: false
 
 jobs:
   build:
@@ -46,7 +39,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            kalmyk.duckdns.org/lab/${{ inputs.image_name }}
+            registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}},value=${{ inputs.new_tag }}
@@ -58,13 +51,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Registry
-        uses: docker/login-action@v3
-        with:
-          registry: kalmyk.duckdns.org
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_TOKEN }}
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -74,7 +60,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: true
-          cache-from: type=registry,ref=kalmyk.duckdns.org/lab/${{ inputs.image_name }}:latest
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:latest
           cache-to: type=inline
-          secrets: |
-            ${{ secrets.docker_secrets }}
