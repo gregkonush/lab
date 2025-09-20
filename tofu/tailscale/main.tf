@@ -28,3 +28,23 @@ resource "tailscale_dns_preferences" "tailnet" {
 resource "tailscale_dns_nameservers" "tailnet" {
   nameservers = var.dns_nameservers
 }
+
+data "tailscale_devices" "all" {}
+
+locals {
+  kube_devices = {
+    for device in data.tailscale_devices.all.devices :
+    device.hostname => device.id
+    if length(device.hostname) > 0 && contains(coalesce(device.tags, []), "tag:kube-node")
+  }
+}
+
+resource "tailscale_device_subnet_routes" "kube_nodes" {
+  for_each = local.kube_devices
+
+  device_id = each.value
+  routes = [
+    "10.42.0.0/16",
+    "10.43.0.0/16"
+  ]
+}

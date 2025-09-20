@@ -7,7 +7,7 @@ variable "tailnet" {
 variable "dns_nameservers" {
   description = "Global nameservers used by tailnet devices when overriding local DNS settings."
   type        = list(string)
-  default     = [
+  default = [
     "192.168.1.130"
   ]
 }
