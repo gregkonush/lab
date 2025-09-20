@@ -19,11 +19,6 @@ const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 
 const AGENT_PATTERNS: { icon: IconName; title: string; text: string }[] = [
   {
-    icon: "Activity",
-    title: "policy-first orchestration",
-    text: "call proompteng routing from convex actions with guardrails baked in.",
-  },
-  {
     icon: "Eye",
     title: "observability on tap",
     text: "store traces, evals, and cost metrics in convex for instant dashboards.",

@@ -1,0 +1,89 @@
+name: Docker PR Build
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+
+jobs:
+  changes:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    outputs:
+      proompteng: ${{ steps.filter.outputs.proompteng }}
+      kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
+      reviseur: ${{ steps.filter.outputs.reviseur }}
+      alchimie: ${{ steps.filter.outputs.alchimie }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for file changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            proompteng:
+              - 'apps/proompteng/**'
+              - 'packages/backend/**'
+            kitty-krew:
+              - 'apps/kitty-krew/**'
+            reviseur:
+              - 'apps/reviseur/**'
+            alchimie:
+              - 'apps/alchimie/**'
+
+  build-proompteng:
+    needs: changes
+    if: ${{ needs.changes.outputs.proompteng == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: proompteng
+      dockerfile: ./apps/proompteng/Dockerfile
+      context: .
+      new_tag: pr-${{ github.event.number }}-${{ github.sha }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-kitty-krew:
+    needs: changes
+    if: ${{ needs.changes.outputs.kitty-krew == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: kitty-krew
+      dockerfile: ./apps/kitty-krew/Dockerfile
+      context: ./apps/kitty-krew
+      new_tag: pr-${{ github.event.number }}-${{ github.sha }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-reviseur:
+    needs: changes
+    if: ${{ needs.changes.outputs.reviseur == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: reviseur
+      dockerfile: ./apps/reviseur/Dockerfile
+      context: .
+      new_tag: pr-${{ github.event.number }}-${{ github.sha }}
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+  build-alchimie:
+    needs: changes
+    if: ${{ needs.changes.outputs.alchimie == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: alchimie
+      dockerfile: ./apps/alchimie/Dockerfile
+      context: ./apps/alchimie
+      new_tag: pr-${{ github.event.number }}-${{ github.sha }}
+      platforms: linux/arm64
+    secrets:
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
