@@ -105,12 +105,6 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
-          - name: registry
-            path: argocd/applications/registry
-            namespace: registry
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
           - name: gitea
             path: argocd/applications/gitea
             namespace: gitea
