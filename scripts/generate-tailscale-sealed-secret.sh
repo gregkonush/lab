@@ -3,10 +3,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-APPLY=false
-if [[ "${1:-}" == "--apply" ]]; then
-  APPLY=true
-  shift
+if [[ "${1:-}" == -* ]]; then
+  echo "Unknown flag '$1'. Pass an optional output path or nothing." >&2
+  exit 1
 fi
 
 OUTPUT_PATH="${1:-$REPO_ROOT/argocd/applications/tailscale/base/secrets.yaml}"
@@ -44,54 +43,27 @@ if [[ -z "$CLIENT_SECRET" ]]; then
   exit 1
 fi
 
-TMP_SECRET="$(mktemp)"
-trap 'rm -f "$TMP_SECRET"' EXIT
+TMP_OUTPUT="$(mktemp)"
+trap 'rm -f "$TMP_OUTPUT"' EXIT
 
-kubectl create secret generic "$SECRET_NAME" \
+if ! kubectl create secret generic "$SECRET_NAME" \
   --namespace "$SECRET_NAMESPACE" \
   --from-literal=client_id="$CLIENT_ID" \
   --from-literal=client_secret="$CLIENT_SECRET" \
-  --dry-run=client -o yaml >"$TMP_SECRET"
-
-TMP_SEALED="$(mktemp)"
-trap 'rm -f "$TMP_SECRET" "$TMP_SEALED"' EXIT
-
-kubeseal \
-  --controller-name "$SEALED_CONTROLLER_NAME" \
-  --controller-namespace "$SEALED_CONTROLLER_NAMESPACE" \
-  --format yaml <"$TMP_SECRET" >"$TMP_SEALED"
-
-CLIENT_ID_CIPHER=$(awk '/^[[:space:]]*client_id:/ {print $2; exit}' "$TMP_SEALED")
-CLIENT_SECRET_CIPHER=$(awk '/^[[:space:]]*client_secret:/ {print $2; exit}' "$TMP_SEALED")
-
-if [[ -z "$CLIENT_ID_CIPHER" || -z "$CLIENT_SECRET_CIPHER" ]]; then
-  echo "Failed to extract encrypted values from kubeseal output" >&2
+  --dry-run=client -o yaml |
+  kubeseal \
+    --controller-name "$SEALED_CONTROLLER_NAME" \
+    --controller-namespace "$SEALED_CONTROLLER_NAMESPACE" \
+    --format yaml >"$TMP_OUTPUT"; then
+  echo "Failed to generate sealed secret" >&2
   exit 1
 fi
 
-cat >"$OUTPUT_PATH" <<EOF
----
-apiVersion: bitnami.com/v1alpha1
-kind: SealedSecret
-metadata:
-  creationTimestamp: null
-  name: $SECRET_NAME
-  namespace: $SECRET_NAMESPACE
-spec:
-  encryptedData:
-    client_id: $CLIENT_ID_CIPHER
-    client_secret: $CLIENT_SECRET_CIPHER
-  template:
-    metadata:
-      creationTimestamp: null
-      name: $SECRET_NAME
-      namespace: $SECRET_NAMESPACE
-    type: Opaque
-EOF
-
-if $APPLY; then
-  kubectl apply -f "$OUTPUT_PATH"
-  echo "SealedSecret written to $OUTPUT_PATH and applied to cluster"
-else
-  echo "SealedSecret written to $OUTPUT_PATH"
+if ! grep -q "client_id:" "$TMP_OUTPUT" || ! grep -q "client_secret:" "$TMP_OUTPUT"; then
+  echo "kubeseal output missing expected encrypted fields" >&2
+  exit 1
 fi
+
+install -m 600 "$TMP_OUTPUT" "$OUTPUT_PATH"
+
+echo "SealedSecret written to $OUTPUT_PATH. Commit and trigger an Argo CD sync to roll it out."
