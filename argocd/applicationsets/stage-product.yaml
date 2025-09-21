@@ -79,10 +79,10 @@ spec:
     metadata:
       name: '{{ .name }}'
     spec:
-      project: '{{ default "default" .project }}'
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{ default .name .namespace }}'
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
