@@ -73,20 +73,25 @@ The install script uses a set of high‑performance, safe defaults aligned with 
 
 Server flags (applied via `k3sup install` and server `k3sup join --server`):
 
-- **--disable servicelb**: Disables K3s' built‑in klipper‑lb because you deploy MetalLB under `argocd/applications/metallb-system`. Prevents overlapping LBs.
-- **--kube-proxy-arg=proxy-mode=ipvs**: Switches kube‑proxy from iptables to IPVS for better performance and scalability.
-- **--kube-proxy-arg=ipvs-scheduler=wrr**: Uses Weighted Round‑Robin for more even backend distribution.
-- **--kubelet-arg=cpu-manager-policy=static**: Enables CPU pinning for QoS Guaranteed pods (requests=limits, whole CPUs), reducing jitter.
-- **--kubelet-arg=topology-manager-policy=single-numa-node**: Co-locates CPU/memory/devices on the same NUMA node when possible.
-- **--kubelet-arg=reserved-cpus=0-3**: Reserves CPUs 0–3 for the OS/kube daemons to isolate system work from workloads. Adjust per node size.
-  - In this repo: we reserve fewer CPUs on smaller nodes based on VM sizes in `tofu/harvester/main.tf`:
-    - Masters (4 vCPU): `reserved-cpus=0-1` (2 cores for control plane/system)
-    - Workers (4 vCPU): `reserved-cpus=0` (1 core for system, 3 cores for workloads)
-- **--kubelet-arg=container-log-max-size=10Mi** and **--kubelet-arg=container-log-max-files=3**: Caps per‑container log size to avoid disk pressure.
+- **--disable servicelb**: Remove the bundled klipper-lb so MetalLB can own LoadBalancer services without conflict.
+- **--flannel-backend=host-gw**: Use simple L2 routing, avoiding VXLAN encapsulation and lowering east-west latency on flat LANs.
+- **--etcd-arg=auto-compaction-mode=periodic** / **--etcd-arg=auto-compaction-retention=1h**: Compact etcd hourly to keep the datastore responsive.
+- **--etcd-arg=quota-backend-bytes=8589934592**: Raise the etcd data size limit to ~8 GiB to accommodate the larger cluster safely.
+- **--etcd-snapshot-schedule-cron="0 */6 * * *"** / **--etcd-snapshot-retention=20**: Take automated snapshots every six hours and retain ~5 days of restore points.
+- **--kube-proxy-arg=proxy-mode=ipvs** / **--kube-proxy-arg=ipvs-scheduler=wrr**: Leverage IPVS with weighted round robin for scalable service routing.
+- **--kubelet-arg=cpu-manager-policy=static** / **--kubelet-arg=topology-manager-policy=single-numa-node**: Pin Guaranteed pods to dedicated cores within the same NUMA domain to minimize jitter.
+- **--kubelet-arg=reserved-cpus=0-1**: Hold two cores per node for the OS and control-plane daemons, aligning with the 8 vCPU sizing in `tofu/harvester/main.tf`.
+- **--kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi** and **--kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi**: Reserve memory, CPU, and disk budget for critical services.
+- **--kubelet-arg=container-log-max-size=10Mi** / **--kubelet-arg=container-log-max-files=3**: Rotate container logs aggressively to avoid filling the 150 GiB root disks.
+- **--kubelet-arg=serialize-image-pulls=false**: Allow concurrent image downloads to speed up pod startups.
+- **--node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule**: Keep general workloads off the control-plane nodes unless they add an explicit toleration.
 
 Agent flags (applied via `k3sup join` for workers):
 
-- Same kubelet args as above (CPU/NUMA/log rotation). Agents do not set kube‑proxy args.
+- **--kubelet-arg=cpu-manager-policy=static** / **--kubelet-arg=topology-manager-policy=single-numa-node**: Match control-plane NUMA/CPU pinning behaviour for consistency.
+- **--kubelet-arg=reserved-cpus=0-1**: Reserve the first two cores on each worker for system daemons, leaving six dedicated cores for workloads.
+- **--kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi** and **--kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi**: Mirror control-plane resource cushions on the workers.
+- **--kubelet-arg=container-log-max-size=10Mi** / **--kubelet-arg=container-log-max-files=3** / **--kubelet-arg=serialize-image-pulls=false**: Apply the same log and pull tuning cluster-wide.
 
 IPVS prerequisites (Ubuntu usually has these modules):
 
