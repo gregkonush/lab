@@ -45,10 +45,6 @@ spec:
   template:
     metadata:
       name: '{{ .name }}'
-      {{- if .annotations }}
-      annotations:
-{{ toYaml .annotations | indent 8 }}
-      {{- end }}
     spec:
       project: '{{ default "default" .project }}'
       destination:
@@ -58,20 +54,11 @@ spec:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
         path: '{{ .path }}'
-        {{- if not (and (hasKey . "renderWithLovely") (not .renderWithLovely)) }}
-        plugin:
-          name: lovely
-        {{- end }}
       syncPolicy:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
-        {{- if and (hasKey . "automation") (eq .automation "auto") }}
-        automated:
-          prune: true
-          selfHeal: true
-        {{- end }}
       ignoreDifferences:
         - kind: StatefulSet
           group: apps
@@ -115,3 +102,24 @@ spec:
           name: knative-serving-operator-aggregated-stable
           jqPathExpressions:
             - .rules
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- if or (not (hasKey . "renderWithLovely")) .renderWithLovely }}
+    spec:
+      source:
+        plugin:
+          name: lovely
+    {{- end }}
+    {{- if eq .automation "auto" }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}
