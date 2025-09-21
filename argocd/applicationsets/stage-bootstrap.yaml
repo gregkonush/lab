@@ -39,6 +39,12 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: auto
+          - name: registry
+            path: argocd/applications/registry
+            namespace: registry
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+            automation: auto
   template:
     metadata:
       name: '{{ .name }}'

@@ -7,7 +7,7 @@ data:
   registries.conf: |
     registries:
     - name: kalmyk-registry
-      prefix: kalmyk.duckdns.org
-      api_url: https://kalmyk.duckdns.org
+      prefix: registry.ide-newton.ts.net
+      api_url: https://registry.ide-newton.ts.net
       credentials: pullsecret:argocd/kalmyk-registry
       default: true
