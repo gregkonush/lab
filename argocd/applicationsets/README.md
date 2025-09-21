@@ -1,54 +1,77 @@
 # Bootstrap
 
-Install argo-cd CLI
-
-```bash
-# Manually create the rest of kubernetes resources for harvester
-k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
-```
+Install the Argo CD CLI:
 
 ```bash
 brew install argocd
 ```
 
-## Kustomization bootstrap
+Prepare the cluster resources required by Harvester:
+
+```bash
+k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
+```
+
+## Deploy Argo CD itself
+
+Apply the Argo CD manifests with Kustomize to get the control plane and Lovely plugin online:
 
 ```bash
 k apply -k argocd/applications/argocd
 ```
 
-## Get initial password, login and update password
+Retrieve the initial admin password, log in, and rotate credentials:
 
 ```bash
-# Passing --grpc-web will make grpc calls afterwards
 argocd admin initial-password -n argocd
 argocd login argocd.proompteng.ai --grpc-web
 argocd account update-password --account admin --server argocd.proompteng.ai
 ```
 
-## Add a repo
+Add this repository to Argo CD:
 
 ```bash
-argocd repo add https://github.com/gregkonush/lab
+argocd repo add https://github.com/gregkonush/lab.git
 ```
 
-## Bootstrap argocd
+## Stage-based ApplicationSets
+
+The repo now provides three staged ApplicationSets:
+
+- `stage-bootstrap.yaml` (core prerequisites)
+- `stage-platform.yaml` (shared infrastructure & tooling)
+- `stage-product.yaml` (product-facing workloads)
+
+Sync the `root` Application to register the staged sets:
 
 ```bash
-argocd appset create argocd/applicationsets/lovely-apps.yaml
+argocd app create root --file argocd/root.yaml
+argocd app sync root
 ```
 
-## Update argocd
+Preview what each stage would create before syncing:
 
 ```bash
-argocd appset create --upsert argocd/applicationsets/lovely-apps.yaml
+argocd appset preview --app stage-bootstrap --output table
 ```
 
-### Delete argocd that got stuck in deleting phase
+Sync individual stages when you are ready:
+
+```bash
+argocd appset create --upsert argocd/applicationsets/stage-bootstrap.yaml
+argocd appset create --upsert argocd/applicationsets/stage-platform.yaml
+argocd appset create --upsert argocd/applicationsets/stage-product.yaml
+```
+
+All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
+
+### Removing stuck Applications
+
+Should an Application get stuck in a deleting phase, drop the finalizers:
 
 ```bash
 kubectl get application -n argocd
 kubectl edit application
 ```
 
-Remove finalizers from spec
+Remove the `finalizers` array from the spec and save.

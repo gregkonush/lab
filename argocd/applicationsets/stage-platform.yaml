@@ -1,0 +1,231 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: stage-platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: cloudnative-pg
+            path: argocd/applications/cloudnative-pg
+            namespace: cloudnative-pg
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: manual
+          - name: longhorn
+            path: argocd/applications/longhorn
+            namespace: longhorn-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: manual
+          - name: external-dns
+            path: argocd/applications/external-dns
+            namespace: external-dns
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+          - name: cloudflare
+            path: argocd/applications/cloudflare
+            namespace: cloudflare
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+          - name: istio-system
+            path: argocd/applications/istio-system
+            namespace: istio-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+          - name: istio-ingress
+            path: argocd/applications/istio-ingress
+            namespace: istio-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+            automation: manual
+          - name: knative
+            path: argocd/applications/knative
+            namespace: knative
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+            automation: manual
+          - name: knative-serving
+            path: argocd/applications/knative-serving
+            namespace: knative-serving
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+          - name: knative-eventing
+            path: argocd/applications/knative-eventing
+            namespace: knative-eventing
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+          - name: fission
+            path: argocd/applications/fission
+            namespace: fission
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+          - name: kafka
+            path: argocd/applications/kafka
+            namespace: kafka
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+          - name: minio
+            path: argocd/applications/minio
+            namespace: minio
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+          - name: milvus
+            path: argocd/applications/milvus
+            namespace: milvus
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+          - name: temporal
+            path: argocd/applications/temporal
+            namespace: temporal
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+          - name: airbyte
+            path: argocd/applications/airbyte
+            namespace: airbyte
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+          - name: dagster
+            path: argocd/applications/dagster
+            namespace: dagster
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+          - name: registry
+            path: argocd/applications/registry
+            namespace: registry
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+          - name: gitea
+            path: argocd/applications/gitea
+            namespace: gitea
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+          - name: verdaccio
+            path: argocd/applications/verdaccio
+            namespace: verdaccio
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+          - name: spark
+            path: argocd/applications/spark
+            namespace: spark
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+          - name: coder
+            path: argocd/applications/coder
+            namespace: coder
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+          - name: arc
+            path: argocd/applications/arc
+            namespace: arc
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+          - name: backstage
+            path: argocd/applications/backstage
+            namespace: backstage
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+          - name: convex
+            path: argocd/applications/convex
+            namespace: convex
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+  ignoreApplicationDifferences:
+    - jsonPointers:
+        - /spec/syncPolicy
+  template:
+    metadata:
+      name: '{{ .name }}'
+      {{- if .annotations }}
+      annotations:
+{{ toYaml .annotations | indent 8 }}
+      {{- end }}
+    spec:
+      project: '{{ default "default" .project }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ default .name .namespace }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: '{{ .path }}'
+        {{- if not (and (hasKey . "renderWithLovely") (not .renderWithLovely)) }}
+        plugin:
+          name: lovely
+        {{- end }}
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+        {{- if and (hasKey . "automation") (eq .automation "auto") }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{- end }}
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: gitea
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: dagster
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: Deployment
+          group: apps
+          namespace: istio-system
+          name: istiod
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: DaemonSet
+          group: apps
+          namespace: istio-system
+          name: istio-cni-node
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istio-validator-istio-system
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istiod-default-validator
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-eventing-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-serving-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules

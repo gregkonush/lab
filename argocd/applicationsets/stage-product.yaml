@@ -1,0 +1,150 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: stage-product
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: proompteng
+            path: argocd/applications/proompteng
+            namespace: proompteng
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: proompteng=kalmyk.duckdns.org/lab/proompteng
+              argocd-image-updater.argoproj.io/proompteng: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: release/proompteng
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
+            automation: manual
+          - name: kitty-krew
+            path: argocd/applications/kitty-krew
+            namespace: kitty-krew
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: kitty-krew=kalmyk.duckdns.org/lab/kitty-krew
+              argocd-image-updater.argoproj.io/kitty-krew: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: release/kitty-krew
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
+            automation: manual
+          - name: reviseur
+            path: argocd/applications/reviseur
+            namespace: reviseur
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: reviseur=kalmyk.duckdns.org/lab/reviseur
+              argocd-image-updater.argoproj.io/reviseur: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: release/reviseur
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
+            automation: manual
+          - name: ecran
+            path: argocd/applications/ecran
+            namespace: ecran
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+          - name: eclair
+            path: argocd/applications/eclair
+            namespace: eclair
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+          - name: miel
+            path: argocd/applications/miel
+            namespace: miel
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+          - name: froussard
+            path: argocd/applications/froussard
+            namespace: froussard
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+  ignoreApplicationDifferences:
+    - jsonPointers:
+        - /spec/syncPolicy
+  template:
+    metadata:
+      name: '{{ .name }}'
+      {{- if .annotations }}
+      annotations:
+{{ toYaml .annotations | indent 8 }}
+      {{- end }}
+    spec:
+      project: '{{ default "default" .project }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ default .name .namespace }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: '{{ .path }}'
+        {{- if not (and (hasKey . "renderWithLovely") (not .renderWithLovely)) }}
+        plugin:
+          name: lovely
+        {{- end }}
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+        {{- if and (hasKey . "automation") (eq .automation "auto") }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{- end }}
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: gitea
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: dagster
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: Deployment
+          group: apps
+          namespace: istio-system
+          name: istiod
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: DaemonSet
+          group: apps
+          namespace: istio-system
+          name: istio-cni-node
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istio-validator-istio-system
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istiod-default-validator
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-eventing-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-serving-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
