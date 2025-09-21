@@ -15,12 +15,6 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: manual
-          - name: longhorn
-            path: argocd/applications/longhorn
-            namespace: longhorn-system
-            annotations:
-              argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
