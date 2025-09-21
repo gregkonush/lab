@@ -14,34 +14,31 @@ spec:
             namespace: argocd
             annotations:
               argocd.argoproj.io/sync-wave: "-2"
-            automation: manual
+            automation: auto
           - name: sealed-secrets
             path: argocd/applications/sealed-secrets
             namespace: sealed-secrets
             annotations:
               argocd.argoproj.io/sync-wave: "-2"
-            automation: manual
+            automation: auto
           - name: cert-manager
             path: argocd/applications/cert-manager
             namespace: cert-manager
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
+            automation: auto
           - name: metallb-system
             path: argocd/applications/metallb-system
             namespace: metallb-system
             annotations:
               argocd.argoproj.io/sync-wave: "0"
-            automation: manual
+            automation: auto
           - name: tailscale
             path: argocd/applications/tailscale
             namespace: tailscale
             annotations:
               argocd.argoproj.io/sync-wave: "0"
-            automation: manual
-  ignoreApplicationDifferences:
-    - jsonPointers:
-        - /spec/syncPolicy
+            automation: auto
   template:
     metadata:
       name: '{{ .name }}'
@@ -58,50 +55,6 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
-          - RespectIgnoreDifferences=true
-      ignoreDifferences:
-        - kind: StatefulSet
-          group: apps
-          namespace: gitea
-          jqPathExpressions:
-            - .spec.volumeClaimTemplates
-        - kind: StatefulSet
-          group: apps
-          namespace: dagster
-          jqPathExpressions:
-            - .spec.volumeClaimTemplates
-        - kind: Deployment
-          group: apps
-          namespace: istio-system
-          name: istiod
-          jqPathExpressions:
-            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
-        - kind: DaemonSet
-          group: apps
-          namespace: istio-system
-          name: istio-cni-node
-          jqPathExpressions:
-            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
-        - kind: ValidatingWebhookConfiguration
-          group: admissionregistration.k8s.io
-          name: istio-validator-istio-system
-          jqPathExpressions:
-            - .webhooks[].failurePolicy
-        - kind: ValidatingWebhookConfiguration
-          group: admissionregistration.k8s.io
-          name: istiod-default-validator
-          jqPathExpressions:
-            - .webhooks[].failurePolicy
-        - kind: ClusterRole
-          group: rbac.authorization.k8s.io
-          name: knative-eventing-operator-aggregated-stable
-          jqPathExpressions:
-            - .rules
-        - kind: ClusterRole
-          group: rbac.authorization.k8s.io
-          name: knative-serving-operator-aggregated-stable
-          jqPathExpressions:
-            - .rules
   templatePatch: |
     {{- if .annotations }}
     metadata:
@@ -110,16 +63,18 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
-    {{- if or (not (hasKey . "renderWithLovely")) .renderWithLovely }}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- if or $useLovely (eq .automation "auto") }}
     spec:
+      {{- if $useLovely }}
       source:
         plugin:
           name: lovely
-    {{- end }}
-    {{- if eq .automation "auto" }}
-    spec:
+      {{- end }}
+      {{- if eq .automation "auto" }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
+      {{- end }}
     {{- end }}

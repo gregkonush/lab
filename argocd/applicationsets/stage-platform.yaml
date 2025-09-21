@@ -153,9 +153,6 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
-  ignoreApplicationDifferences:
-    - jsonPointers:
-        - /spec/syncPolicy
   template:
     metadata:
       name: '{{ .name }}'
@@ -224,16 +221,18 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
-    {{- if or (not (hasKey . "renderWithLovely")) .renderWithLovely }}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- if or $useLovely (eq .automation "auto") }}
     spec:
+      {{- if $useLovely }}
       source:
         plugin:
           name: lovely
-    {{- end }}
-    {{- if eq .automation "auto" }}
-    spec:
+      {{- end }}
+      {{- if eq .automation "auto" }}
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
+      {{- end }}
     {{- end }}
