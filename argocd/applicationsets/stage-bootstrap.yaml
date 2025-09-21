@@ -27,6 +27,12 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
+          - name: longhorn
+            path: argocd/applications/longhorn
+            namespace: longhorn-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: auto
           - name: metallb-system
             path: argocd/applications/metallb-system
             namespace: metallb-system
