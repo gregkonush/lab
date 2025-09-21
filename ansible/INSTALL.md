@@ -39,3 +39,22 @@ Once Ansible is installed:
 cd ansible
 ansible-playbook -i inventory/hosts.ini playbooks/install_tailscale.yml
 ```
+
+## Installing the K3s Cluster (official playbook wrapper)
+
+1. Install the official K3s Ansible collection:
+
+   ```bash
+   cd ansible
+   ansible-galaxy collection install -r collections/requirements.yml
+   ```
+
+2. Update `inventory/group_vars/k3s_cluster.yml` with a secure `token` (use `ansible-vault` or an environment-specific override) and tweak any optional settings.
+
+3. Run the wrapper playbook, which delegates to `k3s.orchestration.site` from the official collection:
+
+   ```bash
+   ansible-playbook -i inventory/hosts.ini playbooks/k3s-ha.yml
+   ```
+
+The official collection handles bootstrapping the first server, joining the remaining control-plane nodes, and enrolling all agents while honoring the configuration defined in `k3s_cluster.yml`.

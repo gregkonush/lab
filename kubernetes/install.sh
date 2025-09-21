@@ -7,8 +7,7 @@ k3sup install --host 192.168.1.150 \
 --local-path "$HOME/.kube/config" \
 --context default \
 --ssh-key "$HOME/.ssh/id_ed25519" \
---k3s-extra-args '--disable servicelb --flannel-backend=host-gw --etcd-arg=auto-compaction-mode=periodic --etcd-arg=auto-compaction-retention=1h --etcd-arg=quota-backend-bytes=8589934592 --etcd-snapshot-schedule-cron="0 */6 * * *" --etcd-snapshot-retention=20 --kube-proxy-arg=proxy-mode=ipvs --kube-proxy-arg=ipvs-scheduler=wrr --kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0-1 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=serialize-image-pulls=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule' \
---merge
+--k3s-extra-args '--disable servicelb --flannel-backend=host-gw --etcd-arg=auto-compaction-mode=periodic --etcd-arg=auto-compaction-retention=1h --etcd-arg=quota-backend-bytes=8589934592 --etcd-snapshot-schedule-cron="0 */6 * * *" --etcd-snapshot-retention=20 --kube-proxy-arg=proxy-mode=ipvs --kube-proxy-arg=ipvs-scheduler=wrr --kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0-1 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=serialize-image-pulls=false --node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule'
 
 echo "Fetching the server's node-token into memory"
 
