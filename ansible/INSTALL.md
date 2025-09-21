@@ -38,7 +38,25 @@ Once Ansible is installed:
 ```bash
 cd ansible
 ansible-playbook -i inventory/hosts.ini playbooks/install_tailscale.yml
+# Start/restart the daemon on the Kubernetes nodes only (excludes proxy hosts like nuc)
+ansible-playbook -i inventory/hosts.ini playbooks/start_enable_tailscale.yml
 ```
+
+### Supplying the Ansible Vault password
+
+- Prompt each run:
+
+  ```bash
+  ansible-playbook -i inventory/hosts.ini playbooks/start_enable_tailscale.yml --ask-vault-pass
+  ```
+
+- Avoid the prompt by creating a password file outside the repo, for example `~/.config/ansible/vault/tailscale.pass`, with 700 perms on the directory and 600 on the file, then:
+
+  ```bash
+  ansible-playbook -i inventory/hosts.ini \
+    playbooks/start_enable_tailscale.yml \
+    --vault-password-file ~/.config/ansible/vault/tailscale.pass
+  ```
 
 ## Installing the K3s Cluster (official playbook wrapper)
 

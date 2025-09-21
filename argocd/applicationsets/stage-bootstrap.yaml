@@ -1,0 +1,117 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: stage-bootstrap
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: argocd
+            path: argocd/applications/argocd
+            namespace: argocd
+            annotations:
+              argocd.argoproj.io/sync-wave: "-2"
+            automation: manual
+          - name: sealed-secrets
+            path: argocd/applications/sealed-secrets
+            namespace: sealed-secrets
+            annotations:
+              argocd.argoproj.io/sync-wave: "-2"
+            automation: manual
+          - name: cert-manager
+            path: argocd/applications/cert-manager
+            namespace: cert-manager
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: manual
+          - name: metallb-system
+            path: argocd/applications/metallb-system
+            namespace: metallb-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+          - name: tailscale
+            path: argocd/applications/tailscale
+            namespace: tailscale
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+  ignoreApplicationDifferences:
+    - jsonPointers:
+        - /spec/syncPolicy
+  template:
+    metadata:
+      name: '{{ .name }}'
+      {{- if .annotations }}
+      annotations:
+{{ toYaml .annotations | indent 8 }}
+      {{- end }}
+    spec:
+      project: '{{ default "default" .project }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ default .name .namespace }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: '{{ .path }}'
+        {{- if not (and (hasKey . "renderWithLovely") (not .renderWithLovely)) }}
+        plugin:
+          name: lovely
+        {{- end }}
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+        {{- if and (hasKey . "automation") (eq .automation "auto") }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{- end }}
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: gitea
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: dagster
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: Deployment
+          group: apps
+          namespace: istio-system
+          name: istiod
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: DaemonSet
+          group: apps
+          namespace: istio-system
+          name: istio-cni-node
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istio-validator-istio-system
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istiod-default-validator
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-eventing-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-serving-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules

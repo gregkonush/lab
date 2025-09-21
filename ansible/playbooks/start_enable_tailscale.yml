@@ -1,6 +1,6 @@
 ---
 - name: Start and authorize Tailscale (no install)
-  hosts: all
+  hosts: k3s_cluster
   become: true
   vars:
     tailscale_authkey: "{{ lookup('env', 'TAILSCALE_AUTHKEY') | default('', true) }}"
