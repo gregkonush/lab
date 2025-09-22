@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: stage-product
+  name: product
   namespace: argocd
 spec:
   goTemplate: true
@@ -36,7 +36,7 @@ spec:
               argocd-image-updater.argoproj.io/git-branch: release/kitty-krew
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
             automation: manual
-            enabled: true
+            enabled: false
           - name: reviseur
             path: argocd/applications/reviseur
             namespace: reviseur
@@ -50,35 +50,35 @@ spec:
               argocd-image-updater.argoproj.io/git-branch: release/reviseur
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
             automation: manual
-            enabled: true
+            enabled: false
           - name: ecran
             path: argocd/applications/ecran
             namespace: ecran
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
-            enabled: true
+            enabled: false
           - name: eclair
             path: argocd/applications/eclair
             namespace: eclair
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
-            enabled: true
+            enabled: false
           - name: miel
             path: argocd/applications/miel
             namespace: miel
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
-            enabled: true
+            enabled: false
           - name: froussard
             path: argocd/applications/froussard
             namespace: froussard
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
-            enabled: true
+            enabled: false
       selector:
         matchExpressions:
           - key: enabled

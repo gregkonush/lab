@@ -38,9 +38,9 @@ argocd repo add https://github.com/gregkonush/lab.git
 
 The repo now provides three staged ApplicationSets:
 
-- `stage-bootstrap.yaml` (core prerequisites)
-- `stage-platform.yaml` (shared infrastructure & tooling)
-- `stage-product.yaml` (product-facing workloads)
+- `bootstrap.yaml` (core prerequisites)
+- `platform.yaml` (shared infrastructure & tooling)
+- `product.yaml` (product-facing workloads)
 
 Sync the `root` Application to register the staged sets:
 
@@ -52,15 +52,15 @@ argocd app sync root
 Preview what each stage would create before syncing:
 
 ```bash
-argocd appset preview --app stage-bootstrap --output table
+argocd appset preview --app bootstrap --output table
 ```
 
 Sync individual stages when you are ready:
 
 ```bash
-argocd appset create --upsert argocd/applicationsets/stage-bootstrap.yaml
-argocd appset create --upsert argocd/applicationsets/stage-platform.yaml
-argocd appset create --upsert argocd/applicationsets/stage-product.yaml
+argocd appset create --upsert argocd/applicationsets/bootstrap.yaml
+argocd appset create --upsert argocd/applicationsets/platform.yaml
+argocd appset create --upsert argocd/applicationsets/product.yaml
 ```
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
