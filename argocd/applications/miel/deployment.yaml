@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: miel
-          image: kalmyk.duckdns.org/lab/miel:0.1.0
+          image: registry.ide-newton.ts.net/lab/miel:0.1.0
           imagePullPolicy: Always
           ports:
             - name: http
@@ -79,5 +79,3 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-      imagePullSecrets:
-        - name: kalmyk-registry

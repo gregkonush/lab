@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/alchimie"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/alchimie"
 DOCKERFILE="apps/alchimie/Dockerfile"
 CONTEXT_PATH="apps/alchimie"
 DAGSTER_VERSION="1.10.6"

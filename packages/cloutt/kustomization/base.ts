@@ -9,7 +9,7 @@ import { Kustomization } from './common/kustomization'
 const chartSchema = z.object({
   name: z.string(),
   replicas: z.number().min(1),
-  image: z.string().startsWith('kalmyk.duckdns.org/lab/'),
+  image: z.string().startsWith('registry.ide-newton.ts.net/lab/'),
   containerPort: z.number().min(1).max(65535),
   cpuRequest: z.number().min(1),
   cpuLimit: z.number().min(1),

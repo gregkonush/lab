@@ -74,7 +74,7 @@ if (require.main === module) {
   new KustomizationBase(overlays, 'base', {
     name: appName,
     replicas: 1,
-    image: 'kalmyk.duckdns.org/lab/reviseur',
+    image: 'registry.ide-newton.ts.net/lab/reviseur',
     containerPort: 3000,
     cpuRequest: 100,
     cpuLimit: 1000,
@@ -92,7 +92,7 @@ if (require.main === module) {
   new KustomizationBase(devOverlay, 'dev', {
     name: appName,
     replicas: 1,
-    image: 'kalmyk.duckdns.org/lab/reviseur',
+    image: 'registry.ide-newton.ts.net/lab/reviseur',
     containerPort: 3000,
     cpuRequest: 100,
     cpuLimit: 1000,

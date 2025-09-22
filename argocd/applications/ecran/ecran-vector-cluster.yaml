@@ -4,10 +4,8 @@ metadata:
   name: ecran-vector-cluster
   namespace: ecran
 spec:
-  imageName: kalmyk.duckdns.org/lab/vecteur:16
+  imageName: registry.ide-newton.ts.net/lab/vecteur:16
   imagePullPolicy: Always
-  imagePullSecrets:
-    - name: kalmyk-registry
   instances: 3
   resources:
     requests:

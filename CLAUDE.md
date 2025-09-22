@@ -158,7 +158,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 ## Container Registry & Deployment
 
-- Private registry: `kalmyk.duckdns.org` (for ARM64 builds)
+- Private registry: `registry.ide-newton.ts.net` (for ARM64 builds)
 - Build scripts in `/scripts/` directory (e.g., `build-kitty-krew.sh`)
 - ArgoCD manages deployments from Git
 

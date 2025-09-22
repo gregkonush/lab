@@ -6,8 +6,7 @@ data:
   log.level: debug
   registries.conf: |
     registries:
-    - name: kalmyk-registry
+    - name: registry
       prefix: registry.ide-newton.ts.net
       api_url: https://registry.ide-newton.ts.net
-      credentials: pullsecret:argocd/kalmyk-registry
       default: true

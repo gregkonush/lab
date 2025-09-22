@@ -20,10 +20,8 @@ spec:
         cdk8s.io/metadata.addr: dev-dev-deployment-dev-deployment-deployment-c8e90e90
     spec:
       automountServiceAccountToken: false
-      imagePullSecrets:
-        - name: registry
       containers:
-        - image: kalmyk.duckdns.org/lab/reviseur
+        - image: registry.ide-newton.ts.net/lab/reviseur
           imagePullPolicy: Always
           name: reviseur
           env:

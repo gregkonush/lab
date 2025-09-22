@@ -111,13 +111,6 @@ op --version
 op signin
 ```
 
-- **Create registry secret in the `argocd` namespace**
+- **Registry access**
 
-```bash
-kubectl create secret docker-registry registry \
-  --docker-server=https://kalmyk.duckdns.org \
-  --docker-username=lab \
-  --docker-password="$(op read op://vault_name/secret_name/field_name)" \
-  --namespace=argocd \
-  --dry-run=client -o yaml
-```
+  The Tailscale registry at `registry.ide-newton.ts.net` allows anonymous pulls, so no `docker-registry` secrets are required in `argocd` or workload namespaces. Prune any legacy `registry` or `kalmyk-registry` secrets before syncing.

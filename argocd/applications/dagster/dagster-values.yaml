@@ -1,21 +1,16 @@
 ---
-imagePullSecrets:
-  - name: registry
-
 dagsterWebserver:
   image:
-    repository: kalmyk.duckdns.org/lab/alchimie
+    repository: registry.ide-newton.ts.net/lab/alchimie
     tag: latest
     pullPolicy: Always
 
 dagster-user-deployments:
-  imagePullSecrets:
-    - name: registry
   deployments:
     - name: alchimie
       port: 3030
       image:
-        repository: kalmyk.duckdns.org/lab/alchimie
+        repository: registry.ide-newton.ts.net/lab/alchimie
         tag: latest
         pullPolicy: Always
       dagsterApiGrpcArgs:
@@ -58,6 +53,6 @@ dagster-user-deployments:
 
 dagsterDaemon:
   image:
-    repository: kalmyk.duckdns.org/lab/alchimie
+    repository: registry.ide-newton.ts.net/lab/alchimie
     tag: latest
     pullPolicy: Always

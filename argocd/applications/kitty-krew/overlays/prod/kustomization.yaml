@@ -12,4 +12,4 @@ patchesStrategicMerge:
 
 images:
   - name: kitty-krew
-    newName: kalmyk.duckdns.org/lab/kitty-krew
+    newName: registry.ide-newton.ts.net/lab/kitty-krew

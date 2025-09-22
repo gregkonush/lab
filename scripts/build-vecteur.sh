@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/vecteur"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/vecteur"
 DOCKERFILE="services/vecteur/Dockerfile"
 CONTEXT_PATH="services/vecteur"
 

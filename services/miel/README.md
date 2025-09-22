@@ -109,7 +109,7 @@ Response mirrors Alpaca’s order payload.
 
 ## Deployment
 
-- Argo CD manifests live in `argocd/applications/miel` and expect the image `kalmyk.duckdns.org/lab/miel:<tag>`.
+- Argo CD manifests live in `argocd/applications/miel` and expect the image `registry.ide-newton.ts.net/lab/miel:<tag>`.
 - Provide a `Secret` named `miel-secrets` in the `miel` namespace with keys `alpaca-api-key` and `alpaca-secret-key` before syncing.
 - Optional non-secret overrides can be applied by editing `configmap.yaml` or layering a Kustomize overlay.
 

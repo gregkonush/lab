@@ -13,8 +13,6 @@ spec:
         app: kitty-krew
     spec:
       serviceAccountName: kitty-krew-sa
-      imagePullSecrets:
-        - name: registry
       containers:
         - name: kitty-krew
           resources:

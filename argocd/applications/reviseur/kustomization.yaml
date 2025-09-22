@@ -5,5 +5,5 @@ metadata:
 resources:
 - overlays/dev
 images:
-- name: kalmyk.duckdns.org/lab/reviseur
+- name: registry.ide-newton.ts.net/lab/reviseur
   newTag: 0.184.0
