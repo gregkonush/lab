@@ -72,9 +72,6 @@ jobs:
       dockerfile: ./apps/proompteng/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   
 
@@ -87,9 +84,6 @@ jobs:
       dockerfile: ./apps/kitty-krew/Dockerfile
       context: ./apps/kitty-krew
       new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   build-reviseur:
     needs: [changes, version]
@@ -100,9 +94,6 @@ jobs:
       dockerfile: ./apps/reviseur/Dockerfile
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   build-alchimie:
     needs: [changes, version]
@@ -114,9 +105,6 @@ jobs:
       context: ./apps/alchimie
       new_tag: ${{ needs.version.outputs.new_tag }}
       platforms: linux/arm64
-    secrets:
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
 
   cleanup-release:
     runs-on: arc-arm64
