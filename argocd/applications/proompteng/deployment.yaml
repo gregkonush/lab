@@ -12,11 +12,9 @@ spec:
       labels:
         app: proompteng
     spec:
-      imagePullSecrets:
-        - name: kalmyk-registry
       containers:
         - name: proompteng
-          image: kalmyk.duckdns.org/lab/proompteng
+          image: registry.ide-newton.ts.net/lab/proompteng
           resources:
             limits:
               cpu: "1"

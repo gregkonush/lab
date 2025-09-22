@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/juge"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/juge"
 DOCKERFILE="services/juge/Dockerfile"
 CONTEXT_PATH="services/juge/app"
 

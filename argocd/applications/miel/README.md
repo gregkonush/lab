@@ -5,7 +5,7 @@ This directory defines the Kubernetes manifests synced by Argo CD for the `miel`
 ## Components
 
 - `ConfigMap` (`miel-config`) — default non-secret configuration values such as Alpaca endpoints and request limits.
-- `Deployment` — runs the Go service image `kalmyk.duckdns.org/lab/miel:0.1.0`, exposing port 8080 with readiness/liveness probes on `/healthz`.
+- `Deployment` — runs the Go service image `registry.ide-newton.ts.net/lab/miel:0.1.0`, exposing port 8080 with readiness/liveness probes on `/healthz`.
 - `Service` — stable ClusterIP service on port 80 pointing to the container’s port 8080.
 
 ## Secrets

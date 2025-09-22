@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/riposte"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/riposte"
 DOCKERFILE="services/riposte/Dockerfile"
 CONTEXT_PATH="services/riposte"
 

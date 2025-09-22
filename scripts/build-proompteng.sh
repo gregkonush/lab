@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/proompteng"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/proompteng"
 DOCKERFILE="apps/proompteng/Dockerfile"
 CONTEXT_PATH="."
 

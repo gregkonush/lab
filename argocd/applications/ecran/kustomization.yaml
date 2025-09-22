@@ -17,9 +17,9 @@ resources:
 - juge-deployment.yaml
 - juge-service.yaml
 images:
-- name: kalmyk.duckdns.org/lab/ecran
+- name: registry.ide-newton.ts.net/lab/ecran
   newTag: 0.123.0
-- name: kalmyk.duckdns.org/lab/ecran-worker
+- name: registry.ide-newton.ts.net/lab/ecran-worker
   newTag: 0.123.0
-- name: kalmyk.duckdns.org/lab/juge
+- name: registry.ide-newton.ts.net/lab/juge
   newTag: 0.123.0

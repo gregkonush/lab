@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-IMAGE_NAME="kalmyk.duckdns.org/lab/miel"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/miel"
 DOCKERFILE="services/miel/Dockerfile"
 CONTEXT_PATH="."
 

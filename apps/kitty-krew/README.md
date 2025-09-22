@@ -86,7 +86,7 @@ After building, update your kustomization.yaml in the appropriate overlay:
 ```yaml
 images:
   - name: kitty-krew
-    newName: kalmyk.duckdns.org/lab/kitty-krew
+    newName: registry.ide-newton.ts.net/lab/kitty-krew
     newTag: YOUR_TAG
 ```
 
@@ -126,10 +126,10 @@ To test the containerized application manually:
 
 ```bash
 # Run with auto-removal when stopped
-docker run --rm -p 3000:3000 kalmyk.duckdns.org/lab/kitty-krew:YOUR_TAG
+docker run --rm -p 3000:3000 registry.ide-newton.ts.net/lab/kitty-krew:YOUR_TAG
 
 # Or run in detached mode
-docker run -d -p 3000:3000 kalmyk.duckdns.org/lab/kitty-krew:YOUR_TAG
+docker run -d -p 3000:3000 registry.ide-newton.ts.net/lab/kitty-krew:YOUR_TAG
 
 # Verify it's working with curl
 curl http://localhost:3000/health

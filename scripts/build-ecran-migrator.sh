@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/ecran-migrator"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/ecran-migrator"
 DOCKERFILE="services/ecran/Dockerfile.migrator"
 CONTEXT_PATH="services/ecran"
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set variables
-IMAGE_NAME="kalmyk.duckdns.org/lab/kitty-krew"
+IMAGE_NAME="registry.ide-newton.ts.net/lab/kitty-krew"
 DOCKERFILE="Dockerfile"
 CONTEXT_PATH="apps/kitty-krew"
 

@@ -21,7 +21,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       containers:
-        - image: kalmyk.duckdns.org/lab/reviseur
+        - image: registry.ide-newton.ts.net/lab/reviseur
           imagePullPolicy: Always
           name: reviseur
           ports:

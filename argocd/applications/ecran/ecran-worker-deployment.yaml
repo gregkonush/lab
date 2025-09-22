@@ -15,11 +15,9 @@ spec:
       labels:
         app.kubernetes.io/name: ecran-worker
     spec:
-      imagePullSecrets:
-        - name: kalmyk-registry
       initContainers:
         - name: run-migrations
-          image: kalmyk.duckdns.org/lab/ecran-migrator:latest
+          image: registry.ide-newton.ts.net/lab/ecran-migrator:latest
           imagePullPolicy: Always
           env:
             - name: DB_URI
@@ -29,7 +27,7 @@ spec:
                   key: uri
       containers:
         - name: ecran-worker
-          image: kalmyk.duckdns.org/lab/ecran-worker
+          image: registry.ide-newton.ts.net/lab/ecran-worker
           imagePullPolicy: Always
           env:
             - name: RESEND_API_KEY
