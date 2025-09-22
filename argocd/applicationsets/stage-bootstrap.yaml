@@ -15,42 +15,54 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "-2"
             automation: auto
+            enabled: true
           - name: sealed-secrets
             path: argocd/applications/sealed-secrets
             namespace: sealed-secrets
             annotations:
               argocd.argoproj.io/sync-wave: "-2"
             automation: auto
+            enabled: true
           - name: cert-manager
             path: argocd/applications/cert-manager
             namespace: cert-manager
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
+            enabled: true
           - name: longhorn
             path: argocd/applications/longhorn
             namespace: longhorn-system
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
+            enabled: true
           - name: metallb-system
             path: argocd/applications/metallb-system
             namespace: metallb-system
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: auto
+            enabled: true
           - name: tailscale
             path: argocd/applications/tailscale
             namespace: tailscale
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: auto
+            enabled: true
           - name: registry
             path: argocd/applications/registry
             namespace: registry
             annotations:
               argocd.argoproj.io/sync-wave: "1"
             automation: auto
+            enabled: true
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
   template:
     metadata:
       name: '{{ .name }}'

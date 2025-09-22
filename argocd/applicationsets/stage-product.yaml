@@ -22,6 +22,7 @@ spec:
               argocd-image-updater.argoproj.io/git-branch: release/proompteng
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
             automation: manual
+            enabled: true
           - name: kitty-krew
             path: argocd/applications/kitty-krew
             namespace: kitty-krew
@@ -35,6 +36,7 @@ spec:
               argocd-image-updater.argoproj.io/git-branch: release/kitty-krew
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
             automation: manual
+            enabled: true
           - name: reviseur
             path: argocd/applications/reviseur
             namespace: reviseur
@@ -48,30 +50,40 @@ spec:
               argocd-image-updater.argoproj.io/git-branch: release/reviseur
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
             automation: manual
+            enabled: true
           - name: ecran
             path: argocd/applications/ecran
             namespace: ecran
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
+            enabled: true
           - name: eclair
             path: argocd/applications/eclair
             namespace: eclair
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
+            enabled: true
           - name: miel
             path: argocd/applications/miel
             namespace: miel
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
+            enabled: true
           - name: froussard
             path: argocd/applications/froussard
             namespace: froussard
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
+            enabled: true
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
   template:
     metadata:
       name: '{{ .name }}'

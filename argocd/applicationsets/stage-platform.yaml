@@ -15,132 +15,152 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: manual
+            enabled: "false"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: manual
+            enabled: "false"
           - name: cloudflare
             path: argocd/applications/cloudflare
             namespace: cloudflare
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: manual
+            enabled: "false"
           - name: istio-system
             path: argocd/applications/istio-system
             namespace: istio-system
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: manual
+            enabled: "false"
           - name: istio-ingress
             path: argocd/applications/istio-ingress
             namespace: istio-system
             annotations:
               argocd.argoproj.io/sync-wave: "1"
             automation: manual
+            enabled: "false"
           - name: knative
             path: argocd/applications/knative
             namespace: knative
             annotations:
               argocd.argoproj.io/sync-wave: "1"
             automation: manual
+            enabled: "false"
           - name: knative-serving
             path: argocd/applications/knative-serving
             namespace: knative-serving
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
+            enabled: "false"
           - name: knative-eventing
             path: argocd/applications/knative-eventing
             namespace: knative-eventing
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
+            enabled: "false"
           - name: fission
             path: argocd/applications/fission
             namespace: fission
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
+            enabled: "false"
           - name: kafka
             path: argocd/applications/kafka
             namespace: kafka
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
+            enabled: "false"
           - name: minio
             path: argocd/applications/minio
             namespace: minio
             annotations:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
+            enabled: "false"
           - name: milvus
             path: argocd/applications/milvus
             namespace: milvus
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
+            enabled: "false"
           - name: temporal
             path: argocd/applications/temporal
             namespace: temporal
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
+            enabled: "false"
           - name: airbyte
             path: argocd/applications/airbyte
             namespace: airbyte
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
+            enabled: "false"
           - name: dagster
             path: argocd/applications/dagster
             namespace: dagster
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
-          - name: gitea
-            path: argocd/applications/gitea
-            namespace: gitea
-            annotations:
-              argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            enabled: "false"
           - name: verdaccio
             path: argocd/applications/verdaccio
             namespace: verdaccio
             annotations:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
+            enabled: "false"
           - name: spark
             path: argocd/applications/spark
             namespace: spark
             annotations:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
+            enabled: "false"
           - name: coder
             path: argocd/applications/coder
             namespace: coder
             annotations:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
+            enabled: "false"
           - name: arc
             path: argocd/applications/arc
             namespace: arc
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
+            enabled: "true"
           - name: backstage
             path: argocd/applications/backstage
             namespace: backstage
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
+            enabled: "false"
           - name: convex
             path: argocd/applications/convex
             namespace: convex
             annotations:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
+            enabled: "false"
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
   template:
     metadata:
       name: '{{ .name }}'
@@ -159,11 +179,6 @@ spec:
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
       ignoreDifferences:
-        - kind: StatefulSet
-          group: apps
-          namespace: gitea
-          jqPathExpressions:
-            - .spec.volumeClaimTemplates
         - kind: StatefulSet
           group: apps
           namespace: dagster
