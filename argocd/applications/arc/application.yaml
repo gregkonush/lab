@@ -51,48 +51,6 @@ spec:
                       cpu: "200m"
                       memory: "256Mi"
               containers:
-                - name: tailscale
-                  image: ghcr.io/tailscale/tailscale:stable
-                  env:
-                    - name: TS_AUTHKEY
-                      valueFrom:
-                        secretKeyRef:
-                          name: tailscale-auth
-                          key: TS_AUTHKEY
-                    - name: TS_HOSTNAME_PREFIX
-                      value: arc-runner
-                    - name: TS_TAGS
-                      value: tag:k8s
-                  securityContext:
-                    privileged: true
-                    capabilities:
-                      add: ["NET_ADMIN", "NET_RAW"]
-                  volumeMounts:
-                    - name: tailscale-run
-                      mountPath: /var/run/tailscale
-                    - name: dev-net-tun
-                      mountPath: /dev/net/tun
-                  command:
-                    - /bin/sh
-                    - -c
-                  args:
-                    - |
-                      set -euo pipefail 2>/dev/null || set -euo
-                      mkdir -p /var/run/tailscale
-                      tailscaled --state=mem: --socket=/var/run/tailscale/tailscaled.sock &
-                      for i in $(seq 1 30); do
-                        tailscale --socket=/var/run/tailscale/tailscaled.sock status >/dev/null 2>&1 && break
-                        sleep 1
-                      done
-                      tailscale --socket=/var/run/tailscale/tailscaled.sock up \
-                        --auth-key="${TS_AUTHKEY}?ephemeral=true" \
-                        --hostname="${TS_HOSTNAME_PREFIX}-${HOSTNAME}" \
-                        --accept-dns=true \
-                        --accept-routes=true \
-                        --advertise-tags="${TS_TAGS}" \
-                        --reset
-                      trap 'tailscale --socket=/var/run/tailscale/tailscaled.sock logout' EXIT
-                      wait
                 - name: runner
                   image: ghcr.io/actions/actions-runner:latest
                   command: ["/home/runner/run.sh"]
@@ -158,12 +116,6 @@ spec:
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
-                - name: tailscale-run
-                  emptyDir: {}
-                - name: dev-net-tun
-                  hostPath:
-                    path: /dev/net/tun
-                    type: CharDevice
 
   destination:
     server: https://kubernetes.default.svc
