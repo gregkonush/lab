@@ -12,5 +12,6 @@ These runners are specifically running on the `kube-worker-08` node.
     --dry-run=client -o yaml | kubeseal --controller-namespace sealed-secrets --format yaml > argocd/applications/arc/tailscale-auth.yaml
   ```
   Replace the literal with a Tailscale OAuth client secret or an auth key that is permitted to issue ephemeral nodes (`?ephemeral=true` is appended automatically).
+- Generate the `github-token` SealedSecret with `scripts/generate-arc-github-token-secret.sh`. The script reads the token from 1Password via `${ARC_GITHUB_TOKEN_OP_PATH}` (defaults to `op://infra/github personal token/token`) and writes the sealed manifest to `argocd/applications/arc/github-token.yaml`.
 
 [Taint a node](../../kubernetes/README.md#tainting-a-node)
