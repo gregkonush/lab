@@ -4,6 +4,8 @@ metadata:
   name: knative-serving
   namespace: knative-serving
 spec:
+  ingress:
+    - istio
   config:
     domain:
       "proompteng.ai": ""
@@ -17,6 +19,12 @@ spec:
       systemInternalIssuerRef: |
         kind: ClusterIssuer
         name: letsencrypt-prod
+    network:
+      domainTemplate: "{{.Name}}.{{.Domain}}"
+      autoTLS: Enabled
+      defaultExternalScheme: https
+      httpProtocol: Redirected
+      ingress.class: istio.ingress.networking.knative.dev
     istio:
       external-gateways: |
         - name: knative-external-gateway

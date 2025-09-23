@@ -11,4 +11,9 @@ spec:
     solvers:
       - http01:
           ingress:
-            class: traefik
+            class: istio
+            ingressClassName: istio
+          podTemplate:
+            metadata:
+              annotations:
+                sidecar.istio.io/inject: "false"
