@@ -13,7 +13,7 @@ spec:
           ingress:
             class: istio
             ingressClassName: istio
-          podTemplate:
-            metadata:
-              annotations:
-                sidecar.istio.io/inject: "false"
+            podTemplate:
+              metadata:
+                annotations:
+                  sidecar.istio.io/inject: "false"

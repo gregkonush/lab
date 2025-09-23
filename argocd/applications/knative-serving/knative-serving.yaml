@@ -29,7 +29,7 @@ spec:
       external-gateways: |
         - name: knative-external-gateway
           namespace: istio-ingress
-          service: knative-external-gateway.istio-ingress.svc.cluster.local
+          service: gateway.istio-ingress.svc.cluster.local
       local-gateways: |
         - name: knative-local-gateway
           namespace: knative-serving
