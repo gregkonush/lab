@@ -2,9 +2,11 @@
 
 This template provisions a Coder workspace on Kubernetes with:
 
-- arm64 agent binary (for arm64 nodes)
-- code-server preinstalled and exposed at <http://localhost:13337>
-- Persistent home volume (PVC) sized via parameter `home_disk_size`
+- arm64 agent binary tuned for arm64 nodes
+- `code-server` exposed at <http://localhost:13337>
+- Persistent home volume sized via the `home_disk_size` parameter
+- Git checkout via `coder/git-clone`, followed by dependency install on first boot
+- Cursor launcher, Node.js via nvm (LTS), kubectl, Argo CD CLI, Convex CLI, and OpenAI Codex CLI
 
 ## Install
 
@@ -35,16 +37,27 @@ coder workspaces create sutro --template "kubernetes/coder"
 
 ## Parameters
 
-- CPU cores: 2/4/6/8
-- Memory (GiB): 2/4/6/8
-- Home disk size (GiB): default 10
+- CPU cores: 4/6/8 (default 4)
+- Memory (GiB): 4/6/8 (default 8)
+- Home disk size (GiB): default 30
+- Repository URL: defaults to `https://github.com/gregkonush/lab`; accepts HTTPS or SSH remotes
+- Checkout directory: defaults to `~/github.com` and expands to `${directory}/${repo}` inside the workspace
 
-## Notes
+## Modules & automation
 
-- The agent bootstrap is adjusted to fetch linux-arm64 to match your arm64 cluster nodes.
-- If a workspace becomes unhealthy, check logs inside the pod:
-  - `/tmp/coder-startup-script.log`
-  - `/tmp/coder-agent.log`
+- `coder/git-clone@1.1.1` for repository checkout
+- `coder/cursor@1.3.2` to expose Cursor Desktop
+- `thezoker/nodejs@1.0.11` to install Node.js via nvm
+- `coder_script.bootstrap_tools` runs on start to:
+  - Install Node.js LTS (fallback to 22), enable Corepack, and activate the latest pnpm
+  - Install Convex CLI, OpenAI Codex CLI, kubectl, and Argo CD CLI when missing
+  - Expand the repository path, then run `pnpm install --frozen-lockfile`, `pnpm install`, or `npm install` based on repo files
+  - Persist PNPM environment variables in `.profile` and `.zshrc`
+
+If a workspace becomes unhealthy, check logs inside the pod:
+
+- `/tmp/coder-startup-script.log`
+- `/tmp/coder-agent.log`
 
 ## Troubleshooting
 

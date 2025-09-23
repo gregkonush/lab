@@ -7,13 +7,21 @@ maintainer: you
 parameters:
   - name: cpu
     type: string
-    default: "2"
+    default: "4"
   - name: memory
     type: string
-    default: "2"
+    default: "8"
   - name: home_disk_size
     type: number
-    default: 10
+    default: 30
+  - name: repository_url
+    type: string
+    default: "https://github.com/gregkonush/lab"
+    description: Git URL to clone into the workspace
+  - name: repository_directory
+    type: string
+    default: "~/github.com"
+    description: Parent directory for the cloned repository
 provisioners:
   - type: terraform
     path: ./main.tf
