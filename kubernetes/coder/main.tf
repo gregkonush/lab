@@ -57,7 +57,7 @@ data "coder_parameter" "memory" {
   name         = "memory"
   display_name = "Memory"
   description  = "The amount of memory in GB"
-  default      = "4"
+  default      = "8"
   icon         = "/icon/memory.svg"
   mutable      = true
   option {
@@ -86,6 +86,32 @@ data "coder_parameter" "home_disk_size" {
     min = 1
     max = 99999
   }
+}
+
+data "coder_parameter" "repository_url" {
+  name         = "repository_url"
+  display_name = "Repository URL"
+  description  = "Git URL to clone into the workspace"
+  default      = "https://github.com/gregkonush/lab"
+  icon         = "/icon/git-branch.svg"
+  mutable      = true
+}
+
+data "coder_parameter" "repository_directory" {
+  name         = "repository_directory"
+  display_name = "Checkout directory"
+  description  = "Parent directory for the cloned repository"
+  default      = "~/github.com"
+  icon         = "/icon/folder.svg"
+  mutable      = true
+}
+
+locals {
+  repository_url           = trimspace(data.coder_parameter.repository_url.value)
+  repository_directory_raw = trimspace(trimsuffix(data.coder_parameter.repository_directory.value, "/"))
+  repository_directory     = local.repository_directory_raw != "" ? local.repository_directory_raw : "~/github.com"
+  repository_name          = try(regex("[^/]+(?=\\.git$|$)", local.repository_url), "workspace")
+  repository_folder        = "${local.repository_directory}/${local.repository_name}"
 }
 
 provider "kubernetes" {
@@ -271,8 +297,9 @@ resource "kubernetes_deployment" "main" {
       }
       spec {
         security_context {
-          run_as_user = 1000
-          fs_group    = 1000
+          run_as_user     = 1000
+          fs_group        = 1000
+          run_as_non_root = true
         }
 
         container {
@@ -337,24 +364,161 @@ resource "kubernetes_deployment" "main" {
 }
 
 module "git-clone" {
-  source   = "registry.coder.com/modules/git-clone/coder"
-  version  = "1.0.18"
+  source   = "registry.coder.com/coder/git-clone/coder"
+  version  = "1.1.1"
   agent_id = coder_agent.main.id
-  url      = "https://github.com/gregkonush/lab"
-  base_dir = "~/github.com"
+  url      = local.repository_url
+  base_dir = local.repository_directory
 }
 
 module "cursor" {
-  source   = "registry.coder.com/modules/cursor/coder"
-  version  = "1.0.19"
-  agent_id = coder_agent.main.id
-  folder   = "~/github.com/lab"
+  source     = "registry.coder.com/coder/cursor/coder"
+  version    = "1.3.2"
+  agent_id   = coder_agent.main.id
+  folder     = local.repository_folder
+  depends_on = [module.git-clone]
 }
 
 module "nodejs" {
-  source               = "registry.coder.com/modules/nodejs/coder"
-  version              = "1.0.10"
+  source               = "registry.coder.com/thezoker/nodejs/coder"
+  version              = "1.0.11"
   agent_id             = coder_agent.main.id
   node_versions        = ["20", "22"]
   default_node_version = "22"
+}
+
+resource "coder_script" "bootstrap_tools" {
+  agent_id           = coder_agent.main.id
+  display_name       = "Bootstrap developer tools"
+  run_on_start       = true
+  start_blocks_login = true
+  script             = <<-EOT
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    export NVM_DIR="$HOME/.nvm"
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+      # shellcheck source=/dev/null
+      . "$NVM_DIR/nvm.sh"
+      nvm install --lts >/dev/null 2>&1 || nvm install 22 >/dev/null 2>&1 || true
+      nvm use --lts >/dev/null 2>&1 || nvm use 22 >/dev/null 2>&1 || true
+      nvm alias default "$(nvm current)" >/dev/null 2>&1 || true
+    else
+      echo "nvm not found; skipping Node.js LTS bootstrap" >&2
+    fi
+
+    export PNPM_HOME="$HOME/.local/share/pnpm"
+    mkdir -p "$PNPM_HOME"
+    mkdir -p "$HOME/.local/bin"
+    case ":$PATH:" in
+      *:"$HOME/.local/share/pnpm":* | *:"$PNPM_HOME":*) ;;
+      *) export PATH="$PNPM_HOME:$PATH" ;;
+    esac
+    case ":$PATH:" in
+      *:"$HOME/.local/bin":*) ;;
+      *) export PATH="$HOME/.local/bin:$PATH" ;;
+    esac
+
+    corepack enable >/dev/null 2>&1 || true
+    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+
+    if ! command -v brew >/dev/null 2>&1; then
+      export NONINTERACTIVE=1
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/tmp/homebrew-install.log 2>&1 || true
+    fi
+
+    if [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
+      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+      if ! grep -q "brew shellenv" "$HOME/.profile" 2>/dev/null; then
+        cat <<'BREW_PROFILE' >> "$HOME/.profile"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+BREW_PROFILE
+      fi
+
+      if ! grep -q "brew shellenv" "$HOME/.zshrc" 2>/dev/null; then
+        cat <<'BREW_ZSHRC' >> "$HOME/.zshrc"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+BREW_ZSHRC
+      fi
+    fi
+
+    if ! command -v convex >/dev/null 2>&1; then
+      if command -v pnpm >/dev/null 2>&1; then
+        pnpm add --global convex@1.27.0 >/dev/null 2>&1
+      elif command -v npm >/dev/null 2>&1; then
+        npm install --global convex@1.27.0 >/dev/null 2>&1
+      else
+        echo "Convex CLI install skipped: npm-compatible package manager not available" >&2
+      fi
+    fi
+
+    if command -v pnpm >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
+      pnpm add --global @openai/codex@latest >/dev/null 2>&1 || true
+    elif command -v npm >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
+      npm install --global @openai/codex@latest >/dev/null 2>&1 || true
+    fi
+
+    if ! command -v kubectl >/dev/null 2>&1; then
+      KUBECTL_ARCH="$(uname -m)"
+      case "$KUBECTL_ARCH" in
+        aarch64|arm64) KUBECTL_ARCH="arm64" ;;
+        x86_64|amd64)  KUBECTL_ARCH="amd64" ;;
+        *)             KUBECTL_ARCH="amd64" ;;
+      esac
+
+      KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+      curl -fsSLo "$HOME/.local/bin/kubectl" "https://dl.k8s.io/release/$${KUBECTL_VERSION}/bin/linux/$${KUBECTL_ARCH}/kubectl" && \
+        chmod +x "$HOME/.local/bin/kubectl" || \
+        echo "kubectl install skipped" >&2
+    fi
+
+    if ! command -v argocd >/dev/null 2>&1; then
+      ARGOCD_ARCH="$(uname -m)"
+      case "$ARGOCD_ARCH" in
+        aarch64|arm64) ARGOCD_ARCH="arm64" ;;
+        x86_64|amd64)  ARGOCD_ARCH="amd64" ;;
+        *)             ARGOCD_ARCH="amd64" ;;
+      esac
+
+      curl -fsSLo "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-$${ARGOCD_ARCH}" && \
+        chmod +x "$HOME/.local/bin/argocd" || \
+        echo "argocd install skipped" >&2
+    fi
+
+    REPO_ROOT="${local.repository_folder}"
+    case "$REPO_ROOT" in
+      ~*) REPO_ROOT="$${HOME}$${REPO_ROOT#~}" ;;
+    esac
+
+    if [ -d "$REPO_ROOT/.git" ]; then
+      if command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
+        (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1)
+      elif command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
+        (cd "$REPO_ROOT" && pnpm install >/dev/null 2>&1)
+      elif command -v npm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
+        (cd "$REPO_ROOT" && npm install >/dev/null 2>&1)
+      fi
+    else
+      echo "Repository directory '$REPO_ROOT' not found; skipping dependency install" >&2
+    fi
+
+    if ! grep -q "PNPM_HOME" "$HOME/.profile" 2>/dev/null; then
+      cat <<'PROFILE' >> "$HOME/.profile"
+export PNPM_HOME="$HOME/.local/share/pnpm"
+export PATH="$PNPM_HOME:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+PROFILE
+    fi
+
+    if ! grep -q "PNPM_HOME" "$HOME/.zshrc" 2>/dev/null; then
+      cat <<'ZSHRC' >> "$HOME/.zshrc"
+export PNPM_HOME="$HOME/.local/share/pnpm"
+export PATH="$PNPM_HOME:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+ZSHRC
+    fi
+  EOT
+
+  depends_on = [module.nodejs]
 }
