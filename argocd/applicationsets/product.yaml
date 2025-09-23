@@ -78,7 +78,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
-            enabled: false
+            enabled: true
       selector:
         matchExpressions:
           - key: enabled

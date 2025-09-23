@@ -36,35 +36,35 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "0"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: istio-ingress
             path: argocd/applications/istio-ingress
             namespace: istio-system
             annotations:
               argocd.argoproj.io/sync-wave: "1"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: knative
             path: argocd/applications/knative
             namespace: knative
             annotations:
               argocd.argoproj.io/sync-wave: "1"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: knative-serving
             path: argocd/applications/knative-serving
             namespace: knative-serving
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: knative-eventing
             path: argocd/applications/knative-eventing
             namespace: knative-eventing
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: fission
             path: argocd/applications/fission
             namespace: fission
@@ -78,7 +78,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: minio
             path: argocd/applications/minio
             namespace: minio

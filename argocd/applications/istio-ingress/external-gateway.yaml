@@ -5,11 +5,19 @@ metadata:
   namespace: istio-ingress
 spec:
   selector:
-    istio: gateway
+    istio: ingressgateway
   servers:
     - port:
         number: 80
         protocol: HTTP
         name: http
+      hosts:
+        - "*"
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: https
+      tls:
+        mode: PASSTHROUGH
       hosts:
         - "*"
