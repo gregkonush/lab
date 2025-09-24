@@ -1,5 +1,5 @@
 # baozi: Bun S2I Builder
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 LABEL maintainer="Greg Konush <greg.konush@gmail.com>"
 
@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip git 
 # Create app directory and set permissions before switching user
 RUN mkdir -p /opt/app-root && chown bun:bun /opt/app-root
 
-# Switch to the application user
-USER bun
+# Switch to the application user using a numeric UID for Kubernetes PSP compatibility
+USER 1001
 WORKDIR /opt/app-root
 
 # Install Bun as the application user
