@@ -39,7 +39,7 @@ spec:
             enabled: "true"
           - name: istio-ingress
             path: argocd/applications/istio-ingress
-            namespace: istio-system
+            namespace: istio-ingress
             annotations:
               argocd.argoproj.io/sync-wave: "1"
             automation: manual
