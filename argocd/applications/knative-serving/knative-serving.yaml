@@ -5,7 +5,8 @@ metadata:
   namespace: knative-serving
 spec:
   ingress:
-    - istio
+    istio:
+      enabled: true
   config:
     domain:
       "proompteng.ai": ""

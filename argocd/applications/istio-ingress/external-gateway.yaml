@@ -5,6 +5,7 @@ metadata:
   namespace: istio-ingress
 spec:
   selector:
+    app: gateway
     istio: gateway
   servers:
     - port:
