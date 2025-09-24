@@ -28,4 +28,11 @@ spec:
       http-protocol: Enabled
       ingress.class: istio.ingress.networking.knative.dev
     istio:
-      'gateway.knative-serving.knative-ingress-gateway': gateway.istio-ingress.svc.cluster.local
+      external-gateways: |
+        - name: knative-external-gateway
+          namespace: istio-ingress
+          service: gateway.istio-ingress.svc.cluster.local
+      local-gateways: |
+        - name: knative-local-gateway
+          namespace: istio-system
+          service: knative-local-gateway.istio-system.svc.cluster.local
