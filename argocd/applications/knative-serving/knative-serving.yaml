@@ -16,22 +16,16 @@ spec:
         name: letsencrypt-prod
       clusterLocalIssuerRef: |
         kind: ClusterIssuer
-        name: letsencrypt-prod
+        name: knative-selfsigned-issuer
       systemInternalIssuerRef: |
         kind: ClusterIssuer
-        name: letsencrypt-prod
+        name: knative-selfsigned-issuer
     network:
-      domainTemplate: "{{.Name}}.{{.Domain}}"
-      autoTLS: Enabled
-      defaultExternalScheme: https
-      httpProtocol: Enabled
+      domain-template: "{{.Name}}.{{.Domain}}"
+      auto-tls: "Enabled"
+      external-domain-tls: "Enabled"
+      default-external-scheme: https
+      http-protocol: Enabled
       ingress.class: istio.ingress.networking.knative.dev
     istio:
-      external-gateways: |
-        - name: knative-external-gateway
-          namespace: istio-ingress
-          service: gateway.istio-ingress.svc.cluster.local
-      local-gateways: |
-        - name: knative-local-gateway
-          namespace: knative-serving
-          service: knative-local-gateway.istio-system.svc.cluster.local
+      'gateway.knative-serving.knative-ingress-gateway': gateway.istio-ingress.svc.cluster.local
