@@ -3,17 +3,17 @@
 specVersion: 0.45.1
 name: nata
 runtime: typescript
-registry: xleb.duckdns.org
+registry: registry.ide-newton.ts.net/lab
 namespace: froussard
 created: 2025-03-30T10:30:06.936905-07:00
 build:
   builderImages:
     platforms: linux/arm64
-    s2i: xleb.duckdns.org/base
+    s2i: registry.ide-newton.ts.net/lab/base
   builder: s2i
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/nata@sha256:bc5e9b6e548fa4cfc09e3ff91f5d1abbcc8fed8a438a756511635b417b4270f2
+  image: registry.ide-newton.ts.net/lab/nata@sha256:bc5e9b6e548fa4cfc09e3ff91f5d1abbcc8fed8a438a756511635b417b4270f2
   options:
     scale:
       min: 1

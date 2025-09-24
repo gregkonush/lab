@@ -3,7 +3,7 @@
 specVersion: 1.17.0
 name: eclair
 runtime: go
-registry: xleb.duckdns.org
+registry: registry.ide-newton.ts.net/lab
 namespace: eclair
 created: 2025-09-09T00:00:00Z
 build:
@@ -12,7 +12,7 @@ build:
   builder: s2i
 deploy:
   namespace: eclair
-  image: xleb.duckdns.org/eclair@sha256:17e934d8fa5926b7518676b1268e2e405e3e7af3ec1031d9d5f1cbc644a2a669
+  image: registry.ide-newton.ts.net/lab/eclair@sha256:17e934d8fa5926b7518676b1268e2e405e3e7af3ec1031d9d5f1cbc644a2a669
   options:
     scale:
       min: 1
