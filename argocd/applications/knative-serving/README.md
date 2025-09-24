@@ -11,6 +11,7 @@ The integration uses the Let's Encrypt production issuer with HTTP01 challenges 
 **Important settings:**
 
 - External Domain TLS: `Enabled` - Automatically provisions certificates for external domains via cert-manager
+- HTTP-01 Challenges: `httpProtocol` stays `Enabled` so Let's Encrypt can complete callbacks before Knative enforces HTTPS
 - Ingress: `Istio` - Knative net-istio is the only enabled ingress implementation
 - ClusterIssuer: `letsencrypt-prod` - Uses Let's Encrypt production with HTTP01 challenges through Istio
 - Domain Template: `{{.Name}}.{{.Domain}}` - Routes render as single-level subdomains (e.g., `froussard.proompteng.ai`)

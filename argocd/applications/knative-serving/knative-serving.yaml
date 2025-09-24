@@ -23,7 +23,7 @@ spec:
       domainTemplate: "{{.Name}}.{{.Domain}}"
       autoTLS: Enabled
       defaultExternalScheme: https
-      httpProtocol: Redirected
+      httpProtocol: Enabled
       ingress.class: istio.ingress.networking.knative.dev
     istio:
       external-gateways: |
