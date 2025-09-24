@@ -11,12 +11,12 @@ spec:
     solvers:
       - http01:
           ingress:
-            class: istio
             ingressClassName: istio
             podTemplate:
               metadata:
                 annotations:
                   sidecar.istio.io/inject: "false"
+              spec: {}
 
 ---
 apiVersion: cert-manager.io/v1
