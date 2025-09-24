@@ -26,6 +26,8 @@ run:
 deploy:
   namespace: froussard
   image: registry.ide-newton.ts.net/lab/froussard@sha256:8f4b5a26e47f7d94c23a915342723a4fcbca2a58716ba8a2fa6943aa1186b960
+  annotations:
+    serving.knative.dev/revision-history-limit: '3'
   options:
     scale:
       min: 1
