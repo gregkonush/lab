@@ -1,5 +1,5 @@
 IMAGE_NAME = base
-REGISTRY_URL = xleb.duckdns.org
+REGISTRY_URL = registry.ide-newton.ts.net/lab
 IMAGE_TAG ?= latest
 FULL_BUILDER_IMAGE_NAME = $(REGISTRY_URL)/$(IMAGE_NAME):$(IMAGE_TAG)
 

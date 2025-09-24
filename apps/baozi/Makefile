@@ -2,7 +2,7 @@ BUILDER_IMAGE_NAME = baozi
 TEST_APP_IMAGE_NAME = baozi-test-app
 TEST_APP_CONTAINER_NAME = $(TEST_APP_IMAGE_NAME)-container
 S2I_CMD ?= s2i # Allows overriding the s2i command path if needed
-REGISTRY_URL = xleb.duckdns.org
+REGISTRY_URL = registry.ide-newton.ts.net/lab
 IMAGE_TAG ?= latest
 FULL_BUILDER_IMAGE_NAME = $(REGISTRY_URL)/$(BUILDER_IMAGE_NAME):$(IMAGE_TAG)
 

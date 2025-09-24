@@ -3,13 +3,13 @@
 specVersion: 1.17.0
 name: froussard
 runtime: typescript
-registry: xleb.duckdns.org
+registry: registry.ide-newton.ts.net/lab
 namespace: froussard
 created: 2025-03-30T10:30:06.936905-07:00
 build:
   builderImages:
     platforms: linux/arm64
-    s2i: xleb.duckdns.org/baozi
+    s2i: registry.ide-newton.ts.net/lab/baozi
   builder: s2i
 run:
   envs:
@@ -25,7 +25,7 @@ run:
     value: '{{ secret:froussard-kafka:password }}'
 deploy:
   namespace: froussard
-  image: xleb.duckdns.org/froussard@sha256:8f4b5a26e47f7d94c23a915342723a4fcbca2a58716ba8a2fa6943aa1186b960
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:8f4b5a26e47f7d94c23a915342723a4fcbca2a58716ba8a2fa6943aa1186b960
   options:
     scale:
       min: 1
