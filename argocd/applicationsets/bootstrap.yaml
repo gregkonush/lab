@@ -30,6 +30,27 @@ spec:
               argocd.argoproj.io/sync-wave: "-1"
             automation: auto
             enabled: true
+            ignoreDifferences:
+              - group: admissionregistration.k8s.io
+                kind: MutatingWebhookConfiguration
+                name: cert-manager-webhook
+                jqPathExpressions:
+                  - .webhooks[]?.clientConfig.caBundle
+              - group: admissionregistration.k8s.io
+                kind: ValidatingWebhookConfiguration
+                name: cert-manager-webhook
+                jqPathExpressions:
+                  - .webhooks[]?.clientConfig.caBundle
+              - group: apiextensions.k8s.io
+                kind: CustomResourceDefinition
+                nameRegex: '.*cert-manager.io'
+                jqPathExpressions:
+                  - .spec.conversion.webhook.clientConfig.caBundle
+              - group: apiregistration.k8s.io
+                kind: APIService
+                nameRegex: '.*cert-manager.io'
+                jqPathExpressions:
+                  - .spec.caBundle
           - name: longhorn
             path: argocd/applications/longhorn
             namespace: longhorn-system
@@ -79,6 +100,11 @@ spec:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+      {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences:
+{{ toYaml .ignoreDifferences | indent 8 }}
+      {{- end }}
   templatePatch: |
     {{- if .annotations }}
     metadata:
