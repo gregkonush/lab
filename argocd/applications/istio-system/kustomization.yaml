@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: istio-system
 resources:
   - ingress-class.yaml
+  - knative-local-gateway.yaml
 helmCharts:
   - name: base
     repo: https://istio-release.storage.googleapis.com/charts
