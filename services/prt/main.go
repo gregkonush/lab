@@ -32,16 +32,33 @@ func handleHealthz(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 }
 
-func main() {
-	router := gin.Default()
+func handleLiveness(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "alive"})
+}
 
+func handleReadiness(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+}
+
+func registerRoutes(router *gin.Engine) {
 	router.GET("/", handleRoot)
 	router.POST("/data", handleData)
 	router.GET("/healthz", handleHealthz)
+	router.GET("/health/liveness", handleLiveness)
+	router.GET("/health/readiness", handleReadiness)
+}
+
+func newRouter() *gin.Engine {
+	router := gin.Default()
+	registerRoutes(router)
+	return router
+}
+
+func main() {
+	router := newRouter()
 
 	log.Println("Starting server on :8080 using Gin")
-	err := router.Run(":8080")
-	if err != nil {
+	if err := router.Run(":8080"); err != nil {
 		log.Fatal("Failed to run server: ", err)
 	}
 }

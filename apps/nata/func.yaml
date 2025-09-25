@@ -13,7 +13,7 @@ build:
   builder: s2i
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/nata@sha256:1583329f34724fd69bac933665b05078d9ed02dcbbbde9900822380a465de38a
+  image: registry.ide-newton.ts.net/lab/nata@sha256:b20a225a8660ba870e59b1768bc35c180e195d6669ccf55f7b14c7fcfb5cfea7
   options:
     scale:
       min: 1

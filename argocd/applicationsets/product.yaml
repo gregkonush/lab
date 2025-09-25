@@ -51,6 +51,14 @@ spec:
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
             automation: manual
             enabled: false
+          - name: prt
+            path: argocd/applications/prt
+            namespace: prt
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+            automation: manual
+            enabled: true
           - name: ecran
             path: argocd/applications/ecran
             namespace: ecran

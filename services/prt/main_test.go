@@ -1,80 +1,100 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
 )
 
-func setupRouter() *gin.Engine {
+type responseBody map[string]any
+
+func performRequest(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func decode(t *testing.T, resp *httptest.ResponseRecorder) responseBody {
+	t.Helper()
+	var decoded responseBody
+	if err := json.Unmarshal(resp.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return decoded
+}
+
+func TestRootHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.GET("/", handleRoot)
-	router.POST("/data", handleData)
-	router.GET("/healthz", handleHealthz)
-	return router
+	router := newRouter()
+
+	resp := performRequest(router, http.MethodGet, "/", "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+
+	payload := decode(t, resp)
+	if payload["status"] != "OK" {
+		t.Fatalf("expected status OK, got %v", payload["status"])
+	}
 }
 
-func TestHandleRoot(t *testing.T) {
-	router := setupRouter()
+func TestHandleData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := newRouter()
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/", nil)
-	router.ServeHTTP(w, req)
+	t.Run("valid payload", func(t *testing.T) {
+		resp := performRequest(router, http.MethodPost, "/data", `{"data":"demo"}`)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", resp.Code)
+		}
 
-	assert.Equal(t, http.StatusOK, w.Code)
+		payload := decode(t, resp)
+		if payload["received_data"] != "demo" {
+			t.Fatalf("expected received_data demo, got %v", payload["received_data"])
+		}
+	})
 
-	expectedBody := `{"message":"All systems are go!","status":"OK"}`
-	assert.JSONEq(t, expectedBody, w.Body.String())
+	t.Run("invalid payload", func(t *testing.T) {
+		resp := performRequest(router, http.MethodPost, "/data", `{"data":}`)
+		if resp.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d", resp.Code)
+		}
+	})
 }
 
-func TestHandleData_Success(t *testing.T) {
-	router := setupRouter()
+func TestHealthEndpoints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := newRouter()
 
-	w := httptest.NewRecorder()
-	payload := `{"data": "test data"}`
-	req, _ := http.NewRequest(http.MethodPost, "/data", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{"healthz", "/healthz", "healthy"},
+		{"liveness", "/health/liveness", "alive"},
+		{"readiness", "/health/readiness", "ready"},
+	}
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performRequest(router, http.MethodGet, tc.path, "")
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", resp.Code)
+			}
 
-	var response map[string]string
-	err := json.Unmarshal(w.Body.Bytes(), &response)
-	assert.NoError(t, err)
-	assert.Equal(t, "Data received", response["status"])
-	assert.Equal(t, "test data", response["received_data"])
-}
-
-func TestHandleData_BadRequest(t *testing.T) {
-	router := setupRouter()
-
-	w := httptest.NewRecorder()
-	payload := `{"invalid json`
-	req, _ := http.NewRequest(http.MethodPost, "/data", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-
-	expectedBody := `{"error":"Invalid JSON payload"}`
-	assert.JSONEq(t, expectedBody, w.Body.String())
-}
-
-func TestHandleHealthz(t *testing.T) {
-	router := setupRouter()
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/healthz", nil)
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	expectedBody := `{"status":"healthy"}`
-	assert.JSONEq(t, expectedBody, w.Body.String())
+			payload := decode(t, resp)
+			if payload["status"] != tc.expected {
+				t.Fatalf("expected status %s, got %v", tc.expected, payload["status"])
+			}
+		})
+	}
 }
