@@ -4,15 +4,15 @@ specVersion: 1.17.0
 name: eclair
 runtime: go
 registry: registry.ide-newton.ts.net/lab
-namespace: eclair
+namespace: froussard
 created: 2025-09-09T00:00:00Z
 build:
   builderImages:
     platforms: linux/arm64
   builder: s2i
 deploy:
-  namespace: eclair
-  image: registry.ide-newton.ts.net/lab/eclair@sha256:17e934d8fa5926b7518676b1268e2e405e3e7af3ec1031d9d5f1cbc644a2a669
+  namespace: froussard
+  image: registry.ide-newton.ts.net/lab/eclair@sha256:ad43ca06f3bf20ae599256518f3521f519c223242bbfefa7565ba5ecc9b1bfce
   options:
     scale:
       min: 1
