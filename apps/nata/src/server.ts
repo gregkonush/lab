@@ -4,7 +4,7 @@ import { serve } from '@hono/node-server'
 const app = new Hono()
 
 app.get('/', (c) => {
-  return c.text('OK')
+  return c.text('Nata!')
 })
 
 app.get('/health/liveness', (c) => {

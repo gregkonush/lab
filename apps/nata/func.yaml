@@ -1,5 +1,5 @@
-# $schema: https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
-# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/refs/tags/v0.45.1/schema/func_yaml-schema.json
+# $schema: https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
 specVersion: 0.45.1
 name: nata
 runtime: typescript
@@ -13,7 +13,7 @@ build:
   builder: s2i
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/nata@sha256:bc5e9b6e548fa4cfc09e3ff91f5d1abbcc8fed8a438a756511635b417b4270f2
+  image: registry.ide-newton.ts.net/lab/nata@sha256:1583329f34724fd69bac933665b05078d9ed02dcbbbde9900822380a465de38a
   options:
     scale:
       min: 1
