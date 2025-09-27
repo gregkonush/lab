@@ -15,7 +15,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
@@ -134,7 +134,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "3"
             automation: manual
-            enabled: "false"
+            enabled: "true"
           - name: arc
             path: argocd/applications/arc
             namespace: arc
