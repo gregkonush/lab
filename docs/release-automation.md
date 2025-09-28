@@ -15,4 +15,4 @@ This workflow opens pull requests when Argo CD Image Updater commits to a `relea
 - Use single quotes for all YAML string literals in `.github/workflows/auto-pr-release-branches.yml` to keep quoting consistent and avoid escaping GitHub expressions like `${{ ... }}`.
 - Run `pnpm run format` before committing if you make broader changes that touch project code; the workflow file is not autoformatted, so keep it tidy by hand.
 
-Documenting these steps prevents the `workflow_dispatch` options from drifting behind the applications actually maintained by Argo CD Image Updater.
+This documentation helps ensure the `workflow_dispatch` options stay synchronized with the applications managed by Argo CD Image Updater.
