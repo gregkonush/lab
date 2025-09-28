@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_WORKSPACE="proompteng"
 DEFAULT_LOCAL_AUTH="$HOME/.codex/auth.json"
-DEFAULT_LOCAL_CONFIG="$HOME/.codex/config.toml"
+DEFAULT_CONFIG_TEMPLATE="$SCRIPT_DIR/codex-config-template.toml"
 DEFAULT_REMOTE_AUTH='~/.codex/auth.json'
 DEFAULT_REMOTE_CONFIG='~/.codex/config.toml'
 DEFAULT_REMOTE_HOME='/home/coder'
@@ -15,7 +16,7 @@ Usage: sync-codex-cli.sh [options]
 Options:
   -w, --workspace NAME     Coder workspace name (default: proompteng)
   -a, --auth PATH          Local auth.json path (default: ~/.codex/auth.json)
-  -c, --config PATH        Local config template path (default: ~/.codex/config.toml)
+  -c, --config PATH        Local config template path (default: scripts/codex-config-template.toml)
       --remote-auth PATH   Remote auth destination (default: ~/.codex/auth.json)
       --remote-config PATH Remote config destination (default: ~/.codex/config.toml)
       --remote-home PATH   Remote home directory (default: /home/coder)
@@ -30,7 +31,7 @@ shell_escape() {
 
 workspace="$DEFAULT_WORKSPACE"
 local_auth="$DEFAULT_LOCAL_AUTH"
-local_config="$DEFAULT_LOCAL_CONFIG"
+template_path="$DEFAULT_CONFIG_TEMPLATE"
 remote_auth="$DEFAULT_REMOTE_AUTH"
 remote_config="$DEFAULT_REMOTE_CONFIG"
 remote_home="$DEFAULT_REMOTE_HOME"
@@ -47,7 +48,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -c|--config)
-      local_config="$2"
+      template_path="$2"
       shift 2
       ;;
     --remote-auth)
@@ -83,8 +84,8 @@ if [[ ! -f "$local_auth" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$local_config" ]]; then
-  echo "Missing local config template: $local_config" >&2
+if [[ ! -f "$template_path" ]]; then
+  echo "Missing config template: $template_path" >&2
   exit 1
 fi
 
@@ -143,13 +144,12 @@ trap 'if [[ -n "$tmp_config" && -f "$tmp_config" ]]; then rm -f "$tmp_config"; f
 local_home="$(cd "$HOME" && pwd)"
 local_repo="${local_home%/}/github.com/lab"
 remote_default_repo="${remote_home%/}/github.com/lab"
-remote_config_payload=$(cat "$local_config")
+remote_config_payload=$(cat "$template_path")
 remote_config_payload=${remote_config_payload//$'\r'/}
+remote_config_payload=${remote_config_payload//"{{LOCAL_PROJECT}}"/"$local_repo"}
+remote_config_payload=${remote_config_payload//"{{LOCAL_HOME}}"/"$local_home"}
 remote_config_payload=${remote_config_payload//"$local_repo"/"$remote_repo"}
 remote_config_payload=${remote_config_payload//"$local_home"/"$remote_home"}
-if [[ "$remote_repo" != "$remote_default_repo" ]]; then
-  remote_config_payload=${remote_config_payload//"$remote_default_repo"/"$remote_repo"}
-fi
 if [[ "$remote_config_payload" != *$'\n' ]]; then
   remote_config_payload+=$'\n'
 fi
