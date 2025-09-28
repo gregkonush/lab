@@ -27,7 +27,11 @@ export default function Home() {
     {
       heading: "resources",
       links: [
-        { label: "docs", href: "/docs" },
+        {
+          label: "docs",
+          href: "https://docs.proompteng.ai",
+          isExternal: true,
+        },
         { label: "changelog", href: "#" },
         { label: "status", href: "#" },
       ],
@@ -42,7 +46,7 @@ export default function Home() {
     },
   ] satisfies {
     heading: string;
-    links: { label: string; href: string }[];
+    links: { label: string; href: string; isExternal?: boolean }[];
   }[];
 
   return (
@@ -91,6 +95,9 @@ export default function Home() {
                         <Link
                           className="transition hover:text-foreground"
                           href={link.href}
+                          prefetch={!link.isExternal}
+                          target={link.isExternal ? "_blank" : undefined}
+                          rel={link.isExternal ? "noreferrer" : undefined}
                         >
                           {link.label}
                         </Link>

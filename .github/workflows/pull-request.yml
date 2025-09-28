@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
+      docs: ${{ steps.filter.outputs.docs }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
     steps:
@@ -25,12 +26,40 @@ jobs:
           filters: |
             proompteng:
               - 'apps/proompteng/**'
+            docs:
+              - 'apps/docs/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
             reviseur:
               - 'apps/reviseur/**'
             packages:
               - 'packages/**'
+
+  docs:
+    needs: check_changed_files
+    if: ${{ needs.check_changed_files.outputs.docs == 'true' }}
+    runs-on: arc-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/apps/docs/.next/cache
+          key: ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('apps/docs/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter docs build
 
   proompteng:
     needs: check_changed_files
@@ -57,8 +86,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm --filter proompteng build
-
-  
 
   kitty-krew:
     needs: check_changed_files

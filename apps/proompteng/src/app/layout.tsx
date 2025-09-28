@@ -112,7 +112,7 @@ export default function RootLayout({
     },
     potentialAction: {
       "@type": "SearchAction",
-      target: "https://proompteng.ai/docs?q={search_term_string}",
+      target: "https://docs.proompteng.ai?q={search_term_string}",
       "query-input": "required name=search_term_string",
     },
   };
@@ -126,7 +126,7 @@ export default function RootLayout({
     url: "https://proompteng.ai",
     description:
       "Launch, govern, and scale AI agents with policy-as-code guardrails, observability, and model freedom across any stack.",
-    downloadUrl: "https://proompteng.ai/docs",
+    downloadUrl: "https://docs.proompteng.ai",
     softwareVersion: "1.0",
     featureList: [
       "Policy-as-code guardrails",

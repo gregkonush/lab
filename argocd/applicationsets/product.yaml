@@ -23,6 +23,20 @@ spec:
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
             automation: manual
             enabled: true
+          - name: docs
+            path: argocd/applications/docs
+            namespace: docs
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: docs=registry.ide-newton.ts.net/lab/docs
+              argocd-image-updater.argoproj.io/docs: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: release/docs
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
+            automation: manual
+            enabled: true
           - name: kitty-krew
             path: argocd/applications/kitty-krew
             namespace: kitty-krew
@@ -94,7 +108,7 @@ spec:
             values: ["false", "False", "0"]
   template:
     metadata:
-      name: '{{ .name }}'
+      name: "{{ .name }}"
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
@@ -103,7 +117,7 @@ spec:
       source:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
-        path: '{{ .path }}'
+        path: "{{ .path }}"
       syncPolicy:
         syncOptions:
           - CreateNamespace=true

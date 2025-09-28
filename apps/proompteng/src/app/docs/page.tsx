@@ -1,42 +1,33 @@
+import Link from "next/link";
+
 export default function DocsPage() {
   return (
-    <main className="mx-auto w-full max-w-4xl px-6 py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">documentation</h1>
-      <p className="mt-2 text-muted-foreground">
-        docs are coming soon. in the meantime, explore the platform pillars
-        below.
+    <main className="mx-auto flex w-full max-w-2xl flex-col items-start gap-4 px-6 py-16">
+      <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+        documentation hub
       </p>
-
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <section className="rounded-lg border bg-card p-5">
-          <h2 className="text-lg font-medium">context engineering</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Compose prompts, system state, tools, and guardrails to shape agent
-            behavior.
-          </p>
-        </section>
-        <section className="rounded-lg border bg-card p-5">
-          <h2 className="text-lg font-medium">memory</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Short- and long-term memory with pluggable backends and retention
-            policies.
-          </p>
-        </section>
-        <section className="rounded-lg border bg-card p-5">
-          <h2 className="text-lg font-medium">rag</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Retrieval pipelines with chunkers, embedders, rerankers, and
-            adapters.
-          </p>
-        </section>
-        <section className="rounded-lg border bg-card p-5">
-          <h2 className="text-lg font-medium">vector stores</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Bring your own store (Milvus, PGVecto.rs, Qdrant, etc.) with unified
-            drivers.
-          </p>
-        </section>
-      </div>
+      <h1 className="text-3xl font-semibold tracking-tight">Docs moved</h1>
+      <p className="text-muted-foreground">
+        Our documentation now lives at{" "}
+        <Link
+          href="https://docs.proompteng.ai"
+          className="font-medium text-primary underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          docs.proompteng.ai
+        </Link>
+        . You will find onboarding guides, API references, and governance
+        playbooks there.
+      </p>
+      <Link
+        href="https://docs.proompteng.ai"
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center justify-center rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground shadow transition hover:bg-primary/90"
+      >
+        Visit documentation
+      </Link>
     </main>
   );
 }

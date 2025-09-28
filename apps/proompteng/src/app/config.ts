@@ -53,7 +53,7 @@ export type FaqItem = {
 export const HERO = {
   announcement: {
     label: "Launch Week: new control plane and guardrail packs",
-    href: "/docs",
+    href: "https://docs.proompteng.ai",
   },
   headline: "ship ai agents",
   subheadline:
