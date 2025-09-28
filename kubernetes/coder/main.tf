@@ -397,32 +397,29 @@ resource "coder_script" "bootstrap_tools" {
     set -euo pipefail
 
     export NVM_DIR="$HOME/.nvm"
-    mkdir -p "$NVM_DIR"
+    LOG_DIR="/tmp/coder-bootstrap"
+    mkdir -p "$NVM_DIR" "$LOG_DIR"
     touch "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"
     NVM_VERSION="v0.39.7"
     if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-      mkdir -p "$NVM_DIR"
-      if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash >/tmp/nvm-install.log 2>&1; then
-        echo "nvm install failed; see /tmp/nvm-install.log" >&2
+      if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash >"$LOG_DIR/nvm-install.log" 2>&1; then
+        echo "nvm install failed; see $LOG_DIR/nvm-install.log" >&2
       fi
     fi
 
     if [ -s "$NVM_DIR/nvm.sh" ]; then
-      if ! grep -q "NVM_DIR" "$HOME/.profile" 2>/dev/null; then
-        cat <<'PROFILE_NVM' >> "$HOME/.profile"
+      NVM_BASH_SNIPPET="$(cat <<'BASH_SNIPPET'
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 [ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
-PROFILE_NVM
-      fi
+BASH_SNIPPET
+)"
 
-      if ! grep -q "NVM_DIR" "$HOME/.bashrc" 2>/dev/null; then
-        cat <<'BASHRC_NVM' >> "$HOME/.bashrc"
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
-BASHRC_NVM
-      fi
+      for rc_file in "$HOME/.profile" "$HOME/.bashrc"; do
+        if ! grep -q "NVM_DIR" "$rc_file" 2>/dev/null; then
+          printf '%s\n' "$NVM_BASH_SNIPPET" >> "$rc_file"
+        fi
+      done
 
       if ! grep -q "NVM_DIR" "$HOME/.zshrc" 2>/dev/null; then
         cat <<'ZSHRC_NVM' >> "$HOME/.zshrc"
@@ -478,19 +475,46 @@ BREW_ZSHRC
     fi
 
     if ! command -v convex >/dev/null 2>&1; then
+      CONVEX_LOG="$LOG_DIR/convex-install.log"
+      : > "$CONVEX_LOG"
       if command -v pnpm >/dev/null 2>&1; then
-        pnpm add --global convex@1.27.0 >/dev/null 2>&1 || true
+        if ! pnpm add --global convex@1.27.0 >"$CONVEX_LOG" 2>&1; then
+          echo "Convex CLI install via pnpm failed; see $CONVEX_LOG" >&2
+        fi
       elif command -v npm >/dev/null 2>&1; then
-        npm install --global convex@1.27.0 >/dev/null 2>&1 || true
+        if ! npm install --global convex@1.27.0 >"$CONVEX_LOG" 2>&1; then
+          echo "Convex CLI install via npm failed; see $CONVEX_LOG" >&2
+        fi
       else
         echo "Convex CLI install skipped: npm-compatible package manager not available" >&2
       fi
     fi
 
-    if command -v pnpm >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
-      pnpm add --global @openai/codex@latest >/dev/null 2>&1 || true
-    elif command -v npm >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
-      npm install --global @openai/codex@latest >/dev/null 2>&1 || true
+    if ! command -v codex >/dev/null 2>&1; then
+      CODEX_LOG="$LOG_DIR/codex-install.log"
+      : > "$CODEX_LOG"
+
+      if command -v brew >/dev/null 2>&1; then
+        if ! brew list codex >/dev/null 2>&1; then
+          if ! brew install codex >>"$CODEX_LOG" 2>&1; then
+            echo "Codex CLI install via Homebrew failed; see $CODEX_LOG" >&2
+          fi
+        fi
+      fi
+
+      if ! command -v codex >/dev/null 2>&1; then
+        if command -v npm >/dev/null 2>&1; then
+          if ! npm install --global @openai/codex >>"$CODEX_LOG" 2>&1; then
+            echo "Codex CLI install via npm failed; see $CODEX_LOG" >&2
+          fi
+        elif command -v pnpm >/dev/null 2>&1; then
+          if ! pnpm add --global @openai/codex >>"$CODEX_LOG" 2>&1; then
+            echo "Codex CLI install via pnpm failed; see $CODEX_LOG" >&2
+          fi
+        else
+          echo "Codex CLI install skipped: npm-compatible package manager not available" >&2
+        fi
+      fi
     fi
 
     if ! command -v kubectl >/dev/null 2>&1; then
@@ -527,11 +551,25 @@ BREW_ZSHRC
 
     if [ -d "$REPO_ROOT/.git" ]; then
       if command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
-        (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1 || true)
+        PNPM_LOG="$LOG_DIR/pnpm-install.log"
+        : > "$PNPM_LOG"
+        if ! (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >>"$PNPM_LOG" 2>&1); then
+          if ! (cd "$REPO_ROOT" && pnpm install >>"$PNPM_LOG" 2>&1); then
+            echo "pnpm install failed; see $PNPM_LOG" >&2
+          fi
+        fi
       elif command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
-        (cd "$REPO_ROOT" && pnpm install >/dev/null 2>&1 || true)
+        PNPM_LOG="$LOG_DIR/pnpm-install.log"
+        : > "$PNPM_LOG"
+        if ! (cd "$REPO_ROOT" && pnpm install >>"$PNPM_LOG" 2>&1); then
+          echo "pnpm install failed; see $PNPM_LOG" >&2
+        fi
       elif command -v npm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
-        (cd "$REPO_ROOT" && npm install >/dev/null 2>&1 || true)
+        NPM_LOG="$LOG_DIR/npm-install.log"
+        : > "$NPM_LOG"
+        if ! (cd "$REPO_ROOT" && npm install >>"$NPM_LOG" 2>&1); then
+          echo "npm install failed; see $NPM_LOG" >&2
+        fi
       fi
     else
       echo "Repository directory '$REPO_ROOT' not found; skipping dependency install" >&2
