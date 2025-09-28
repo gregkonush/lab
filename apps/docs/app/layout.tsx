@@ -3,15 +3,15 @@ import type { Metadata } from "next";
 import { RootProvider } from "fumadocs-ui/provider";
 
 const siteUrl = "https://docs.proompteng.ai";
-const siteTitle = "Proompteng Documentation";
+const siteTitle = "proompteng documentation";
 const siteDescription =
-  "Guides and references for implementing and operating the Proompteng platform.";
+  "Guides and references for implementing and operating the proompteng platform.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
     default: siteTitle,
-    template: "%s | Proompteng Documentation",
+    template: "%s | proompteng documentation",
   },
   description: siteDescription,
   alternates: {

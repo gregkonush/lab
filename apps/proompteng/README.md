@@ -1,4 +1,4 @@
-# Proompteng Web
+# proompteng web
 
 This app now expects the shared Convex backend in `packages/backend`.
 

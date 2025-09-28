@@ -3,7 +3,7 @@ import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 const baseConfig: BaseLayoutProps = {
   nav: {
     enabled: true,
-    title: "Proompteng",
+    title: "proompteng",
     url: "https://proompteng.ai",
   },
   links: [

@@ -8,7 +8,7 @@ export default function HomePage() {
           Documentation Preview
         </p>
         <h1 className="text-3xl font-semibold sm:text-4xl">
-          Everything you need to build with Proompteng
+          Everything you need to build with proompteng
         </h1>
         <p className="mx-auto max-w-2xl text-base text-fd-muted-foreground">
           This site hosts the official guides for docs.proompteng.ai. Explore
