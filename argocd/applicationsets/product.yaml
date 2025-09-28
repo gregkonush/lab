@@ -21,7 +21,7 @@ spec:
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
               argocd-image-updater.argoproj.io/git-branch: release/proompteng
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
-            automation: manual
+            automation: auto
             enabled: true
           - name: docs
             path: argocd/applications/docs
@@ -35,7 +35,7 @@ spec:
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
               argocd-image-updater.argoproj.io/git-branch: release/docs
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
-            automation: manual
+            automation: auto
             enabled: true
           - name: kitty-krew
             path: argocd/applications/kitty-krew
