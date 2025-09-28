@@ -23,7 +23,10 @@
     "prepare": "husky",
     "dev:convex": "pnpm --filter @proompteng/backend dev",
     "dev:setup:convex": "pnpm --filter @proompteng/backend dev:setup",
-    "seed:models": "pnpm --filter @proompteng/backend seed:models"
+    "seed:models": "pnpm --filter @proompteng/backend seed:models",
+    "dev:docs": "pnpm --filter docs dev",
+    "build:docs": "pnpm --filter docs build",
+    "start:docs": "pnpm --filter docs start"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

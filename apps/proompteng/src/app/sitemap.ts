@@ -12,7 +12,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     {
-      url: `${baseUrl}/docs`,
+      url: "https://docs.proompteng.ai",
       lastModified: now,
       changeFrequency: "monthly",
       priority: 0.7,

@@ -50,7 +50,7 @@ export default function AgentsPage() {
           </h2>
           <p className="text-sm text-muted-foreground sm:text-base">
             Monitor live sessions, review routing policies, and connect
-            Proompteng orchestration to Convex state without switching tabs.
+            proompteng orchestration to Convex state without switching tabs.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -97,7 +97,7 @@ function LiveAgentsList() {
       <div className="rounded-2xl border border-dashed border-border/60 bg-card/20 p-6 text-sm text-muted-foreground">
         <p className="text-base font-semibold text-foreground">No agents yet</p>
         <p className="mt-2">
-          Deploy an agent through Proompteng to see live status, routing data,
+          Deploy an agent through proompteng to see live status, routing data,
           and tags in this list.
         </p>
       </div>
@@ -107,7 +107,10 @@ function LiveAgentsList() {
   return (
     <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/60 bg-card/40">
       {agents.map((agent) => (
-        <li key={agent._id} className="flex flex-col gap-3 p-5 transition hover:bg-card/60">
+        <li
+          key={agent._id}
+          className="flex flex-col gap-3 p-5 transition hover:bg-card/60"
+        >
           <div className="flex items-start gap-3">
             <div className="rounded-lg border border-border/40 bg-primary/10 p-2">
               <Icon name="Activity" className="size-5" />
@@ -171,7 +174,7 @@ function RealTimePlaySection() {
       value: "action",
       label: "Action: orchestrate models",
       description:
-        "Call Proompteng from a Convex action to pick the best model and persist inference telemetry.",
+        "Call proompteng from a Convex action to pick the best model and persist inference telemetry.",
       code: ROUTE_PROMPT_CODE,
     },
     {

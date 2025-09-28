@@ -37,7 +37,9 @@ export default function Navbar() {
         </Button>
         <Link
           className="text-sm text-muted-foreground transition hover:text-foreground"
-          href="/docs"
+          href="https://docs.proompteng.ai"
+          target="_blank"
+          rel="noreferrer"
         >
           docs
         </Link>

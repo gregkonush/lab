@@ -19,12 +19,12 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://proompteng.ai"),
   title: {
     default:
-      "Proompteng – Ship AI agents with a control plane built for engineers",
-    template: "%s — Proompteng",
+      "proompteng – Ship AI agents with a control plane built for engineers",
+    template: "%s — proompteng",
   },
   description:
-    "Proompteng is the control plane that lets software teams launch, govern, and scale AI agents with guardrails, observability, and model freedom across any stack.",
-  applicationName: "Proompteng",
+    "proompteng is the control plane that lets software teams launch, govern, and scale AI agents with guardrails, observability, and model freedom across any stack.",
+  applicationName: "proompteng",
   keywords: [
     "ai agent control plane",
     "ai agent platform",
@@ -39,9 +39,9 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: "/",
-    siteName: "Proompteng",
+    siteName: "proompteng",
     title:
-      "Proompteng – Ship AI agents with a control plane built for engineers",
+      "proompteng – Ship AI agents with a control plane built for engineers",
     description:
       "Launch, govern, and scale AI agents with guardrails, observability, and model freedom across any stack.",
     images: [
@@ -49,13 +49,13 @@ export const metadata: Metadata = {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "Proompteng AI agent control plane",
+        alt: "proompteng AI agent control plane",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Proompteng – Ship AI agents",
+    title: "proompteng – Ship AI agents",
     description:
       "Control plane for engineers to launch, govern, and scale AI agents with guardrails and observability.",
     images: ["/opengraph-image"],
@@ -88,13 +88,13 @@ export default function RootLayout({
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: "Proompteng",
+    name: "proompteng",
     url: "https://proompteng.ai",
     description:
       "Control plane for engineers to launch, govern, and scale AI agents with guardrails, observability, and model freedom.",
     publisher: {
       "@type": "Organization",
-      name: "Proompteng",
+      name: "proompteng",
       url: "https://proompteng.ai",
       logo: {
         "@type": "ImageObject",
@@ -112,21 +112,21 @@ export default function RootLayout({
     },
     potentialAction: {
       "@type": "SearchAction",
-      target: "https://proompteng.ai/docs?q={search_term_string}",
+      target: "https://docs.proompteng.ai?q={search_term_string}",
       "query-input": "required name=search_term_string",
     },
   };
   const productLd = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    name: "Proompteng",
+    name: "proompteng",
     applicationCategory: "AIPlatform",
     operatingSystem: "Any",
     offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
     url: "https://proompteng.ai",
     description:
       "Launch, govern, and scale AI agents with policy-as-code guardrails, observability, and model freedom across any stack.",
-    downloadUrl: "https://proompteng.ai/docs",
+    downloadUrl: "https://docs.proompteng.ai",
     softwareVersion: "1.0",
     featureList: [
       "Policy-as-code guardrails",
@@ -136,7 +136,7 @@ export default function RootLayout({
     ],
     creator: {
       "@type": "Organization",
-      name: "Proompteng",
+      name: "proompteng",
       url: "https://proompteng.ai",
       contactPoint: {
         "@type": "ContactPoint",

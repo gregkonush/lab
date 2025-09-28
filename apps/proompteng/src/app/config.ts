@@ -53,11 +53,11 @@ export type FaqItem = {
 export const HERO = {
   announcement: {
     label: "Launch Week: new control plane and guardrail packs",
-    href: "/docs",
+    href: "https://docs.proompteng.ai",
   },
   headline: "ship ai agents",
   subheadline:
-    "Proompteng is the control plane for engineers to launch, govern, and scale AI agents across any stack.",
+    "proompteng is the control plane for engineers to launch, govern, and scale AI agents across any stack.",
   ctaLabel: "talk to us",
   secondaryCtaLabel: "book an architecture review",
   secondaryCtaHref: "mailto:greg@proompteng.ai?subject=Architecture%20Review",
@@ -226,7 +226,7 @@ export const OBSERVABILITY: CardItem[] = [
 
 export const TESTIMONIAL = {
   quote:
-    "Proompteng turned weeks of glue work into a one‑day launch for our first AI agent — with end‑to‑end governance ready for audit.",
+    "proompteng turned weeks of glue work into a one‑day launch for our first AI agent — with end‑to‑end governance ready for audit.",
   author: "Head of Platform",
   org: "Design Partner Co.",
 } as const;

@@ -1,6 +1,6 @@
 # Convex backend
 
-Author Convex functions for Proompteng here.
+Author Convex functions for proompteng here.
 
 - Add tables in `schema.ts` with `defineSchema`.
 - Implement queries/mutations alongside in this directory.
