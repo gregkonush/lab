@@ -1,5 +1,5 @@
 name: k8s-arm64
-version: "1.0.0"
+version: "1.0.4"
 display_name: Kubernetes Workspace (arm64)
 description: Coder workspace on Kubernetes with arm64 agent and code-server.
 icon: https://raw.githubusercontent.com/coder/coder/main/site/static/icon/code.svg
@@ -24,4 +24,4 @@ parameters:
     description: Parent directory for the cloned repository
 provisioners:
   - type: terraform
-    path: ./main.tf
+    path: .

@@ -2,6 +2,8 @@
 
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/gregkonush/lab)
 
+[![Open in Coder](https://coder.proompteng.ai/open-in-coder.svg)](https://coder.proompteng.ai/templates/k8s-arm64/workspace?param.repository_url=https%3A%2F%2Fgithub.com%2Fgregkonush%2Flab&param.repository_directory=%7E%2Fgithub.com)
+
 ## Home Cloud
 
 ### Terraform Harvester provider

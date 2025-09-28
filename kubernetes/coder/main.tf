@@ -397,6 +397,40 @@ resource "coder_script" "bootstrap_tools" {
     set -euo pipefail
 
     export NVM_DIR="$HOME/.nvm"
+    mkdir -p "$NVM_DIR"
+    touch "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"
+    NVM_VERSION="v0.39.7"
+    if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+      mkdir -p "$NVM_DIR"
+      if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash >/tmp/nvm-install.log 2>&1; then
+        echo "nvm install failed; see /tmp/nvm-install.log" >&2
+      fi
+    fi
+
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+      if ! grep -q "NVM_DIR" "$HOME/.profile" 2>/dev/null; then
+        cat <<'PROFILE_NVM' >> "$HOME/.profile"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+PROFILE_NVM
+      fi
+
+      if ! grep -q "NVM_DIR" "$HOME/.bashrc" 2>/dev/null; then
+        cat <<'BASHRC_NVM' >> "$HOME/.bashrc"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+BASHRC_NVM
+      fi
+
+      if ! grep -q "NVM_DIR" "$HOME/.zshrc" 2>/dev/null; then
+        cat <<'ZSHRC_NVM' >> "$HOME/.zshrc"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+ZSHRC_NVM
+      fi
+    fi
     if [ -s "$NVM_DIR/nvm.sh" ]; then
       # shellcheck source=/dev/null
       . "$NVM_DIR/nvm.sh"
@@ -445,9 +479,9 @@ BREW_ZSHRC
 
     if ! command -v convex >/dev/null 2>&1; then
       if command -v pnpm >/dev/null 2>&1; then
-        pnpm add --global convex@1.27.0 >/dev/null 2>&1
+        pnpm add --global convex@1.27.0 >/dev/null 2>&1 || true
       elif command -v npm >/dev/null 2>&1; then
-        npm install --global convex@1.27.0 >/dev/null 2>&1
+        npm install --global convex@1.27.0 >/dev/null 2>&1 || true
       else
         echo "Convex CLI install skipped: npm-compatible package manager not available" >&2
       fi
@@ -493,11 +527,11 @@ BREW_ZSHRC
 
     if [ -d "$REPO_ROOT/.git" ]; then
       if command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
-        (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1)
+        (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1 || true)
       elif command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
-        (cd "$REPO_ROOT" && pnpm install >/dev/null 2>&1)
+        (cd "$REPO_ROOT" && pnpm install >/dev/null 2>&1 || true)
       elif command -v npm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
-        (cd "$REPO_ROOT" && npm install >/dev/null 2>&1)
+        (cd "$REPO_ROOT" && npm install >/dev/null 2>&1 || true)
       fi
     else
       echo "Repository directory '$REPO_ROOT' not found; skipping dependency install" >&2
@@ -520,5 +554,5 @@ ZSHRC
     fi
   EOT
 
-  depends_on = [module.nodejs]
+  depends_on = [module.git-clone, module.nodejs]
 }
