@@ -3,22 +3,23 @@ name: Auto PR for release branches
 on:
   push:
     branches:
-      - 'release/**'
+      - "release/**"
     paths:
-      - 'argocd/applications/*/kustomization.yaml'
+      - "argocd/applications/*/kustomization.yaml"
   workflow_dispatch:
     inputs:
       app:
-        description: 'Release app'
+        description: "Release app"
         type: choice
         required: true
         default: proompteng
         options:
           - proompteng
+          - docs
           - kitty-krew
           - reviseur
       head_branch:
-        description: 'Override branch name (leave blank to use release/<app>)'
+        description: "Override branch name (leave blank to use release/<app>)"
         required: false
 
 permissions:
