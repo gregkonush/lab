@@ -396,111 +396,264 @@ resource "coder_script" "bootstrap_tools" {
     #!/usr/bin/env bash
     set -euo pipefail
 
-    export NVM_DIR="$HOME/.nvm"
-    if [ -s "$NVM_DIR/nvm.sh" ]; then
-      # shellcheck source=/dev/null
-      . "$NVM_DIR/nvm.sh"
-      nvm install --lts >/dev/null 2>&1 || nvm install 22 >/dev/null 2>&1 || true
-      nvm use --lts >/dev/null 2>&1 || nvm use 22 >/dev/null 2>&1 || true
-      nvm alias default "$(nvm current)" >/dev/null 2>&1 || true
-    else
-      echo "nvm not found; skipping Node.js LTS bootstrap" >&2
-    fi
+    log() {
+      printf '[bootstrap] %s\n' "$1" | tee -a "$LOG_FILE"
+    }
 
+    fail() {
+      printf '[bootstrap][error] %s\n' "$1" | tee -a "$LOG_FILE" >&2
+      exit 1
+    }
+
+    wait_for_path() {
+      local target="$1"
+      local attempts="$${2:-60}"
+      local sleep_seconds="$${3:-2}"
+      local i
+      for ((i = 0; i < attempts; i++)); do
+        if [ -s "$target" ]; then
+          return 0
+        fi
+        sleep "$sleep_seconds"
+      done
+      return 1
+    }
+
+    normalize_nvm_dir() {
+      if [ -s "$NVM_DIR/nvm.sh" ]; then
+        return 0
+      fi
+      if [ -s "$NVM_DIR/nvm/nvm.sh" ]; then
+        NVM_DIR="$NVM_DIR/nvm"
+        export NVM_DIR
+        return 0
+      fi
+      return 1
+    }
+
+    wait_for_nvm_dir() {
+      local attempts="$${1:-60}"
+      local sleep_seconds="$${2:-2}"
+      local i
+      for ((i = 0; i < attempts; i++)); do
+        if normalize_nvm_dir; then
+          return 0
+        fi
+        sleep "$sleep_seconds"
+      done
+      return 1
+    }
+
+    wait_for_command() {
+      local cmd="$1"
+      local attempts="$${2:-60}"
+      local sleep_seconds="$${3:-2}"
+      local i
+      for ((i = 0; i < attempts; i++)); do
+        if command -v "$cmd" >/dev/null 2>&1; then
+          return 0
+        fi
+        sleep "$sleep_seconds"
+      done
+      return 1
+    }
+
+    has_nvm_version() {
+      local major="$1"
+      local candidate
+      for candidate in "$NVM_DIR"/versions/node/v"$major".*/bin/node; do
+        if [ -x "$candidate" ]; then
+          return 0
+        fi
+      done
+      return 1
+    }
+
+    wait_for_nvm_version() {
+      local major="$1"
+      local attempts="$${2:-60}"
+      local sleep_seconds="$${3:-2}"
+      local i
+      for ((i = 0; i < attempts; i++)); do
+        if has_nvm_version "$major"; then
+          return 0
+        fi
+        sleep "$sleep_seconds"
+      done
+      return 1
+    }
+
+    LOG_DIR="/tmp/coder-bootstrap"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/bootstrap.log"
+    log "Starting developer tool bootstrap"
+    touch "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"
+
+    export PATH="$HOME/.local/bin:$PATH"
     export PNPM_HOME="$HOME/.local/share/pnpm"
-    mkdir -p "$PNPM_HOME"
-    mkdir -p "$HOME/.local/bin"
+    mkdir -p "$PNPM_HOME" "$HOME/.local/bin" /tmp/coder-script-data/bin
     case ":$PATH:" in
-      *:"$HOME/.local/share/pnpm":* | *:"$PNPM_HOME":*) ;;
+      *:"$PNPM_HOME":*) ;;
       *) export PATH="$PNPM_HOME:$PATH" ;;
     esac
-    case ":$PATH:" in
-      *:"$HOME/.local/bin":*) ;;
-      *) export PATH="$HOME/.local/bin:$PATH" ;;
-    esac
 
-    corepack enable >/dev/null 2>&1 || true
-    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+    export NVM_DIR="$HOME/.nvm"
+    NVM_VERSION="v0.39.7"
+    DEFAULT_NODE_MAJOR="22"
+    mkdir -p "$NVM_DIR"
 
-    if ! command -v brew >/dev/null 2>&1; then
-      export NONINTERACTIVE=1
-      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/tmp/homebrew-install.log 2>&1 || true
+    if ! normalize_nvm_dir; then
+      log "Waiting for nvm from module.nodejs"
+      if ! wait_for_nvm_dir 90 2; then
+        log "module.nodejs did not publish nvm in time; installing nvm $NVM_VERSION"
+        if ! curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh" | bash >"$LOG_DIR/nvm-install.log" 2>&1; then
+          fail "nvm install failed; see $LOG_DIR/nvm-install.log"
+        fi
+        normalize_nvm_dir || fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
+      fi
     fi
 
-    if [ -d "/home/linuxbrew/.linuxbrew/bin" ]; then
-      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    if normalize_nvm_dir; then
+      . "$NVM_DIR/nvm.sh"
+    else
+      fail "nvm not available after install; see $LOG_DIR/nvm-install.log"
+    fi
 
-      if ! grep -q "brew shellenv" "$HOME/.profile" 2>/dev/null; then
-        cat <<'BREW_PROFILE' >> "$HOME/.profile"
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-BREW_PROFILE
+    if ! wait_for_nvm_version "$DEFAULT_NODE_MAJOR" 90 2; then
+      log "Node.js $DEFAULT_NODE_MAJOR not detected; installing via nvm"
+      if ! nvm install "$DEFAULT_NODE_MAJOR" >"$LOG_DIR/node-install.log" 2>&1; then
+        fail "Node.js install failed; see $LOG_DIR/node-install.log"
       fi
+    else
+      log "Detected Node.js $DEFAULT_NODE_MAJOR provisioned by module.nodejs"
+    fi
 
-      if ! grep -q "brew shellenv" "$HOME/.zshrc" 2>/dev/null; then
-        cat <<'BREW_ZSHRC' >> "$HOME/.zshrc"
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-BREW_ZSHRC
+    if ! nvm use "$DEFAULT_NODE_MAJOR" >/dev/null 2>&1; then
+      log "Retrying Node.js $DEFAULT_NODE_MAJOR install"
+      if ! nvm install "$DEFAULT_NODE_MAJOR" >"$LOG_DIR/node-install.log" 2>&1; then
+        fail "Node.js install failed; see $LOG_DIR/node-install.log"
       fi
+      nvm use "$DEFAULT_NODE_MAJOR" >/dev/null 2>&1 || fail "Unable to switch to Node.js $DEFAULT_NODE_MAJOR"
+    fi
+
+    nvm alias default "$DEFAULT_NODE_MAJOR" >/dev/null 2>&1 || true
+    hash -r
+
+    if command -v node >/dev/null 2>&1; then
+      NODE_VERSION=$(node --version 2>/dev/null || echo "unknown")
+      log "Node $NODE_VERSION ready"
+    fi
+
+    if ! wait_for_command npm 60 2; then
+      fail "npm not found after Node.js install; see $LOG_DIR/node-install.log"
+    fi
+
+    if ! command -v corepack >/dev/null 2>&1; then
+      log "Waiting for corepack availability"
+      wait_for_command corepack 60 2 || log "corepack still unavailable; continuing with npm fallback"
+    fi
+
+    if command -v corepack >/dev/null 2>&1; then
+      log "Enabling corepack"
+      corepack enable >/dev/null 2>&1 || true
+      if corepack prepare pnpm@9 --activate >"$LOG_DIR/pnpm-prepare.log" 2>&1; then
+        hash -r
+      fi
+    else
+      log "corepack not available; will fall back to npm installation"
+    fi
+
+    if ! command -v pnpm >/dev/null 2>&1; then
+      log "Activating pnpm via corepack"
+      if command -v corepack >/dev/null 2>&1; then
+        if ! corepack prepare pnpm@9 --activate >"$LOG_DIR/pnpm-prepare.log" 2>&1; then
+          log "corepack activation failed; falling back to npm install"
+        else
+          hash -r
+        fi
+      fi
+    fi
+
+    if ! command -v pnpm >/dev/null 2>&1; then
+      log "Installing pnpm via npm fallback"
+      if ! npm install -g pnpm >"$LOG_DIR/pnpm-install.log" 2>&1; then
+        fail "pnpm install failed; see $LOG_DIR/pnpm-install.log"
+      fi
+      hash -r
+    fi
+
+    if ! command -v pnpm >/dev/null 2>&1; then
+      fail "pnpm not found after install; see $LOG_DIR/pnpm-install.log"
+    fi
+
+    if command -v pnpm >/dev/null 2>&1; then
+      PNPM_VERSION=$(pnpm --version 2>/dev/null || echo "unknown")
+      log "pnpm $PNPM_VERSION ready"
     fi
 
     if ! command -v convex >/dev/null 2>&1; then
-      if command -v pnpm >/dev/null 2>&1; then
-        pnpm add --global convex@1.27.0 >/dev/null 2>&1
-      elif command -v npm >/dev/null 2>&1; then
-        npm install --global convex@1.27.0 >/dev/null 2>&1
-      else
-        echo "Convex CLI install skipped: npm-compatible package manager not available" >&2
+      log "Installing Convex CLI"
+      if ! npm install -g convex@1.27.0 >"$LOG_DIR/convex-install.log" 2>&1; then
+        fail "Convex CLI install failed; see $LOG_DIR/convex-install.log"
       fi
     fi
 
-    if command -v pnpm >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
-      pnpm add --global @openai/codex@latest >/dev/null 2>&1 || true
-    elif command -v npm >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
-      npm install --global @openai/codex@latest >/dev/null 2>&1 || true
+    if ! command -v codex >/dev/null 2>&1; then
+      log "Installing OpenAI Codex CLI"
+      if ! npm install -g @openai/codex >"$LOG_DIR/codex-install.log" 2>&1; then
+        fail "Codex CLI install failed; see $LOG_DIR/codex-install.log"
+      fi
     fi
 
     if ! command -v kubectl >/dev/null 2>&1; then
+      log "Installing kubectl"
       KUBECTL_ARCH="$(uname -m)"
       case "$KUBECTL_ARCH" in
         aarch64|arm64) KUBECTL_ARCH="arm64" ;;
         x86_64|amd64)  KUBECTL_ARCH="amd64" ;;
         *)             KUBECTL_ARCH="amd64" ;;
       esac
-
       KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
-      curl -fsSLo "$HOME/.local/bin/kubectl" "https://dl.k8s.io/release/$${KUBECTL_VERSION}/bin/linux/$${KUBECTL_ARCH}/kubectl" && \
-        chmod +x "$HOME/.local/bin/kubectl" || \
-        echo "kubectl install skipped" >&2
+      if ! curl -fsSLo "$HOME/.local/bin/kubectl" "https://dl.k8s.io/release/$${KUBECTL_VERSION}/bin/linux/$${KUBECTL_ARCH}/kubectl" 2>"$LOG_DIR/kubectl-install.log"; then
+        fail "kubectl download failed; see $LOG_DIR/kubectl-install.log"
+      fi
+      chmod +x "$HOME/.local/bin/kubectl"
+      ln -sf "$HOME/.local/bin/kubectl" /tmp/coder-script-data/bin/kubectl
     fi
 
     if ! command -v argocd >/dev/null 2>&1; then
+      log "Installing Argo CD CLI"
       ARGOCD_ARCH="$(uname -m)"
       case "$ARGOCD_ARCH" in
         aarch64|arm64) ARGOCD_ARCH="arm64" ;;
         x86_64|amd64)  ARGOCD_ARCH="amd64" ;;
         *)             ARGOCD_ARCH="amd64" ;;
       esac
-
-      curl -fsSLo "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-$${ARGOCD_ARCH}" && \
-        chmod +x "$HOME/.local/bin/argocd" || \
-        echo "argocd install skipped" >&2
+      if ! curl -fsSLo "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-$${ARGOCD_ARCH}" 2>"$LOG_DIR/argocd-install.log"; then
+        fail "Argo CD CLI download failed; see $LOG_DIR/argocd-install.log"
+      fi
+      chmod +x "$HOME/.local/bin/argocd"
+      ln -sf "$HOME/.local/bin/argocd" /tmp/coder-script-data/bin/argocd
     fi
 
-    REPO_ROOT="${local.repository_folder}"
-    case "$REPO_ROOT" in
-      ~*) REPO_ROOT="$${HOME}$${REPO_ROOT#~}" ;;
-    esac
+    NVM_SNIPPET="$(cat <<BASH_SNIPPET
+export NVM_DIR="$NVM_DIR"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+BASH_SNIPPET
+    )"
 
-    if [ -d "$REPO_ROOT/.git" ]; then
-      if command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
-        (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1)
-      elif command -v pnpm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
-        (cd "$REPO_ROOT" && pnpm install >/dev/null 2>&1)
-      elif command -v npm >/dev/null 2>&1 && [ -f "$REPO_ROOT/package.json" ]; then
-        (cd "$REPO_ROOT" && npm install >/dev/null 2>&1)
+    for rc_file in "$HOME/.profile" "$HOME/.bashrc"; do
+      if ! grep -q "NVM_DIR" "$rc_file" 2>/dev/null; then
+        printf '%s\n' "$NVM_SNIPPET" >> "$rc_file"
       fi
-    else
-      echo "Repository directory '$REPO_ROOT' not found; skipping dependency install" >&2
+    done
+
+    if ! grep -q "NVM_DIR" "$HOME/.zshrc" 2>/dev/null; then
+      cat <<ZSHRC_NVM >> "$HOME/.zshrc"
+export NVM_DIR="$NVM_DIR"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+ZSHRC_NVM
     fi
 
     if ! grep -q "PNPM_HOME" "$HOME/.profile" 2>/dev/null; then
@@ -518,7 +671,42 @@ export PATH="$PNPM_HOME:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 ZSHRC
     fi
+
+    REPO_ROOT="${local.repository_folder}"
+    case "$REPO_ROOT" in
+      ~*) REPO_ROOT="$${HOME}$${REPO_ROOT#~}" ;;
+    esac
+
+    if [ ! -d "$REPO_ROOT/.git" ]; then
+      for candidate in "$${REPO_ROOT%/*}"/*; do
+        if [ -d "$candidate/.git" ]; then
+          REPO_ROOT="$candidate"
+          log "Detected cloned repository at $REPO_ROOT"
+          break
+        fi
+      done
+    fi
+
+    if [ -d "$REPO_ROOT/.git" ]; then
+      if [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
+        log "Installing workspace dependencies with pnpm"
+        if ! (cd "$REPO_ROOT" && pnpm install --frozen-lockfile >"$LOG_DIR/pnpm-install.log" 2>&1); then
+          fail "pnpm install failed; see $LOG_DIR/pnpm-install.log"
+        fi
+      elif [ -f "$REPO_ROOT/package.json" ]; then
+        log "Installing workspace dependencies with npm"
+        if ! (cd "$REPO_ROOT" && npm install >"$LOG_DIR/npm-install.log" 2>&1); then
+          fail "npm install failed; see $LOG_DIR/npm-install.log"
+        fi
+      else
+        log "No Node.js manifest found in $REPO_ROOT; skipping dependency install"
+      fi
+    else
+      log "Repository directory '$REPO_ROOT' not found; skipping dependency install"
+    fi
+
+    log "Bootstrap complete"
   EOT
 
-  depends_on = [module.nodejs]
+  depends_on = [module.git-clone, module.nodejs]
 }
