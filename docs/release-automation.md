@@ -5,7 +5,7 @@ This workflow opens pull requests when Argo CD Image Updater commits to a `relea
 ## Enrolling a New Application
 
 1. Configure the application's Argo CD manifests with the Image Updater annotations that target a `release/<app>` branch.
-2. Update `.github/workflows/auto-pr-release-branches.yml`:
+2. Update [`.github/workflows/auto-pr-release-branches.yml`](../.github/workflows/auto-pr-release-branches.yml):
    - Add the application name to the `workflow_dispatch.inputs.app.options` list so the manual release action can target it.
    - Confirm any branch-specific logic in the shell script recognizes the new branch (most simply follow the `release/<app>` naming convention).
 3. Push a change to the `release/<app>` branch (or trigger the workflow manually) to verify that a pull request is created.
