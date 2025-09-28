@@ -88,6 +88,30 @@ If a command is missing, re-run the bootstrap script manually for quicker iterat
 bash -x /tmp/coder-script-data/bin/bootstrap_tools
 ```
 
+## Syncing Codex CLI Authentication
+
+Codex sessions are stored locally under `~/.codex/auth.json`. When recreating the `proompteng` workspace you need to push that file into the remote home directory so CLI calls succeed without re-authenticating.
+
+1. Make sure your local machine has an SSH host entry for each workspace:
+   ```bash
+   coder config-ssh --yes
+   ```
+   This creates aliases such as `coder.proompteng` that wrap the Coder proxy command.
+2. Sync the Codex CLI credentials and config:
+   ```bash
+   ./scripts/sync-codex-cli.sh
+   ```
+   - Optional flags: `--workspace <name>`, `--auth <path>`, `--config <path>`, `--remote-home <path>`, `--remote-repo <path>`.
+   - The script checks for both `rsync` and the OpenSSH client locally and will exit early if either is missing.
+   - It recreates `~/.codex/` in the workspace, pushes `auth.json`, writes an Ubuntu-friendly `config.toml` that trusts `/home/coder` and `/home/coder/github.com/lab`, keeps the Linear MCP binding, and installs a shell wrapper function in `~/.profile`, `~/.bashrc`, and `~/.zshrc` so running `codex …` automatically expands to `codex --dangerously-bypass-approvals-and-sandbox --search --model gpt-5-codex …` without alias recursion issues.
+   - Both files are locked down with `chmod 600` after transfer.
+3. Verify on the remote host if desired:
+   ```bash
+   ssh coder.proompteng 'ls -l ~/.codex/auth.json'
+   ```
+
+If you skip step 1 the script fails fast with: `SSH host entry 'coder.<workspace>' not found. Run 'coder config-ssh --yes' to configure SSH access.`
+
 ## Debug Tips
 
 - Exit code 127 usually means a command was not found. Ensure PATH exports in the bootstrap script include `$HOME/.local/bin` and `$HOME/.local/share/pnpm` before using the tool.
