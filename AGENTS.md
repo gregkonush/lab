@@ -33,7 +33,7 @@
 ## Commit & Pull Request Guidelines
 
 - Adopt Conventional Commits (e.g. `feat: add prix cache`); use bodies for extra context or breaking notes.
-- Commits and PR titles MUST use the approved types (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`).
+- Commits and PR titles MUST use one of the approved types defined in `commitlint.config.cjs`.
 - PRs should summarize the change, link issues, list verification (`go test`, `pnpm run lint:<app>`), and attach UI screenshots when visuals shift.
 - Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
 
