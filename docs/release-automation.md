@@ -10,6 +10,17 @@ This workflow opens pull requests when Argo CD Image Updater commits to a `relea
    - Confirm any branch-specific logic in the shell script recognizes the new branch (most simply follow the `release/<app>` naming convention).
 3. Push a change to the `release/<app>` branch (or trigger the workflow manually) to verify that a pull request is created.
 
+## Enabling Docker Image Publishing
+
+When a new application should ship a container image, mirror its registration in [`.github/workflows/docker-build-push.yaml`](../.github/workflows/docker-build-push.yaml).
+
+1. Add the application under the `dorny/paths-filter` step so that commits touching its source trigger a build.
+2. If the app is Next.js-based, set `output: 'standalone'` in `next.config.mjs` so the build generates the `/standalone` server bundle consumed by the Dockerfile.
+3. Create a `build-<app>` job that calls `docker-build-common.yaml` with the application's image name, Dockerfile path, and build context.
+4. Append the job to the `cleanup-release` `needs` list so failed builds automatically roll back the tag and release.
+
+This keeps the continuous delivery release tagging and the image publishing workflow in sync whenever a new app comes online.
+
 ## Formatting Notes
 
 - Use single quotes for all YAML string literals in `.github/workflows/auto-pr-release-branches.yml` to keep quoting consistent and avoid escaping GitHub expressions like `${{ ... }}`.

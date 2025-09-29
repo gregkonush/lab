@@ -15,6 +15,7 @@ jobs:
       contents: read
     outputs:
       proompteng: ${{ steps.filter.outputs.proompteng }}
+      docs: ${{ steps.filter.outputs.docs }}
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
       alchimie: ${{ steps.filter.outputs.alchimie }}
@@ -30,6 +31,8 @@ jobs:
           filters: |
             proompteng:
               - 'apps/proompteng/**'
+            docs:
+              - 'apps/docs/**'
             kitty-krew:
               - 'apps/kitty-krew/**'
             reviseur:
@@ -73,7 +76,15 @@ jobs:
       context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
-  
+  build-docs:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.docs == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: docs
+      dockerfile: ./apps/docs/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
 
   build-kitty-krew:
     needs: [changes, version]
@@ -114,6 +125,7 @@ jobs:
       [
         version,
         build-proompteng,
+        build-docs,
         build-kitty-krew,
         build-reviseur,
         build-alchimie,
