@@ -1,0 +1,20 @@
+{
+  "name": "cdk8s-hello-server",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "synth": "cdk8s synth",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "cdk8s": "^2.69.48",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "cdk8s-cli": "^2.200.9",
+    "ts-node": "^10",
+    "typescript": "^5.8.2"
+  }
+}

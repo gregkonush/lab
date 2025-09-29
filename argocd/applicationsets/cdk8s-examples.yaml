@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cdk8s-examples
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: hello-server
+            path: packages/cloutt/examples/hello-server
+            namespace: hello-server
+            automation: manual
+            enabled: true
+  template:
+    metadata:
+      name: "{{ .name }}"
+    spec:
+      project: default
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
+        plugin:
+          name: cdk8s
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- if eq .automation "auto" }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}

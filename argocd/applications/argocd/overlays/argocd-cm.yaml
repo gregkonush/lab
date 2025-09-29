@@ -8,3 +8,29 @@ data:
   kustomize.buildOptions: --enable-helm
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
+  configManagementPlugins: |
+    - name: cdk8s
+      generate:
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -eu
+            if [ -d /custom-tools/bin ]; then
+              export PATH="/custom-tools/bin:$PATH"
+            fi
+            if [ -f package.json ]; then
+              npm install --no-progress --ignore-scripts
+            fi
+            npx --yes cdk8s-cli@2 synth
+            if [ -d dist ]; then
+              files=$(find dist -type f -name '*.yaml' | sort)
+              if [ -n "$files" ]; then
+                last=$(printf '%s\n' "$files" | tail -n1)
+                printf '%s\n' "$files" | while IFS= read -r file; do
+                  cat "$file"
+                  if [ "$file" != "$last" ]; then
+                    printf '\n---\n'
+                  fi
+                done
+              fi
+            fi
