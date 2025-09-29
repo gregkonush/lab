@@ -39,16 +39,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, 'automatic update'))
     runs-on: ubuntu-latest
     steps:
-      - name: Ensure GitHub CLI is available
-        run: gh --version
+      - name: Determine release branch context
+        id: release_branch
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-
-      - name: Create PR if not exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
           APP_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.app || '' }}
           HEAD_BRANCH_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.head_branch || '' }}
         run: |
@@ -60,6 +53,57 @@ jobs:
           else
             HEAD_BRANCH="${GITHUB_REF_NAME}"
           fi
+          short_name=${HEAD_BRANCH#release/}
+          echo "head_branch=${HEAD_BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "short_name=${short_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Recreate release branch from last release commit
+        env:
+          HEAD_BRANCH: ${{ steps.release_branch.outputs.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HEAD_BRANCH}" ]; then
+            echo "Head branch is not defined"
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code origin "refs/heads/${HEAD_BRANCH}" > /dev/null 2>&1; then
+            echo "Release branch ${HEAD_BRANCH} does not exist on origin."
+            exit 1
+          fi
+
+          git fetch origin main
+          git fetch origin "${HEAD_BRANCH}"
+
+          last_commit=$(git rev-parse "origin/${HEAD_BRANCH}")
+          echo "Recreating ${HEAD_BRANCH} from commit ${last_commit}"
+
+          git checkout -B "${HEAD_BRANCH}" origin/main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git cherry-pick "${last_commit}"
+          git push origin "${HEAD_BRANCH}" --force
+
+      - name: Ensure GitHub CLI is available
+        run: gh --version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Create PR if not exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ steps.release_branch.outputs.head_branch }}
+          SHORT_NAME: ${{ steps.release_branch.outputs.short_name }}
+        run: |
+          set -euo pipefail
           BASE_BRANCH="main"
 
           existing_pr_number=$(gh pr list \
@@ -76,10 +120,8 @@ jobs:
           fi
 
           # Derive a concise title from the branch name
-          short_name=${HEAD_BRANCH#release/}
-
-          pr_title="chore(${short_name}): automated release PR"
-          pr_body="Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${short_name}."
+          pr_title="chore(${SHORT_NAME}): automated release PR"
+          pr_body="Automated PR created on push to ${HEAD_BRANCH}. Contains Argo CD Image Updater changes for ${SHORT_NAME}."
 
           response_file=$(mktemp)
           err_file=$(mktemp)
