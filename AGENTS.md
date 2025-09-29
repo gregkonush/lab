@@ -36,6 +36,7 @@
 - Commits and PR titles MUST use the approved types (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`).
 - PRs should summarize the change, link issues, list verification (`go test`, `pnpm run lint:<app>`), and attach UI screenshots when visuals shift.
 - Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
+- NEVER edit lockfiles (e.g. `pnpm-lock.yaml`, `bun.lock`) by hand—regenerate them with the package manager instead.
 
 ## Security & Operations Notes
 
