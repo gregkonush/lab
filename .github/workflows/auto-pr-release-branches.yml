@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       head_branch:
-        description: "Branch to create the PR from (for manual runs, provide value like release/<app>-<sha256>)"
+        description: "Branch to create the PR from (for manual runs, provide value like release/<sha256>)"
         required: false
 
 permissions:
@@ -43,10 +43,9 @@ jobs:
           else
             HEAD_BRANCH="${GITHUB_REF_NAME}"
           fi
-          if [[ "${HEAD_BRANCH}" =~ ^release/([A-Za-z0-9._-]+)-([0-9a-f]{64})$ ]]; then
-            app="${BASH_REMATCH[1]}"
-            sha="${BASH_REMATCH[2]}"
-            short_name="release/${app}-${sha:0:7}"
+          if [[ "${HEAD_BRANCH}" =~ ^release/([0-9a-f]{64})$ ]]; then
+            sha="${BASH_REMATCH[1]}"
+            short_name="release/${sha:0:7}"
           else
             short_name="${HEAD_BRANCH}"
           fi
