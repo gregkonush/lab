@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: cloutt-bonjour-serveur
+  name: bonjour
   namespace: argocd
 spec:
   goTemplate: true
@@ -9,9 +9,9 @@ spec:
   generators:
     - list:
         elements:
-          - name: bonjour-serveur
-            path: packages/cloutt/bonjour-serveur
-            namespace: bonjour-serveur
+          - name: bonjour
+            path: packages/bonjour
+            namespace: bonjour
             automation: manual
             enabled: true
   template:

@@ -36,7 +36,7 @@ export function startServer(): void {
   });
 
   server.listen(port, host, () => {
-    console.log(`bonjour-serveur listening on http://${host}:${port}`);
+    console.log(`bonjour listening on http://${host}:${port}`);
   });
 }
 

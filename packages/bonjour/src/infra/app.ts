@@ -14,7 +14,7 @@ interface ResourceQuantities {
   readonly memory: string;
 }
 
-interface BonjourServeurConfig {
+interface BonjourConfig {
   readonly name: string;
   readonly namespace: string;
   readonly image: string;
@@ -34,11 +34,11 @@ interface KustomizationProps {
   readonly patches?: string[];
 }
 
-class BonjourServeurWorkload extends Chart {
+class BonjourWorkload extends Chart {
   constructor(
     scope: Construct,
     id: string,
-    config: BonjourServeurConfig,
+    config: BonjourConfig,
     props?: ChartProps,
   ) {
     super(scope, id, props);
@@ -146,7 +146,7 @@ class DeploymentPatchChart extends Chart {
   constructor(
     scope: Construct,
     id: string,
-    config: BonjourServeurConfig,
+    config: BonjourConfig,
     props?: ChartProps,
   ) {
     super(scope, id, props);
@@ -209,10 +209,10 @@ class KustomizationChart extends Chart {
 function synthesize(): void {
   const distDir = path.resolve(__dirname, "..", "..", "dist");
 
-  const baseConfig: BonjourServeurConfig = {
-    name: "bonjour-serveur",
-    namespace: "bonjour-serveur",
-    image: "ghcr.io/gregkonush/bonjour-serveur:main",
+  const baseConfig: BonjourConfig = {
+    name: "bonjour",
+    namespace: "bonjour",
+    image: "ghcr.io/gregkonush/bonjour:main",
     containerPort: 8080,
     servicePort: 80,
     replicas: 1,
@@ -225,9 +225,9 @@ function synthesize(): void {
     },
   };
 
-  const devOverlayConfig: BonjourServeurConfig = {
+  const devOverlayConfig: BonjourConfig = {
     ...baseConfig,
-    image: "ghcr.io/gregkonush/bonjour-serveur:dev",
+    image: "ghcr.io/gregkonush/bonjour:dev",
     replicas: 2,
     environment: {
       ...baseConfig.environment,
@@ -241,7 +241,7 @@ function synthesize(): void {
     yamlOutputType: YamlOutputType.FILE_PER_CHART,
   });
 
-  new BonjourServeurWorkload(baseApp, "workload", baseConfig);
+  new BonjourWorkload(baseApp, "workload", baseConfig);
   new KustomizationChart(baseApp, "kustomization", {
     namespace: baseConfig.namespace,
     resources: ["workload.k8s.yaml"],
