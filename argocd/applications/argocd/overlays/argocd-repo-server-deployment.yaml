@@ -6,6 +6,24 @@ spec:
   replicas: 3
   template:
     spec:
+      initContainers:
+        - name: install-cdk8s-runtime
+          image: node:22.12.0-alpine3.20
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              mkdir -p /custom-tools/bin /custom-tools/lib
+              cp -a /usr/local/bin/node /custom-tools/bin/
+              cp -a /usr/local/bin/npm /custom-tools/bin/
+              cp -a /usr/local/bin/npx /custom-tools/bin/
+              if [ -f /usr/local/bin/corepack ]; then
+                cp -a /usr/local/bin/corepack /custom-tools/bin/
+              fi
+              cp -a /usr/local/lib/node_modules /custom-tools/lib/
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /custom-tools
       dnsConfig:
         options:
           - name: ndots
@@ -19,3 +37,9 @@ spec:
             limits:
               cpu: "2"
               memory: "4Gi"
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /custom-tools
+      volumes:
+        - name: custom-tools
+          emptyDir: {}
