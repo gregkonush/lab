@@ -2,6 +2,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: argocd
+configMapGenerator:
+  - name: argocd-cdk8s-plugin
+    behavior: replace
+    files:
+      - plugin.yaml=plugin/cdk8s-plugin.yaml
+    options:
+      disableNameSuffixHash: true
 resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.6/manifests/ha/install.yaml
   - base/namespace.yaml
@@ -9,11 +16,14 @@ resources:
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v0.16.0/manifests/install.yaml
   - base/secrets.yaml
   - base/image-updater-git-ssh.yaml
-
 patches:
   - path: overlays/argocd-cm.yaml
   - path: overlays/argocd-cmd-params-cm.yaml
   - path: overlays/argocd-lovely-plugin.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-cdk8s-plugin.yaml
     target:
       kind: Deployment
       name: argocd-repo-server

@@ -1,0 +1,63 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cdk8s
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: bonjour
+            path: packages/bonjour
+            namespace: bonjour
+            image: registry.ide-newton.ts.net/lab/bonjour:latest
+            automation: manual
+            enabled: true
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}"
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
+        plugin:
+          name: cdk8s
+          env:
+            - name: IMAGE
+              value: '{{ if hasKey . "image" }}{{ .image }}{{ else }}registry.ide-newton.ts.net/lab/bonjour:latest{{ end }}'
+            - name: NAMESPACE
+              value: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $auto := eq .automation "auto" -}}
+    {{- if $auto }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}

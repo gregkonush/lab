@@ -1,0 +1,82 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ConfigManagementPlugin
+metadata:
+  name: cdk8s
+spec:
+  version: v2025.09.30.1
+  allowConcurrency: false
+  lockRepo: true
+  init:
+    command:
+      - /bin/sh
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        HOME_DIR="${HOME:-/home/argocd}"
+        if ! mkdir -p "$HOME_DIR" 2>/dev/null; then
+          HOME_DIR="/tmp/argocd-home"
+          mkdir -p "$HOME_DIR"
+        fi
+        export HOME="$HOME_DIR"
+        export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+        export PNPM_HOME="$HOME/.local/share/pnpm"
+        export PATH="$NPM_CONFIG_PREFIX/bin:$PNPM_HOME:$PATH"
+        mkdir -p "$NPM_CONFIG_PREFIX" "$PNPM_HOME"
+        if command -v corepack >/dev/null 2>&1; then
+          corepack enable 2>/dev/null || true
+        fi
+        npm install -g cdk8s-cli@latest
+        REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+        while [ ! -f "$REPO_ROOT/pnpm-lock.yaml" ] \
+          && [ ! -f "$REPO_ROOT/package-lock.json" ] \
+          && [ ! -f "$REPO_ROOT/yarn.lock" ] \
+          && [ "$REPO_ROOT" != "/" ]
+        do
+          REPO_ROOT="$(dirname "$REPO_ROOT")"
+        done
+        if [ -f "$REPO_ROOT/pnpm-lock.yaml" ]; then
+          (cd "$REPO_ROOT" && pnpm install --frozen-lockfile --prefer-offline)
+        elif [ -f "$REPO_ROOT/package-lock.json" ]; then
+          (cd "$REPO_ROOT" && npm ci)
+        elif [ -f "$REPO_ROOT/yarn.lock" ]; then
+          (cd "$REPO_ROOT" && yarn install --immutable)
+        elif [ -f "$REPO_ROOT/package.json" ]; then
+          (cd "$REPO_ROOT" && npm install)
+        elif [ -f package.json ]; then
+          npm install
+        fi
+  generate:
+    command:
+      - /bin/sh
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        HOME_DIR="${HOME:-/home/argocd}"
+        if ! mkdir -p "$HOME_DIR" 2>/dev/null; then
+          HOME_DIR="/tmp/argocd-home"
+          mkdir -p "$HOME_DIR"
+        fi
+        export HOME="$HOME_DIR"
+        export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+        export PNPM_HOME="$HOME/.local/share/pnpm"
+        export PATH="$NPM_CONFIG_PREFIX/bin:$PNPM_HOME:$PATH"
+        mkdir -p "$NPM_CONFIG_PREFIX" "$PNPM_HOME"
+        if command -v corepack >/dev/null 2>&1; then
+          corepack enable 2>/dev/null || true
+        fi
+        WORKDIR="$(mktemp -d)"
+        trap 'rm -rf "$WORKDIR"' EXIT
+        cdk8s synth --no-check-upgrade --app "pnpm exec tsx --tsconfig infra/tsconfig.json infra/main.ts" --output "$WORKDIR"
+        find "$WORKDIR" -maxdepth 1 -type f -name '*.yaml' -print0 |
+          sort -z |
+          xargs -0 cat
+  discover:
+    find:
+      command:
+        - /bin/sh
+      args:
+        - -c
+        - |
+          test -f infra/main.ts

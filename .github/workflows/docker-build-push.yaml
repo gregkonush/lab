@@ -22,6 +22,7 @@ jobs:
       kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
       reviseur: ${{ steps.filter.outputs.reviseur }}
       alchimie: ${{ steps.filter.outputs.alchimie }}
+      bonjour: ${{ steps.filter.outputs.bonjour }}
 
     steps:
       - name: Checkout
@@ -42,6 +43,8 @@ jobs:
               - 'apps/reviseur/**'
             alchimie:
               - 'apps/alchimie/**'
+            bonjour:
+              - 'packages/bonjour/**'
 
   version:
     runs-on: arc-arm64
@@ -120,6 +123,16 @@ jobs:
       new_tag: ${{ needs.version.outputs.new_tag }}
       platforms: linux/arm64
 
+  build-bonjour:
+    needs: [changes, version]
+    if: ${{ needs.changes.outputs.bonjour == 'true' }}
+    uses: ./.github/workflows/docker-build-common.yaml
+    with:
+      image_name: bonjour
+      dockerfile: ./packages/bonjour/Dockerfile
+      context: .
+      new_tag: ${{ needs.version.outputs.new_tag }}
+
   cleanup-release:
     runs-on: arc-arm64
     permissions:
@@ -132,6 +145,7 @@ jobs:
         build-kitty-krew,
         build-reviseur,
         build-alchimie,
+        build-bonjour,
       ]
     if: failure()
     steps:
