@@ -8,18 +8,8 @@ on:
       - "argocd/applications/*/kustomization.yaml"
   workflow_dispatch:
     inputs:
-      app:
-        description: "Release app"
-        type: choice
-        required: true
-        default: proompteng
-        options:
-          - proompteng
-          - docs
-          - kitty-krew
-          - reviseur
       head_branch:
-        description: "Override branch name (leave blank to use release/<app>)"
+        description: "Branch to create the PR from (for manual runs, provide value like release/<app>-<sha256>)"
         required: false
 
 permissions:
@@ -42,53 +32,26 @@ jobs:
       - name: Determine release branch context
         id: release_branch
         env:
-          APP_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.app || '' }}
           HEAD_BRANCH_INPUT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.head_branch || '' }}
         run: |
           set -euo pipefail
           if [ -n "${HEAD_BRANCH_INPUT}" ]; then
             HEAD_BRANCH="${HEAD_BRANCH_INPUT}"
-          elif [ -n "${APP_INPUT}" ]; then
-            HEAD_BRANCH="release/${APP_INPUT}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Head branch must be provided when running manually"
+            exit 1
           else
             HEAD_BRANCH="${GITHUB_REF_NAME}"
           fi
-          short_name=${HEAD_BRANCH#release/}
+          if [[ "${HEAD_BRANCH}" =~ ^release/([A-Za-z0-9._-]+)-([0-9a-f]{64})$ ]]; then
+            app="${BASH_REMATCH[1]}"
+            sha="${BASH_REMATCH[2]}"
+            short_name="release/${app}-${sha:0:7}"
+          else
+            short_name="${HEAD_BRANCH}"
+          fi
           echo "head_branch=${HEAD_BRANCH}" >> "${GITHUB_OUTPUT}"
           echo "short_name=${short_name}" >> "${GITHUB_OUTPUT}"
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: main
-
-      - name: Recreate release branch from last release commit
-        env:
-          HEAD_BRANCH: ${{ steps.release_branch.outputs.head_branch }}
-        run: |
-          set -euo pipefail
-          if [ -z "${HEAD_BRANCH}" ]; then
-            echo "Head branch is not defined"
-            exit 1
-          fi
-
-          if ! git ls-remote --exit-code origin "refs/heads/${HEAD_BRANCH}" > /dev/null 2>&1; then
-            echo "Release branch ${HEAD_BRANCH} does not exist on origin."
-            exit 1
-          fi
-
-          git fetch origin main
-          git fetch origin "${HEAD_BRANCH}"
-
-          last_commit=$(git rev-parse "origin/${HEAD_BRANCH}")
-          echo "Recreating ${HEAD_BRANCH} from commit ${last_commit}"
-
-          git checkout -B "${HEAD_BRANCH}" origin/main
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git cherry-pick "${last_commit}"
-          git push origin "${HEAD_BRANCH}" --force
 
       - name: Ensure GitHub CLI is available
         run: gh --version

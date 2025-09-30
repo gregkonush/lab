@@ -19,7 +19,7 @@ spec:
               argocd-image-updater.argoproj.io/proompteng: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
-              argocd-image-updater.argoproj.io/git-branch: release/proompteng
+              argocd-image-updater.argoproj.io/git-branch: '{{ printf "main:release/%s-{{.SHA256}}" .name }}'
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
             automation: auto
             enabled: true
@@ -33,7 +33,7 @@ spec:
               argocd-image-updater.argoproj.io/docs: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
-              argocd-image-updater.argoproj.io/git-branch: release/docs
+              argocd-image-updater.argoproj.io/git-branch: '{{ printf "main:release/%s-{{.SHA256}}" .name }}'
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
             automation: auto
             enabled: true
@@ -47,7 +47,7 @@ spec:
               argocd-image-updater.argoproj.io/kitty-krew: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
-              argocd-image-updater.argoproj.io/git-branch: release/kitty-krew
+              argocd-image-updater.argoproj.io/git-branch: '{{ printf "main:release/%s-{{.SHA256}}" .name }}'
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
             automation: manual
             enabled: false
@@ -61,7 +61,7 @@ spec:
               argocd-image-updater.argoproj.io/reviseur: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
-              argocd-image-updater.argoproj.io/git-branch: release/reviseur
+              argocd-image-updater.argoproj.io/git-branch: '{{ printf "main:release/%s-{{.SHA256}}" .name }}'
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
             automation: manual
             enabled: false
