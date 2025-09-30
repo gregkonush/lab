@@ -8,3 +8,33 @@ data:
   kustomize.buildOptions: --enable-helm
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
+  configManagementPlugins: |
+    - name: cdk8s
+      generate:
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -euo pipefail
+            if [ -d /custom-tools/bin ]; then
+              export PATH="/custom-tools/bin:$PATH"
+            fi
+            export CDK8S_DISABLE_VERSION_CHECK=1
+            repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+            if command -v pnpm >/dev/null 2>&1 && [ -f "$repo_root/pnpm-lock.yaml" ]; then
+              pnpm install --frozen-lockfile --prefer-offline --dir "$repo_root"
+            elif command -v npm >/dev/null 2>&1 && [ -f package.json ]; then
+              npm install --no-progress --ignore-scripts
+            fi
+            cdk8s synth
+            if [ -d dist ]; then
+              files=$(find dist -type f -name '*.yaml' | sort)
+              if [ -n "$files" ]; then
+                last=$(printf '%s\n' "$files" | tail -n1)
+                printf '%s\n' "$files" | while IFS= read -r file; do
+                  cat "$file"
+                  if [ "$file" != "$last" ]; then
+                    printf '\n---\n'
+                  fi
+                done
+              fi
+            fi

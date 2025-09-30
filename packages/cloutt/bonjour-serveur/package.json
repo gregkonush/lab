@@ -1,0 +1,26 @@
+{
+  "name": "@cloutt/bonjour-serveur",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "clean": "rm -rf dist lib",
+    "build": "tsc -p tsconfig.json",
+    "start": "node lib/server/server.js",
+    "dev": "ts-node src/server/server.ts",
+    "synth": "cdk8s synth"
+  },
+  "dependencies": {
+    "cdk8s": "2.70.17",
+    "constructs": "10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.7",
+    "cdk8s-cli": "2.201.39",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.2"
+  }
+}

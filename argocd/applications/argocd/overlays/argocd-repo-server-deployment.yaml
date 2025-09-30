@@ -6,6 +6,21 @@ spec:
   replicas: 3
   template:
     spec:
+      initContainers:
+        - name: install-cdk8s-cli
+          image: node:22.12.0-alpine3.20
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              npm install -g --prefix /custom-tools cdk8s-cli@2.201.39
+              install -Dm755 /usr/local/bin/node /custom-tools/bin/node
+              if [ -f /usr/local/bin/npm ]; then
+                install -Dm755 /usr/local/bin/npm /custom-tools/bin/npm
+              fi
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /custom-tools
       dnsConfig:
         options:
           - name: ndots
@@ -19,3 +34,9 @@ spec:
             limits:
               cpu: "2"
               memory: "4Gi"
+          volumeMounts:
+            - name: custom-tools
+              mountPath: /custom-tools
+      volumes:
+        - name: custom-tools
+          emptyDir: {}

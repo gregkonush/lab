@@ -1,0 +1,2 @@
+language: typescript
+app: node --require ts-node/register src/infra/app.ts
