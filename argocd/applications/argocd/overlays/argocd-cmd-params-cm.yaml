@@ -10,5 +10,6 @@ data:
   controller.k8s.client.burst: "200"
   reposerver.parallelism.limit: "16"
   reposerver.plugin.tar.exclusions: ".git/*;node_modules/*;tmp/*"
+  reposerver.log.level: "debug"
   server.enable.gzip: "true"
   server.insecure: "true"
