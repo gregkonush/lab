@@ -36,11 +36,12 @@ argocd repo add https://github.com/gregkonush/lab.git
 
 ## Stage-based ApplicationSets
 
-The repo now provides three staged ApplicationSets:
+The repo now provides four staged ApplicationSets:
 
 - `bootstrap.yaml` (core prerequisites)
 - `platform.yaml` (shared infrastructure & tooling)
 - `product.yaml` (product-facing workloads)
+- `cdk8s.yaml` (TypeScript-driven CMP workloads powered by the cdk8s plugin)
 
 Sync the `root` Application to register the staged sets:
 
@@ -61,6 +62,7 @@ Sync individual stages when you are ready:
 argocd appset create --upsert argocd/applicationsets/bootstrap.yaml
 argocd appset create --upsert argocd/applicationsets/platform.yaml
 argocd appset create --upsert argocd/applicationsets/product.yaml
+argocd appset create --upsert argocd/applicationsets/cdk8s.yaml
 ```
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.

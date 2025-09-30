@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      volumes:
+        - name: cdk8s-plugin-config
+          configMap:
+            name: argocd-cdk8s-plugin
+        - name: cdk8s-plugin-tmp
+          emptyDir: {}
+      containers:
+        - name: cdk8s-plugin
+          image: node:lts-slim
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -e
+              if command -v corepack >/dev/null 2>&1; then
+                corepack enable 2>/dev/null || true
+              fi
+              exec /var/run/argocd/argocd-cmp-server --config /home/argocd/cmp-server/config/plugin.yaml
+          env:
+            - name: NODE_OPTIONS
+              value: "--max_old_space_size=512"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+          volumeMounts:
+            - mountPath: /var/run/argocd
+              name: var-files
+            - mountPath: /home/argocd/cmp-server/plugins
+              name: plugins
+            - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              name: cdk8s-plugin-config
+              subPath: plugin.yaml
+            - mountPath: /tmp
+              name: cdk8s-plugin-tmp
+        - name: argocd-repo-server
+          volumeMounts:
+            - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              name: cdk8s-plugin-config
+              subPath: plugin.yaml
