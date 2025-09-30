@@ -4,7 +4,6 @@ kind: Kustomization
 namespace: argocd
 configMapGenerator:
   - name: argocd-cdk8s-plugin
-    behavior: replace
     files:
       - plugin.yaml=plugin/cdk8s-plugin.yaml
     options:
