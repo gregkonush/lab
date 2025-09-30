@@ -20,10 +20,7 @@ spec:
             - -c
             - |
               set -e
-              if command -v corepack >/dev/null 2>&1; then
-                corepack enable 2>/dev/null || true
-              fi
-              exec /var/run/argocd/argocd-cmp-server --config /home/argocd/cmp-server/config/plugin.yaml
+              exec /var/run/argocd/argocd-cmp-server --config-dir-path /home/argocd/cmp-server/config
           env:
             - name: NODE_OPTIONS
               value: "--max_old_space_size=512"
