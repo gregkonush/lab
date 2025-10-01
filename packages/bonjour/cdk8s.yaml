@@ -1,2 +1,0 @@
-app: pnpm exec tsx --tsconfig infra/tsconfig.json infra/main.ts
-output: manifests

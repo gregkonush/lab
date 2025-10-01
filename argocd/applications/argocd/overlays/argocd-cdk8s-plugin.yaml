@@ -13,7 +13,7 @@ spec:
           emptyDir: {}
       containers:
         - name: cdk8s-plugin
-          image: node:lts-slim
+          image: oven/bun:1.2.23
           command:
             - /bin/sh
           args:

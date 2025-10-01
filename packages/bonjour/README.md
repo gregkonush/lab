@@ -5,14 +5,14 @@ TypeScript sample service that renders Kubernetes resources with cdk8s via the o
 ## Scripts
 
 - `pnpm --filter @proompteng/bonjour dev` – run the Hono server locally on port 3000.
-- `pnpm --filter @proompteng/bonjour synth` – regenerate manifests in `packages/bonjour/manifests/` using `cdk8s synth` (append `-- --stdout` to stream YAML to the console).
+- `pnpm --filter @proompteng/bonjour synth` – regenerate manifests in `packages/bonjour/manifests/` using `bunx cdk8s-cli synth` (append `-- -- --stdout` to stream YAML to the console).
 - `pnpm --filter @proompteng/bonjour build` – compile TypeScript to `dist/` for packaging.
 - `pnpm --filter @proompteng/bonjour clean` – remove build and manifest artifacts.
 - `scripts/build-bonjour.sh [tag]` – build and push the Docker image to `registry.ide-newton.ts.net/lab/bonjour` (defaults to the current git SHA if no tag is provided).
 
 ## Generated Assets
 
-Running `pnpm --filter @proompteng/bonjour synth` produces (outputs are gitignored and intended for local inspection only):
+Running `pnpm --filter @proompteng/bonjour synth` (which wraps `bunx cdk8s-cli synth`) produces outputs intended for local inspection only:
 
 ```
 packages/bonjour/manifests/
