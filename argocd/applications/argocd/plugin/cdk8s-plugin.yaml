@@ -3,30 +3,15 @@ kind: ConfigManagementPlugin
 metadata:
   name: cdk8s
 spec:
+  sourceRepos:
+    - https://github.com/gregkonush/lab.git
+    - https://github.com/gregkonush/lab
+    - git@github.com:gregkonush/lab.git
   allowConcurrency: false
   lockRepo: true
-  init:
-    command:
-      - /bin/bash
-    args:
-      - -c
-      - |
-        set -eu
-        HOME_DIR="/tmp/argocd-home"
-        mkdir -p "$HOME_DIR"
-        export HOME="$HOME_DIR"
-        export NPM_CONFIG_PREFIX="$HOME/.npm-global"
-        export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
-        mkdir -p "$NPM_CONFIG_PREFIX"
-        APP_PATH="${ARGOCD_APP_SOURCE_PATH:-.}"
-        if [ -f "$APP_PATH/package-lock.json" ]; then
-          (cd "$APP_PATH" && npm ci --no-audit --no-fund)
-        elif [ -f "$APP_PATH/package.json" ]; then
-          (cd "$APP_PATH" && npm install --no-audit --no-fund)
-        fi
   generate:
     command:
-      - /bin/bash
+      - /bin/sh
     args:
       - -c
       - |
@@ -34,20 +19,18 @@ spec:
         HOME_DIR="/tmp/argocd-home"
         mkdir -p "$HOME_DIR"
         export HOME="$HOME_DIR"
-        export NPM_CONFIG_PREFIX="$HOME/.npm-global"
-        export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
-        mkdir -p "$NPM_CONFIG_PREFIX"
+        export BUN_INSTALL_CACHE_DIR="$HOME_DIR/.bun-install-cache"
         APP_PATH="${ARGOCD_APP_SOURCE_PATH:-.}"
+        if [ ! -d "$APP_PATH" ]; then
+          APP_PATH="."
+        fi
+        cd "$APP_PATH"
+        if [ -f package.json ]; then
+          bun install --no-save --cwd .
+        fi
         WORKDIR="$(mktemp -d)"
         trap 'rm -rf "$WORKDIR"' EXIT
-        (cd "$APP_PATH" && npx --no-install cdk8s synth --no-check-upgrade --app "npx --no-install tsx --tsconfig infra/tsconfig.json infra/main.ts" --output "$WORKDIR")
+        bunx cdk8s-cli synth --no-check-upgrade --app "bun run infra/main.ts" --output "$WORKDIR"
         find "$WORKDIR" -maxdepth 1 -type f -name '*.yaml' -print0 |
           sort -z |
           xargs -0 cat
-  discover:
-    find:
-      command:
-        - /bin/sh
-      args:
-        - -c
-        - 'echo "cdk8s discover" >&2; exit 0'
