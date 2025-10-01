@@ -30,5 +30,9 @@ RUN npm install --omit=dev
 # Copy compiled application
 COPY --from=builder /workspace/packages/bonjour/dist ./dist
 
+# Drop root privileges for runtime
+RUN chown -R node:node /opt/app
+USER node
+
 EXPOSE 3000
 CMD ["node", "dist/server.js"]
