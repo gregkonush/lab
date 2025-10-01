@@ -29,7 +29,7 @@ export class ServerChart extends Chart {
     const minReplicas = Math.max(props.replicas ?? 1, 1)
     const targetCpu = Math.min(Math.max(props.cpuTargetUtilizationPercent ?? 70, 1), 100)
 
-    const deployment = new Deployment(this, 'server', {
+   const deployment = new Deployment(this, 'server', {
       metadata: {
         namespace,
         labels: {
@@ -41,6 +41,12 @@ export class ServerChart extends Chart {
           app: appLabel,
         },
       },
+      securityContext: {
+        ensureNonRoot: true,
+        user: 1000,
+        group: 1000,
+        fsGroup: 1000,
+      },
     })
 
     deployment.addContainer({
@@ -50,6 +56,11 @@ export class ServerChart extends Chart {
       envVariables: {
         PORT: EnvValue.fromValue(String(port)),
         NODE_ENV: EnvValue.fromValue('production'),
+      },
+      securityContext: {
+        ensureNonRoot: true,
+        user: 1000,
+        group: 1000,
       },
       readiness: Probe.fromHttpGet('/healthz', {
         port,
