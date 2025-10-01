@@ -20,17 +20,19 @@ spec:
         mkdir -p "$HOME_DIR"
         export HOME="$HOME_DIR"
         export BUN_INSTALL_CACHE_DIR="$HOME_DIR/.bun-install-cache"
+        export HUSKY=0
         APP_PATH="${ARGOCD_APP_SOURCE_PATH:-.}"
         if [ ! -d "$APP_PATH" ]; then
           APP_PATH="."
         fi
         cd "$APP_PATH"
         if [ -f package.json ]; then
-          bun install --no-save --cwd .
+          bun install --no-save --cwd . 1>&2
         fi
         WORKDIR="$(mktemp -d)"
         trap 'rm -rf "$WORKDIR"' EXIT
-        bunx cdk8s-cli synth --no-check-upgrade --app "bun run infra/main.ts" --output "$WORKDIR"
+        export CDK8S_OUTDIR="$WORKDIR"
+        bun run infra/main.ts 1>&2
         find "$WORKDIR" -maxdepth 1 -type f -name '*.yaml' -print0 |
           sort -z |
           xargs -0 cat
