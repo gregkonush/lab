@@ -1,2 +1,8 @@
 #!/bin/sh
+
+# Skip lint-staged when there are no staged files.
+if git diff --cached --quiet --exit-code; then
+  exit 0
+fi
+
 pnpm exec lint-staged
