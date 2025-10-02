@@ -1,18 +1,18 @@
-import "./instrumentation";
+import './instrumentation'
 
-import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { serve } from '@hono/node-server'
+import { Hono } from 'hono'
 
-import { logger } from "./logger";
+import { logger } from './logger'
 
-const port = Number.parseInt(process.env.PORT ?? "3000", 10);
+const port = Number.parseInt(process.env.PORT ?? '3000', 10)
 
-const app = new Hono();
+const app = new Hono()
 
-app.use("*", async (c, next) => {
-  const start = Date.now();
-  await next();
-  const durationMs = Date.now() - start;
+app.use('*', async (c, next) => {
+  const start = Date.now()
+  await next()
+  const durationMs = Date.now() - start
   logger.info(
     {
       method: c.req.method,
@@ -20,15 +20,13 @@ app.use("*", async (c, next) => {
       status: c.res.status,
       durationMs,
     },
-    "request completed",
-  );
-});
+    'request completed',
+  )
+})
 
-app.get("/healthz", (c) => c.json({ status: "ok" }));
+app.get('/healthz', (c) => c.json({ status: 'ok' }))
 
-app.get("/", (c) =>
-  c.json({ message: "bonjour from the cdk8s + Argo CD sample server" }),
-);
+app.get('/', (c) => c.json({ message: 'bonjour from the cdk8s + Argo CD sample server' }))
 
 const server = serve(
   {
@@ -36,12 +34,12 @@ const server = serve(
     port,
   },
   (info) => {
-    logger.info({ port: info.port }, "server listening");
+    logger.info({ port: info.port }, 'server listening')
   },
-);
+)
 
-process.on("SIGTERM", () => {
+process.on('SIGTERM', () => {
   server.close(() => {
-    logger.info("server terminated gracefully");
-  });
-});
+    logger.info('server terminated gracefully')
+  })
+})

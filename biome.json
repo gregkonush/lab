@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "ignore": ["node_modules", ".next"]
+    "ignore": ["node_modules", ".next", "pnpm-lock.yaml", "bun.lock"]
   },
   "formatter": {
     "enabled": true,

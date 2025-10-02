@@ -1,19 +1,17 @@
-import pino, { multistream } from "pino";
+import pino, { multistream } from 'pino'
 
-const level = process.env.LOG_LEVEL ?? "info";
-const service = process.env.OTEL_SERVICE_NAME ?? "bonjour";
-const namespace = process.env.POD_NAMESPACE ?? "default";
-const lokiEndpoint = process.env.LGTM_LOKI_ENDPOINT;
-const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH;
+const level = process.env.LOG_LEVEL ?? 'info'
+const service = process.env.OTEL_SERVICE_NAME ?? 'bonjour'
+const namespace = process.env.POD_NAMESPACE ?? 'default'
+const lokiEndpoint = process.env.LGTM_LOKI_ENDPOINT
+const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 
-const destinations: { stream: NodeJS.WritableStream }[] = [
-  { stream: process.stdout },
-];
+const destinations: { stream: NodeJS.WritableStream }[] = [{ stream: process.stdout }]
 
 if (lokiEndpoint) {
   try {
     const lokiStream = pino.transport({
-      target: "pino-loki",
+      target: 'pino-loki',
       options: {
         host: lokiEndpoint,
         batching: true,
@@ -25,12 +23,12 @@ if (lokiEndpoint) {
         },
         basicAuth: lokiBasicAuth,
       },
-    });
+    })
 
-    destinations.push({ stream: lokiStream });
+    destinations.push({ stream: lokiStream })
   } catch (error) {
     // Fallback to stdout logging if the Loki transport cannot be initialised.
-    console.warn("failed to initialise pino-loki transport", error);
+    console.warn('failed to initialise pino-loki transport', error)
   }
 }
 
@@ -44,4 +42,4 @@ export const logger = pino(
     timestamp: pino.stdTimeFunctions.isoTime,
   },
   multistream(destinations),
-);
+)

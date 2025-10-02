@@ -19,7 +19,9 @@ const KAFKA_PASSWORD = requireEnv('KAFKA_PASSWORD')
 const KAFKA_TOPIC = requireEnv('KAFKA_TOPIC')
 const KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID ?? 'froussard-webhook-producer'
 
-const kafkaBrokers = KAFKA_BROKERS.split(',').map((broker) => broker.trim()).filter(Boolean)
+const kafkaBrokers = KAFKA_BROKERS.split(',')
+  .map((broker) => broker.trim())
+  .filter(Boolean)
 
 if (kafkaBrokers.length === 0) {
   console.error('No Kafka brokers configured. Set KAFKA_BROKERS to a comma-separated list of host:port values.')

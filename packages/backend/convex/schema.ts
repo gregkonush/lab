@@ -1,5 +1,5 @@
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { defineSchema, defineTable } from 'convex/server'
+import { v } from 'convex/values'
 
 export default defineSchema({
   models: defineTable({
@@ -14,10 +14,10 @@ export default defineSchema({
     order: v.number(),
     updatedAt: v.number(),
   })
-    .index("bySlug", ["slug"]) // fetch individual models quickly
-    .index("byProvider", ["provider"])
-    .index("byCategory", ["category"])
-    .index("byFeatured", ["featured", "order"]),
+    .index('bySlug', ['slug']) // fetch individual models quickly
+    .index('byProvider', ['provider'])
+    .index('byCategory', ['category'])
+    .index('byFeatured', ['featured', 'order']),
   agents: defineTable({
     slug: v.string(),
     name: v.string(),
@@ -28,6 +28,6 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("bySlug", ["slug"])
-    .index("byStatus", ["status", "updatedAt"]),
-});
+    .index('bySlug', ['slug'])
+    .index('byStatus', ['status', 'updatedAt']),
+})
