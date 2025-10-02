@@ -164,12 +164,10 @@ export const StatusBadge = React.memo(({ status }: StatusBadgeProps) => {
   }
 
   return (
-    <span
-      className={statusBadgeVariants({ status: getVariantStatus(status) })}
-      aria-label={`Status: ${status || 'Unknown'}`}
-    >
+    <output className={statusBadgeVariants({ status: getVariantStatus(status) })} aria-live="polite">
+      <span className="sr-only">Status:</span>
       {getStatusIcon(status)}
       {status || 'Unknown'}
-    </span>
+    </output>
   )
 })

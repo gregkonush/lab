@@ -19,20 +19,30 @@ RUN pnpm install --frozen-lockfile --filter @proompteng/bonjour...
 COPY packages/bonjour packages/bonjour
 RUN pnpm --filter @proompteng/bonjour build
 
-FROM node:22.19.0-bullseye-slim AS runtime
+FROM node:22.19.0-bullseye-slim AS prod-deps
+ENV PNPM_HOME=/root/.local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+WORKDIR /workspace
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/bonjour/package.json packages/bonjour/package.json
+
+RUN pnpm install --prod --frozen-lockfile --filter @proompteng/bonjour...
+
+FROM oven/bun:1.2.23 AS runtime
 ENV NODE_ENV=production
+ENV BUN_CONFIG_DISABLE_TELEMETRY=1
 WORKDIR /opt/app
 
-# Install only runtime dependencies
-COPY packages/bonjour/package.json ./package.json
-RUN npm install --omit=dev
-
-# Copy compiled application
+# Copy application manifest and dependencies from the builder stage
+COPY --from=builder /workspace/packages/bonjour/package.json ./package.json
+COPY --from=prod-deps /workspace/node_modules ./node_modules
 COPY --from=builder /workspace/packages/bonjour/dist ./dist
 
 # Drop root privileges for runtime
-RUN chown -R node:node /opt/app
-USER node
+RUN chown -R bun:bun /opt/app
+USER bun
 
 EXPOSE 3000
-CMD ["node", "dist/server.js"]
+CMD ["bun", "dist/server.js"]

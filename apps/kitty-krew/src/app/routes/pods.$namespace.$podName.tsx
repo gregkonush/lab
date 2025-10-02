@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useId } from 'react'
 import type { ReactNode } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
@@ -102,6 +102,9 @@ function LogSettings({
   wrapLogs: boolean
   setWrapLogs: (wrap: boolean) => void
 }) {
+  const timestampsId = useId()
+  const wrapLogsId = useId()
+
   return (
     <div className="flex flex-col md:flex-row gap-4 p-4 bg-zinc-800/20 border border-zinc-700 rounded-md mb-4">
       <div className="flex items-center gap-2">
@@ -122,12 +125,12 @@ function LogSettings({
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
-          id="timestamps"
+          id={timestampsId}
           checked={timestamps}
           onChange={(e) => setTimestamps(e.target.checked)}
           className="bg-zinc-700 border-zinc-600"
         />
-        <label htmlFor="timestamps" className="text-sm text-zinc-400">
+        <label htmlFor={timestampsId} className="text-sm text-zinc-400">
           Show timestamps
         </label>
       </div>
@@ -135,12 +138,12 @@ function LogSettings({
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
-          id="wrapLogs"
+          id={wrapLogsId}
           checked={wrapLogs}
           onChange={(e) => setWrapLogs(e.target.checked)}
           className="bg-zinc-700 border-zinc-600"
         />
-        <label htmlFor="wrapLogs" className="text-sm text-zinc-400">
+        <label htmlFor={wrapLogsId} className="text-sm text-zinc-400">
           Wrap logs
         </label>
       </div>

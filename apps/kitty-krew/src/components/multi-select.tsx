@@ -25,8 +25,10 @@ export function MultiSelect({
   const [focusedIndex, setFocusedIndex] = React.useState(-1)
   const containerRef = React.useRef<HTMLDivElement>(null)
   const searchInputRef = React.useRef<HTMLInputElement>(null)
-  const optionRefs = React.useRef<(HTMLButtonElement | null)[]>([])
+  const optionRefs = React.useRef<(HTMLDivElement | null)[]>([])
   const triggerButtonRef = React.useRef<HTMLButtonElement>(null)
+  const dropdownId = React.useId()
+  const optionsListId = React.useId()
 
   // Filter options based on search input
   const filteredOptions = React.useMemo(() => {
@@ -202,7 +204,7 @@ export function MultiSelect({
   }, [])
 
   // Set up option refs
-  const setOptionRef = React.useCallback((element: HTMLButtonElement | null, index: number) => {
+  const setOptionRef = React.useCallback((element: HTMLDivElement | null, index: number) => {
     optionRefs.current[index] = element
   }, [])
 
@@ -230,7 +232,7 @@ export function MultiSelect({
         onClick={toggleDropdown}
         onKeyDown={handleTriggerKeyDown}
         className="w-full h-[38px] px-3 py-1.5 bg-zinc-800 text-zinc-400/90 rounded-md border border-zinc-700 focus:outline-none focus:ring-2 focus:ring-zinc-600 flex items-center justify-between"
-        aria-controls="multi-select-dropdown"
+        aria-controls={dropdownId}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
       >
@@ -252,7 +254,7 @@ export function MultiSelect({
 
       {isOpen && (
         <dialog
-          id="multi-select-dropdown"
+          id={dropdownId}
           className="absolute z-10 mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-md shadow-lg max-h-60 overflow-auto"
           aria-label="Options"
           open
@@ -267,7 +269,7 @@ export function MultiSelect({
                 onKeyDown={(e) => handleKeyDown(e)}
                 placeholder="Search..."
                 className="w-full px-3 py-1 bg-zinc-700 text-zinc-300 rounded-md border border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-500 placeholder:text-zinc-400/50 placeholder:text-sm text-sm"
-                aria-controls="multi-select-options"
+                aria-controls={optionsListId}
                 aria-autocomplete="list"
               />
               <svg
@@ -288,20 +290,33 @@ export function MultiSelect({
               </svg>
             </div>
           </div>
-          <div id="multi-select-options" className="py-1">
+          <div
+            id={optionsListId}
+            role="listbox"
+            aria-multiselectable="true"
+            aria-activedescendant={
+              focusedIndex >= 0 && filteredOptions[focusedIndex]
+                ? `${optionsListId}-option-${filteredOptions[focusedIndex].value}`
+                : undefined
+            }
+            className="py-1"
+            tabIndex={-1}
+          >
             {filteredOptions.length > 0 ? (
               filteredOptions.map((option, index) => (
-                <button
+                <div
                   key={option.value}
+                  id={`${optionsListId}-option-${option.value}`}
                   ref={(el) => setOptionRef(el, index)}
-                  type="button"
+                  role="option"
+                  aria-selected={value.includes(option.value)}
+                  tabIndex={-1}
                   onClick={() => handleOptionClick(option.value)}
                   onKeyDown={(e) => handleKeyDown(e, option.value)}
+                  onMouseEnter={() => setFocusedIndex(index)}
                   className={`text-sm w-full px-3 py-2 flex items-center hover:bg-zinc-700 cursor-pointer text-left ${
                     focusedIndex === index ? 'bg-zinc-700' : ''
                   }`}
-                  aria-selected={value.includes(option.value)}
-                  tabIndex={-1}
                 >
                   <div className="mr-2 h-4 w-4 border border-zinc-500 rounded flex items-center justify-center">
                     {value.includes(option.value) && (
@@ -322,7 +337,7 @@ export function MultiSelect({
                     )}
                   </div>
                   <span className="text-zinc-300">{option.label}</span>
-                </button>
+                </div>
               ))
             ) : (
               <div className="px-3 py-2 text-zinc-400 text-sm">No options found</div>

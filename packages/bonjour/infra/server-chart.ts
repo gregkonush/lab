@@ -17,6 +17,9 @@ export interface ServerChartProps extends ChartProps {
   readonly replicas?: number
   readonly containerPort?: number
   readonly cpuTargetUtilizationPercent?: number
+  readonly tempoTracesEndpoint?: string
+  readonly mimirMetricsEndpoint?: string
+  readonly lokiEndpoint?: string
 }
 
 export class ServerChart extends Chart {
@@ -29,7 +32,13 @@ export class ServerChart extends Chart {
     const minReplicas = Math.max(props.replicas ?? 1, 1)
     const targetCpu = Math.min(Math.max(props.cpuTargetUtilizationPercent ?? 70, 1), 100)
 
-   const deployment = new Deployment(this, 'server', {
+    const tempoTracesEndpoint =
+      props.tempoTracesEndpoint ?? 'http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces'
+    const mimirMetricsEndpoint =
+      props.mimirMetricsEndpoint ?? 'http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics'
+    const lokiEndpoint = props.lokiEndpoint ?? 'http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push'
+
+    const deployment = new Deployment(this, 'server', {
       metadata: {
         namespace,
         labels: {
@@ -56,6 +65,13 @@ export class ServerChart extends Chart {
       envVariables: {
         PORT: EnvValue.fromValue(String(port)),
         NODE_ENV: EnvValue.fromValue('production'),
+        OTEL_SERVICE_NAME: EnvValue.fromValue(appLabel),
+        LGTM_TEMPO_TRACES_ENDPOINT: EnvValue.fromValue(tempoTracesEndpoint),
+        LGTM_MIMIR_METRICS_ENDPOINT: EnvValue.fromValue(mimirMetricsEndpoint),
+        LGTM_LOKI_ENDPOINT: EnvValue.fromValue(lokiEndpoint),
+        OTEL_EXPORTER_OTLP_PROTOCOL: EnvValue.fromValue('http/protobuf'),
+        POD_NAME: EnvValue.fromFieldPath('metadata.name'),
+        POD_NAMESPACE: EnvValue.fromFieldPath('metadata.namespace'),
       },
       securityContext: {
         ensureNonRoot: true,
