@@ -197,6 +197,27 @@ spec:
           jqPathExpressions:
             - .spec.volumeClaimTemplates[].apiVersion
             - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+            - .spec.volumeClaimTemplates[].status
+            - .spec.persistentVolumeClaimRetentionPolicy
+            - .spec.podManagementPolicy
+            - .spec.updateStrategy.type
+            - .spec.updateStrategy.rollingUpdate.partition
+            - .spec.template.spec.serviceAccount
+            - .spec.template.spec.dnsPolicy
+            - .spec.template.spec.restartPolicy
+            - .spec.template.spec.schedulerName
+            - .spec.template.spec.volumes[].configMap.defaultMode
+            - .spec.template.spec.containers[].livenessProbe.failureThreshold
+            - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].livenessProbe.periodSeconds
+            - .spec.template.spec.containers[].livenessProbe.successThreshold
+            - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+            - .spec.template.spec.containers[].readinessProbe.failureThreshold
+            - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].readinessProbe.periodSeconds
+            - .spec.template.spec.containers[].readinessProbe.successThreshold
+            - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
         - kind: Deployment
           group: apps
           namespace: istio-system
