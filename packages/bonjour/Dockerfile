@@ -3,6 +3,7 @@
 FROM node:22.19.0-bullseye-slim AS builder
 ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+ENV HUSKY=0
 RUN corepack enable
 WORKDIR /workspace
 
@@ -22,6 +23,7 @@ RUN pnpm --filter @proompteng/bonjour build
 FROM node:22.19.0-bullseye-slim AS prod-deps
 ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+ENV HUSKY=0
 RUN corepack enable
 WORKDIR /workspace
 
