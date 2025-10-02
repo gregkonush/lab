@@ -79,6 +79,13 @@ spec:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
             enabled: "true"
+          - name: lgtm
+            path: argocd/applications/lgtm
+            namespace: lgtm
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "true"
           - name: minio
             path: argocd/applications/minio
             namespace: minio
@@ -163,7 +170,7 @@ spec:
             values: ["false", "False", "0"]
   template:
     metadata:
-      name: '{{ .name }}'
+      name: "{{ .name }}"
     spec:
       project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
       destination:
@@ -172,7 +179,7 @@ spec:
       source:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
-        path: '{{ .path }}'
+        path: "{{ .path }}"
       syncPolicy:
         syncOptions:
           - CreateNamespace=true
