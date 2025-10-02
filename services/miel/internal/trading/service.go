@@ -7,16 +7,18 @@ import (
 
 	sdkalpaca "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
 	"github.com/gregkonush/lab/services/miel/internal/alpaca"
+	"github.com/gregkonush/lab/services/miel/internal/ledger"
 )
 
 // Service exposes trading-centric operations powered by Alpaca.
 type Service struct {
 	client *alpaca.Client
+	ledger ledger.Recorder
 }
 
 // NewService wires an Alpaca client into the trading service.
-func NewService(client *alpaca.Client) *Service {
-	return &Service{client: client}
+func NewService(client *alpaca.Client, recorder ledger.Recorder) *Service {
+	return &Service{client: client, ledger: recorder}
 }
 
 // SubmitMarketOrder is a convenience wrapper that validates user input before
@@ -29,13 +31,24 @@ func (s *Service) SubmitMarketOrder(ctx context.Context, symbol string, qty floa
 
 	alpacaTIF := parseTimeInForce(tif)
 
-	return s.client.PlaceMarketOrder(ctx, alpaca.MarketOrderInput{
+	order, err := s.client.PlaceMarketOrder(ctx, alpaca.MarketOrderInput{
 		Symbol:        strings.ToUpper(symbol),
 		Quantity:      qty,
 		Side:          alpacaSide,
 		TimeInForce:   alpacaTIF,
 		ExtendedHours: extended,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	if s.ledger != nil {
+		if err := s.ledger.RecordOrder(ctx, order); err != nil {
+			return nil, fmt.Errorf("record order in ledger: %w", err)
+		}
+	}
+
+	return order, nil
 }
 
 func parseSide(side string) (sdkalpaca.Side, error) {

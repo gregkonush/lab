@@ -17,6 +17,28 @@ The deployment expects a `Secret` named `miel-secrets` in the same namespace wit
 
 Provision these via SealedSecrets or your preferred secret management flow. The values populate the `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` environment variables.
 
+## TigerBeetle Integration
+
+TigerBeetle support is disabled by default (`TIGERBEETLE_ENABLED=false`). To emit ledger transfers you must update `miel-config` with:
+
+- `TIGERBEETLE_ENABLED=true`
+- `TIGERBEETLE_ADDRESSES` (comma-separated replica addresses)
+- `TIGERBEETLE_CLUSTER_ID`
+- `TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID` and `TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID`
+- Optionally override `TIGERBEETLE_LEDGER`, `TIGERBEETLE_ORDER_CODE`, `TIGERBEETLE_BACKTEST_CODE`, `TIGERBEETLE_AMOUNT_SCALE`, and the backtest-specific account IDs.
+
+Restart the deployment after updating the ConfigMap so the new environment variables are applied.
+
+## Observability (LGTM)
+
+`miel-config` now hydrates OpenTelemetry defaults that point at the in-cluster LGTM stack:
+
+- `OTEL_SERVICE_NAME=miel`
+- `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
+- OTLP endpoints for traces (`lgtm-tempo-distributor`), metrics (`lgtm-mimir-nginx`), and logs (`lgtm-loki-gateway`).
+
+Override these values as needed for other environments, then restart the deployment (or let Argo CD roll pods) to pick up the new telemetry configuration.
+
 ## Image Updates
 
 Use `scripts/build-miel.sh <tag>` to build and push a new container image. Update the `image` field in `deployment.yaml` (or manage via Argo CD Image Updater) to roll out the new version.

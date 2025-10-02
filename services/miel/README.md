@@ -26,15 +26,38 @@ services/miel/
 
 Set the following environment variables before running the service. Paper-trading endpoints are used by default.
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `HTTP_PORT` | HTTP listen port. Prefix with `:` if desired. | `8080` |
-| `ALPACA_API_KEY` | Alpaca API key (paper or live). | _required_ |
-| `ALPACA_SECRET_KEY` | Alpaca API secret. | _required_ |
-| `ALPACA_BASE_URL` | Trading REST base URL. | `https://paper-api.alpaca.markets` |
-| `ALPACA_DATA_BASE_URL` | Market data REST base URL. | `https://data.alpaca.markets` |
-| `ALPACA_REQUEST_TIMEOUT_SECONDS` | Timeout applied to outbound Alpaca calls. | `30` |
-| `BACKTEST_MAX_BARS` | Maximum bars fetched per backtest request. | `5000` |
+| Variable                              | Description                                   | Default                                   |
+| ------------------------------------- | --------------------------------------------- | ----------------------------------------- |
+| `HTTP_PORT`                           | HTTP listen port. Prefix with `:` if desired. | `8080`                                    |
+| `ALPACA_API_KEY`                      | Alpaca API key (paper or live).               | _required_                                |
+| `ALPACA_SECRET_KEY`                   | Alpaca API secret.                            | _required_                                |
+| `ALPACA_BASE_URL`                     | Trading REST base URL.                        | `https://paper-api.alpaca.markets`        |
+| `ALPACA_DATA_BASE_URL`                | Market data REST base URL.                    | `https://data.alpaca.markets`             |
+| `ALPACA_REQUEST_TIMEOUT_SECONDS`      | Timeout applied to outbound Alpaca calls.     | `30`                                      |
+| `BACKTEST_MAX_BARS`                   | Maximum bars fetched per backtest request.    | `5000`                                    |
+| `OTEL_SERVICE_NAME`                   | Service name reported to OpenTelemetry/LGTM.  | `miel`                                    |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`         | OTLP transport protocol.                      | `http/protobuf`                           |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | OTLP traces endpoint (LGTM Tempo).            | `http://lgtm-tempo-distributor.lgtm:4318` |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | OTLP metrics endpoint (LGTM Mimir).           | `http://lgtm-mimir-nginx.lgtm/otlp`       |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`    | OTLP logs endpoint (LGTM Loki).               | `http://lgtm-loki-gateway.lgtm/otlp`      |
+
+### TigerBeetle ledger (optional)
+
+Enable ledger recording to TigerBeetle by setting `TIGERBEETLE_ENABLED=true` and supplying the additional parameters below. Orders and backtest net P&L are written as transfers.
+
+| Variable                                 | Description                                                                      | Default                 |
+| ---------------------------------------- | -------------------------------------------------------------------------------- | ----------------------- |
+| `TIGERBEETLE_ENABLED`                    | Toggle TigerBeetle integration.                                                  | `false`                 |
+| `TIGERBEETLE_ADDRESSES`                  | Comma-separated replica addresses (e.g., `127.0.0.1:3000`).                      | _required when enabled_ |
+| `TIGERBEETLE_CLUSTER_ID`                 | Cluster identifier provided when bootstrapping TigerBeetle.                      | _required when enabled_ |
+| `TIGERBEETLE_LEDGER`                     | Ledger identifier used for transfers.                                            | `1`                     |
+| `TIGERBEETLE_ORDER_CODE`                 | Transfer code for Alpaca order entries.                                          | `100`                   |
+| `TIGERBEETLE_BACKTEST_CODE`              | Transfer code for backtest P&L entries.                                          | `200`                   |
+| `TIGERBEETLE_AMOUNT_SCALE`               | Decimal precision (power of 10) applied before storing amounts.                  | `6`                     |
+| `TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID`     | Account debited for buy orders (credited for sells).                             | _required when enabled_ |
+| `TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID`    | Account credited for buy orders (debited for sells).                             | _required when enabled_ |
+| `TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID`  | Account debited for profitable backtests (defaults to order debit when unset).   | _optional_              |
+| `TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID` | Account credited for profitable backtests (defaults to order credit when unset). | _optional_              |
 
 ## Developing Locally
 
