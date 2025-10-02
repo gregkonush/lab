@@ -50,6 +50,86 @@ spec:
                 configMapKeyRef:
                   name: miel-config
                   key: BACKTEST_MAX_BARS
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_SERVICE_NAME
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_PROTOCOL
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            - name: TIGERBEETLE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ENABLED
+            - name: TIGERBEETLE_ADDRESSES
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ADDRESSES
+            - name: TIGERBEETLE_CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_CLUSTER_ID
+            - name: TIGERBEETLE_LEDGER
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_LEDGER
+            - name: TIGERBEETLE_ORDER_CODE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_CODE
+            - name: TIGERBEETLE_BACKTEST_CODE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_CODE
+            - name: TIGERBEETLE_AMOUNT_SCALE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_AMOUNT_SCALE
+            - name: TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID
+            - name: TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID
+            - name: TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID
+            - name: TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID
             - name: ALPACA_API_KEY
               valueFrom:
                 secretKeyRef:

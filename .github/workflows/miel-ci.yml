@@ -3,15 +3,15 @@ name: miel
 on:
   push:
     paths:
-      - 'services/miel/**'
-      - '.github/workflows/miel-ci.yml'
+      - "services/miel/**"
+      - ".github/workflows/miel-ci.yml"
   pull_request:
     paths:
-      - 'services/miel/**'
-      - '.github/workflows/miel-ci.yml'
+      - "services/miel/**"
+      - ".github/workflows/miel-ci.yml"
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
@@ -19,8 +19,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.1'
+          go-version: "1.24.1"
           cache: true
-      - name: Run miel tests
+      - name: Download dependencies
+        working-directory: services/miel
+        run: go mod download
+      - name: Build
+        working-directory: services/miel
+        run: go build ./...
+      - name: Vet
+        working-directory: services/miel
+        run: go vet ./...
+      - name: Test
         working-directory: services/miel
         run: go test ./...

@@ -8,7 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gregkonush/lab/services/miel/internal/alpaca"
 	"github.com/gregkonush/lab/services/miel/internal/backtest"
+	"github.com/gregkonush/lab/services/miel/internal/ledger"
 	"github.com/gregkonush/lab/services/miel/internal/trading"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 // Server wires HTTP routes to business services.
@@ -16,18 +18,21 @@ type Server struct {
 	router   *gin.Engine
 	trading  *trading.Service
 	backtest *backtest.Engine
+	ledger   ledger.Recorder
 }
 
 // New constructs a Server with all dependencies pre-wired.
-func New(tradingSvc *trading.Service, backtestEngine *backtest.Engine) *Server {
+func New(serviceName string, tradingSvc *trading.Service, backtestEngine *backtest.Engine, recorder ledger.Recorder) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(otelgin.Middleware(serviceName))
 
 	s := &Server{
 		router:   r,
 		trading:  tradingSvc,
 		backtest: backtestEngine,
+		ledger:   recorder,
 	}
 
 	s.registerRoutes()
@@ -125,6 +130,13 @@ func (s *Server) handleBacktest(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if s.ledger != nil {
+		if err := s.ledger.RecordBacktest(c.Request.Context(), result); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, result)
