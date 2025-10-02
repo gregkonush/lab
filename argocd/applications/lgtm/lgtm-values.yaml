@@ -143,6 +143,14 @@ mimir:
 
 tempo:
   enabled: true
+  gateway:
+    enabled: true
+  traces:
+    otlp:
+      http:
+        enabled: true
+      grpc:
+        enabled: true
   ingester:
     replicas: 1
     persistence:
