@@ -1,0 +1,21 @@
+[package]
+name = "ledger"
+version = "0.1.0"
+edition = "2021"
+description = "Ledger desktop app"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "1", features = ["dialog-all", "shell-open", "window-start-dragging"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+libsql = { version = "0.9.24" }
+thiserror = "1"
+chrono = { version = "0.4", default-features = false, features = ["alloc", "std"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = []
