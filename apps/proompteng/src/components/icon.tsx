@@ -11,7 +11,7 @@ import {
   Network,
   Server,
   ShieldCheck,
-} from 'lucide-react'
+} from "lucide-react";
 
 const ICON_MAP = {
   Activity,
@@ -26,19 +26,21 @@ const ICON_MAP = {
   Network,
   Server,
   ShieldCheck,
-}
+};
 
-export type IconName = keyof typeof ICON_MAP
+export type IconName = keyof typeof ICON_MAP;
 
 export function Icon({
   name,
   className,
   strokeWidth,
 }: {
-  name: IconName
-  className?: string
-  strokeWidth?: number
+  name: IconName;
+  className?: string;
+  strokeWidth?: number;
 }) {
-  const Comp = ICON_MAP[name]
-  return <Comp aria-hidden className={className} strokeWidth={strokeWidth ?? 1.5} />
+  const Comp = ICON_MAP[name];
+  return (
+    <Comp aria-hidden className={className} strokeWidth={strokeWidth ?? 1.5} />
+  );
 }

@@ -1,12 +1,14 @@
-import Link from 'next/link'
+import Link from "next/link";
 
 export default function DocsPage() {
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col items-start gap-4 px-6 py-16">
-      <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">documentation hub</p>
+      <p className="text-sm uppercase tracking-[0.3em] text-muted-foreground">
+        documentation hub
+      </p>
       <h1 className="text-3xl font-semibold tracking-tight">Docs moved</h1>
       <p className="text-muted-foreground">
-        Our documentation now lives at{' '}
+        Our documentation now lives at{" "}
         <Link
           href="https://docs.proompteng.ai"
           className="font-medium text-primary underline"
@@ -15,7 +17,8 @@ export default function DocsPage() {
         >
           docs.proompteng.ai
         </Link>
-        . You will find onboarding guides, API references, and governance playbooks there.
+        . You will find onboarding guides, API references, and governance
+        playbooks there.
       </p>
       <Link
         href="https://docs.proompteng.ai"
@@ -26,5 +29,5 @@ export default function DocsPage() {
         Visit documentation
       </Link>
     </main>
-  )
+  );
 }

@@ -1,10 +1,10 @@
-'use client'
+"use client";
 
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import type { ReactNode } from 'react'
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
 
-import { Icon, type IconName } from '@/components/icon'
+import { Icon, type IconName } from "@/components/icon";
 import {
   Sidebar,
   SidebarContent,
@@ -19,14 +19,14 @@ import {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
-} from '@/components/ui/sidebar'
+} from "@/components/ui/sidebar";
 
 const NAV_ITEMS: { href: string; label: string; icon: IconName }[] = [
-  { href: '/app/agents', label: 'Agents', icon: 'Activity' },
-]
+  { href: "/app/agents", label: "Agents", icon: "Activity" },
+];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
-  const pathname = usePathname()
+  const pathname = usePathname();
 
   return (
     <SidebarProvider>
@@ -55,7 +55,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 <SidebarMenu>
                   {NAV_ITEMS.map((item) => (
                     <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton asChild tooltip={item.label} isActive={pathname?.startsWith(item.href)}>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip={item.label}
+                        isActive={pathname?.startsWith(item.href)}
+                      >
                         <Link
                           href={item.href}
                           className="flex min-w-0 items-center gap-2 overflow-hidden group-data-[collapsible=icon]:gap-0 group-data-[state=collapsed]:gap-0"
@@ -85,5 +89,5 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </SidebarInset>
       </div>
     </SidebarProvider>
-  )
+  );
 }

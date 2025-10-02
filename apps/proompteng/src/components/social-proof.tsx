@@ -1,4 +1,4 @@
-import { SOCIAL_PROOF } from '@/app/config'
+import { SOCIAL_PROOF } from "@/app/config";
 
 export default function SocialProof() {
   return (
@@ -8,13 +8,19 @@ export default function SocialProof() {
     >
       <div className="mx-auto flex max-w-4xl flex-col items-center gap-4 text-center sm:flex-row sm:justify-between sm:text-left">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-primary">trusted by launch partners</p>
-          <h2 id="social-proof-heading" className="mt-2 text-2xl font-semibold tracking-tight">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-primary">
+            trusted by launch partners
+          </p>
+          <h2
+            id="social-proof-heading"
+            className="mt-2 text-2xl font-semibold tracking-tight"
+          >
             Designed with teams operating regulated workloads
           </h2>
         </div>
         <p className="max-w-sm text-sm text-muted-foreground sm:text-right">
-          From biotech to fintech, proompteng keeps governance and velocity in the same workflow.
+          From biotech to fintech, proompteng keeps governance and velocity in
+          the same workflow.
         </p>
       </div>
 
@@ -31,5 +37,5 @@ export default function SocialProof() {
         ))}
       </div>
     </section>
-  )
+  );
 }

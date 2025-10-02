@@ -1,53 +1,65 @@
-'use client'
+"use client";
 
-import { api } from '@proompteng/backend/convex/_generated/api'
-import { useQuery } from 'convex/react'
+import { api } from "@proompteng/backend/convex/_generated/api";
+import { useQuery } from "convex/react";
 
-import { Icon, type IconName } from '@/components/icon'
-import ModelsGrid from '@/components/models-grid'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Icon, type IconName } from "@/components/icon";
+import ModelsGrid from "@/components/models-grid";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL
+const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 
 const AGENT_PATTERNS: { icon: IconName; title: string; text: string }[] = [
   {
-    icon: 'Activity',
-    title: 'policy-first orchestration',
-    text: 'call proompteng routing from convex actions with guardrails baked in.',
+    icon: "Activity",
+    title: "policy-first orchestration",
+    text: "call proompteng routing from convex actions with guardrails baked in.",
   },
   {
-    icon: 'Eye',
-    title: 'observability on tap',
-    text: 'store traces, evals, and cost metrics in convex for instant dashboards.',
+    icon: "Eye",
+    title: "observability on tap",
+    text: "store traces, evals, and cost metrics in convex for instant dashboards.",
   },
   {
-    icon: 'KeyRound',
-    title: 'role aware sessions',
-    text: 'enforce scopes and pii policies per agent run with convex auth hooks.',
+    icon: "KeyRound",
+    title: "role aware sessions",
+    text: "enforce scopes and pii policies per agent run with convex auth hooks.",
   },
   {
-    icon: 'Network',
-    title: 'tool + memory mesh',
-    text: 'hydrate rag, tools, and memories across agents without moving infra.',
+    icon: "Network",
+    title: "tool + memory mesh",
+    text: "hydrate rag, tools, and memories across agents without moving infra.",
   },
-]
+];
 
 export default function AgentsPage() {
   return (
     <div className="space-y-12">
       <section className="space-y-4">
         <div className="max-w-2xl space-y-3">
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Agents workspace</h2>
+          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            Agents workspace
+          </h2>
           <p className="text-sm text-muted-foreground sm:text-base">
-            Monitor live sessions, review routing policies, and connect proompteng orchestration to Convex state without
-            switching tabs.
+            Monitor live sessions, review routing policies, and connect
+            proompteng orchestration to Convex state without switching tabs.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
           {AGENT_PATTERNS.map((pattern) => (
-            <Badge key={pattern.title} variant="outline" className="gap-1 px-3 py-1 text-xs">
+            <Badge
+              key={pattern.title}
+              variant="outline"
+              className="gap-1 px-3 py-1 text-xs"
+            >
               <Icon name={pattern.icon} className="size-3" />
               {pattern.title}
             </Badge>
@@ -57,7 +69,9 @@ export default function AgentsPage() {
 
       {convexUrl ? (
         <section className="space-y-6">
-          <h3 className="text-2xl font-semibold tracking-tight">Active agents</h3>
+          <h3 className="text-2xl font-semibold tracking-tight">
+            Active agents
+          </h3>
           <LiveAgentsList />
         </section>
       ) : null}
@@ -68,14 +82,14 @@ export default function AgentsPage() {
 
       <RealTimePlaySection />
     </div>
-  )
+  );
 }
 
 function LiveAgentsList() {
-  const agents = useQuery(api.agents.list, {})
+  const agents = useQuery(api.agents.list, {});
 
   if (agents === undefined) {
-    return <AgentsSkeleton />
+    return <AgentsSkeleton />;
   }
 
   if (!agents.length) {
@@ -83,29 +97,35 @@ function LiveAgentsList() {
       <div className="rounded-2xl border border-dashed border-border/60 bg-card/20 p-6 text-sm text-muted-foreground">
         <p className="text-base font-semibold text-foreground">No agents yet</p>
         <p className="mt-2">
-          Deploy an agent through proompteng to see live status, routing data, and tags in this list.
+          Deploy an agent through proompteng to see live status, routing data,
+          and tags in this list.
         </p>
       </div>
-    )
+    );
   }
 
   return (
     <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/60 bg-card/40">
       {agents.map((agent) => (
-        <li key={agent._id} className="flex flex-col gap-3 p-5 transition hover:bg-card/60">
+        <li
+          key={agent._id}
+          className="flex flex-col gap-3 p-5 transition hover:bg-card/60"
+        >
           <div className="flex items-start gap-3">
             <div className="rounded-lg border border-border/40 bg-primary/10 p-2">
               <Icon name="Activity" className="size-5" />
             </div>
             <div className="space-y-1">
-              <p className="text-base font-semibold text-foreground">{agent.name}</p>
+              <p className="text-base font-semibold text-foreground">
+                {agent.name}
+              </p>
               <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">
                 model {agent.modelSlug} · status {agent.status}
               </p>
             </div>
           </div>
           <p className="text-sm text-muted-foreground line-clamp-3">
-            {agent.description || 'No description provided.'}
+            {agent.description || "No description provided."}
           </p>
           {agent.tags.length ? (
             <div className="flex flex-wrap gap-1">
@@ -119,11 +139,11 @@ function LiveAgentsList() {
         </li>
       ))}
     </ul>
-  )
+  );
 }
 
 function AgentsSkeleton() {
-  const placeholders = ['alpha', 'beta', 'gamma', 'delta']
+  const placeholders = ["alpha", "beta", "gamma", "delta"];
   return (
     <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/40 bg-card/20">
       {placeholders.map((key) => (
@@ -145,37 +165,43 @@ function AgentsSkeleton() {
         </li>
       ))}
     </ul>
-  )
+  );
 }
 
 function RealTimePlaySection() {
   const CODE_EXAMPLES = [
     {
-      value: 'action',
-      label: 'Action: orchestrate models',
-      description: 'Call proompteng from a Convex action to pick the best model and persist inference telemetry.',
+      value: "action",
+      label: "Action: orchestrate models",
+      description:
+        "Call proompteng from a Convex action to pick the best model and persist inference telemetry.",
       code: ROUTE_PROMPT_CODE,
     },
     {
-      value: 'query',
-      label: 'Query: realtime feed',
-      description: 'Stream the latest inferences (optionally filtered by session) into any Convex-powered dashboard.',
+      value: "query",
+      label: "Query: realtime feed",
+      description:
+        "Stream the latest inferences (optionally filtered by session) into any Convex-powered dashboard.",
       code: LIVE_FEED_CODE,
     },
     {
-      value: 'client',
-      label: 'Client: live console',
-      description: 'Use Convex hooks to render an always-fresh view of model responses, evals, and manual reruns.',
+      value: "client",
+      label: "Client: live console",
+      description:
+        "Use Convex hooks to render an always-fresh view of model responses, evals, and manual reruns.",
       code: CLIENT_PANEL_CODE,
     },
-  ] as const
+  ] as const;
 
   return (
     <section className="space-y-4">
-      <h3 className="text-2xl font-semibold tracking-tight">Realtime playbook</h3>
+      <h3 className="text-2xl font-semibold tracking-tight">
+        Realtime playbook
+      </h3>
       <p className="max-w-3xl text-sm text-muted-foreground">
-        Drop these snippets into your <code>convex/</code> directory and React clients to orchestrate models, persist
-        telemetry, and render live views without manual polling.
+        Drop these snippets into your <code>convex/</code> directory and React
+        clients to orchestrate models, persist telemetry, and render live views
+        without manual polling.
       </p>
       <Tabs defaultValue={CODE_EXAMPLES[0].value} className="space-y-4">
         <TabsList>
@@ -202,7 +228,7 @@ function RealTimePlaySection() {
         ))}
       </Tabs>
     </section>
-  )
+  );
 }
 
 const ROUTE_PROMPT_CODE = `import { action } from './_generated/server';
@@ -244,7 +270,7 @@ export const routePrompt = action({
 
     return result;
   },
-});` as const
+});` as const;
 
 const LIVE_FEED_CODE = `import { query } from './_generated/server';
 import { v } from 'convex/values';
@@ -264,7 +290,7 @@ export const liveInferenceFeed = query({
 
     return await feed.order('desc').take(limit);
   },
-});` as const
+});` as const;
 
 const CLIENT_PANEL_CODE = `'use client';
 
@@ -309,4 +335,4 @@ export function LiveInferencePanel({ sessionId }: Props) {
       ))}
     </div>
   );
-}` as const
+}` as const;

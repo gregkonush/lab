@@ -1,23 +1,26 @@
-import { ArrowRight, Check, ChevronRight } from 'lucide-react'
-import Link from 'next/link'
-import { HERO, PRIMARY_CTA_HREF } from '@/app/config'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { cn } from '@/lib/utils'
+import { ArrowRight, Check, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { HERO, PRIMARY_CTA_HREF } from "@/app/config";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export default function Hero() {
-  const reassuranceId = 'cta-reassurance'
+  const reassuranceId = "cta-reassurance";
 
   return (
     <section
       aria-labelledby="hero-heading"
       className="relative isolate overflow-hidden rounded-3xl border bg-card/80 px-6 py-16 text-center shadow-sm backdrop-blur sm:px-12"
     >
-      <div aria-hidden className="pointer-events-none absolute inset-0 -z-[1] overflow-hidden">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-[1] overflow-hidden"
+      >
         <div className="absolute left-1/2 top-[-65%] h-[560px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,_rgba(129,140,248,0.07),_transparent_85%)] blur-[140px] opacity-55 animate-hero-glow" />
         <div
           className="absolute bottom-[-52%] right-[-26%] h-[520px] w-[640px] rounded-full bg-[radial-gradient(circle,_rgba(70,88,242,0.05),_transparent_84%)] blur-[160px] opacity-45 animate-hero-glow"
-          style={{ animationDelay: '4s' }}
+          style={{ animationDelay: "4s" }}
         />
       </div>
 
@@ -38,7 +41,10 @@ export default function Hero() {
           </Link>
         ) : null}
 
-        <h1 id="hero-heading" className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-6xl">
+        <h1
+          id="hero-heading"
+          className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-6xl"
+        >
           {HERO.headline}
         </h1>
         <p className="mx-auto mt-4 max-w-3xl text-pretty text-base text-muted-foreground sm:text-xl">
@@ -47,7 +53,11 @@ export default function Hero() {
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button asChild size="lg" aria-describedby={reassuranceId}>
-            <a href={PRIMARY_CTA_HREF} target="_blank" rel="noopener noreferrer">
+            <a
+              href={PRIMARY_CTA_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               {HERO.ctaLabel}
               <ArrowRight className="size-5" />
             </a>
@@ -56,7 +66,10 @@ export default function Hero() {
             <a href={HERO.secondaryCtaHref}>{HERO.secondaryCtaLabel}</a>
           </Button>
         </div>
-        <p id={reassuranceId} className="mt-3 text-xs uppercase tracking-wide text-muted-foreground">
+        <p
+          id={reassuranceId}
+          className="mt-3 text-xs uppercase tracking-wide text-muted-foreground"
+        >
           {HERO.deRisk}
         </p>
       </div>
@@ -72,19 +85,21 @@ export default function Hero() {
                 <Check className="size-4 text-primary" strokeWidth={2} />
                 {title}
               </dt>
-              <dd className="mt-2 text-sm text-muted-foreground">{description}</dd>
+              <dd className="mt-2 text-sm text-muted-foreground">
+                {description}
+              </dd>
             </div>
             <div
               aria-hidden
               className={cn(
-                'pointer-events-none absolute inset-x-6 bottom-0 h-px',
-                'bg-gradient-to-r from-transparent via-ring/40 to-transparent opacity-0',
-                'transition-opacity duration-300 group-hover:opacity-100',
+                "pointer-events-none absolute inset-x-6 bottom-0 h-px",
+                "bg-gradient-to-r from-transparent via-ring/40 to-transparent opacity-0",
+                "transition-opacity duration-300 group-hover:opacity-100",
               )}
             />
           </div>
         ))}
       </dl>
     </section>
-  )
+  );
 }
