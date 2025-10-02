@@ -118,10 +118,15 @@ export function CommandPalette() {
 
   if (!isOpen) return null
 
+  const activeOptionId = filteredPods[selectedIndex]?.metadata?.name
+    ? `pod-${filteredPods[selectedIndex].metadata?.namespace}-${filteredPods[selectedIndex].metadata?.name}`
+    : undefined
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center pt-[20vh]">
       <div
         ref={commandPaletteRef}
+        role="dialog"
         aria-modal="true"
         aria-label="Command palette"
         className="w-full max-w-2xl bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl overflow-hidden"
@@ -166,45 +171,41 @@ export function CommandPalette() {
           {!isLoading && filteredPods.length > 0 && (
             <div
               className="divide-y divide-zinc-800"
-              // biome-ignore lint/a11y/useSemanticElements: Using custom listbox UI
               role="listbox"
               tabIndex={0}
               aria-label="Pod search results"
-              aria-activedescendant={
-                filteredPods[selectedIndex]?.metadata?.name
-                  ? `pod-${filteredPods[selectedIndex].metadata.namespace}-${filteredPods[selectedIndex].metadata.name}`
-                  : undefined
-              }
+              aria-activedescendant={activeOptionId}
             >
-              <span className="sr-only">Use up and down arrow keys to navigate, Enter to select a pod.</span>
-              {filteredPods.map((pod, index) => (
-                <button
-                  type="button"
-                  key={`${pod.metadata?.namespace}/${pod.metadata?.name}`}
-                  id={`pod-${pod.metadata?.namespace}-${pod.metadata?.name}`}
-                  // biome-ignore lint/a11y/useSemanticElements: Using custom option UI
-                  role="option"
-                  // eslint-disable-next-line jsx-a11y/no-interactive-element-to-noninteractive-role
-                  aria-selected={index === selectedIndex}
-                  className={cn(
-                    'w-full text-left px-4 py-3 cursor-pointer flex justify-between items-center hover:bg-zinc-800 transition-colors',
-                    index === selectedIndex && 'bg-zinc-800',
-                  )}
-                  onClick={() => navigateToPod(pod)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      navigateToPod(pod)
-                    }
-                  }}
-                >
-                  <div className="flex flex-col">
-                    <span className="text-zinc-200 font-medium">{pod.metadata?.name}</span>
-                    <span className="text-zinc-400 text-sm">Namespace: {pod.metadata?.namespace}</span>
+              {filteredPods.map((pod, index) => {
+                const optionId = `pod-${pod.metadata?.namespace}-${pod.metadata?.name}`
+
+                return (
+                  <div
+                    key={`${pod.metadata?.namespace}/${pod.metadata?.name}`}
+                    id={optionId}
+                    role="option"
+                    aria-selected={index === selectedIndex}
+                    tabIndex={-1}
+                    className={cn(
+                      'text-left px-4 py-3 cursor-pointer flex justify-between items-center hover:bg-zinc-800 transition-colors focus:outline-none',
+                      index === selectedIndex && 'bg-zinc-800',
+                    )}
+                    onClick={() => navigateToPod(pod)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        navigateToPod(pod)
+                      }
+                    }}
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-zinc-200 font-medium">{pod.metadata?.name}</span>
+                      <span className="text-zinc-400 text-sm">Namespace: {pod.metadata?.namespace}</span>
+                    </div>
+                    <StatusBadge status={pod.status?.phase || ''} />
                   </div>
-                  <StatusBadge status={pod.status?.phase || ''} />
-                </button>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
