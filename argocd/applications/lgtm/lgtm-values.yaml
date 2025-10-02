@@ -76,7 +76,7 @@ loki:
   livenessProbe:
     failureThreshold: 3
     httpGet:
-      path: /ready
+      path: /metrics
       port: http
       scheme: HTTP
     initialDelaySeconds: 300
