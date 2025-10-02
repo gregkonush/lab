@@ -3,7 +3,7 @@ import { NodeSDK } from '@opentelemetry/sdk-node'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
-import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
+import { MetricReader, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 import { Resource } from '@opentelemetry/resources'
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions'
 
@@ -25,14 +25,8 @@ const metricsEndpoint =
 const exportInterval = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? '15000', 10)
 
 const sharedHeaders = parseHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS)
-const traceHeaders = {
-  ...sharedHeaders,
-  ...parseHeaders(process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS),
-}
-const metricHeaders = {
-  ...sharedHeaders,
-  ...parseHeaders(process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS),
-}
+const traceHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS))
+const metricHeaders = mergeHeaders(sharedHeaders, parseHeaders(process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS))
 
 const resource = Resource.default().merge(
   new Resource({
@@ -42,7 +36,7 @@ const resource = Resource.default().merge(
   }),
 )
 
-const metricReader = new PeriodicExportingMetricReader({
+const metricReader: MetricReader = new PeriodicExportingMetricReader({
   exporter: new OTLPMetricExporter({
     url: metricsEndpoint,
     headers: metricHeaders,
@@ -56,7 +50,7 @@ const sdk = new NodeSDK({
     url: tracesEndpoint,
     headers: traceHeaders,
   }),
-  metricReader: metricReader as unknown as never,
+  metricReader,
   instrumentations: [
     getNodeAutoInstrumentations({
       '@opentelemetry/instrumentation-http': {
@@ -71,17 +65,12 @@ const sdk = new NodeSDK({
 
 let shuttingDown = false
 
-let startupResult: unknown
 try {
-  startupResult = sdk.start() as unknown
-} catch (error) {
-  diag.error('failed to start OpenTelemetry SDK', error)
-}
-
-if (isPromise(startupResult)) {
-  startupResult.catch((error) => {
+  Promise.resolve(sdk.start()).catch((error) => {
     diag.error('failed to start OpenTelemetry SDK', error)
   })
+} catch (error) {
+  diag.error('failed to start OpenTelemetry SDK', error)
 }
 
 const shutdown = () => {
@@ -96,17 +85,6 @@ const shutdown = () => {
 
 process.once('SIGTERM', shutdown)
 process.once('SIGINT', shutdown)
-
-function isPromise<T = unknown>(value: unknown): value is Promise<T> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'then' in value &&
-    typeof (value as Promise<T>).then === 'function' &&
-    'catch' in value &&
-    typeof (value as Promise<T>).catch === 'function'
-  )
-}
 
 function parseHeaders(value?: string) {
   if (!value) {
@@ -129,4 +107,17 @@ function parseHeaders(value?: string) {
   }
 
   return Object.keys(result).length > 0 ? result : undefined
+}
+
+function mergeHeaders(...headers: Array<Record<string, string> | undefined>): Record<string, string> | undefined {
+  const merged: Record<string, string> = {}
+
+  for (const header of headers) {
+    if (!header) {
+      continue
+    }
+    Object.assign(merged, header)
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined
 }
