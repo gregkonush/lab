@@ -14,6 +14,6 @@ rules:
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
-  - apiGroups: ["infrastructure.proompteng.dev"]
+  - apiGroups: ["infrastructure.proompteng.ai"]
     resources: ["tigerbeetleclusters", "tigerbeetleclusters/status"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

@@ -1,9 +1,9 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: tigerbeetleclusters.infrastructure.proompteng.dev
+  name: tigerbeetleclusters.infrastructure.proompteng.ai
 spec:
-  group: infrastructure.proompteng.dev
+  group: infrastructure.proompteng.ai
   names:
     kind: TigerBeetleCluster
     listKind: TigerBeetleClusterList

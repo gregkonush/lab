@@ -51,7 +51,7 @@ func main() {
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "tigresse-operator.proompteng.dev",
+		LeaderElectionID:       "tigresse-operator.proompteng.ai",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
