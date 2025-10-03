@@ -1,0 +1,31 @@
+---
+title: Tigresse operator
+description: Deploy and operate the Tigresse TigerBeetle controller inside the platform.
+---
+
+The Tigresse operator manages TigerBeetle clusters on Kubernetes using
+controller-runtime. It handles bootstrapping the start script, wiring
+cluster networking, and provisioning persistent storage.
+
+## Installation
+
+Tigresse ships with an Argo CD application definition in this repository.
+Apply the manifests from `argocd/applications/tigresse` or register the
+ApplicationSet entry to roll it out automatically. The deployment creates:
+
+- the `tigresse-system` namespace
+- service account, role, and role binding for reconciliation permissions
+- the controller deployment
+- the `TigerBeetleCluster` custom resource definition
+
+## Storage
+
+Persistent volumes default to the `longhorn` storage class. Override the
+`spec.storageClassName` field on a `TigerBeetleCluster` to opt-in to a
+different storage backend.
+
+## Cluster definition
+
+Create a cluster by committing a `TigerBeetleCluster` resource. The
+example at `argocd/applications/tigerbeetle/base/tigerbeetlecluster.yaml`
+provisions a three replica database with `10Gi` of storage per pod.
