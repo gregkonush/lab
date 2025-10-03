@@ -10,6 +10,7 @@ WORKDIR /workspace
 # Copy workspace manifests required for dependency installation
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY tsconfig.json ./
+COPY scripts/run-husky-install.mjs scripts/run-husky-install.mjs
 COPY packages/bonjour/package.json packages/bonjour/package.json
 COPY packages/bonjour/tsconfig.json packages/bonjour/tsconfig.json
 
@@ -28,6 +29,7 @@ RUN corepack enable
 WORKDIR /workspace
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY scripts/run-husky-install.mjs scripts/run-husky-install.mjs
 COPY packages/bonjour/package.json packages/bonjour/package.json
 
 RUN pnpm install --prod --frozen-lockfile --filter @proompteng/bonjour...

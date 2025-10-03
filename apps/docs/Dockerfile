@@ -2,9 +2,11 @@ FROM node:lts-alpine AS deps
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY scripts/run-husky-install.mjs ./scripts/run-husky-install.mjs
 COPY apps/docs ./apps/docs
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV HUSKY=0
 RUN corepack enable && pnpm install --frozen-lockfile
 
 FROM node:lts-alpine AS builder
