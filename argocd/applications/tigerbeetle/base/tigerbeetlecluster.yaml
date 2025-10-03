@@ -1,0 +1,12 @@
+apiVersion: infrastructure.proompteng.dev/v1alpha1
+kind: TigerBeetleCluster
+metadata:
+  name: tigerbeetle
+  namespace: tigerbeetle
+spec:
+  clusterID: "0"
+  image: ghcr.io/tigerbeetle/tigerbeetle:0.16.60
+  port: 3000
+  replicas: 3
+  storageClassName: longhorn
+  storageSize: 10Gi

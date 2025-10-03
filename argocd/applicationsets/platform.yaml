@@ -100,6 +100,20 @@ spec:
               argocd.argoproj.io/sync-wave: "4"
             automation: manual
             enabled: "false"
+          - name: tigresse
+            path: argocd/applications/tigresse
+            namespace: tigresse-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "false"
+          - name: tigerbeetle
+            path: argocd/applications/tigerbeetle
+            namespace: tigerbeetle
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
           - name: temporal
             path: argocd/applications/temporal
             namespace: temporal

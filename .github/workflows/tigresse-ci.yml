@@ -1,0 +1,42 @@
+name: Tigresse CI
+
+on:
+  push:
+    paths:
+      - 'services/tigresse/**'
+      - '.github/workflows/tigresse-ci.yml'
+  pull_request:
+    paths:
+      - 'services/tigresse/**'
+      - '.github/workflows/tigresse-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/tigresse/go.mod
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('services/tigresse/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run unit tests
+        working-directory: services/tigresse
+        run: GOFLAGS=-buildvcs=false go test ./...
+
+      - name: Build binaries
+        working-directory: services/tigresse
+        run: GOFLAGS=-buildvcs=false go build ./...
