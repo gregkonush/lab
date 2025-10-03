@@ -87,6 +87,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: manual
             enabled: false
+          - name: galette
+            path: argocd/applications/galette
+            namespace: galette
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: false
           - name: miel
             path: argocd/applications/miel
             namespace: miel
