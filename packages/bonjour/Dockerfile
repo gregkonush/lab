@@ -32,9 +32,8 @@ COPY packages/bonjour/package.json packages/bonjour/package.json
 
 RUN pnpm install --prod --frozen-lockfile --filter @proompteng/bonjour...
 
-FROM oven/bun:1.2.23 AS runtime
+FROM node:22.19.0-bullseye-slim AS runtime
 ENV NODE_ENV=production
-ENV BUN_CONFIG_DISABLE_TELEMETRY=1
 WORKDIR /opt/app
 
 # Copy application manifest and dependencies from the builder stage
@@ -43,8 +42,8 @@ COPY --from=prod-deps /workspace/node_modules ./node_modules
 COPY --from=builder /workspace/packages/bonjour/dist ./dist
 
 # Drop root privileges for runtime
-RUN chown -R bun:bun /opt/app
-USER bun
+RUN chown -R node:node /opt/app
+USER node
 
 EXPOSE 3000
-CMD ["bun", "dist/server.js"]
+CMD ["node", "dist/server.js"]
