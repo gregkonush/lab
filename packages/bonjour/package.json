@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc --project tsconfig.json --noEmit false --sourceMap true --declaration true --declarationDir dist",
-    "synth": "bunx cdk8s-cli synth --no-check-upgrade",
+    "synth": "cdk8s synth --no-check-upgrade --app \"tsx --tsconfig infra/tsconfig.json infra/main.ts\"",
     "clean": "rimraf dist manifests"
   },
   "dependencies": {
