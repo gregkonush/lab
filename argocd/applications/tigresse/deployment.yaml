@@ -21,7 +21,7 @@ spec:
       serviceAccountName: tigresse-controller-manager
       containers:
         - name: manager
-          image: ghcr.io/gregkonush/lab/tigresse:latest
+          image: registry.ide-newton.ts.net/lab/tigresse:latest
           imagePullPolicy: IfNotPresent
           args:
             - --leader-elect
