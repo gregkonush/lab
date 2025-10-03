@@ -20,7 +20,7 @@
     "harvester:apply": "kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates",
     "k:install": "./kubernetes/install.sh",
     "k:bootstrap": "kubectl apply -k argocd/applications/argocd",
-    "prepare": "husky",
+    "prepare": "node scripts/run-husky-install.mjs",
     "dev:convex": "pnpm --filter @proompteng/backend dev",
     "dev:setup:convex": "pnpm --filter @proompteng/backend dev:setup",
     "seed:models": "pnpm --filter @proompteng/backend seed:models",
