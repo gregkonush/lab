@@ -235,3 +235,4 @@ cython_debug/
 
 # Temporary files and directories
 tmp/
+.ipynb_checkpoints/

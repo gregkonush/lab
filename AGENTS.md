@@ -38,6 +38,40 @@
 - Keep scope tight, track follow-ups with TODOs, and document rollout or operational impacts.
 - NEVER edit lockfiles (e.g. `pnpm-lock.yaml`, `bun.lock`) by hand—regenerate them with the package manager instead.
 
+## Cursor Agent CLI
+
+- Executable path: confirm with `which cursor-agent`; typically `~/.local/bin/cursor-agent`.
+- Invocation shape: `cursor-agent [options] [command] [prompt...]`.
+- Common workflow for Codex automation: `cursor-agent --print "<instruction>"` (non-interactive output to stdout).
+- Global options:
+  - `-v, --version` — print the version and exit.
+  - `--api-key <key>` — provide API key (otherwise read from `CURSOR_API_KEY`).
+  - `-p, --print` — stream agent responses to stdout (required for CLI scripts).
+  - `--output-format <text|json|stream-json>` — adjust payload (only with `--print`).
+  - `--stream-partial-output` — emit incremental deltas (requires `--print` + `stream-json`).
+  - `-b, --background` — start in background/composer mode.
+  - `--resume [chatId]` — reconnect to an existing session (omit ID to resume latest).
+  - `--model <name>` — pick model (e.g. `gpt-5`, `sonnet-4`).
+  - `-f, --force` — auto-approve commands unless explicitly denied.
+  - `-h, --help` — display help message.
+- Subcommands:
+  - `agent [prompt...]` — launch an interactive run with optional opening prompt.
+  - `create-chat` — start an empty chat and return its ID.
+  - `ls` — list resumable chat sessions.
+  - `resume [chatId]` — resume latest (or specific) chat session.
+  - `install-shell-integration` / `uninstall-shell-integration` — manage shell hooks.
+  - `login` / `logout` — manage authentication state.
+  - `mcp` — manage MCP servers.
+  - `status` or `whoami` — show authentication details.
+  - `sandbox` — inspect sandbox configuration.
+  - `update` / `upgrade` — update Cursor Agent.
+  - `help [command]` — show help for a subcommand.
+- Example (streaming JSON with force + sonnet-4.5):
+  ```bash
+  cursor-agent --print --output-format stream-json --stream-partial-output --force --model sonnet-4.5-thinking "Describe current workspace status"
+  ```
+- Non-zero exit codes indicate command failures; inspect stderr for details.
+
 ## Security & Operations Notes
 
 - ArgoCD reconciles desired state; edit manifests in `argocd/` or `kubernetes/` and let automation deploy.
