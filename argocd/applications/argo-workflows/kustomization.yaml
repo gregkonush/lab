@@ -3,10 +3,11 @@ kind: Kustomization
 resources:
   - rbac.yaml
   - ingressroute.yaml
+  - argo-workflows-sso-sealedsecret.yaml
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
-    version: 0.41.6
+    version: 0.45.26
     releaseName: argo-workflows
     namespace: argo-workflows
     valuesInline:
@@ -15,8 +16,23 @@ helmCharts:
           - argo-workflows
       server:
         secure: false
-        extraArgs:
-          - --auth-mode=server
+        authMode: sso
+        sso:
+          enabled: true
+          issuer: https://argocd.proompteng.ai/api/dex
+          clientId:
+            name: argo-workflows-sso
+            key: client-id
+          clientSecret:
+            name: argo-workflows-sso
+            key: client-secret
+          redirectUrl: https://workflows.proompteng.ai/oauth2/callback
+          scopes:
+            - openid
+            - profile
+            - email
+          rbac:
+            enabled: true
       workflow:
         serviceAccount:
           create: true
@@ -25,7 +41,7 @@ helmCharts:
         archiveLogs: true
   - name: argo-events
     repo: https://argoproj.github.io/argo-helm
-    version: 2.4.7
+    version: 2.4.16
     releaseName: argo-events
     namespace: argo-workflows
     valuesInline:
