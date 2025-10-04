@@ -9,7 +9,7 @@ while IFS= read -r -d '' file; do
   if grep -Eq '^(kind|  kind):\s*(Workflow|WorkflowTemplate|CronWorkflow)' "$file"; then
     FOUND=1
     echo "::group::argo lint $file"
-    if ! argo lint "$file"; then
+    if ! argo lint --offline "$file"; then
       STATUS=1
     fi
     echo "::endgroup::"
