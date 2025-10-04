@@ -1,7 +1,17 @@
 import { Webhooks } from '@octokit/webhooks'
 import { Elysia } from 'elysia'
-import { Kafka, Producer } from 'kafkajs'
+import { Kafka } from 'kafkajs'
+import type { Producer } from 'kafkajs'
 import { randomUUID } from 'node:crypto'
+
+import {
+  PLAN_COMMENT_MARKER,
+  buildCodexBranchName,
+  buildCodexPrompt,
+  normalizeLogin,
+  type CodexTaskMessage,
+  type Nullable,
+} from './codex'
 
 const requireEnv = (name: string): string => {
   const value = process.env[name]
@@ -17,7 +27,11 @@ const KAFKA_BROKERS = requireEnv('KAFKA_BROKERS')
 const KAFKA_USERNAME = requireEnv('KAFKA_USERNAME')
 const KAFKA_PASSWORD = requireEnv('KAFKA_PASSWORD')
 const KAFKA_TOPIC = requireEnv('KAFKA_TOPIC')
+const KAFKA_CODEX_TOPIC = requireEnv('KAFKA_CODEX_TOPIC')
 const KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID ?? 'froussard-webhook-producer'
+const CODEX_BASE_BRANCH = process.env.CODEX_BASE_BRANCH ?? 'main'
+const CODEX_BRANCH_PREFIX = process.env.CODEX_BRANCH_PREFIX ?? 'codex/issue-'
+const CODEX_TRIGGER_LOGIN = (process.env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase()
 
 const kafkaBrokers = KAFKA_BROKERS.split(',')
   .map((broker) => broker.trim())
@@ -71,47 +85,129 @@ const connectProducer = async (): Promise<void> => {
 
 void connectProducer()
 
-const publishGithubEvent = async (rawBody: string, request: Request, action?: string): Promise<string> => {
+interface GithubUser {
+  login?: Nullable<string>
+}
+
+interface GithubIssue {
+  number?: Nullable<number>
+  title?: Nullable<string>
+  body?: Nullable<string>
+  user?: Nullable<GithubUser>
+  html_url?: Nullable<string>
+  repository_url?: Nullable<string>
+  repository?: Nullable<GithubRepository>
+}
+
+interface GithubRepository {
+  full_name?: Nullable<string>
+  name?: Nullable<string>
+  owner?: Nullable<GithubUser>
+  default_branch?: Nullable<string>
+}
+
+interface GithubIssueEventPayload {
+  action?: Nullable<string>
+  issue?: Nullable<GithubIssue>
+  repository?: Nullable<GithubRepository>
+  sender?: Nullable<GithubUser>
+}
+
+interface GithubComment {
+  id?: Nullable<number>
+  body?: Nullable<string>
+  html_url?: Nullable<string>
+  user?: Nullable<GithubUser>
+}
+
+interface GithubReaction {
+  content?: Nullable<string>
+}
+
+interface GithubReactionEventPayload {
+  action?: Nullable<string>
+  reaction?: Nullable<GithubReaction>
+  subject_type?: Nullable<string>
+  issue?: Nullable<GithubIssue>
+  comment?: Nullable<GithubComment>
+  sender?: Nullable<GithubUser>
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
+const isGithubIssueEvent = (payload: unknown): payload is GithubIssueEventPayload => {
+  if (!isRecord(payload)) {
+    return false
+  }
+  return 'issue' in payload
+}
+
+const isGithubReactionEvent = (payload: unknown): payload is GithubReactionEventPayload => {
+  if (!isRecord(payload)) {
+    return false
+  }
+  return 'reaction' in payload
+}
+
+const deriveRepositoryFullName = (
+  repository?: Nullable<GithubRepository>,
+  repositoryUrl?: Nullable<string>,
+): string | null => {
+  if (repository && typeof repository.full_name === 'string' && repository.full_name.length > 0) {
+    return repository.full_name
+  }
+
+  if (typeof repositoryUrl === 'string' && repositoryUrl.length > 0) {
+    try {
+      const parsed = new URL(repositoryUrl)
+      const segments = parsed.pathname.split('/').filter(Boolean)
+      if (segments.length >= 2) {
+        const owner = segments[segments.length - 2]
+        const repo = segments[segments.length - 1]
+        if (owner && repo) {
+          return `${owner}/${repo}`
+        }
+      }
+    } catch (parseError: unknown) {
+      console.warn(`Failed to parse repository URL '${repositoryUrl}':`, parseError)
+    }
+  }
+
+  return null
+}
+
+const publishKafkaMessage = async ({
+  topic,
+  key,
+  value,
+  headers,
+}: {
+  topic: string
+  key: string
+  value: string
+  headers: Record<string, string>
+}): Promise<void> => {
   await connectProducer()
-
-  const deliveryId = request.headers.get('x-github-delivery') ?? randomUUID()
-  const eventName = request.headers.get('x-github-event') ?? 'unknown'
-  const hookId = request.headers.get('x-github-hook-id') ?? 'unknown'
-  const contentType = request.headers.get('content-type') ?? 'application/json'
-  const headers: Record<string, string> = {
-    'x-github-delivery': deliveryId,
-    'x-github-event': eventName,
-    'x-github-hook-id': hookId,
-    'content-type': contentType,
-  }
-
-  if (action) {
-    headers['x-github-action'] = action
-  }
 
   try {
     await producer.send({
-      topic: KAFKA_TOPIC,
+      topic,
       messages: [
         {
-          key: deliveryId,
-          value: rawBody,
+          key,
+          value,
           headers,
         },
       ],
     })
 
-    console.log(
-      `Published GitHub webhook to topic ${KAFKA_TOPIC}: event=${eventName}, action=${action ?? 'n/a'}, delivery=${deliveryId}, hook=${hookId}`,
-    )
+    console.log(`Published Kafka message: topic=${topic}, key=${key}`)
   } catch (error: unknown) {
     producerReady = false
     producerConnectPromise = null
-    console.error('Failed to publish GitHub event to Kafka:', error)
+    console.error(`Failed to publish Kafka message to topic ${topic}:`, error)
     throw error
   }
-
-  return deliveryId
 }
 
 const app = new Elysia()
@@ -153,7 +249,8 @@ const app = new Elysia()
         return new Response('Unauthorized', { status: 401 })
       }
 
-      const deliveryId = request.headers.get('x-github-delivery') ?? 'unknown'
+      const deliveryIdHeader = request.headers.get('x-github-delivery')
+      const deliveryId = deliveryIdHeader && deliveryIdHeader.length > 0 ? deliveryIdHeader : randomUUID()
 
       if (!(await webhooks.verify(rawBody, signatureHeader))) {
         console.error(
@@ -164,29 +261,203 @@ const app = new Elysia()
 
       console.log('GitHub signature verified successfully.')
 
-      let action: string | undefined
+      let parsedPayload: unknown
 
       try {
-        const parsedBody = JSON.parse(rawBody) as { action?: unknown }
-        if (typeof parsedBody === 'object' && parsedBody !== null) {
-          const possibleAction = (parsedBody as { action?: unknown }).action
-          if (typeof possibleAction === 'string') {
-            action = possibleAction
-          }
-        }
+        parsedPayload = JSON.parse(rawBody) as unknown
       } catch (parseError: unknown) {
         console.error('Error parsing GitHub webhook body:', parseError)
         return new Response('Invalid JSON body', { status: 400 })
       }
 
+      const eventName = request.headers.get('x-github-event') ?? 'unknown'
+      const hookId = request.headers.get('x-github-hook-id') ?? 'unknown'
+      const contentType = request.headers.get('content-type') ?? 'application/json'
+
+      const kafkaHeaders: Record<string, string> = {
+        'x-github-delivery': deliveryId,
+        'x-github-event': eventName,
+        'x-github-hook-id': hookId,
+        'content-type': contentType,
+      }
+      const actionValue =
+        typeof (parsedPayload as { action?: unknown }).action === 'string'
+          ? (parsedPayload as { action: string }).action
+          : undefined
+
+      if (actionValue) {
+        kafkaHeaders['x-github-action'] = actionValue
+      }
+
+      let codexStageTriggered: string | null = null
+
       try {
-        const deliveryId = await publishGithubEvent(rawBody, request, action)
+        if (eventName === 'issues' && actionValue === 'opened' && isGithubIssueEvent(parsedPayload)) {
+          const issue = parsedPayload.issue ?? undefined
+          const repository = parsedPayload.repository ?? undefined
+          const senderLoginValue = parsedPayload.sender?.login
+          const senderLogin = typeof senderLoginValue === 'string' ? senderLoginValue : ''
+
+          if (issue && typeof issue.number === 'number') {
+            const issueAuthor = normalizeLogin(issue.user?.login)
+
+            console.log(
+              `GitHub issues event received: action=${actionValue}, issue=${issue.number}, author=${issueAuthor ?? 'unknown'}`,
+            )
+
+            if (issueAuthor === CODEX_TRIGGER_LOGIN) {
+              const repositoryFullName = deriveRepositoryFullName(repository, issue.repository_url)
+
+              if (repositoryFullName) {
+                const baseBranch = repository?.default_branch ?? CODEX_BASE_BRANCH
+                const headBranch = buildCodexBranchName(issue.number, deliveryId, CODEX_BRANCH_PREFIX)
+                const issueTitle =
+                  typeof issue.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issue.number}`
+                const issueBody = typeof issue.body === 'string' ? issue.body : ''
+                const issueUrl = typeof issue.html_url === 'string' ? issue.html_url : ''
+                const prompt = buildCodexPrompt({
+                  stage: 'planning',
+                  issueTitle,
+                  issueBody,
+                  repositoryFullName,
+                  issueNumber: issue.number,
+                  baseBranch,
+                  headBranch,
+                  issueUrl,
+                })
+
+                const codexMessage: CodexTaskMessage = {
+                  stage: 'planning',
+                  prompt,
+                  repository: repositoryFullName,
+                  base: baseBranch,
+                  head: headBranch,
+                  issueNumber: issue.number,
+                  issueUrl,
+                  issueTitle,
+                  issueBody,
+                  sender: senderLogin,
+                  issuedAt: new Date().toISOString(),
+                }
+
+                await publishKafkaMessage({
+                  topic: KAFKA_CODEX_TOPIC,
+                  key: `issue-${issue.number}-planning`,
+                  value: JSON.stringify(codexMessage),
+                  headers: {
+                    ...kafkaHeaders,
+                    'x-codex-task-stage': 'planning',
+                  },
+                })
+
+                codexStageTriggered = 'planning'
+                console.log(
+                  `Planning task dispatched for issue ${issue.number} to topic ${KAFKA_CODEX_TOPIC} (delivery ${deliveryId}).`,
+                )
+              } else {
+                console.warn(
+                  `Skipping planning task dispatch: repository.full_name missing for issue ${issue.number} (delivery ${deliveryId}).`,
+                )
+              }
+            }
+          }
+        }
+
+        if (eventName === 'reaction' && actionValue === 'created' && isGithubReactionEvent(parsedPayload)) {
+          const reactionContent = parsedPayload.reaction?.content
+          const senderLoginValue = parsedPayload.sender?.login
+          const senderLogin = typeof senderLoginValue === 'string' ? senderLoginValue : ''
+
+          if (
+            (reactionContent === '+1' || reactionContent === 'thumbs_up') &&
+            normalizeLogin(senderLoginValue) === CODEX_TRIGGER_LOGIN
+          ) {
+            const commentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body : ''
+
+            if (commentBody.includes(PLAN_COMMENT_MARKER)) {
+              const issue = parsedPayload.issue ?? undefined
+              const repositoryFullName = deriveRepositoryFullName(issue?.repository, issue?.repository_url)
+
+              const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
+
+              if (issueNumber && repositoryFullName) {
+                const baseBranch = issue?.repository?.default_branch ?? CODEX_BASE_BRANCH
+                const headBranch = buildCodexBranchName(issueNumber, deliveryId, CODEX_BRANCH_PREFIX)
+                const issueTitle =
+                  typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
+                const issueBody = typeof issue?.body === 'string' ? issue.body : ''
+                const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
+                const planCommentId =
+                  typeof parsedPayload.comment?.id === 'number' ? parsedPayload.comment.id : undefined
+                const planCommentUrl =
+                  typeof parsedPayload.comment?.html_url === 'string' ? parsedPayload.comment.html_url : undefined
+
+                const prompt = buildCodexPrompt({
+                  stage: 'implementation',
+                  issueTitle,
+                  issueBody,
+                  repositoryFullName,
+                  issueNumber,
+                  baseBranch,
+                  headBranch,
+                  issueUrl,
+                  planCommentBody: commentBody,
+                })
+
+                const codexMessage: CodexTaskMessage = {
+                  stage: 'implementation',
+                  prompt,
+                  repository: repositoryFullName,
+                  base: baseBranch,
+                  head: headBranch,
+                  issueNumber,
+                  issueUrl,
+                  issueTitle,
+                  issueBody,
+                  sender: senderLogin,
+                  issuedAt: new Date().toISOString(),
+                  planCommentId,
+                  planCommentUrl,
+                  planCommentBody: commentBody,
+                }
+
+                await publishKafkaMessage({
+                  topic: KAFKA_CODEX_TOPIC,
+                  key: `issue-${issueNumber}-implementation`,
+                  value: JSON.stringify(codexMessage),
+                  headers: {
+                    ...kafkaHeaders,
+                    'x-codex-task-stage': 'implementation',
+                  },
+                })
+
+                codexStageTriggered = 'implementation'
+                console.log(
+                  `Implementation task dispatched for issue ${issueNumber} to topic ${KAFKA_CODEX_TOPIC} (delivery ${deliveryId}).`,
+                )
+              } else {
+                console.warn(
+                  `Skipping implementation task dispatch: missing repository or issue number for delivery ${deliveryId}.`,
+                )
+              }
+            }
+          }
+        }
+
+        await publishKafkaMessage({
+          topic: KAFKA_TOPIC,
+          key: deliveryId,
+          value: rawBody,
+          headers: kafkaHeaders,
+        })
+
         return new Response(
           JSON.stringify({
             status: 'accepted',
             deliveryId,
-            event: request.headers.get('x-github-event') ?? 'unknown',
-            action: action ?? null,
+            event: eventName,
+            action: actionValue ?? null,
+            codexStageTriggered,
           }),
           {
             status: 202,
@@ -194,6 +465,7 @@ const app = new Elysia()
           },
         )
       } catch (error: unknown) {
+        console.error('Failed to enqueue webhook event:', error)
         return new Response('Failed to enqueue webhook event', { status: 500 })
       }
     }

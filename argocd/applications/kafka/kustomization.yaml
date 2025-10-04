@@ -33,7 +33,6 @@ resources:
   - strimzi-operator-watched-crb.yaml
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
-  - github-webhooks-topic.yaml
 patches:
   # Make the operator watch all namespaces
   - target:

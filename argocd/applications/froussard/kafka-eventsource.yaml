@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: github-codex
+  namespace: argo-workflows
+spec:
+  eventBusName: default
+  kafka:
+    github-codex-tasks:
+      url: kafka-kafka-bootstrap.kafka:9092
+      topic: github.codex.tasks
+      consumerGroup: argo-workflows-codex
+      jsonBody: true
+      sasl:
+        mechanism: SCRAM-SHA-512
+        userSecret:
+          name: kafka-codex-credentials
+          key: username
+        passwordSecret:
+          name: kafka-codex-credentials
+          key: password
