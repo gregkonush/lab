@@ -12,7 +12,7 @@ spec:
     - match: Host(`workflows.proompteng.ai`)
       kind: Rule
       services:
-        - name: argo-server
+        - name: argo-workflows-server
           port: 2746
   tls:
     secretName: wildcard-proompteng-ai-tls
