@@ -1,0 +1,15 @@
+{{- $globs := list "applications/**/*.yaml" "applicationsets/**/*.yaml" "root.yaml" }}
+{{- $paths := list }}
+{{- range $glob := $globs }}
+  {{- range $path, $_ := .Files.Glob $glob }}
+    {{- $paths = append $paths $path }}
+  {{- end }}
+{{- end }}
+{{- $sorted := sortAlpha $paths }}
+{{- range $index, $path := $sorted }}
+{{- if gt $index 0 }}
+---
+{{- end }}
+# Source: {{ $path }}
+{{ .Files.Get $path }}
+{{- end }}

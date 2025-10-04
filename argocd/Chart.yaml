@@ -1,0 +1,4 @@
+apiVersion: v2
+name: argocd-manifests
+version: 0.1.0
+description: Aggregated chart for ArgoCD manifests snapshot testing

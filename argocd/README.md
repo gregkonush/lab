@@ -100,6 +100,15 @@ kubectl kustomize argocd/applications/kitty-krew
 kubectl kustomize argocd/applications/kitty-krew/overlays/prod
 ```
 
+## Testing
+
+Helm unit tests ensure that all manifests in this directory remain valid and
+stable. Run the snapshot test suite locally with:
+
+```bash
+helm unittest argocd
+```
+
 ### Private Docker registry credentials (with 1Password CLI)
 
 - **Install 1Password CLI (macOS)**
