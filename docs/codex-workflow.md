@@ -59,15 +59,18 @@ argo submit --from workflowtemplate/github-codex-task -n argo-workflows \
 
 Repeat with `stage=implementation` and pass `planCommentBody` (the approved plan text) plus any comment metadata.
 
-## CI Safety Checks
+## Manifest & CI Safety Checks
+
+Whenever you introduce a new Codex workflow or touch the surrounding manifests, run the validation scripts locally before opening a PR:
 
 - `pnpm --filter froussard run test`
-- `scripts/argo-lint.sh`
-- `scripts/kubeconform.sh argocd`
+- `scripts/argo-lint.sh` (offline Argo lint of any Workflow/WorkflowTemplate YAML)
+- `scripts/kubeconform.sh argocd` (kubeconform with custom CRD schemas)
+
+Both lint scripts are what CI uses, so matching their output locally keeps Argo CD syncs clean.
 
 ## Troubleshooting
 
 - **No plan comment**: verify the webhook secret/names.
 - **Workflows not triggered**: check the `github-codex` sensor/eventsource pods.
 - **Draft PR missing**: confirm the GitHub token has `repo` scope and the workflow pod can push.
-
