@@ -75,6 +75,7 @@
 ## Security & Operations Notes
 
 - ArgoCD reconciles desired state; edit manifests in `argocd/` or `kubernetes/` and let automation deploy.
+- Application directories under `argocd/applications/` must expose Kustomize or raw manifests only; the platform `ApplicationSet` owns the Argo CD `Application` objects (no nested `Application` manifests).
 - Pair Terraform plans from `pnpm run tf:plan` with review before `pnpm run tf:apply`; note outcomes after applies.
 - Prefer read-only `kubectl -n <namespace> get ...` for production checks and capture findings in runbooks.
 
