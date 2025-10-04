@@ -1,6 +1,6 @@
 # Nginx Proxy Manager (NUC)
 
-Snapshot of the running configuration for the home Nginx Proxy Manager instance.
+Snapshot of the running configuration for the home Nginx Proxy Manager instance. Sensitive artifacts (`data/database.sqlite`, `data/keys.json`, full LetsEncrypt tree) are intentionally excluded; copy them from the live host before running if you need the existing proxy records.
 
 ## Layout
 
