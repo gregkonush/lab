@@ -1,0 +1,33 @@
+name: kubeconform
+
+on:
+  pull_request:
+    paths:
+      - "argocd/**/*.yaml"
+      - "scripts/kubeconform.sh"
+      - ".github/workflows/kubeconform.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "argocd/**/*.yaml"
+      - "scripts/kubeconform.sh"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          KUBECONFORM_VERSION="v0.6.7"
+          curl -sSL -o kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf kubeconform.tar.gz kubeconform
+          chmod +x kubeconform
+          sudo mv kubeconform /usr/local/bin/
+          kubeconform -v
+
+      - name: Validate manifests
+        run: scripts/kubeconform.sh argocd
