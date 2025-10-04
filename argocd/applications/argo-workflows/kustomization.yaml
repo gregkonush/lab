@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml
+helmCharts:
+  - name: argo-workflows
+    repo: https://argoproj.github.io/argo-helm
+    version: 0.41.6
+    releaseName: argo-workflows
+    namespace: argo-workflows
+    valuesInline:
+      controller:
+        workflowNamespaces:
+          - argo-workflows
+      server:
+        secure: false
+        extraArgs:
+          - --auth-mode=server
+      workflow:
+        serviceAccount:
+          create: true
+          name: argo-workflows-workflow
+      artifactRepository:
+        archiveLogs: true
+  - name: argo-events
+    repo: https://argoproj.github.io/argo-helm
+    version: 2.4.7
+    releaseName: argo-events
+    namespace: argo-workflows
+    valuesInline:
+      singleNamespace: true
+      controller:
+        metricsConfigMap: ""
+      eventsource:
+        serviceAccount:
+          create: true
+      sensor:
+        serviceAccount:
+          create: false

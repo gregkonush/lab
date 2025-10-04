@@ -18,7 +18,9 @@ run:
   - name: KAFKA_BROKERS
     value: kafka-kafka-bootstrap.kafka:9092
   - name: KAFKA_TOPIC
-    value: github-webhooks
+    value: github.webhook.events
+  - name: KAFKA_CODEX_TOPIC
+    value: github.codex.tasks
   - name: KAFKA_USERNAME
     value: '{{ secret:froussard-kafka:username }}'
   - name: KAFKA_PASSWORD

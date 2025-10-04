@@ -86,6 +86,13 @@ spec:
               argocd.argoproj.io/sync-wave: "2"
             automation: manual
             enabled: "true"
+          - name: argo-workflows
+            path: argocd/applications/argo-workflows
+            namespace: argo-workflows
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "true"
           - name: lgtm
             path: argocd/applications/lgtm
             namespace: lgtm

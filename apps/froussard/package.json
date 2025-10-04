@@ -5,7 +5,10 @@
     "type": "git",
     "url": "https://github.com/gregkonush/lab"
   },
-  "scripts": {},
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "dependencies": {
     "@elysiajs/eden": "^1.2.0",
     "@octokit/webhooks": "^13.8.0",
@@ -14,7 +17,9 @@
   },
   "devDependencies": {
     "@types/bun": "^1.2.9",
-    "typescript": "^5.8.2"
+    "@types/node": "^24.6.2",
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.4"
   },
   "module": "src/index.ts",
   "type": "module"

@@ -1,0 +1,33 @@
+name: argo-lint
+
+on:
+  pull_request:
+    paths:
+      - "**/*.yaml"
+      - "scripts/argo-lint.sh"
+      - ".github/workflows/argo-lint.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.yaml"
+      - "scripts/argo-lint.sh"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Argo CLI
+        run: |
+          ARGO_VERSION="v3.5.9"
+          curl -sLO https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz
+          gunzip argo-linux-amd64.gz
+          chmod +x argo-linux-amd64
+          sudo mv argo-linux-amd64 /usr/local/bin/argo
+          argo version
+
+      - name: Lint Argo workflow manifests
+        run: scripts/argo-lint.sh

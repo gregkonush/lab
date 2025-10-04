@@ -136,6 +136,7 @@ Supporting configuration:
 ## Additional Resources
 
 - `docs/tooling.md` – Install guides for Node, Terraform/OpenTofu, kubectl, Ansible, PostgreSQL, Python tooling, and the GitHub CLI
+- `docs/kafka-topics.md` – Kafka topic naming (dot notation) and Strimzi resource guidance
 - `argocd/README.md` – GitOps deployment notes
 - `kubernetes/README.md` – Cluster setup instructions
 - `services/*/README.md` – Service-specific docs (`miel`, `prt`)
