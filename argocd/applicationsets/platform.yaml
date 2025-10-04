@@ -16,6 +16,13 @@ spec:
               argocd.argoproj.io/sync-wave: "-1"
             automation: manual
             enabled: "true"
+          - name: redis-operator
+            path: argocd/applications/redis-operator
+            namespace: redis-operator
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: manual
+            enabled: "true"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
