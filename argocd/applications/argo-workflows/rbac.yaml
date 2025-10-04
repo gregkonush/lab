@@ -6,6 +6,7 @@ metadata:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
+metadata:
   name: github-codex-sensor
   namespace: argo-workflows
 rules:
@@ -18,6 +19,7 @@ rules:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
+metadata:
   name: github-codex-sensor
   namespace: argo-workflows
 subjects:

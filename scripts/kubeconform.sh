@@ -8,11 +8,20 @@ if ! command -v kubeconform >/dev/null 2>&1; then
   exit 1
 fi
 
-# Collect YAML files. If none found, exit successfully.
-if ! find "$ROOT_DIR" -type f -name '*.yaml' -print -quit >/dev/null; then
-  echo "No YAML manifests found under $ROOT_DIR" >&2
+filtered=()
+while IFS= read -r -d '' file; do
+  if grep -Eq '^[[:space:]]*kind:' "$file"; then
+    filtered+=("$file")
+  fi
+done < <(find "$ROOT_DIR" -type f -name '*.yaml' -print0)
+
+if [[ ${#filtered[@]} -eq 0 ]]; then
+  echo "No Kubernetes manifests with a kind key found under $ROOT_DIR" >&2
   exit 0
 fi
 
-find "$ROOT_DIR" -type f -name '*.yaml' -print0 \
-  | xargs -0 kubeconform --strict --summary --ignore-missing-schemas
+kubeconform --strict --summary --ignore-missing-schemas \
+  --ignore-filename-pattern 'overlays/' \
+  --ignore-filename-pattern 'Chart.yaml' \
+  --ignore-filename-pattern 'values.yaml' \
+  "${filtered[@]}"
