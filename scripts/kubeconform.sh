@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="${1:-argocd}"
+SCHEMA_DIR="${PWD}/schemas/custom"
 
 if ! command -v kubeconform >/dev/null 2>&1; then
   echo "kubeconform is required but not installed" >&2
@@ -20,8 +21,14 @@ if [[ ${#filtered[@]} -eq 0 ]]; then
   exit 0
 fi
 
+SCHEMA_ARGS=("--schema-location" "default")
+if [[ -d "$SCHEMA_DIR" ]]; then
+  SCHEMA_ARGS+=("--schema-location" "file://${SCHEMA_DIR}")
+fi
+
 kubeconform --strict --summary --ignore-missing-schemas \
   --ignore-filename-pattern 'overlays/' \
   --ignore-filename-pattern 'Chart.yaml' \
   --ignore-filename-pattern 'values.yaml' \
+  "${SCHEMA_ARGS[@]}" \
   "${filtered[@]}"
