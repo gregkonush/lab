@@ -14,6 +14,8 @@ resources:
   - base/ingressroute.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v0.16.0/manifests/install.yaml
   - base/secrets.yaml
+  - base/argo-workflows-sso-sealedsecret.yaml
+  - base/argo-workflows-sso-password-sealedsecret.yaml
   - base/image-updater-git-ssh.yaml
 patches:
   - path: overlays/argocd-cm.yaml
@@ -39,3 +41,7 @@ patches:
     target:
       kind: StatefulSet
       name: argocd-application-controller
+  - path: overlays/argocd-dex-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-dex-server
