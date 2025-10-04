@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   nginx-proxy-manager:
-    image: docker.io/nginxproxymanager/nginx-proxy-manager:2.12.0
+    image: jc21/nginx-proxy-manager:latest
     restart: unless-stopped
     ports:
       - "80:80"
