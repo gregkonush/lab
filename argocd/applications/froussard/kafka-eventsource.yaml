@@ -9,7 +9,8 @@ spec:
     github-codex-tasks:
       url: kafka-kafka-bootstrap.kafka:9092
       topic: github.codex.tasks
-      consumerGroup: argo-workflows-codex
+      consumerGroup:
+        groupName: argo-workflows-codex
       jsonBody: true
       sasl:
         mechanism: SCRAM-SHA-512

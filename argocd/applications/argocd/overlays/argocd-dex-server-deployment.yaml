@@ -18,3 +18,5 @@ spec:
                 secretKeyRef:
                   name: argo-workflows-sso-password
                   key: hash
+            - name: ARGOCD_DEX_SERVER_DISABLE_TLS
+              value: "true"

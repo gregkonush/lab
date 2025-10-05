@@ -12,7 +12,6 @@ resources:
   - https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.6/manifests/ha/install.yaml
   - base/namespace.yaml
   - base/ingressroute.yaml
-  - base/middleware-argocd-dex.yaml
   - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v0.16.0/manifests/install.yaml
   - base/secrets.yaml
   - base/argo-workflows-sso-sealedsecret.yaml
@@ -46,3 +45,7 @@ patches:
     target:
       kind: Deployment
       name: argocd-dex-server
+  - path: overlays/argocd-dex-network-policy.yaml
+    target:
+      kind: NetworkPolicy
+      name: argocd-dex-server-network-policy

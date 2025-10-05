@@ -29,8 +29,6 @@ spec:
     - kind: Rule
       match: Host(`argocd.proompteng.ai`) && PathPrefix(`/api/dex`)
       priority: 100
-      middlewares:
-        - name: argocd-dex-strip
       services:
         - name: argocd-dex-server
           port: 5556
