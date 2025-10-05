@@ -52,3 +52,12 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: argo-workflows-admin
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argo-workflows-sso-admin.service-account-token
+  namespace: argo-workflows
+  annotations:
+    kubernetes.io/service-account.name: argo-workflows-sso-admin
+type: kubernetes.io/service-account-token
