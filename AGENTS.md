@@ -19,6 +19,7 @@
 ### Tooling Notes
 
 - **kubectl**: the default kubeconfig on these hosts already targets the shared cluster. Avoid overriding `KUBECONFIG` unless you intentionally need another context; doing so can surface TLS or auth errors that do not occur with the default config.
+- **argocd CLI**: keep usage read-only by default—prefer `argocd app get <app>` or `argocd app list` to inspect state, and only run mutating operations (syncs, rollbacks, deletes) when the playbook explicitly calls for them.
 - **gh CLI**: when passing markdown in flags, wrap the entire value in single quotes or use `--body-file` with a heredoc. Backticks inside double-quoted arguments trigger shell command substitution and will break commands like `gh pr create`.
 
 ## Coding Style & Naming Conventions
