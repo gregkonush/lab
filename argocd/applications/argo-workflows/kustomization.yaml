@@ -16,7 +16,8 @@ helmCharts:
           - argo-workflows
       server:
         secure: false
-        authMode: sso
+        authModes:
+          - sso
         sso:
           enabled: true
           issuer: https://argocd.proompteng.ai/api/dex
@@ -33,6 +34,7 @@ helmCharts:
             - email
           rbac:
             enabled: true
+          insecureSkipVerify: true
       workflow:
         serviceAccount:
           create: true
