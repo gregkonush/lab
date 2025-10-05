@@ -54,3 +54,21 @@ The local runtime exposes:
 2. Ensure Argo Events produces a Workflow named `github-codex-echo-*` in
    `argo-workflows` namespace.
 3. Inspect pod logs to confirm the payload mirrors the Kafka message.
+
+## Codex Automation Image
+
+The Codex planning/implementation workflows use a derived container built from
+`apps/froussard/Dockerfile.codex`. The helper script below copies the local
+Codex auth (`~/.codex/auth.json`), Codex configuration (`~/.codex/config.toml`),
+and your GitHub CLI token into the image before pushing it to the shared
+registry.
+
+```bash
+apps/froussard/scripts/build-codex-image.sh
+```
+
+- Override `IMAGE_TAG` to publish a different tag or registry.
+- Provide `GH_TOKEN` explicitly if `gh auth token` is unavailable.
+- The resulting image defaults to cloning `gregkonush/lab` into
+  `/workspace/lab`; override `REPO_URL`, `BASE_BRANCH`, or `TARGET_DIR` at
+  runtime as needed.
