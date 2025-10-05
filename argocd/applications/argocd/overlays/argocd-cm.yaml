@@ -5,6 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: argocd
 data:
+  url: https://argocd.proompteng.ai
   kustomize.buildOptions: --enable-helm
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
