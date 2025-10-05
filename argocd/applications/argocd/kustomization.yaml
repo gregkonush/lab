@@ -46,3 +46,7 @@ patches:
     target:
       kind: Deployment
       name: argocd-dex-server
+  - path: overlays/argocd-dex-network-policy.yaml
+    target:
+      kind: NetworkPolicy
+      name: argocd-dex-server-network-policy
