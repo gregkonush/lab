@@ -1,0 +1,4922 @@
+# Source: applications/airbyte/airbyte-values.yaml
+global:
+  airbyteUrl: http://airbyte.lan
+webapp:
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: airbyte.lan
+        paths:
+          - path: /
+            pathType: Prefix
+---
+# Source: applications/airbyte/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: airbyte
+helmCharts:
+  - name: airbyte
+    repo: https://airbytehq.github.io/helm-charts
+    version: 1.5.1
+    releaseName: airbyte
+    namespace: airbyte
+    includeCRDs: true
+    valuesFile: airbyte-values.yaml
+---
+# Source: applications/arc/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arc-controller
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+      targetRevision: 0.12.1
+      helm:
+        releaseName: arc-controller
+        skipCrds: false
+    - repoURL: ghcr.io
+      chart: actions/actions-runner-controller-charts/gha-runner-scale-set
+      targetRevision: 0.12.1
+      helm:
+        releaseName: arc-runner-set
+        skipCrds: false
+        valuesObject:
+          controllerServiceAccount:
+            name: arc-controller-gha-rs-controller
+            namespace: arc
+          githubConfigUrl: https://github.com/gregkonush/lab
+          githubConfigSecret: github-token
+          runnerScaleSetName: arc-arm64
+          minRunners: 3
+          maxRunners: 9
+          containerMode:
+            type: "kubernetes"
+            kubernetesModeWorkVolumeClaim:
+              accessModes: ["ReadWriteOnce"]
+              storageClassName: "local-path"
+              resources:
+                requests:
+                  storage: 1Gi
+          template:
+            spec:
+              securityContext:
+                runAsNonRoot: false
+              initContainers:
+                - name: init-dind-externals
+                  image: ghcr.io/actions/actions-runner:latest
+                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "128Mi"
+                    limits:
+                      cpu: "200m"
+                      memory: "256Mi"
+              containers:
+                - name: runner
+                  image: ghcr.io/actions/actions-runner:latest
+                  command: ["/home/runner/run.sh"]
+                  resources:
+                    requests:
+                      cpu: "500m"
+                      memory: "2Gi"
+                    limits:
+                      cpu: "2000m"
+                      memory: "4Gi"
+                  env:
+                    - name: ACTIONS_RUNNER_CONTAINER_HOOKS
+                      value: /home/runner/k8s/index.js
+                    - name: ACTIONS_RUNNER_POD_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: metadata.name
+                    - name: DOCKER_HOST
+                      value: unix:///var/run/docker.sock
+                    - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+                      value: "false"
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                - name: dind
+                  image: docker:dind
+                  args:
+                    - dockerd
+                    - --host=unix:///var/run/docker.sock
+                    - --group=$(DOCKER_GROUP_GID)
+                  resources:
+                    requests:
+                      cpu: "500m"
+                      memory: "2Gi"
+                    limits:
+                      cpu: "2000m"
+                      memory: "4Gi"
+                  env:
+                    - name: DOCKER_GROUP_GID
+                      value: "123"
+                  securityContext:
+                    privileged: true
+                  volumeMounts:
+                    - name: work
+                      mountPath: /home/runner/_work
+                    - name: dind-sock
+                      mountPath: /var/run
+                    - name: dind-externals
+                      mountPath: /home/runner/externals
+              volumes:
+                - name: work
+                  ephemeral:
+                    volumeClaimTemplate:
+                      spec:
+                        accessModes: ["ReadWriteOnce"]
+                        storageClassName: "local-path"
+                        resources:
+                          requests:
+                            storage: 5Gi
+                - name: dind-sock
+                  emptyDir: {}
+                - name: dind-externals
+                  emptyDir: {}
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: arc
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/preserveUnknownFields
+---
+# Source: applications/arc/github-token.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: github-token
+  namespace: arc
+spec:
+  encryptedData:
+    github_token: AgAmd2tvl9QVYZx4dpqpEbJrJCDpvfEg6E6fH4s72gU2eu8mdvxq6e+umX9QJ9rAsCtgg4FSrpjb2noYZGooqyvgBpml1hXZccR0oKfONloFnp0JHHYwrpgMv7eyxgFSBuEdhm02vpl5Y/GnwR5/wj3mG5YX+NCgBu4jZtWiHVTuM3CB3TVJLS6CCxdeym3P0B4qMTVuo3OhrOq/I6dylBD0AgS0S/pdU52qs1d1Y509DskF5Swjqi3wK9rLU22HxSZXxwuGumWpfQ2JNMhaLIEC8Bz/atRrByPJuVGu9Xz76sjeN3/xJzypK9lQ2lSYKkih8tv99beNg3bczLJ2nbhojPgiksTrPWRnLADT6eZ81W0hXL1xSLSl64yiquQHDucp7dvtJWnKgUpS/Q5hg9n0vu5nNoxrPp2vIKKzi9XA/K6kdW/ux/5L3qr38YWWObnWeVH5cRmsvU1JkTgbn3+rby+oO9meTQCCwSB2XuC/moHd+dZneK99ChW3/Sf+gdQk+A0uTN29H284UdRMGwlLGLPSz/VWRoVt1hGOgYK85Mc4d6LF+E49Sk1tvuhnUIhELk0k1PXRWpf4wDuLptYEK5a97I90wGNDlFptSsR0JkS72LECeagU4pbG6pz7XctAZDjmkS3ufoehR2XC211ZgRIMxMXUt8YLps4zGZJDdOBKRcoPNwVXW6sb54wBfAF14kra6FChAMsRLxiKpFtNEm/ezCgHz5hWgZhWgnjdIW6kRO6vcWdB
+  template:
+    metadata:
+      name: github-token
+      namespace: arc
+---
+# Source: applications/argocd/base/image-updater-git-ssh.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: image-updater-git-ssh
+  namespace: argocd
+spec:
+  encryptedData:
+    sshPrivateKey: AgA0xexefjP4/QMY/BpX5WfiRFj8+OJKtx+/nwdqi039gwiHloPZkumbN91B29D++KWNjtYExcvdTTAX8yveCfqbOnJZdBm+i5BDCj5jqXpCqvWMBJe2cU2Bspm1Fay4rjutvrCHbY5kDycIZH/9NPRjes6yhmLjSJh2rrzpdyRUmC1ULTBb2xuQug6bNVKhI2Vw/K4qihz/wjM8ZVcdMpavaO+vl47Nq4jTqnD2Rz2BXJXWvz/iwWuHWmX1SwgTEJV/fE1WbfoK5PaSg42Y6jqxgo5hzoJOnZkhZ67n3chPGy9gQLNzfBbNkMMvj7GoHtE6l5kR1wGnYYrHdCtoP5KG+lTEOwZWiOrpy/blsxrdbkTrooK98IbK38oTccZzOBvxL5uHprC54OlUTfpBfhD3AqInsUdccCaliKCxVV3lCB2J/cowUrGEVZCbh0qQiHn3+GXCjgtfqAnU2nqIvsyZ2q9x+lamKOphBrbrJ3HxhYM61Z82B2M2E0hAPmncEX9/FrWxH11jX2eCl7pcz7bAGWUy1MSPEro1Xcv73cqH1ZrHSVSWdD7wMRuQKu0Nptx2eTIzmB/3lK7gis+57e3s7wJvuz+MG8XX6talXvWRobgPQ8CaRSp4XHOIZhtAGuXgedYaQD0PZ2/2cZT1PSn7h9m5vhk4WzYpMQmPzaMwJ62eHtQBEScFc2Zs0Nm93uyee52XRRbWzC/zdesDgq16Na1WYIPOsIGtfsjT6TVuhdYO0OASLLRYcusAfQ4eQBIXB5YAApySQbgpS8Lieio6e2vGUMsQEwFhi+q7H6O8/PUfEs0M8L3IfLypJBpkMdGhPrhwrxaM3rRkHKB1R2lz3wDd0iwNRQTgBayngJg3QHDrdagqi2YWQ+aGTAo+hOmkeYk4bUri4SgfLtIW5lI4OnoDTK9CAg3hxGC71zTfOFs58ZVOrZeSOZ7hR0u1sd+1lE8PLrFvlWNbxmf0Cz0jIHQvi27xXnG6/LhPkXPVsSQmD3Tn45cRAWIHqOpBo+3mXdotCMzOddACJutOUKfZqVLjQA1IQn6u0gNw07i9Ix6neuWFUo0RyoH7SEcUX8aoD+vV4QsW1b7vf8xOuet5KGyZ0bHlyB9VGWw9V2bjAJlYIhH052qMzVLhLefFUPwwsTeeSbPn13iwuG2BEhSYyUCIA36A9jBUBsKozdMqmWEgwM1M2hrP3Hyi+a+HutYbp7nRRs/zwW4q78vjBH1nzzVRkKSgp7ikPI0=
+  template:
+    metadata:
+      name: image-updater-git-ssh
+      namespace: argocd
+---
+# Source: applications/argocd/base/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-server
+  namespace: argocd
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`argocd.lan`)
+      priority: 10
+      services:
+        - name: argocd-server
+          port: 80
+    - kind: Rule
+      match: Host(`argocd.lan`) && Header(`Content-Type`, `application/grpc`)
+      priority: 11
+      services:
+        - name: argocd-server
+          port: 80
+          scheme: h2c
+    - kind: Rule
+      match: Host(`argocd.proompteng.ai`)
+      priority: 10
+      services:
+        - name: argocd-server
+          port: 80
+    - kind: Rule
+      match: Host(`argocd.proompteng.ai`) && Header(`Content-Type`, `application/grpc`)
+      priority: 11
+      services:
+        - name: argocd-server
+          port: 80
+          scheme: h2c
+---
+# Source: applications/argocd/base/namespace.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+---
+# Source: applications/argocd/base/secrets.yaml
+---
+# https://github.com/argoproj/argo-cd/issues/7121#issuecomment-921165708
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    argocd.argoproj.io/secret-type: repository
+  name: docker-io-helm-oci
+  namespace: argocd
+stringData:
+  url: registry-1.docker.io/bitnamicharts
+  name: bitnamicharts
+  type: helm
+  enableOCI: "true"
+---
+# Source: applications/argocd/kustomization.yaml
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+configMapGenerator:
+  - name: argocd-cdk8s-plugin
+    files:
+      - plugin.yaml=plugin/cdk8s-plugin.yaml
+    options:
+      disableNameSuffixHash: true
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.1.6/manifests/ha/install.yaml
+  - base/namespace.yaml
+  - base/ingressroute.yaml
+  - https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/v0.16.0/manifests/install.yaml
+  - base/secrets.yaml
+  - base/image-updater-git-ssh.yaml
+patches:
+  - path: overlays/argocd-cm.yaml
+  - path: overlays/argocd-cmd-params-cm.yaml
+  - path: overlays/argocd-lovely-plugin.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-cdk8s-plugin.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-image-updater-config.yaml
+  - path: overlays/argocd-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-server
+  - path: overlays/argocd-repo-server-deployment.yaml
+    target:
+      kind: Deployment
+      name: argocd-repo-server
+  - path: overlays/argocd-application-controller-statefulset.yaml
+    target:
+      kind: StatefulSet
+      name: argocd-application-controller
+---
+# Source: applications/argocd/overlays/argocd-application-controller-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: argocd-application-controller
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: argocd-application-controller
+          env:
+            - name: ARGOCD_CONTROLLER_REPLICAS
+              value: "3"
+          resources:
+            requests:
+              cpu: "750m"
+              memory: "1.5Gi"
+            limits:
+              cpu: "3"
+              memory: "4Gi"
+---
+# Source: applications/argocd/overlays/argocd-cdk8s-plugin.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
+    spec:
+      volumes:
+        - name: cdk8s-plugin-config
+          configMap:
+            name: argocd-cdk8s-plugin
+        - name: cdk8s-plugin-tmp
+          emptyDir: {}
+      containers:
+        - name: cdk8s-plugin
+          image: oven/bun:1.2.23
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -e
+              exec /var/run/argocd/argocd-cmp-server --config-dir-path /home/argocd/cmp-server/config
+          env:
+            - name: NODE_OPTIONS
+              value: "--max_old_space_size=512"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+          volumeMounts:
+            - mountPath: /var/run/argocd
+              name: var-files
+            - mountPath: /home/argocd/cmp-server/plugins
+              name: plugins
+            - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              name: cdk8s-plugin-config
+              subPath: plugin.yaml
+            - mountPath: /tmp
+              name: cdk8s-plugin-tmp
+        - name: argocd-repo-server
+          volumeMounts:
+            - mountPath: /home/argocd/cmp-server/config/plugin.yaml
+              name: cdk8s-plugin-config
+              subPath: plugin.yaml
+---
+# Source: applications/argocd/overlays/argocd-cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  kustomize.buildOptions: --enable-helm
+  application.resourceTrackingMethod: annotation
+  timeout.reconciliation: 180s
+---
+# Source: applications/argocd/overlays/argocd-cmd-params-cm.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  controller.status.processors: "20"
+  controller.operation.processors: "10"
+  controller.repo.server.timeout.seconds: "60"
+  controller.k8s.client.qps: "100"
+  controller.k8s.client.burst: "200"
+  reposerver.parallelism.limit: "16"
+  reposerver.plugin.tar.exclusions: ".git/*;node_modules/*;tmp/*"
+  reposerver.log.level: "debug"
+  server.enable.gzip: "true"
+  server.insecure: "true"
+---
+# Source: applications/argocd/overlays/argocd-image-updater-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-image-updater-config
+data:
+  git.email: noreply@proompteng.ai
+  git.user: Proompt Eng
+  log.level: debug
+  registries.conf: |
+    registries:
+    - name: registry
+      prefix: registry.ide-newton.ts.net
+      api_url: https://registry.ide-newton.ts.net
+      default: true
+---
+# Source: applications/argocd/overlays/argocd-lovely-plugin.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-lovely-plugin
+spec:
+  template:
+    spec:
+      containers:
+        - name: lovely-plugin
+          # Choose your image here - see https://github.com/crumbhole/argocd-lovely-plugin/blob/main/doc/variations.md
+          image: ghcr.io/crumbhole/lovely:1.2.2
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+          volumeMounts:
+            # Import the repo-server's plugin binary
+            - mountPath: /var/run/argocd
+              name: var-files
+            - mountPath: /home/argocd/cmp-server/plugins
+              name: plugins
+              # Starting with v2.4, do NOT mount the same tmp volume as the repo-server container. The filesystem separation helps
+              # mitigate path traversal attacks.
+            - mountPath: /tmp
+              name: lovely-tmp
+      volumes:
+        # A temporary directory for the tool to work in.
+        - emptyDir: {}
+          name: lovely-tmp
+---
+# Source: applications/argocd/overlays/argocd-repo-server-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  replicas: 3
+  template:
+    spec:
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      containers:
+        - name: argocd-repo-server
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+---
+# Source: applications/argocd/overlays/argocd-server-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-server
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: argocd-server
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+---
+# Source: applications/argocd/plugin/cdk8s-plugin.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ConfigManagementPlugin
+metadata:
+  name: cdk8s
+spec:
+  sourceRepos:
+    - https://github.com/gregkonush/lab.git
+    - https://github.com/gregkonush/lab
+    - git@github.com:gregkonush/lab.git
+  allowConcurrency: false
+  lockRepo: true
+  generate:
+    command:
+      - /bin/sh
+    args:
+      - -c
+      - |
+        set -eu
+        HOME_DIR="/tmp/argocd-home"
+        mkdir -p "$HOME_DIR"
+        export HOME="$HOME_DIR"
+        export BUN_INSTALL_CACHE_DIR="$HOME_DIR/.bun-install-cache"
+        export HUSKY=0
+        APP_PATH="${ARGOCD_APP_SOURCE_PATH:-.}"
+        if [ ! -d "$APP_PATH" ]; then
+          APP_PATH="."
+        fi
+        cd "$APP_PATH"
+        if [ -f package.json ]; then
+          bun install --no-save --cwd . 1>&2
+        fi
+        WORKDIR="$(mktemp -d)"
+        trap 'rm -rf "$WORKDIR"' EXIT
+        export CDK8S_OUTDIR="$WORKDIR"
+        bun run infra/main.ts 1>&2
+        find "$WORKDIR" -maxdepth 1 -type f -name '*.yaml' -print0 |
+          sort -z |
+          xargs -0 cat
+---
+# Source: applications/backstage/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`backstage.proompteng.ai`)
+      kind: Rule
+      services:
+        - name: backstage
+          port: 7007
+
+---
+# Source: applications/backstage/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: backstage
+helmCharts:
+  - name: backstage
+    repo: https://backstage.github.io/charts
+    version: 2.4.0
+    releaseName: backstage
+    namespace: backstage
+---
+# Source: applications/cert-manager/cluster-issuer.yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    email: admin@proompteng.ai
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: istio
+            podTemplate:
+              metadata:
+                annotations:
+                  sidecar.istio.io/inject: "false"
+              spec: {}
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: knative-selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+# Source: applications/cert-manager/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cert-manager
+resources:
+  - cluster-issuer.yaml
+helmCharts:
+  - name: cert-manager
+    repo: https://charts.jetstack.io
+    version: 1.13.2
+    releaseName: cert-manager
+    namespace: cert-manager
+    includeCRDs: true
+    valuesInline:
+      installCRDs: true
+      crds:
+        enabled: true
+        keep: false
+      global:
+        leaderElection:
+          namespace: cert-manager
+---
+# Source: applications/cloudflare/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: cloudflared
+  name: cloudflared-deployment
+  namespace: cloudflare
+spec:
+  selector:
+    matchLabels:
+      pod: cloudflared
+  template:
+    metadata:
+      labels:
+        pod: cloudflared
+    spec:
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ping_group_range
+            value: "65532 65532"
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          command:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+            - --token
+            - $(CLOUDFLARED_TOKEN)
+          env:
+            - name: CLOUDFLARED_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-token
+                  key: data
+
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          ports:
+            - name: metrics
+              containerPort: 2000
+          resources:
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+---
+# Source: applications/cloudflare/secrets.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: cloudflared-token
+  namespace: cloudflare
+spec:
+  encryptedData:
+    data: AgCUco468agvL/skx963f8jqPU7MYgWgzU5DyItdM7q9NHf2bY9Uc5xi+iCm6ZvceQ9MYh6HRCieLGvOiomKgNGEI863oo0XmsieEXEFcrREUbDdVpw4onl79FysFL8hEC/BOKNiFrNI3bNEYPjinnXdq5kVVj9uJdL1oipksnWtOYoaiMyVmJX1nEjF67s3kpOcHOTdXW1WcO4npDw4f70Wpgjp2aU3hCmOcNQW0ugrXCFMuSqhpsZ/95XnR5dhKNsLUeX6iq2AtVOxg+/ODsJZfbSLQt9USB/498eSoo93OoRHX0wvKEPC4lVTovoORICHngenn73i6iHP2JHIb9yuscITZ+o0FdklsJEpZylfQXVImded3POYhg2LPinRQuJiQMPV8FsxwcKh+HnBSKnZk/siUGyr60FcyuTGwY7+n60eDCbC2ixePZP1sLrIaP8cXs59mjPLppX1mZmKL4SftTkTdEzf4ckFx4sarrvK9qYwSz+vVPKyi9NANMUQpmdB5qLYtcjwiAg/Ymlza/OXMe25w1d0rcGQSRyxq/gB+Ts39CsZyCNx27FJUxtD45CdFO1i5ZHZwd8RgEXYdLVFCoa0HnAWGr/VyMK9AYAe1JC//cfENvXJSPeKUUkp25ImrEWb5eN3o6u4zTqRX/FrvR8TOBeBdMVs2wskovT/s13tWpsdAzjYMHzQCo7ByPLbaKSaTjpot5HqTNX2WYOFsPQ+WacvepTHNZYs71GQZspvQRbIkEZaxrS1XekToji+cc2qQX1SKn6mxE2qEsK9FzbIXGh509t2G7/FxG04jW7I80bZhQ6ZuCchGqtmpQVBoEtG+9WOcbo8lX3uXjV0Da+0QdN8NK4BkR5FrBNI3oVPGV1zhGp+RVmtsGxWbq81m6TllhI5breK4u/rQRsoi85LxTxGrhIf2b3eG+2UhEp1OyeNK9cQ
+  template:
+    metadata:
+      creationTimestamp: null
+      name: cloudflared-token
+      namespace: cloudflare
+    type: Opaque
+---
+# Source: applications/cloudnative-pg/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloudnative-pg
+helmCharts:
+  - name: cloudnative-pg
+    repo: https://cloudnative-pg.io/charts
+    version: 0.22.1
+    releaseName: cloudnative-pg
+    namespace: cloudnative-pg
+    includeCRDs: true
+---
+# Source: applications/coder/Chart.yaml
+apiVersion: v2
+appVersion: 0.0.1
+description: Coder open source developer platform
+name: coder
+version: 2.26.0
+type: application
+dependencies:
+  - name: coder
+    version: 2.26.0
+    repository: https://helm.coder.com/v2
+---
+# Source: applications/coder/coder-cluster.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coder-cluster
+  namespace: coder
+spec:
+  instances: 1
+  storage:
+    storageClass: longhorn
+    size: 10Gi
+  bootstrap:
+    initdb:
+      dataChecksums: true
+      encoding: "UTF8"
+      database: coder
+      owner: coder
+---
+# Source: applications/coder/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - coder-cluster.yaml
+  - rbac.yaml
+
+---
+# Source: applications/coder/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coder-workspace-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "persistentvolumes", "pods", "pods/exec", "pods/log", "configmaps", "secrets", "events", "serviceaccounts", "services"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "roles"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: coder-workspace-provisioner-binding
+subjects:
+  - kind: ServiceAccount
+    name: coder
+    namespace: coder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: coder-workspace-provisioner
+---
+# Source: applications/coder/values.yaml
+coder:
+  coder:
+    env:
+      - name: CODER_ACCESS_URL
+        value: "https://coder.proompteng.ai"
+      - name: CODER_PG_CONNECTION_URL
+        valueFrom:
+          secretKeyRef:
+            name: coder-cluster-app
+            key: uri
+    ingress:
+      enable: true
+      className: traefik
+      host: coder.proompteng.ai
+    service:
+      type: ClusterIP
+---
+# Source: applications/convex/backend-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: convex-backend-config
+data:
+  CONVEX_SITE_ORIGIN: https://convex.proompteng.ai/http
+  CONVEX_CLOUD_ORIGIN: https://convex.proompteng.ai
+---
+# Source: applications/convex/backend-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: convex-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: convex-backend
+  template:
+    metadata:
+      labels:
+        app: convex-backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/get-convex/convex-backend:latest
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - >-
+              mkdir -p "$HOME/.postgresql" &&
+              cp /etc/postgres-ca/ca.crt "$HOME/.postgresql/root.crt" &&
+              export POSTGRES_URL="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT?sslmode=verify-full" &&
+              export DATABASE_URL="$POSTGRES_URL" &&
+              exec ./run_backend.sh
+          ports:
+            - containerPort: 3210
+              name: api-ws
+            - containerPort: 3211
+              name: api-http
+          envFrom:
+            - configMapRef:
+                name: convex-backend-config
+            - secretRef:
+                name: convex-backend-secrets
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: user
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: password
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: host
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: convex-db-app
+                  key: port
+            - name: POSTGRES_DATABASE
+              value: convex_self_hosted
+            - name: PGDATABASE
+              value: convex_self_hosted
+            - name: PGSSLROOTCERT
+              value: /etc/postgres-ca/ca.crt
+            - name: SSL_CERT_FILE
+              value: /etc/postgres-ca/ca.crt
+            - name: POSTGRES_SSL
+              value: "true"
+            - name: PGSSLMODE
+              value: verify-full
+          volumeMounts:
+            - name: convex-db-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+      volumes:
+        - name: convex-db-ca
+          secret:
+            secretName: convex-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+# Source: applications/convex/backend-sealedsecret.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: convex-backend-secrets
+  namespace: convex
+spec:
+  encryptedData:
+    CONVEX_ADMIN_KEY: AgAumsDN9fvtMQX1GzHiIyb36blGbTAmQoc/tpYLbY+mZ9tXchqWpCR3NdQUSu6xom0QtL1Lib11R9mZmiFC0c9DgcjD+RvzSEB0LpzmJU/MRsIZIVlDdU5QVraNqDvYaTE5XIkTFOpgN21ecQRgFGEnpIV3f7K3K9Ln9sL0apEpK6WMhO1wYmMi27k3Fz/bqIDKFrhjNoSVgUibwg+UdPM7fWBAuzcrJ7+9zlTqRaimoyF9sJYgpbbkRSGJW9auSNfyR/LGUGp4dy6i8fhhPvzVj2AO1EO9rY/HZLCHajuAJbXgPSgZK7/3YBunKiRJA3uur7+PLjS7BS5tttnJsERnlpN8Qbrd47s/5hckjZjJKb2+nnkoKLoVYRhhDTgtmW+T0yI+t7jJlg8AM/1d/FYlmxPgCHtmQSuoLMn9134wSu2K+VWkeJnl8efLvdeePNSICFyVuG5DrvbFwooJOGxVxoE8+B+O6XvRXQmgm+IXCTG3kAg4ngv3KByFkGVwLJWpA0Dcayj4BQmBjLrB9VZIFG+qgfr+Or1nBjvWO/Wuc4ZtDWvEnv3ZD86PwTzI+KxvOciDwrwPrLGhitZvBUu5U0CEZzCzTS9kIY0/ml7vNqBNPJzCDRobGf7S466H2cDguFunB4pE9GyZqfts5JdCu+bMhdpguS0XNCkvhlHAIAWfb53Uj/6fjSTD3uCVjGxAB5ze1l3g8a64Y9sf300+PNvG8CZQOIPBpQkB0W9g+IO5z7Nj0EKismgN
+    CONVEX_INSTANCE_NAME: AgCiwRNenISKdqvZkT4l/sa5gP8ODn60X/ZHd0Cu/QfJqEa7lYundEh+BGYksIEGm9D9hEVfkG3gsl8Lqp28gTWll9GINUBs+/5YbZcHcMBKSyuml43EGSdTcTFogBQkGgg29dBPng8fVmhMaOEgILB2v7ohMr3o6WFjRS04Gzou6kDQ5tEx3zRqHxFdjagYewRnGVYH8PCKfOpWxWHrSd8yTNgYnLxV5z/87PDJY0xDtlssLlsClC2cmE8H5Mjqs1awQuqUPcOyb8mqqJTPWILjvKCfLaZNDzvq8zUlx+uxNr3iDgFhivh72epMONRD5OClb8JEbBxPrzb7Q7y5BZA39IHZ78bRsCVvw1Qipejvtz1+VCbQAgO0f6E6bF6Ia3UKabVsSAV9ilrZ4fAraG2++UctZ+MH5ktYLT3LTe0VG/bop3nhGBFE0n7FRLbWZeRppyPkZWOdVB2WlNtDda/V8qz0gtwHXhVwW/AdKH77LPnbu5PS65+388KS7px8UrFzJPhB6hwN7Tc8ju0QqVKhEjdEEJ6Cg/tCLP3FBY0OCN4+kBVGGttGy6keQE9cInrvnhfIuWsSHPTFmBsTEhfqCMd/J8KzxJ/9TOnX8/cEB16lUToZzeLJIen6UdYXaCR/4Na+oloBz9Z+A+71ucY8XI7RRIs7OdKcnrY1r51+DgEfL93XgAxBbgjBGhRWa8+PrFRbuYfA17fA
+    CONVEX_INSTANCE_SECRET: AgASwNzWvMdM1zVS28fAsQwbr3o4WbsT4CvlX4lUfJr/m1wT1x1iYzW3F5ueOKjGXb1f2evWDISW4iKgbOBB9GUXR/SJHqKstJLJPGjEqge8Iqv5HiKxcUWO0hzlk1ALUhVC443tki/0/0dYu3pu30tYXgueUmd8LI3K2w8z607NRBf+Hvh4hw/bJaC8VlBN5Bv55WyzEpOyv17WomlsxDC8HJHkUEK07dH1vOoL+EHK/qtNsmc8onCni505WH06PrZrgESrMFUZMaa9h6WRaOScP/vZcCxAdTiqXHXUD5HushfgQepisShd/LIE0qHtB5f89dUvMybX3os+ebtK1H+c0CcSHdhvBYwJ15bPSg4QMcJ4kzVi30ItC0XWrysnhvdT6QBHjF9eHd4/qimIgyLuJsfFpPxtMeKQDwyAeX3FwQaSHICJfGmlj38JViqd3ARvF+Dk6R0dC/M3qL7JlNx40UCS+MDtqo14Ivvl9UoiW0m7kasgkDqsTZHk+YNFP6o7vz4Wjyktjn8qdnwT4DCSFBexaAU1rtDwp7J7j+Jbg1x66oUDPkJZuVfYXBLwTcvp7MDV3qMbgq2iFHIUIEVsETpVbR5A9Lii5WHnN1TANzeSNsJeWzdkBXRHENWZRiMFi0NfwB7CL9CI7bBfaLTjT6lxSBodFiyZPzwFrKeJ2TYfyPomAE+yZl3jBNua9SKKquDD2Hy7/4K1kcoSYR7uAMfdvbYfBEA95JZmgPYMtOE2dBuhAbJwVenW
+  template:
+    metadata:
+      name: convex-backend-secrets
+      namespace: convex
+---
+# Source: applications/convex/backend-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: convex-backend
+spec:
+  type: ClusterIP
+  selector:
+    app: convex-backend
+  ports:
+    - name: ws
+      port: 3210
+      targetPort: api-ws
+    - name: http
+      port: 3211
+      targetPort: api-http
+---
+# Source: applications/convex/dashboard-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: convex-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: convex-dashboard
+  template:
+    metadata:
+      labels:
+        app: convex-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: ghcr.io/get-convex/convex-dashboard:latest
+          ports:
+            - containerPort: 6791
+              name: http
+          env:
+            - name: NEXT_PUBLIC_DEPLOYMENT_URL
+              value: https://convex.proompteng.ai
+            - name: CONVEX_SITE_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: convex-backend-config
+                  key: CONVEX_SITE_ORIGIN
+            - name: CONVEX_CLOUD_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: convex-backend-config
+                  key: CONVEX_CLOUD_ORIGIN
+            - name: CONVEX_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: convex-backend-secrets
+                  key: CONVEX_ADMIN_KEY
+---
+# Source: applications/convex/dashboard-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: convex-dashboard
+  annotations:
+    tailscale.com/hostname: convex
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app: convex-dashboard
+  ports:
+    - name: http-web
+      port: 80
+      targetPort: http
+---
+# Source: applications/convex/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: convex-backend
+  namespace: convex
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: Host(`convex.proompteng.ai`) && PathPrefix(`/http`)
+      kind: Rule
+      priority: 10
+      services:
+        - name: convex-backend
+          port: 3211
+    - match: Host(`convex.proompteng.ai`)
+      kind: Rule
+      services:
+        - name: convex-backend
+          port: 3210
+---
+# Source: applications/convex/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: convex
+resources:
+  - backend-configmap.yaml
+  - backend-sealedsecret.yaml
+  - backend-deployment.yaml
+  - backend-service.yaml
+  - postgres-cluster.yaml
+  - dashboard-deployment.yaml
+  - dashboard-service.yaml
+  - ingressroute.yaml
+---
+# Source: applications/convex/postgres-cluster.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: convex-db
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 30Gi
+  bootstrap:
+    initdb:
+      database: convex_self_hosted
+      owner: convex
+  monitoring:
+    enablePodMonitor: true
+---
+# Source: applications/dagster/base/secrets.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: alchimie-cluster-app
+  namespace: dagster
+spec:
+  encryptedData:
+    dbname: AgAukfur7yDe8mCotSvoajtDPOo/FLmzMigtPQ5rqRuTTkTTPPCAUpyKaVpFDHJeMU6IF2J3nl30TkKa2H9k6LTJulhjDTdXspP3s8krATGjc4igDAbRL/kVRehEjFiMD8ovQhxCInF3E408Eqm+0BJ1ESMPmnggo2SLIV80ZReH2NqWl/fOCUq4ztm4Smf7curTUSk/hpPd8olScyBv1O7beVQLM1cCxt1V7oCLxq5xn8hVYX2p/Vq0LUaes6QY1G7kaXvHXInXvjT6fZj0OGy4FbRroL+pkA2i+e+wk5kM4mzcO22unscJI+Q5d7zlaKTsOBidQNgwmJ71tjK/DtTM2O6UGKvXJZFlOfoTtfqMQ4LCDH6qyEuoInSKiy3nZTYIp71AspF6+SZyo4Va1oGpAFvTuJlLgX692nSFtbeIs1QkS/B+SfOhkYKDbBzqb15mI5ZOM9yO87lvsSLqgevyb6HpmZVGPlYlPs4TEt1BazLtT7AGGkEAcIl6EaXu0vDzDRvdfRhJ3MUfoStgWzNET/g0LgYkMjQSdG05dDtmh998hMmld1NE6O/L0tHyWY3k8bjFj//KJ7WnBmOjfap9vMj8rZpKekgHVv5T/cjq/+yL6Ep+U9UVrCNwRFcLU1UPUPdnJtbFv9HLjyNTtsZfR61BBk7XnE8hAuQq8guYHZAPN/ST8I2W4toQu9jcZGUzKUnu/BKTLA==
+    host: AgAhWVhRDdVgtKNj6FjOwyL3oeZPmDw6V044wRiANGAsPZZdY1vIYsWWZSIOrcfvn3gAatw+zsPBkFkSGQn+uVHctk30iGMNZ78pzFacznNpHCKkE2SXRgzQ9GqKX9yUSKHt94chplbnSz5rBwn7Np+bU9o95zxkg+ZjqEvNRXLV8xJoD+2jLI3yI6gWu/8fSMi/q9tHmGXnTmU8LZ3/HEhPdP0cZlSKrpmoiC/GaPbnk6ylhJ+UItUFCV2cOfJWgUv8nfCEXHNJrZM/yHMLkTNXQxN+pU2UwCkw32dLcChaaR44+D47spn2lJ0pe+kVAYdmE7VJ8pRifRHhbJk2imBwB7UaWFbiYBmGKHtfXskfnFXbTPOntFofrmWumqNZPgZYNjyURvstLDM/AP/pzA7C+qwGHf9ZFwCqCWQzDUGxrotXJc7AU+viDBSqLaKIkmQdHO7WAUQZPTOCCr+t6DMgqg9ri4OKMWOVD4kG1Gwads29tWweZs7YVPPwmCjxTCoKZPYq9M1Qk5yff1xjtL8JXMBdnaNdJjy8uk0kA69+oOZZ4KqnzPUB4kEK784d7T7Dcwt019iP4ioDGtqvgw8vWDqP/9qtUPCJtgs+DqX054W0Q4MgDy9gGROlpvqb4waee7MX/IFEpDcyT1En8QKri1QMjEBkVfi03+pGTiTsIBo6iHPzdvNtECjqKA6spfVeAktVS40Y0aLAWY8OvNqnMLbm
+    jdbc-uri: AgBgzBqynKdGz3aGMGCDC5/GuSCsO12/OAesJe8SvVAJzqmdTMrsxIhTFwkAT94BnzIkOuunJJvympsNOBa8wCqMFvGLhY8M5/AbTdNjbOTOghVNUhYEN5zqUXoMwqLlrwCR4e8yT7JBh8YhwrnTeBsMtvbg1XMMPm3shKlRRspeNI4di+SQe+RpVUPnbjBMBgL40hiHmmQfxGtzAjZR6Gh9F9NI0CUY9pghm0xhYBXGcOrIagzTzZqlftYh67WycFoFO5OamMXCzntoYxI/uCXmNq0to28WV0SkJnLdx+9ARVy0U6ACpvBgwWeCycHUVt9kRW5+zEZ6LrSoE8emBOdVOw1kHffzIkl1D81c6IZ/jg+3OU1NR5Z+H4wWcuM7IsTBTC71Z3B3ERzhayTAKvnfanqDoSmnr5MAqD4MYAHfaFWNIiKglgu1T/vYEkHGTb5u3oEzGPWTx4axEc0rOaXfpwQikIsokKu1ofRjT8Def4fwyvCIIRcYkmU9icvn2zVhsvI2HVZMZe90YTvmyMguW/gV9yCvfpT1XP2Xr75LeUHtZzljcTUalLZbOUv9bq5Ytnq/vAgobHjOIAmGzsY5+UisWnOoN5eP/jN3ryUKX2N2lEvF0sgiTdSZ/xHCd85t+X1qa0UCOND8uDNZfOQSRkSaY7SGP1CdBtjjdoIdZmnLOzBak40W2QnzVPbkC7wcypyHmoYFkfbxUJCRwSsHz7wUX8zNKbjHuW0aPDvaDYUrhr1g2sS/JnesaszqSW+KGYLtpLhHycM6I+q/C6flPH9fk3tToLT5AcB0pmBD8XcQBkQG4YwDcfFp3ETjeDOoL3xKmtvRwfmI6kGfnKTgHqdVMXdTraniw3cBFW/D2W0OkiSz5Ik9mVzz+ixmbu3Cfhex
+    password: AgArovyjm3XnIBn83cO5tKfQvYm8peMtJ5niKhAihlYi0esFP47PVpSp68Yl923KEhUAimlaovR+srltiE/XpkNaQE9SH1SpXpKM6qb7XYze2h2ZXy0BBOEI/q6HHdxapnrZIraV5NO2DafKaZpEyxIo4+EVjEZSdWTQOE6YDKX5X/qtnaAKAqilB7liz3rbLU3PmNIdVhG2jYJ0eL1YPDVp9ura1Xx8eZ5wwodMwmWTpJtGwcoV58qGLvIfwwP2KcwLB3Vnv/NvdJH6sq7rs7o5dQQyBlBTVQsPEUDu1MJuV17Vf8AC1hlIU7zp03bLgZkLASeVodQy8EciRgHMXXeLnOSkPOOcsZcq480p1Wz8b4RJqE6UCZ0yUsZjnkKYzwnOLt4/Ri8QFOtBRF2YmFOp9eopIC2HDjgbCb9EdNTZJxWQP09XISaHVtW+5hp+fw/DYhus2vDZA+0tJgaDeE0D3qprIOp9+xDCejay+yIqLYsirr/mcvAQpEDW0GujImbOF5nX1R3O3RysAEuFfhq2QnHkepg6SNKqgaHpmuuebXsmoFXDGAtAYg1x2uKjClWaG9nxzizIi2A56j3AyCMTt9pFql1Vb5SQVeS5av133c4nNI6Mnwxwy4vRf4hux6l3aqUqiErUGEm+YeCA9ommjyuItVcfp9QdzSE9X4M+9cVkurgHC4h2asAvIfVm4Crk9gzmf+jHdBnL0JQUwtNJPYxIu80Sh0s1UAGFgPmeS3Nn/xhVL6kh6kVeo1WQAK7BV4260qdT0CoVVmCk+OEF
+    pgpass: AgAZ7/wulUoojstWJlI6BzaHUhjSsbY7OHXwzF6k0FiJk+jZEDqqivT0zWS3SDjvI2aEjbGc1hn8lo1Uj8S/agK8zyZeYRc3Rpk5pqgYIFEnx7mze4dw2926JPwpF6xE+gfPNrdVfkhfkPLFLKtpwV+c9Hc3gLQN+INoEOxfqZoTPtmMhs30wbWDjQ0mrX6Zay8zD/u1TOL42qYND0TpS8Xiu9ZyHwf6LFLjSfAgDQAVZnzg4JBppdw50yvsYyDIokkRP/fD34Xv7Pbqr612WtxzK8u94woqUtkhUPay0kMS9mjAHovFc4083/9j8TddMpA3mlqs4qFO1OrL8IKd8d6M2JGCVGYniDH9Q2+rA/+vigzKfLtwzdaRiamligg6EZ5wQ49yEErUXd/BVjP7DJa6hbAc8cgehEWJ7sST+jBW1aRqvx4tEvFw0m/PrOMIzZxM49x6AlTfdMaFSkIBKrYd2tOu0G06iTjviK3FlF+Wk/KDlou6piriQUDKX2qO5kKc2SrL49eFi+K0K8zm8BMWYs3DODlQ8WIWo3KTfoxK50jJFFtofa4aAhQb6m/vlDkhqn08i6FgcCdFmuT7WDWqKhfdzp8Hqd4nHKuhydjleRp5WKYcDsSITpZ7HrpzOQ2dq9N0L+xiEMLJrIXnARSVLW9iq4BybKxH4XGNArrCz7WQ/2pb5lwnV2lvwHSTRNeKXUybvSoPDOMhFPoRFIWR+0NiP77rZN/kwMbKL1jxkNIDE2aQk598d7bScwmuYiCnZUzDRgbv8kkk/1mDX/SVzCYMu1tLdN/MwMBpyeptOlBs91nmz7FRvQSa7GFaGfN7syPRJUYZMV4QKWo=
+    port: AgCTtdk/+PopWMcaqJ1DJhfZWc68H4AfV/iDTEmf/GUaJPxHzReItJS1nRC7vOxLs/zYH2pA25CsSxjbbUiRo7jmjwava8i4GZ0ZoYhT8dBSwogiYLM7ABsUT+zstsZokU1Mi86B6o0Zg1syrHXd0YKS2E6nzTqJjCqX1x9euKIPARCLxNSOLEmVyGRx2S0RKhD7WHoamswycL5ipE1fnDHEwCYZFyIbUaWmMDbl7HMU1YJKhw82ctKLVU8B2xpVoNNsF4uYFEjgPD1JcUh5E/pYE31EkYVI3Q1gxQX0tHc3p6VF2kvNt/jjAOo9dCjqXmSEPXLT7A7szHp/JAIzIUINmRxeqJtPecjPhPKMJ6gCgo1yqpbxKcC/V0000NB5c+9+J/QLy93Ebtm87bAVASkVvYoXpOY/DyMb93pdmJj7NO9a/udabpyGTnI7bIa8DX8aGRdvuyb+8iImJRUN0ZXf06KPhzKaB8gYnUuEZPP8o2IvrzucSElvgpl7XzrnwbeMv0l/mYeCZO/D5gc7ZxqtbXgsV7hWz5MTdeMAOk+Db6AMFoAzFyMeur3DASXTnYcY4kYw1+Ic+r/cJA7pGHALcqVertZMqB/q39xQts3Bp5eFW/oDK3ST88U67M1jkbIoRI8pGfbqcx9x9aYV4lkO6hpXqPfJcKPCacfSqqHpBQzVNHWUmbHj7kaHcKpO9/dSoC+x
+    uri: AgBxBdiXk/WsJPo6d/lgvmzJNYAH5TlaWVbuYAdySvmHG2V9pE8G1zCkfk7IEJIcD+ExOUrPVCRPet6aIygyusM6zhE7AgWGm9Nx9qzcDX0H6l9YDbp68aTU0lfR4Avym/A6QUO2AcpyTyDFbNBLJWTiKqcIdpeqL1GMxUzSzKJvxEwj9EGBIK1v6EQegULfUwBA/Zb1N/0ALbl+CwNFoO5n+gNyKrzIViGUj0cvWFdR8mO/JobpCrpnV4jEwK37duyUU6qZozJYrs3+Bm3CVfxaFj/ihBEweb81qn8G33GmTVgEWMpqTU+5YmAbs5x86aSKI8MET64FSPa2qd4zcZ629SZfkikB/kBqZdGRctSf2TNe4+7xXOeVtMG9U0A/MGB2U1ym1YEJENwMbJR4A1TMQXVcsatARh7caoCG6kzE8bY+LBuRsGA9ZG0rKVlmuPbKJjxHl9t8NmLoQuBz/LaOsW4O9vv5N6LO4nrzdLy0LQp7jGkKlt8TgNbW8t85+M4q/L7ThRTFN9mfMYpPXkCF4hyxMZrHt1Uw20i7APGZyqouQWPNQCkEHV4Bwv1RyKLSP/W0pTa2PTE+PWRpPedIBqqF9njCJ4VRmQQOIMYxvEP5APu2D1/Xy/a1/+VXObIrDn0GMQtbFYWcEg1lGbgEfsk9KsUtW5DO0GZ9zYbKGhhyrfKO7Q/81NkGjEfWVcQvNNya0qeuVDJHIVbEpYFjHzvE1pvY+AMYdWAJRe13OtPjSJi+qdwfC4Do1fvHjlKiWsDLR0vhm4eWM5rWuC9GrTYmDzyE7GlLkiMOO+Nu6ovzKA+TSP8UepiwOeWFvEtkdMExD1LWuukRfH9cnpMLauDcgqI4AYVuNTyQuOSjOAM=
+    user: AgCRPlPU5W4HqL2yI3+svu8AUtoZLd+USTnEcE2RwbZHpgQ3j59Vne4hlHoME3rrAANMO19WDQdFzvtAi+1HMmfGPuaZWMFWaQhIUb87vgDC4OEfhaCokmJXhQtPvafPJ0Zr4IkyFWDQ0VMYcHdgwyRYLA8u0kJOunQmLDwxTuQQR0UN4A83YltZgKJW3SBCuG4ohTjZdvG1Je/VvMAwRjo2QKucS2YF0s8UutCDqvNU6LLkx15Zes9624oEziCywiI46aSaEnAlgWr1MQGLqE2JTlcltDuy/yf9ERiMhgBcLW+maihLxODWLP8d81BjI+yEQpPsD1E4+Nqy2kjfSRDeDraWq0AueBo9UM1dfE2qWzRo7oZD5ci+MUYh5uPVri34R3xW8iLWOmZJ7cTI71TtsFKo8TWcTj0pvNIZUYrMIqFRIDGLVv2DAJ29earFbUiQkNhUfuand97cKpvx/4K1yHcEPDLuyQ/yk1xF6VVFk7qdv9jXsB1Qs7aRSwJaBCl67euiSX1To1KuMk+/kvYOuRLgTQrPunAEdyyYJ2Kwoj0NvzFZF2YsSw3CyJqGL5uBaP0zek1y7WDGWkXq9YqxuUIFmHQqnDv4+9VQZr6uOgXGNzfgll8szIHlp9q0ZQr28qUaSHmmOQ9TtYVG/ElX4ntRm3ygs7I+StwzDFNuw7AQV+IBEy+Xd3X1votQYSkIg+UvPw64AA==
+    username: AgA/IMO4nL3BqFEaRu6HAeGgscsRQ3yrvuY40FfSpyCNcNhWWTpoHDAzBHFbBBbBIQsK3A/8mu7Lxxm1kYWz08QIuQFETEOQ30a4jfUOQFY+VYPCIDDygn/BgkfsZzjDgtohSQyuRMhXZrOPTnQZm7eap60WlrcRYtpOrh9nvBMYB9lQ4fPbP0DtnslJF892c2rwN770gSDJtZYhH7YUbrmCdWwU/S/Rp2s12YnVy7Dyx+fODHPScC8k9sqV0jwmxXiHOdbl4ZT7lPc6Iflvm437HnWLq9qhciMqPrUqsJ/iXcPKelftCuUJqdEucI2V44Clt/HCaZ30K4F2ZrF063A+SP4fmPKrwEdOWAVmTFIPZnTGBsur9Z2k1yOlMosPpyBSH1gk3CdGG0U4OFA5FJG+nrnkMyQlKGUWaI1qMX+pWxkwQoUUSPWeRss71yxd182dNJ0epZ1nkjs7hgmVHlithyYntHOkFXsaSEcmnsmFHVsjKgVXNrSXS10eadpwEUQk+beA8HO+XI46Igp1nQH+sA9iH2G/xGm9N5g7R2S3w/f7zxO13oq4xbN6CZBZGWK8jG8ol0VVsoXRek5gzP4s7HUh/PlzmwL5aCJ6d8q9Bwc1gS3wXnt+z5iPnFVO88INid9TOWiGVQw3IA1zs8tZdcbz1qt2It1qbO+qo384UtOharB2O40Aj7cEFP/AHuQWeXpU/hdEGg==
+  template:
+    metadata:
+      creationTimestamp: null
+      name: alchimie-cluster-app
+      namespace: dagster
+    type: kubernetes.io/basic-auth
+---
+# Source: applications/dagster/dagster-values.yaml
+---
+dagsterWebserver:
+  image:
+    repository: registry.ide-newton.ts.net/lab/alchimie
+    tag: latest
+    pullPolicy: Always
+
+dagster-user-deployments:
+  deployments:
+    - name: alchimie
+      port: 3030
+      image:
+        repository: registry.ide-newton.ts.net/lab/alchimie
+        tag: latest
+        pullPolicy: Always
+      dagsterApiGrpcArgs:
+        - "-f"
+        - "/app/alchimie/definitions.py"
+      volumes:
+        - name: postgres-secret
+          secret:
+            secretName: alchimie-cluster-app
+      volumeMounts:
+        - name: postgres-secret
+          mountPath: "/opt/dagster/postgres-secrets"
+          readOnly: true
+      env:
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: host
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: port
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: dbname
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: alchimie-cluster-app
+              key: password
+
+dagsterDaemon:
+  image:
+    repository: registry.ide-newton.ts.net/lab/alchimie
+    tag: latest
+    pullPolicy: Always
+---
+# Source: applications/dagster/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - load-balancer.yaml
+  - base/secrets.yaml
+helmCharts:
+  - name: dagster
+    repo: https://dagster-io.github.io/helm
+    version: 1.11.11
+    releaseName: dagster
+    namespace: dagster
+    includeCRDs: true
+    valuesFile: dagster-values.yaml
+---
+# Source: applications/dagster/load-balancer.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver-lb
+  namespace: dagster
+  annotations:
+    tailscale.com/hostname: dagster
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/instance: dagster
+    app.kubernetes.io/name: dagster
+    component: dagster-webserver
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+---
+# Source: applications/docs/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs
+  namespace: docs
+spec:
+  selector:
+    matchLabels:
+      app: docs
+  template:
+    metadata:
+      labels:
+        app: docs
+    spec:
+      containers:
+        - name: docs
+          image: registry.ide-newton.ts.net/lab/docs
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - containerPort: 3000
+---
+# Source: applications/docs/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: docs
+  namespace: docs
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`docs.proompteng.ai`)
+      services:
+        - name: docs
+          port: 80
+---
+# Source: applications/docs/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+images:
+  - name: registry.ide-newton.ts.net/lab/docs
+    newTag: 0.213.1
+---
+# Source: applications/docs/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs
+  namespace: docs
+spec:
+  selector:
+    app: docs
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+# Source: applications/eclair/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: eclair
+resources: []
+---
+# Source: applications/ecran/ecran-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: ecran
+  name: ecran
+  namespace: ecran
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ecran
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ecran
+    spec:
+      serviceAccountName: ecran-sa
+      initContainers:
+        - name: run-migrations
+          image: registry.ide-newton.ts.net/lab/ecran-migrator:latest
+          imagePullPolicy: Always
+          env:
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
+      containers:
+        - name: ecran
+          image: registry.ide-newton.ts.net/lab/ecran
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: resend-api-key
+                  key: data
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: data
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secret
+                  key: data
+            - name: AUTH_URL
+              value: "https://proompteng.ai"
+            - name: AUTH_TRUST_HOST
+              value: "true"
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "100m"
+              memory: "100Mi"
+---
+# Source: applications/ecran/ecran-secrets.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: resend-api-key
+  namespace: ecran
+spec:
+  encryptedData:
+    data: AgByF8mYdSOTLaczYwQLuzTPfa1FOLjLgGWNx/GqvrYu7X90fhfThX3N6WBfIozQHgpnw0evkueHzuxu6LrszJPvYMqMi/CGfXm80BwHOYSJw930p7ZE0t+oj8KMyPWQ70CYIlr8Trrzq2h3HnUUxLRjd8LvjtdatlQwSTGfpKtWTMXih0g5LtunoDJzBl5urEEEpf/qzHGZEikxkbX7f1zsGKrZPGx0g9Nv46YB8yOCNe290Rzlbx79sE4bAoJrsppNEdsoHBvHio3oxgGkD9skX/XlEcWGbAhk+KtlpTHtb0/TVdOigbONRTdBmd0BXNOAVotlVYrp7rbOxHxLoYb3lmkdOo17dBARhvXj2zdR9/FXj1bEFsQPnJFtsMxFuGwKrwmXy7LX5d0Cb/HLRhKnyNcwuILAb7aPSEh/HCJFe3sCzq32W6nF204Hnq1EPeIQrisuW12L7wUrkPseK2/W08SDMWiAPqXfWQFOuy2bhgO4LWOOM5rn4eoajPKrNu8YDgvvACD7vz7sBkqyzP6oKtflAPkhVtqYbvB140w4YUephD2yNqVj+0KHAFv76QNgZWU5wBwLR22vfETkqkdeE8d4xINuQBVO6UZxH6JUX90E2kZGIGriWZtxprfDWPRi1c+q1Bqmb4cmNve+hbj2jvwALM81aHMmf5Mofjsw1+gCpqwHJU48b/NGIil/CgUEBqd5cCyieqRzx/mXJ+fmePdxspZafIi4rwCjG79i37vRazw=
+  template:
+    metadata:
+      creationTimestamp: null
+      name: resend-api-key
+      namespace: ecran
+    type: Opaque
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: anthropic-api-key
+  namespace: ecran
+spec:
+  encryptedData:
+    data: AgBXdqMpsM82OGN6gb+I13a21dlv3PUzFV+gQoCbpH8WbcVj2/Z+FCw4uJM5b+1i1co07F5gFu7hPj+RhEs4j9AKME7PXRr+lK4AHVCqamdfELmtTQ8IsVcwKKHGjKpaPlyi2bVpyyiVYlh4MUXXudtED3x59Nb/puFGeNT9qUFiJkMwvwgG1RvkB1jcorn6imc6Klg28T+5+q4rPhhQwdhxw7FAaVlk4wgvuwgwsA/LVrA2CeEd5myhdj+O90Rv8d1bCIem6p+voRDXAKvNL+2WFRJliB4beSUPrIpIeDvTlWYeBcoxcI5O1P3TLQJSPHH1cEGL4v9qXLr1kyY/qPFdwGBjJDeSAEiab2Vcs0YgZTkAvH7SVF0dnZKSr+UKOso+wXLWuxwg6oqcne0JkHwOGWnmsm+chm7TNuDfVVhZgIQvbc0UlU9KfNNsHqKWGeBrTWNgEKFYutHC0TnnQ1eplQnETDvhvyYgTa2myggFIlbOkBEKG0ewA68arquw9azqe0bNemuExHN2AfoXtTQn9Aap9oM6X4j7GMyfQS5g/iRw2RqovM9kCXf0346cf7gdRsaVxklQP4h1bMhhSlI2ERGB2+LPm5en67RwdAaq4h9KtmkgQgitKZQaboyP2yMgHvt6Q5TV13MF+DvxJ04BaQXx7+1bTidL0F6f83SVDuKy9zRUJeNRrXQTvFU3LAmGDT79U+owUj80bhmTsOo9emy3g2vcTEZu+c/7XQ0Inxz2z0Df/LPXvVvHNt3owYGeJrPbSal5/4IFc2xznjpiDOjYU7f4oIWcrER3/yC6p/DbWvQuO/Ss8DUL3+1OxkGs0WsjrNS1qaBKLRc=
+  template:
+    metadata:
+      creationTimestamp: null
+      name: anthropic-api-key
+      namespace: ecran
+    type: Opaque
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: auth-secret
+  namespace: ecran
+spec:
+  encryptedData:
+    data: AgBX0m0vYLCa264D7Op2JS2FK+mFnyEo9l9uolDoyUCJLA8Za4cG2Uz1Q1x3A56Vmv0zpFw1GN38nqMEWsWRb+anV8ovDj1W5/f6WlaWen3mR2x+G6ksnrVH4qW3/fpe7pcEHfsMvlx6PV6QVZvDQPdriUYgKuDCnpSDH1hlNrUxrXtlmAUn+t4JQ6Bu9EhKZaWx+Qsoos+FxnBfeiSy5ZYYT3lbgbRuVySEQgdHRR8aYddrK1DSAuLPvt9AxowM3/q7oJiXSi+7TDIrUtuiw792bGK/meaSzVwe0N4s0ssY6oaFpCSimSRlvCSTHCTP+HGtmhwOnRa0Hpwd8CdSMlqIDA5uNk4lkaO8b3wpoigfw8H2UKK4dMpdUuTfc/GOrTCnMy87kPwyRdjfoObuqaxhUgVPEYXgmMV6WPHmop66VaaYc2z1n4KoBnydCjgDGxJ+yHz4iNfyNTLIjNFOmUQvFHYXgXsmchrpdvq5gLs6zsvfQWJX0Sb9g+fI7lQbSya+ZIrjo4fYo+XPcRvNeswDKtoO/jrW4+cYxWWi1BzfOqtkD8ubdLDwRCXI1dkTQQulYOMzASJDI7jKngFPprDE5bUgn9I5K45cVvbueV6qhGDZzyHbSBylYnQxPLKZtHN9/POpZJFbgSDsgd0CxuqphExx7KxdVL4RukqHzbK+e297BEK6/FWZ2kLsnaMvTXn4qu9HCnIXTCAk7bjj+xfD7bMpCexphJ+aRO6dJzZ3qm49M1p24sM2K4YSrQ==
+  template:
+    metadata:
+      creationTimestamp: null
+      name: auth-secret
+      namespace: ecran
+    type: Opaque
+---
+# Source: applications/ecran/ecran-vector-cluster.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: ecran-vector-cluster
+  namespace: ecran
+spec:
+  imageName: registry.ide-newton.ts.net/lab/vecteur:16
+  imagePullPolicy: Always
+  instances: 3
+  resources:
+    requests:
+      cpu: "1"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "1Gi"
+  storage:
+    storageClass: longhorn
+    size: 20Gi
+  bootstrap:
+    initdb:
+      dataChecksums: true
+      encoding: "UTF8"
+      database: ecran
+      owner: ecran
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector;
+        - CREATE EXTENSION IF NOT EXISTS age;
+---
+# Source: applications/ecran/ecran-worker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: ecran-worker
+  name: ecran-worker
+  namespace: ecran
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ecran-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ecran-worker
+    spec:
+      initContainers:
+        - name: run-migrations
+          image: registry.ide-newton.ts.net/lab/ecran-migrator:latest
+          imagePullPolicy: Always
+          env:
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
+      containers:
+        - name: ecran-worker
+          image: registry.ide-newton.ts.net/lab/ecran-worker
+          imagePullPolicy: Always
+          env:
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: resend-api-key
+                  key: data
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: ecran-vector-cluster-app
+                  key: uri
+            - name: TEMPORAL_ADDRESS
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: data
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "100m"
+              memory: "100Mi"
+---
+# Source: applications/ecran/ingress.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ecran
+  namespace: ecran
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`ecran.lan`)
+      priority: 10
+      services:
+        - name: ecran
+          port: 80
+    - kind: Rule
+      match: Host(`proompteng.ai`)
+      priority: 10
+      services:
+        - name: ecran
+          port: 80
+    - kind: Rule
+      match: Host(`proompteng.ai`) && PathPrefix(`/blog`)
+      priority: 20
+      services:
+        - name: riposte
+          port: 80
+  tls:
+    certResolver: default
+---
+# Source: applications/ecran/js-ts-standby-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: js-ts-standby-pool
+  namespace: ecran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: js-ts-standby
+  template:
+    metadata:
+      labels:
+        app: js-ts-standby
+    spec:
+      containers:
+        - name: bun-executor
+          image: oven/bun:alpine
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 30; done"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# Source: applications/ecran/juge-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: juge
+  namespace: ecran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: juge
+  template:
+    metadata:
+      labels:
+        app: juge
+    spec:
+      containers:
+        - name: juge
+          image: registry.ide-newton.ts.net/lab/juge
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 9090
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+---
+# Source: applications/ecran/juge-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: juge-service
+  namespace: ecran
+spec:
+  selector:
+    app: juge
+  ports:
+    - protocol: TCP
+      port: 9090
+      targetPort: 9090
+---
+# Source: applications/ecran/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ecran
+resources:
+- ecran-deployment.yaml
+- ecran-worker-deployment.yaml
+- python-standby-deployment.yaml
+- js-ts-standby-deployment.yaml
+- standby-deny-egress-networkpolicy.yaml
+- service.yaml
+- ingress.yaml
+- ecran-secrets.yaml
+- ecran-vector-cluster.yaml
+- serviceaccount.yaml
+- role.yaml
+- rolebinding.yaml
+- juge-deployment.yaml
+- juge-service.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/ecran
+  newTag: 0.123.0
+- name: registry.ide-newton.ts.net/lab/ecran-worker
+  newTag: 0.123.0
+- name: registry.ide-newton.ts.net/lab/juge
+  newTag: 0.123.0
+---
+# Source: applications/ecran/python-standby-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-standby-pool
+  namespace: ecran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-standby
+  template:
+    metadata:
+      labels:
+        app: python-standby
+    spec:
+      containers:
+        - name: python-executor
+          image: python:3.12-alpine
+          command: ["/bin/sh", "-c"]
+          args: ["while true; do sleep 30; done"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# Source: applications/ecran/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: ecran
+  name: ecran-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+# Source: applications/ecran/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ecran-rolebinding
+  namespace: ecran
+subjects:
+  - kind: ServiceAccount
+    name: ecran-sa
+    namespace: ecran
+roleRef:
+  kind: Role
+  name: ecran-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: applications/ecran/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: ecran
+  name: ecran
+  namespace: ecran
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 3000
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 3000
+  selector:
+    app.kubernetes.io/name: ecran
+---
+# Source: applications/ecran/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecran-sa
+  namespace: ecran
+---
+# Source: applications/ecran/standby-deny-egress-networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: standby-deny-egress
+  namespace: ecran
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - java-standby
+          - js-ts-standby
+          - python-standby
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Source: applications/external-dns/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: external-dns
+helmCharts:
+  - name: external-dns
+    repo: https://kubernetes-sigs.github.io/external-dns
+    version: 1.16.0
+    releaseName: external-dns
+    namespace: external-dns
+    includeCRDs: true
+---
+# Source: applications/fission/fission-values.yaml
+routerServiceType: ClusterIP
+defaultNamespace: fission
+kafka:
+  enabled: true
+---
+# Source: applications/fission/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - github.com/fission/fission/crds/v1?ref=v1.21.0
+helmCharts:
+  - name: fission-all
+    repo: https://fission.github.io/fission-charts
+    version: 1.21.0
+    releaseName: fission
+    namespace: fission
+    includeCRDs: true
+    valuesFile: fission-values.yaml
+---
+# Source: applications/froussard/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: froussard
+resources:
+  - secrets.yaml
+---
+# Source: applications/froussard/secrets.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: github-secret
+  namespace: froussard
+spec:
+  encryptedData:
+    webhook-secret: AgB/fEzHu9lcEN/XVqW0XXK+MJDA2+TSCc5X5SyKMWeypR+Da5v3EmccG82/gGgRJ58J+H1pCyW87PVAYXDFp3Wxe8dUkEWGaoENwgM6DR8wNLRx/i2GEy/g2RKfnwbbjzIgjWK4cNptTl2OdYVu4B12TwyBAYN8zR4PFHCtl9foCsU7Zi/6lt1nwINtV+tBWFIi5O0ornAQ+Cac4gGUr0QqwEN+ui1tbYcQ7Llr4EL1Xil4IyibqR+cJYw/3wJg4iz5JaW6w4AGtBFDb4pKcLpkEeLwN7udeu3SKdVafKseoqjEIsmqFTcDkbXI1C/FnEqpYqAHJQm7TxgIh+qedlNBskZofwWMzUBhFt9zK6vYNc5hSdTu+C3PAMUZn2oBcrUDrpuykNoFxSCF1SiG0aSS7GknRDR0ckquswWu0pflcxKFh25iVkBfVDsBbf7WZCJNggpmQ32WA0zLEHPXBtk1yMOxN96sJ+0KugX2SuPNYHC2C3usW29ZwKtaJ7p3OpYTlF7EPrZB8rqo854Xaa+IhH5eWGLCFO+y+W2oapNcISLnD1sIxtd5ICMP8BkIyDqJanWJqE6VNtVB0a1QIQy75tTo4zE4roylHMsTvFMO50s1R1FvzQkDi5chcdPCW15DFxpW+IuJGRabHUAP/TpJaSrRItXbD8WKJZgp0QH+Arm/2sUbJlVl7fzhlP5RKiQ6h7O/JXHA5P10g5mxl9bjageArf37Yek84WI0j5VT3wNKg6Bealuy4Zq4Hn3EclDcNsnUrHlGorzN++iHkfrp
+  template:
+    metadata:
+      creationTimestamp: null
+      name: github-secret
+      namespace: froussard
+    type: Opaque
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: froussard-kafka
+  namespace: froussard
+spec:
+  encryptedData:
+    password: AgCguR+/zxpekhomcuqCBY4CnorpddX4/qarjjCASVhVUjsq/QjP1gvI5lJjugyV6IIx/5agL8LmxPC9qiCU9slOrkUdXXGCa+TQSLZFcxA1jVWeXq1JH6X4bofQPf+b6AgQoaaiTYXP7dowoc7C833uzGTtHK6JW+8DEbsQYvDS3avwqJ3bbwwBWffGyjh6dP32wranL5RRy/Fxk1kND/ZxHsXc5y4ZQwZZYV+Z39yDjvsWw8HhGptqlERnx3c/WGk4gCgRTfm0uE14dj5IzcnOIUYLcFyH+Ply2B/cPoazrfuSUSIRB9EZtEuAKx9lbKbVmxB3pIrBRoApjTNuFCY9uZHHC70AqTXG27QbN45VsgudtplMHcojzrceZYOmXju58WyFCrFQ9atuNNr93xrSTT6szPm6QfnDPOdMJcs3T9qDAM7cZF7rIPW0+9QJD4kCU/MimM0fAgKmuSdLycAbymK2NLn+rZBW6y0y5tiAWK30cFO3+NF4yv7ZwD6Et8WpDxS4u5iGP1QUns9SCfbS+1xiXtc+6JrOnd/cpLBE8zWBk2en3qaSinV2BB7TVWEsHjLg1pCUJBa74twCnh8shUOU1ODIQsGG/LKQ3AWIOGmQ/lh26846LG+YIAe/GkTOFghwFn1a9ULRCx3pRUGeD9mPURLEVM5N+R4vy0LOL6yr0LF1+wTBj7wZDUcdQaMHJY/M6GRWZUt7hvlFrMW4OWDX5F0Ml3opi1Ib89qVQw==
+    username: AgA2vrDja6RtiRzD2ewTYWgSpkEclAGEEd5KJ+Sfjx4Qp8WYD361jyjOb16EDMjg3fntOK18RTndWCypHAHalr+l/Nv4FiPPzcv2datUkEJWHyYqNg9pZGNun1oGR3/vcx4RnHMyr8I0TgIEnJwinmeSz17AAAMiQrdQ0PSmYbz62em5YEPx8Y4HJ7pK5Yf7prUZ0E353ZVrxLFiUramiKYJ0HzZes91uvDEq0iQaEjzlThOfHslonj1xYX90RLtlUTA/KMsgSROZSABzP0WN0saEk05sYKPHo3CB9LLHB+0INR1Tw2NHVqP5xhWsxvnXqLH5TGTcUfbaI36I0o3OSpcWPqXBLlKn2Qqfz9ZFAJcsupcMx8S4cJwqLch1KU3Sqse3phrZ7A/LPI8Q7jkxkWdLdFTnGE9Fm0K/veZPbGcaJoAbUI7ZvFOi4NtVVdihCZNRkYbRSfCPnCjmghSxsY9K+RF8Jaq4kblbXGdkl/ZXjz83PJF4foMGDmtl30l+v46PxJBRJ1UIRPUbHKx12liK1IMS9ZHBvnXyt5OmIWK1Sq5hH4YRZmnSm7+un0YbVJjM1/GFhwXf3O2lguPbBrVDbGlVOXCqQbMpCZyAbYSBGIowyCtdHZvyZyCTIyRuSlEhZ23WcIvfocjOiSlaSIkWJTvP+7CLK1L09GaCCjaC4CxVdKhbmP5Z6Gj5zNzFDe4IFO9Zw==
+  template:
+    metadata:
+      name: froussard-kafka
+      namespace: froussard
+---
+# Source: applications/galette/base/cluster-domain-claim.yaml
+apiVersion: networking.internal.knative.dev/v1alpha1
+kind: ClusterDomainClaim
+metadata:
+  name: galette.proompteng.ai
+spec:
+  namespace: galette
+---
+# Source: applications/galette/base/domain-mapping.yaml
+apiVersion: serving.knative.dev/v1beta1
+kind: DomainMapping
+metadata:
+  name: galette.proompteng.ai
+  namespace: galette
+  annotations:
+    networking.knative.dev/certificate-provider: cert-manager
+spec:
+  ref:
+    apiVersion: serving.knative.dev/v1
+    kind: Service
+    name: galette
+---
+# Source: applications/galette/base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: galette
+resources:
+  - domain-mapping.yaml
+  - cluster-domain-claim.yaml
+---
+# Source: applications/galette/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - overlays/cluster
+---
+# Source: applications/galette/overlays/cluster/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: galette
+    newName: registry.ide-newton.ts.net/lab/galette
+    newTag: main
+---
+# Source: applications/istio-ingress/external-gateway.yaml
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: knative-external-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    app: gateway
+    istio: gateway
+  servers:
+    - port:
+        number: 80
+        protocol: HTTP
+        name: http
+      hosts:
+        - "*"
+    - port:
+        number: 443
+        protocol: HTTPS
+        name: https
+      tls:
+        mode: PASSTHROUGH
+      hosts:
+        - "*"
+---
+# Source: applications/istio-ingress/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: istio-ingress
+resources:
+  - external-gateway.yaml
+helmCharts:
+  - name: gateway
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.27.1
+    releaseName: gateway
+    namespace: istio-ingress
+    valuesInline:
+      service:
+        loadBalancerIP: "192.168.1.105"
+---
+# Source: applications/istio-system/ingress-class.yaml
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: istio
+spec:
+  controller: istio.io/ingress-controller
+---
+# Source: applications/istio-system/knative-local-gateway.yaml
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: knative-local-gateway
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/component: net-istio
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: 1.19.5
+    networking.knative.dev/ingress-provider: istio
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - hosts:
+        - "*"
+      port:
+        name: http
+        number: 8081
+        protocol: HTTP
+---
+# Source: applications/istio-system/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: istio-system
+resources:
+  - ingress-class.yaml
+  - knative-local-gateway.yaml
+helmCharts:
+  - name: base
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.27.1
+    releaseName: istio-base
+    namespace: istio-system
+    includeCRDs: true
+    valuesInline:
+      defaultRevision: default
+  - name: istiod
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.27.1
+    releaseName: istiod
+    namespace: istio-system
+  - name: cni
+    repo: https://istio-release.storage.googleapis.com/charts
+    version: 1.27.1
+    releaseName: istio-cni
+    namespace: istio-system
+    valuesInline:
+      global:
+        platform: k3s
+---
+# Source: applications/kafka/github-webhooks-topic.yaml
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: github-webhooks
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 604800000 # 7 days
+    segment.bytes: 1073741824
+---
+# Source: applications/kafka/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kafka
+resources:
+  # Strimzi operator install (pinned to 0.47.0) – remote raw files
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/010-ServiceAccount-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/020-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/020-RoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/021-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/021-ClusterRoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/022-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/022-RoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/023-ClusterRole-strimzi-cluster-operator-role.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/023-RoleBinding-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/030-ClusterRole-strimzi-kafka-broker.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/030-ClusterRoleBinding-strimzi-cluster-operator-kafka-broker-delegation.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/031-ClusterRole-strimzi-entity-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/031-RoleBinding-strimzi-cluster-operator-entity-operator-delegation.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/033-ClusterRole-strimzi-kafka-client.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/033-ClusterRoleBinding-strimzi-cluster-operator-kafka-client-delegation.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/040-Crd-kafka.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/041-Crd-kafkaconnect.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/042-Crd-strimzipodset.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/043-Crd-kafkatopic.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/044-Crd-kafkauser.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/045-Crd-kafkanodepool.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/046-Crd-kafkabridge.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/047-Crd-kafkaconnector.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/048-Crd-kafkamirrormaker2.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/049-Crd-kafkarebalance.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/050-ConfigMap-strimzi-cluster-operator.yaml
+  - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/060-Deployment-strimzi-cluster-operator.yaml
+  - strimzi-operator-watched-crb.yaml
+  - load-balancer.yaml
+  - strimzi-kafka-cluster.yaml
+  - github-webhooks-topic.yaml
+patches:
+  # Make the operator watch all namespaces
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: strimzi-cluster-operator
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: strimzi-cluster-operator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: strimzi-cluster-operator
+                env:
+                  - name: STRIMZI_NAMESPACE
+                    value: "*"
+                    valueFrom: null
+  # Fix RBAC subjects namespace to match operator namespace
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: strimzi-cluster-operator
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator-kafka-client-delegation
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: strimzi-cluster-operator-kafka-client-delegation
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: strimzi-cluster-operator-kafka-broker-delegation
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: strimzi-cluster-operator-kafka-broker-delegation
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: strimzi-cluster-operator
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator-leader-election
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: strimzi-cluster-operator-leader-election
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator-entity-operator-delegation
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: strimzi-cluster-operator-entity-operator-delegation
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+helmCharts:
+  - name: kafka-ui
+    repo: https://kafbat.github.io/helm-charts
+    version: 1.5.1
+    releaseName: kafka-ui
+    namespace: kafka
+    valuesInline:
+      envs:
+        secretMappings:
+          KAFKA_PASSWORD:
+            name: user1
+            keyName: password
+      yamlApplicationConfig:
+        kafka:
+          clusters:
+            - name: kafka
+              bootstrapServers: kafka-kafka-bootstrap:9092
+              properties:
+                security.protocol: SASL_PLAINTEXT
+                sasl.mechanism: SCRAM-SHA-512
+                sasl.jaas.config: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="user1" password="${KAFKA_PASSWORD}";'
+        auth:
+          type: disabled
+        management:
+          health:
+            ldap:
+              enabled: false
+---
+# Source: applications/kafka/load-balancer.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui-lb
+  namespace: kafka
+  annotations:
+    tailscale.com/hostname: kafka-ui
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/instance: kafka-ui
+    app.kubernetes.io/name: kafka-ui
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+---
+# Source: applications/kafka/strimzi-kafka-cluster.yaml
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: kafka
+  namespace: kafka
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 3.9.1
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+        authentication:
+          type: scram-sha-512
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+    storage:
+      type: persistent-claim
+      size: 8Gi
+      deleteClaim: false
+      class: longhorn
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: pool-a
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  replicas: 3
+  roles:
+    - controller
+    - broker
+  storage:
+    type: persistent-claim
+    size: 8Gi
+    deleteClaim: false
+    class: longhorn
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: user1
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  authentication:
+    type: scram-sha-512
+---
+# Source: applications/kafka/strimzi-operator-watched-crb.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: strimzi-cluster-operator-watched
+  labels:
+    app: strimzi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: strimzi-cluster-operator-watched
+subjects:
+  - kind: ServiceAccount
+    name: strimzi-cluster-operator
+    namespace: kafka
+---
+# Source: applications/kitty-krew/base/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kitty-krew-config
+data:
+  APP_ENV: "base"
+  LOG_LEVEL: "info"
+  API_VERSION: "v1"
+---
+# Source: applications/kitty-krew/base/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitty-krew
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kitty-krew
+  template:
+    metadata:
+      labels:
+        app: kitty-krew
+    spec:
+      containers:
+        - name: kitty-krew
+          image: registry.ide-newton.ts.net/lab/kitty-krew
+          ports:
+            - containerPort: 3000
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: LOG_LEVEL
+              value: "info"
+          envFrom:
+            - configMapRef:
+                name: kitty-krew-config
+          volumeMounts:
+            - name: logs-volume
+              mountPath: /app/logs
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: logs-volume
+          emptyDir: {}
+---
+# Source: applications/kitty-krew/base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+
+commonLabels:
+  app: kitty-krew
+  app.kubernetes.io/name: kitty-krew
+  app.kubernetes.io/part-of: kitty-krew
+
+namespace: kitty-krew
+---
+# Source: applications/kitty-krew/base/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kitty-krew
+spec:
+  selector:
+    app: kitty-krew
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+  type: ClusterIP
+---
+# Source: applications/kitty-krew/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- overlays/dev
+images:
+- name: registry.ide-newton.ts.net/lab/kitty-krew
+  newTag: 0.175.0
+---
+# Source: applications/kitty-krew/overlays/dev/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+# Source: applications/kitty-krew/overlays/dev/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pod-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: kitty-krew-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: applications/kitty-krew/overlays/dev/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kitty-krew-config
+data:
+  APP_ENV: "development"
+  LOG_LEVEL: "debug"
+---
+# Source: applications/kitty-krew/overlays/dev/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitty-krew
+spec:
+  selector:
+    matchLabels:
+      app: kitty-krew
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: kitty-krew
+    spec:
+      serviceAccountName: kitty-krew-sa
+      containers:
+        - name: kitty-krew
+          resources:
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          env:
+            - name: NODE_ENV
+              value: "development"
+            - name: LOG_LEVEL
+              value: "debug"
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+---
+# Source: applications/kitty-krew/overlays/dev/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+
+namespace: kitty-krew-dev
+
+patches:
+  - path: configmap.yaml
+  - path: deployment.yaml
+
+images:
+  - name: kitty-krew
+    newName: registry.ide-newton.ts.net/lab/kitty-krew
+---
+# Source: applications/kitty-krew/overlays/dev/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kitty-krew-dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    app.kubernetes.io/part-of: kitty-krew
+    environment: development
+---
+# Source: applications/kitty-krew/overlays/dev/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kitty-krew-sa
+---
+# Source: applications/kitty-krew/overlays/prod/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kitty-krew-config
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "warn"
+---
+# Source: applications/kitty-krew/overlays/prod/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kitty-krew
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: kitty-krew
+          resources:
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+---
+# Source: applications/kitty-krew/overlays/prod/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: kitty-krew-prod
+
+patchesStrategicMerge:
+  - configmap.yaml
+  - deployment.yaml
+
+images:
+  - name: kitty-krew
+    newName: registry.ide-newton.ts.net/lab/kitty-krew
+---
+# Source: applications/knative-eventing/knative-eventing.yaml
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeEventing
+metadata:
+  name: knative-eventing
+  namespace: knative-eventing
+---
+# Source: applications/knative-eventing/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: knative-eventing
+resources:
+  - knative-eventing.yaml
+---
+# Source: applications/knative-serving/knative-serving.yaml
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeServing
+metadata:
+  name: knative-serving
+  namespace: knative-serving
+spec:
+  ingress:
+    istio:
+      enabled: true
+  config:
+    domain:
+      "proompteng.ai": ""
+    certmanager:
+      issuerRef: |
+        kind: ClusterIssuer
+        name: letsencrypt-prod
+      clusterLocalIssuerRef: |
+        kind: ClusterIssuer
+        name: knative-selfsigned-issuer
+      systemInternalIssuerRef: |
+        kind: ClusterIssuer
+        name: knative-selfsigned-issuer
+    network:
+      domain-template: "{{.Name}}.{{.Domain}}"
+      auto-tls: "Enabled"
+      external-domain-tls: "Enabled"
+      default-external-scheme: https
+      http-protocol: Enabled
+      ingress.class: istio.ingress.networking.knative.dev
+    istio:
+      external-gateways: |
+        - name: knative-external-gateway
+          namespace: istio-ingress
+          service: gateway.istio-ingress.svc.cluster.local
+      local-gateways: |
+        - name: knative-local-gateway
+          namespace: istio-system
+          service: knative-local-gateway.istio-system.svc.cluster.local
+---
+# Source: applications/knative-serving/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: knative-serving
+resources:
+  - knative-serving.yaml
+---
+# Source: applications/knative/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: knative
+resources:
+  - https://github.com/knative/operator/releases/download/knative-v1.19.3/operator.yaml
+---
+# Source: applications/lgtm/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lgtm
+
+helmCharts:
+  - name: lgtm-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 2.1.0
+    releaseName: lgtm
+    namespace: lgtm
+    includeCRDs: true
+    valuesFile: lgtm-values.yaml
+---
+# Source: applications/lgtm/lgtm-values.yaml
+---
+# Values tuned for the lab environment to run the LGTM (Loki, Grafana, Tempo, Mimir) stack
+# with modest resource usage and persistent Longhorn storage.
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: changeme
+  service:
+    type: LoadBalancer
+    annotations:
+      tailscale.com/hostname: lgtm
+    loadBalancerClass: tailscale
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    size: 10Gi
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Loki
+          uid: loki
+          type: loki
+          access: proxy
+          url: http://lgtm-loki-gateway
+          isDefault: false
+        - name: Mimir
+          uid: prom
+          type: prometheus
+          access: proxy
+          url: http://lgtm-mimir-nginx/prometheus
+          isDefault: true
+        - name: Tempo
+          uid: tempo
+          type: tempo
+          access: proxy
+          url: http://lgtm-tempo-query-frontend:3100
+          isDefault: false
+          jsonData:
+            tracesToLogsV2:
+              datasourceUid: loki
+            lokiSearch:
+              datasourceUid: loki
+            tracesToMetrics:
+              datasourceUid: prom
+            serviceMap:
+              datasourceUid: prom
+
+loki:
+  enabled: true
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: boltdb-shipper
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storageConfig:
+    boltdb_shipper:
+      cache_location: /var/loki/index
+      shared_store: filesystem
+    filesystem:
+      directory: /var/loki/chunks
+  readinessProbe:
+    failureThreshold: 3
+    httpGet:
+      path: /ready
+      port: http
+      scheme: HTTP
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  livenessProbe:
+    failureThreshold: 3
+    httpGet:
+      path: /metrics
+      port: http
+      scheme: HTTP
+    initialDelaySeconds: 300
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  structuredConfig:
+    ruler:
+      storage:
+        local:
+          directory: /var/loki/rules
+  compactor:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  ingester:
+    replicas: 1
+    persistence:
+      enabled: true
+      claims:
+        - name: data
+          size: 20Gi
+          storageClass: longhorn
+    zoneAwareReplication:
+      enabled: false
+  querier:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: longhorn
+  ruler:
+    enabled: true
+    kind: StatefulSet
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: longhorn
+
+mimir:
+  enabled: true
+  admin_api:
+    replicas: 1
+  distributor:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  ingester:
+    replicas: 1
+    persistentVolume:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  querier:
+    replicas: 1
+  query_frontend:
+    replicas: 1
+  query_scheduler:
+    replicas: 1
+  ruler:
+    replicas: 1
+  store_gateway:
+    replicas: 1
+    persistentVolume:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  compactor:
+    replicas: 1
+    persistentVolume:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  alertmanager:
+    replicas: 1
+    persistence:
+      enabled: true
+      storageClass: longhorn
+      size: 5Gi
+  minio:
+    enabled: true
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: longhorn
+
+tempo:
+  enabled: true
+  gateway:
+    enabled: true
+  traces:
+    otlp:
+      http:
+        enabled: true
+      grpc:
+        enabled: true
+  ingester:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  compactor:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  querier:
+    replicas: 1
+  queryFrontend:
+    replicas: 1
+  distributor:
+    replicas: 1
+  storage:
+    trace:
+      backend: local
+      block:
+        version: vParquet3
+---
+# Source: applications/longhorn/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: longhorn-system
+helmCharts:
+  - name: longhorn
+    repo: https://charts.longhorn.io
+    version: 1.9.1
+    releaseName: longhorn
+    namespace: longhorn-system
+    valuesFile: longhorn-values.yaml
+    includeCRDs: true
+---
+# Source: applications/longhorn/longhorn-values.yaml
+preUpgradeChecker:
+  jobEnabled: false
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  host: longhorn.lan
+defaultSettings:
+  storageReservedPercentageForDefaultDisk: 30
+  storageMinimalAvailablePercentage: 25
+  defaultReplicaCount: 3
+  replicaAutoBalance: least-effort
+  replicaSoftAntiAffinity: false
+  allowVolumeCreationWithDegradedAvailability: false
+---
+# Source: applications/metallb-system/ipaddresspool.yaml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: metallb-ip-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.100-192.168.1.149
+---
+# Source: applications/metallb-system/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: metallb-system
+resources:
+  - github.com/metallb/metallb//config/frr?ref=v0.15.2
+  - ipaddresspool.yaml
+  - l2advertisement.yaml
+---
+# Source: applications/metallb-system/l2advertisement.yaml
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: metallb-l2-advertisement
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - metallb-ip-pool
+---
+# Source: applications/miel/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: miel-config
+  labels:
+    app.kubernetes.io/name: miel
+    app.kubernetes.io/part-of: miel
+    app.kubernetes.io/component: api
+  annotations:
+    description: Base configuration for the Miel trading service.
+data:
+  HTTP_PORT: "8080"
+  ALPACA_BASE_URL: "https://paper-api.alpaca.markets"
+  ALPACA_DATA_BASE_URL: "https://data.alpaca.markets"
+  ALPACA_REQUEST_TIMEOUT_SECONDS: "30"
+  BACKTEST_MAX_BARS: "5000"
+  OTEL_SERVICE_NAME: "miel"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://lgtm-tempo-distributor.lgtm:4318"
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://lgtm-mimir-nginx.lgtm/otlp"
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://lgtm-loki-gateway.lgtm/otlp"
+  TIGERBEETLE_ENABLED: "false"
+  TIGERBEETLE_ADDRESSES: ""
+  TIGERBEETLE_CLUSTER_ID: ""
+  TIGERBEETLE_LEDGER: "1"
+  TIGERBEETLE_ORDER_CODE: "100"
+  TIGERBEETLE_BACKTEST_CODE: "200"
+  TIGERBEETLE_AMOUNT_SCALE: "6"
+  TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID: ""
+  TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID: ""
+  TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID: ""
+  TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID: ""
+---
+# Source: applications/miel/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miel
+  labels:
+    app.kubernetes.io/name: miel
+    app.kubernetes.io/part-of: miel
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: miel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: miel
+        app.kubernetes.io/part-of: miel
+    spec:
+      containers:
+        - name: miel
+          image: registry.ide-newton.ts.net/lab/miel:0.1.0
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: HTTP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: HTTP_PORT
+            - name: ALPACA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: ALPACA_BASE_URL
+            - name: ALPACA_DATA_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: ALPACA_DATA_BASE_URL
+            - name: ALPACA_REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: ALPACA_REQUEST_TIMEOUT_SECONDS
+            - name: BACKTEST_MAX_BARS
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: BACKTEST_MAX_BARS
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_SERVICE_NAME
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_PROTOCOL
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            - name: TIGERBEETLE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ENABLED
+            - name: TIGERBEETLE_ADDRESSES
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ADDRESSES
+            - name: TIGERBEETLE_CLUSTER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_CLUSTER_ID
+            - name: TIGERBEETLE_LEDGER
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_LEDGER
+            - name: TIGERBEETLE_ORDER_CODE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_CODE
+            - name: TIGERBEETLE_BACKTEST_CODE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_CODE
+            - name: TIGERBEETLE_AMOUNT_SCALE
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_AMOUNT_SCALE
+            - name: TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_DEBIT_ACCOUNT_ID
+            - name: TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_ORDER_CREDIT_ACCOUNT_ID
+            - name: TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_DEBIT_ACCOUNT_ID
+            - name: TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: miel-config
+                  key: TIGERBEETLE_BACKTEST_CREDIT_ACCOUNT_ID
+            - name: ALPACA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: miel-secrets
+                  key: alpaca-api-key
+            - name: ALPACA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: miel-secrets
+                  key: alpaca-secret-key
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# Source: applications/miel/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: miel
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - tigerbeetle-cluster.yaml
+---
+# Source: applications/miel/sealed-secret.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: miel-secrets
+  namespace: miel
+spec:
+  encryptedData:
+    alpaca-api-key: AgBAcFg79fQyeiMAi3GV4WcmVuGS8M+55oHR8J7n/HJic0lEVyfWevkOiGTpQ7Hbh6Erz/TLui85d2hq4b/96oCAIVb93RBXFWIHKBZ0KNQo3nn/lQOBOUoazO5OyYkqeZjocsTO5AW9F/Ty/ExJrhSqj54NVA21VPEqbgDxVMQA7/R23zrbX86RdTythDA7h4HDQCSvqTFpqaWvj2+vAha4001+pH0sG67uCxhQEj0v9lrI+ES6hUSNNdxx7IQsPdauPgPqAQ00eg5IQKTZjshPPPZ5yEcKu/xc+N2dA9IHud3+snq21Ii5wbO+tCZF8JfYbsD+pj7TNq9zZhM51b3LBPNc3Jv6NK5d+v3vVK5GXnBAo9moeBrP1urS6auQT5c2Z4cMnGziz3LVAJI4LnBfe6D7K4X27mPm7Nmh4Q24pElctQZqP9dJES+IXCkt8uBJYT/A/2HJqahhQqvzh6OxSdmQAJZAup2Ki/baZnRbBzEBrrzsy8BNXoQGd/+ZgsqygCL2d7JcMHmY+M+8o62h1xZtZekkgEi+3IgQfgZP90Yn3m5G6HFt4cRPkZ6+wIdKLdWTOpIHGLpwfFLwkRaE5CjBwMwk0WqqV5ttRRsCXl3TysFrra7uXxEtwyzCbpYR+fvm873pvUaY24s2OfsqXCM7WD8xLWB3Zp4uXoe3KI6nVUlmG01AGQDVG/lBDZt0ZWszV4oyxxYlEcAbJzyG1zZoaA==
+    alpaca-secret-key: AgCo6B1eA5t5TGxqbQd3Z2l2p4yZZsyJNBEWPkeAz+s97Y8IKCOPjOwPZY4aE0FiuEJ6+LJUyyt7okpL/J5rFE6dsk+aN0QJf+E3B2tM2V7KgJ90VoQ+GwQ9cOayw7Hv06eDi9oicI+hJ+xfDtKUaVBrCkAgIhOQSowigBfsKlVycGYTFvdnVB8rw2sYCFBODxykJJtpnBIi3vhRzX997xCIlCYzRNSD9Y1MHlgwFq4CRemIu7X7fP5F2z4R6cZIjSD/vGKjZRAnGp4e83OS5os2wfBQuqxpym+qnhO7HjJIgyOXhsua2JpAZqFL38vhYRFDt9HE4yhgDlTN7HO/W/ASP/xtK6VH7ZiRirIdGOIXinhKUTwxNgWN5gh7/SiJ4STDMu8CvsL0WdER+v5Lu0LAJBsr6Q/q/uR/YIHZNlEn8usxWDSg7LRx4ND+th/Mbkp0RTAbsxrF20rtmqIn5twDoDrYbM2kwUJxHNs+/8wyqxOp52h/lsnJC9O3WARthYp3e18MOXaKFOxmp22vCaiLUEf0voH7jA44pKhTSofcG/7pQLj/zlmICcFXyHyql7d+EJCJYyUkBFPe0x8sV5Pjj7zqMcTP/TXi/nYYOq9A9XBPzFQ83Weo+ajiowvi8UZK9uRZmkVWbVnCqSqJi0mpzFmD99wYs2NiMqirP/WNh4B6a7VYNWGQwevl5cL+nqb34xDcMC05ViQ7/t08S6iFL6h31lVcLHoxBy+0NmImzTx3d7Rbl9jB
+  template:
+    metadata:
+      name: miel-secrets
+      namespace: miel
+    type: Opaque
+---
+# Source: applications/miel/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: miel
+  labels:
+    app.kubernetes.io/name: miel
+    app.kubernetes.io/part-of: miel
+spec:
+  selector:
+    app.kubernetes.io/name: miel
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+# Source: applications/miel/tigerbeetle-cluster.yaml
+apiVersion: infrastructure.proompteng.ai/v1alpha1
+kind: TigerBeetleCluster
+metadata:
+  name: miel-tigerbeetle
+  namespace: miel
+spec:
+  clusterID: "1"
+  image: ghcr.io/tigerbeetle/tigerbeetle:0.16.60
+  port: 3000
+  replicas: 3
+  storageClassName: longhorn
+  storageSize: 10Gi
+---
+# Source: applications/milvus/external-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: milvus-external
+  namespace: milvus
+  annotations:
+    metallb.universe.tf/address-pool: default
+spec:
+  type: LoadBalancer
+  ports:
+    - name: milvus
+      port: 19530
+      targetPort: 19530
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: milvus
+    app.kubernetes.io/instance: milvus
+    component: proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: attu-external
+  namespace: milvus
+  annotations:
+    metallb.universe.tf/address-pool: default
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: milvus
+    app.kubernetes.io/instance: milvus
+    component: attu
+---
+# Source: applications/milvus/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: milvus
+
+resources:
+  - external-service.yaml
+  - milvus-kafka-sasl-secret.yaml
+  - minio-bucket-job.yaml
+  - milvus-external-minio-secret.yaml
+
+helmCharts:
+  - name: milvus
+    repo: https://zilliztech.github.io/milvus-helm
+    version: 5.0.0
+    releaseName: milvus
+    namespace: milvus
+    valuesInline:
+      kafka:
+        enabled: false
+        external:
+          enabled: true
+          brokers:
+            - kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+          sasl:
+            enabled: true
+            mechanism: scram-sha-512
+            username: user1
+            passwordFromExistingSecret:
+              name: milvus-kafka-sasl
+              key: password
+      pulsar:
+        enabled: false
+      pulsarv3:
+        enabled: false
+      etcd:
+        enabled: true
+        replicaCount: 1
+        persistence:
+          enabled: true
+          storageClass: longhorn
+          size: 10Gi
+      minio:
+        enabled: false
+      externalS3:
+        enabled: true
+        host: minio.minio.svc.cluster.local
+        port: 9000
+        accessKeyIDFromSecret:
+          name: milvus-external-minio
+          key: accesskey
+        secretAccessKeyFromSecret:
+          name: milvus-external-minio
+          key: secretkey
+        useSSL: false
+        bucketName: milvus-bucket
+        rootPath: file
+        useIAM: false
+        useVirtualHost: false
+---
+# Source: applications/milvus/milvus-external-minio-secret.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: milvus-external-minio
+  namespace: milvus
+spec:
+  encryptedData:
+    accesskey: AgAf3/MKWpBrIOftJBKYn4BTrpnQgldcld46x2I2UCfhW8DbVLJxxq7k6UJiAifiZ/r5YQyQKIgW+UrOqoIZq1AxEtRKjhGdP06iT0xZEm6RxFZu/X21PgtrMCTVYswtr8u/tbbHRLpkaAPvs7Kk7H/b9AsKuANS9jCEb6fTl4H7HN427CaVBuZYOrY6EjRQn8NDSvL2rayvv1X2uDFq/92PiFtfN1nauNuiwoST9X1AxktnBitIuZ9E/VWLew77aYQUIuVrxQYJRcYVn1866xcjsUgkDyOXP2S3wBL2+2REAZvjysUqbvJIyciw3ro7gZ+1dni9gjeD+K2CR5vFRdAZcHb/GlgAzccDpU56zGIRvPj7Z+/kLnJmk6mFiE32SLVnj6BF0O1gRRLFSpJyoORkkS4OipBgtFKFn90GsqQ/DgLaMStOYetk0XHXf8LtFaAflbtqTh4Pm/umg4nhigAhWipDMcCEWOC8g+gLZqyYxJ9Jn66vnfpjy5gIxhFPO5YhXJWwVkDhmHmFtM8WGzPCcYi7K4sbnhmyXw3THiKMNEd1a1zf10Xza4pobA+0NL7rdMuxF/Yn2WYKwOR4rZwb8QXp/JJ/TL/FHPQjj6XFhj0Ps2MLITDvd50vWZm6G69YBilT+wLEqsfjyHnIGoJ2ddF2ganqGLTUeevki0chj4b0Fl/2r227OBDVXoMouhA8vGhzIF71AzG1jVnIl6I/
+    secretkey: AgCQY8oFUG+fpPNoA8H94OMxrworebReJWdD3IN4co50YIYTC4nw0giNGGCRMuuRt6kCZ2ZT2+eBItYYkUNP4WnxDGgrvS2iqByXcDfxAHqy1q+Szj3RyuSrzu0ZvSknvIRo6QBB9PUVhc0Uec7Bw9j7CEgcUf9hlqwcZxDvcTKHcOoCr90HyZLd5j5y+1hWihO4buf5BGVpA6HmA8mwvTN0M/FQxaZa6DLJEN7f7ctsAkrTqNoZX2509qcT7sW/iOty6gcgBkEVAnR0BS8W5UySLwVmu5ZPmSeg3yzB3lb5tUs+7PN9Kn6is991Co+AmMzIf03IT8l/v0IbHPo++xFKnvZUFqdePAofcvmWgSc3Dg2aPVW/exMcWuTnk8cp8qdlSWEE/fnPqPrE2CbcLUZuhhNg/I/qUBdfMkkoBEUgX3J7XEcZe5BF+RvQjwjSQ4mmCxuvHtg0EgKnOTO9Y8ixkuzynZUpKhfLmyGRViPG2TVf2eEXYYL6RTnFBLQ6ZxjxwfMBQF6V++KeNpnIZzTfXC7/qGj7Islc1zVrR2rQy362EoPgFemPpbUEqn6ej+tpUN8/IPCUX/Xz83nfoJmdnUpYfxl0em3lST+CVPttApYPYZ8r9lHLk8EVNzFp0tP990pwHp+hzVu5GPKN2xWHP3qr5i/C6CHpKwLcqV8Bjxn5nNWCPK7En/fo53TVEIQCLZhdzID/Hm0yew7XgDY2g52V5rIlrC1u+RmtCtcf7A==
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: milvus
+        app.kubernetes.io/managed-by: kustomize
+        app.kubernetes.io/name: milvus
+      name: milvus-external-minio
+      namespace: milvus
+---
+# Source: applications/milvus/milvus-kafka-sasl-secret.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: milvus-kafka-sasl
+  namespace: milvus
+spec:
+  encryptedData:
+    password: AgCBm9Z+di1w1Q50BuUF6OWYeYjDTguEtB1aKplGx7xjlAsiLT58nr5Aa5ub1rt2pR9WdE09fwfqPuF8DEY2nq6XCB3cAVTd0HIcfHTWG6H8UBlSApV+tNlCr2S9FCj5gAnYwwXP2soOyxj07GOZhEQIM4ATE8tBCczqulvoyKQJBTsioWAQqTSHonX7n/aL5CLATwLunU6NhLyYnd6zTCaUKQudxnxn+dIXUEfFHCVIN4mdmbCS/pTs4GffyT8NasYP2hg46pFA7nSvwDqiM+E0HvXnXi8PvrYmFIAy1dGGdPDHyR3iJfC2lM+VRL0nYrAURj4/XTuXEEYVDHN5yJJ00Eip6gyay4sQ5dmXt0Fte2HS+3lyUVbsVcseVq3M7hDWFMELAutOhUlXbP8OY3dAJnD0fW6M1S3lZXVxh63sdv8cTTDWPlqR9czn+nnlqSm7ZhrY0zKSm2udpSePVEmUCPjrr1AIYeEUAiKwthmviJZZVmUfb7+326HUgIjOAovejr1tJIIrFxAGgl2NWVMUMyH2PDW3NuwokyDKZQ6UF0Qp/p9/cuue5zIZxxzi5psmnHpu01PVU6LozpcgnAVnwN35nBtbjXSWSiQPEywpCNEOYqfobt6lXZ8X2o4aTz+1GcP88QSjNljAE9olbRfBORmJPJ6c3i77QwohCi04zVQNRlih7kw7WrdYWqLw0temwz22hKo+RvG7bWKuDoTxthEPRp4LRaBlGUv+4QX7wg==
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: milvus
+        app.kubernetes.io/managed-by: kustomize
+        app.kubernetes.io/name: milvus
+      name: milvus-kafka-sasl
+      namespace: milvus
+---
+# Source: applications/milvus/minio-bucket-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: milvus-minio-bucket-init
+  namespace: milvus
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2024-12-18T13-15-44Z
+          env:
+            - name: MINIO_ENDPOINT
+              value: "minio.minio.svc.cluster.local:9000"
+            - name: MINIO_SCHEME
+              value: "http"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-external-minio
+                  key: accesskey
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: milvus-external-minio
+                  key: secretkey
+            - name: MINIO_BUCKET
+              value: "milvus-bucket"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              mc alias set myminio "$MINIO_SCHEME://$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+              if mc ls myminio/"$MINIO_BUCKET" >/dev/null 2>&1; then
+                echo "Bucket exists: $MINIO_BUCKET"
+              else
+                echo "Creating bucket: $MINIO_BUCKET"
+                mc mb myminio/"$MINIO_BUCKET"
+                mc anonymous set none myminio/"$MINIO_BUCKET" || true
+              fi
+---
+# Source: applications/minio/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: minio
+
+resources:
+  - github.com/minio/operator?ref=v7.1.1
+  - milvus-minio-creds.yaml
+  - tenant.yaml
+  - minio-service.yaml
+---
+# Source: applications/minio/milvus-minio-creds.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: milvus-minio-creds
+  namespace: minio
+spec:
+  encryptedData:
+    config.env: AgBnY1ozMo2uZsgV4W57obiGKhEFOXvE7pdW9KBkLv9gd4WmmdqfAM5begdsSE9sqxSzxPfhbeDcIRXKRi2W/VEJFBIzaqbP1xMPrfB4uWqnZ7mC37W+YEGOEEh6eJfnCfo3NezJbJrJho84TvBhUtrCWPcXxIbJRSnmlTl9VV6qTWhOs97tKiQlfKEslQn8JHRNVTtyu/0KCtZyuyXpc+pSHRZWUNLFLlFXaeNlT/93ep/PTWwjwBQh59w+ZQe14kfEofJtG9pXBC8ui7DpwJq7L24+ovGI8XkBqbkbk2jUkxNlzv9jI2qwX1kM7To54qmth0g2HVSa7t3ClCtHNqPqm0gxPZtxxJCW/PaE/E616dgP2jKvMm120KT3vqrlcX6tg74ww6D9qbLfArEqTL+25sXepz4i6ClVLS4J0ODNQto72spsyhPEhuyoG35z9o2dFUF/gIty2FNnMBzbWW9JslAQDixzNKfQYnnF1vyXQ5pjMf2QxSuVjw06Cxr2Em0G03fvsWzYrQiTGuWMfnWyqrYoSGaFwkk+gHWJ2YFOfgXjF6TnHxoTySwJzTbrOyVra666KiF1tHYjHZ8Ezf7goKy/oliQQcN7G4Ot6Fjgb0rM0Sm9/iwggGOlXHiK6n2PM59HLPGNpjYvFCo0s41wSZmsJU7cvQdAhUF7wg1EhYnJKrWEVxFT91vH28KESsz5+rhvI3P4NdaQZKGUlEiVyDAkSunENyOLr8lcD/iLEI7xXKBG6pdWHC/G75lzBo4IosARV8A3Mx1lmau/J9YP7GS0vAeDJsHhwbkxY5DANSugdXqZyGNbpUQgBjV/doi4W67UMcLicQ==
+  template:
+    metadata:
+      name: milvus-minio-creds
+      namespace: minio
+---
+# Source: applications/minio/minio-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+  selector:
+    v1.min.io/tenant: milvus-minio
+---
+# Source: applications/minio/tenant.yaml
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: milvus-minio
+  namespace: minio
+spec:
+  image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  mountPath: /export
+  requestAutoCert: false
+  exposeServices:
+    minio: true
+    console: false
+  configuration:
+    name: milvus-minio-creds
+  pools:
+    - name: pool-0
+      servers: 1
+      volumesPerServer: 4
+      containerSecurityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+          storageClassName: longhorn
+---
+# Source: applications/proompteng/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  selector:
+    matchLabels:
+      app: proompteng
+  template:
+    metadata:
+      labels:
+        app: proompteng
+    spec:
+      containers:
+        - name: proompteng
+          image: registry.ide-newton.ts.net/lab/proompteng
+          resources:
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - containerPort: 3000
+---
+# Source: applications/proompteng/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`proompteng.ai`)
+      services:
+        - name: proompteng
+          port: 80
+---
+# Source: applications/proompteng/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- deployment.yaml
+- service.yaml
+- ingressroute.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/proompteng
+  newTag: 0.211.0
+---
+# Source: applications/proompteng/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: proompteng
+  namespace: proompteng
+spec:
+  selector:
+    app: proompteng
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+# Source: applications/prt/base/cluster-domain-claim.yaml
+apiVersion: networking.internal.knative.dev/v1alpha1
+kind: ClusterDomainClaim
+metadata:
+  name: prt.proompteng.ai
+spec:
+  namespace: prt
+---
+# Source: applications/prt/base/domain-mapping.yaml
+apiVersion: serving.knative.dev/v1beta1
+kind: DomainMapping
+metadata:
+  name: prt.proompteng.ai
+  namespace: prt
+  annotations:
+    networking.knative.dev/certificate-provider: cert-manager
+spec:
+  ref:
+    apiVersion: serving.knative.dev/v1
+    kind: Service
+    name: prt
+---
+# Source: applications/prt/base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: prt
+resources:
+  - service.yaml
+  - domain-mapping.yaml
+  - cluster-domain-claim.yaml
+---
+# Source: applications/prt/base/service.yaml
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: prt
+  namespace: prt
+  labels:
+    app.kubernetes.io/name: prt
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: lab
+  annotations:
+    autoscaling.knative.dev/minScale: "1"
+    serving.knative.dev/rollout-duration: "10s"
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/target: "80"
+    spec:
+      containerConcurrency: 0
+      timeoutSeconds: 60
+      serviceAccountName: default
+      containers:
+        - name: prt
+          image: prt
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http1
+          env:
+            - name: ADDRESS
+              value: '0.0.0.0'
+            - name: PORT
+              value: "8080"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 250m
+              memory: 128Mi
+---
+# Source: applications/prt/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - overlays/cluster
+---
+# Source: applications/prt/overlays/cluster/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: prt
+    newName: registry.ide-newton.ts.net/lab/prt
+    newTag: main
+---
+# Source: applications/registry/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  selector:
+    matchLabels:
+      app: registry
+  template:
+    metadata:
+      labels:
+        app: registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:3
+          resources:
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+          ports:
+            - containerPort: 5000
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+      volumes:
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: registry-data
+---
+# Source: applications/registry/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: registry
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml
+  - tailscale-ingress.yaml
+---
+# Source: applications/registry/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 100Gi
+---
+# Source: applications/registry/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: registry
+spec:
+  selector:
+    app: registry
+  ports:
+    - port: 80
+      targetPort: 5000
+---
+# Source: applications/registry/tailscale-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: registry-tailscale
+  namespace: registry
+  annotations:
+    tailscale.com/tags: tag:k8s
+spec:
+  ingressClassName: tailscale
+  tls:
+    - hosts:
+        - registry.ide-newton.ts.net
+  rules:
+    - host: registry.ide-newton.ts.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: registry
+                port:
+                  number: 80
+---
+# Source: applications/reviseur/base/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reviseur
+spec:
+  minReadySeconds: 0
+  progressDeadlineSeconds: 600
+  replicas: 1
+  selector:
+    matchLabels:
+      cdk8s.io/metadata.addr: base-base-deployment-base-deployment-deployment-c8e0bde8
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        cdk8s.io/metadata.addr: base-base-deployment-base-deployment-deployment-c8e0bde8
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - image: registry.ide-newton.ts.net/lab/reviseur
+          imagePullPolicy: Always
+          name: reviseur
+          ports:
+            - containerPort: 4111
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1024Mi
+            requests:
+              cpu: 100m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          startupProbe:
+            failureThreshold: 3
+            tcpSocket:
+              port: 4111
+      dnsPolicy: ClusterFirst
+      hostNetwork: false
+      restartPolicy: Always
+      securityContext:
+        fsGroupChangePolicy: Always
+        runAsNonRoot: true
+        runAsUser: 1000
+      setHostnameAsFQDN: false
+      shareProcessNamespace: false
+      terminationGracePeriodSeconds: 30
+---
+# Source: applications/reviseur/base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: reviseur
+commonLabels:
+  app: reviseur
+  app.kubernetes.io/name: reviseur
+  app.kubernetes.io/part-of: reviseur
+resources:
+  - deployment.yaml
+  - service.yaml
+---
+# Source: applications/reviseur/base/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: reviseur
+spec:
+  externalIPs: []
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 4111
+  selector:
+    app: reviseur
+  type: ClusterIP
+---
+# Source: applications/reviseur/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: reviseur
+resources:
+- overlays/dev
+images:
+- name: registry.ide-newton.ts.net/lab/reviseur
+  newTag: 0.184.0
+---
+# Source: applications/reviseur/overlays/dev/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reviseur
+spec:
+  minReadySeconds: 0
+  progressDeadlineSeconds: 600
+  replicas: 1
+  selector:
+    matchLabels:
+      cdk8s.io/metadata.addr: dev-dev-deployment-dev-deployment-deployment-c8e90e90
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        cdk8s.io/metadata.addr: dev-dev-deployment-dev-deployment-deployment-c8e90e90
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - image: registry.ide-newton.ts.net/lab/reviseur
+          imagePullPolicy: Always
+          name: reviseur
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: reviseur
+                  key: token
+          ports:
+            - containerPort: 4111
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1024Mi
+            requests:
+              cpu: 100m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+          startupProbe:
+            failureThreshold: 3
+            tcpSocket:
+              port: 4111
+      dnsPolicy: ClusterFirst
+      hostNetwork: false
+      restartPolicy: Always
+      securityContext:
+        fsGroupChangePolicy: Always
+        runAsNonRoot: true
+        runAsUser: 1000
+      setHostnameAsFQDN: false
+      shareProcessNamespace: false
+      terminationGracePeriodSeconds: 30
+---
+# Source: applications/reviseur/overlays/dev/ingressroute.yaml
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: reviseur-ingress
+  namespace: reviseur
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`reviseur.lan`)
+      kind: Rule
+      services:
+        - name: reviseur
+          port: 80
+---
+# Source: applications/reviseur/overlays/dev/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: reviseur
+commonLabels:
+  app: reviseur
+  app.kubernetes.io/name: reviseur
+  app.kubernetes.io/part-of: reviseur
+resources:
+  - deployment.yaml
+  - service.yaml
+  - secrets.yaml
+  - ingressroute.yaml
+---
+# Source: applications/reviseur/overlays/dev/secrets.yaml
+---
+# This is anthropic api key
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: reviseur
+  namespace: reviseur
+spec:
+  encryptedData:
+    token: AgCQs3SjuQj5A3SuGkpAVbHQhbVz4SmFHIMSUFx8OBeoMuyinM/FGR1OlrEAInBLUjmhWwJaoTwXvElulzNc1ljtiXTbA+VtCWl5dLksMY8lgtxagCfs/OsG8QLEQTJiUW1Ku0P+Bm9d5oGNXRj8iwJGXuzyCQydHGNFI0uPWFf+sCjlg8zNTC5K0Jm6AVBdf8rrluqvWXjxEHCyrGSYecQnG1p1T+wgkA8DLZQevoeW3AxD1I6GrYCgI8gNxVho7TXeAp2DOr/4i7aPT+b1P7Erphdc2b6jfS+GGStWGwSsTcR8cKh1irY7AoweMspDckf5qXehoBEoO2O2C8/0uM0GT8UzlmpUgMwc7BcTc9mDsyMtdJ++vZUeIBFBEBIy0yt3pp30hSFzgju3k2GHe5RVaXET0FJ0/2YzANcnrSJTYZEp3Uei8+lLpOxjTnj4Fr/i3O0Hg069RQb9MOBr21jMRsRQNqr4v20iG5FNT/OnBy3N5i6D2gCxscQhB8tdukiZKDJ2F7IwnkbWa9wShD9YwV48DUfwvUnbSYI9mzVvzEctvZUql/m1LjBRtWvKsKChODCniQIKbCZnHBYvWw74SO3X8N1hayxRtpQcBVxHt8l5eHduCwa7bi85qxX/Q+oYjPFhEc7Fn40wu6ORM8A8pVKGsaSzsBGNdWACR8n2e9WkPz7m61KB2yRpxLB9oMU5ISsmXBxlikDbnWA9UkcGe1D7SqCAo2JIMZBzw9BWqiLH4pj7qGJzzNX8/y8XUfLV4aUdLVhvbLg+sp7A+u9K13Mib+ljskmcZ0NZb2Af1y0SEbMdqlLtlSKXd+0/P+Muwxg/LZTF42nejSc=
+  template:
+    metadata:
+      creationTimestamp: null
+      name: reviseur
+      namespace: reviseur
+    type: Opaque
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  creationTimestamp: null
+  name: github-token
+  namespace: reviseur
+spec:
+  encryptedData:
+    token: AgAZW/GZti71/82TicUCeQKz0nuXm+3AiyFeVbDBpFsUpsWS29GbHBntNpDi2KIesyrE8r/sSunst479DwWQB7AtThKPMuJyFvZ8AnmdUEH6hBZD88XyHq7cdpZEHGFqhAYBtoSduJ+Oh0GPwAOBHNg1wIXN2w66rfiPy54Twzvt2w8mbhUOaXhlNd8NWP2ysGoB0pHlut4XPGYjj84CLsplGMUGOUnAS6iTOOwApRP3UOxynBbryQX/47PFodgqZbh9BWbzePVR/q88IRce6RfjawAyWlSfCCoTFBwP2cPF7Ae5TidgzEMEv4psqkO/n91NXfNzXP3iaAwPCSvbuE6aPCKMQ73mUeeEhetHrnOk6WUMyua0my1mrYS9dPLMBaiFqo/if/2QOeC6Yk+HJFUdPP0dn3Anb3RZPtsWDt5x4bqED/WpuJAL/+iByTxd5+DTObbx5B78O15h3m3MHBR5dBzM+A2i4OlM9w4EhryZ/ZAruV7eF5ElHwsp8IOc38/f0fxNL8UitPNrSD8kF+i9t00QVHOdCBlwuHETw96zck9j2+9n5oxWvvBqALOIxvkWC1gvcVOJRKanvwwtIaibGLRFiXs4yJapYPq3081Y4TeQmLoocJJb8c1Bhg8kIUp3A0Dlu59+MULvXtwZFUhHmQ3oaA10TiekL+IfqOAMabBi4WIyzdoEEpheIUAWLhEM2jfcqa+xVkDNOzeSHAOCfbof+EMG/jHIr6pHrdhR+Bdvn5X90PE5
+  template:
+    metadata:
+      creationTimestamp: null
+      name: github-token
+      namespace: reviseur
+    type: Opaque
+---
+# Source: applications/reviseur/overlays/dev/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: reviseur
+spec:
+  externalIPs: []
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 4111
+  selector:
+    app: reviseur
+  type: ClusterIP
+---
+# Source: applications/sealed-secrets/Chart.yaml
+apiVersion: v2
+appVersion: 0.0.3
+description: A Helm chart for Sealed Secrets and UI
+name: sealed-secrets
+version: 3.1.4
+dependencies:
+  - name: sealed-secrets
+    version: 2.17.6
+    repository: https://bitnami-labs.github.io/sealed-secrets
+
+  - name: sealed-secrets-web
+    version: 3.1.9
+    repository: https://charts.bakito.net
+---
+# Source: applications/sealed-secrets/values.yaml
+sealed-secrets-web:
+  sealedSecrets:
+    namespace: sealed-secrets
+    serviceName: sealed-secrets
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - paths:
+          - path: /
+            pathType: Prefix
+        host: sealed-secrets.lan
+---
+# Source: applications/spark/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spark-oci
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: spark
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  source:
+    repoURL: registry-1.docker.io/bitnamicharts
+    chart: spark
+    targetRevision: 9.3.5
+    helm:
+      releaseName: spark
+      skipCrds: false
+---
+# Source: applications/spark/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - application.yaml
+---
+# Source: applications/tailscale/base/coredns-custom.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  ts-net.server: |
+    ts.net:53 {
+        errors
+        cache 30
+        forward . 100.100.100.100
+    }
+---
+# Source: applications/tailscale/base/secrets.yaml
+---
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: operator-oauth-token
+  namespace: tailscale
+spec:
+  encryptedData:
+    client_id: AgBUsl3ktB99fsWyyNl6Vh5fqvVH/b30l+8AnWTRSXvNuzVK7HmBc6y3PANR6kLRTutMiMiU/Zdb9FOftQUNIOqloyUGxKto103vsqBYOAtmevYM9ZEd9xK05S3Ft6wgDK8GDwwLLGBqDpmq/lulX9uzBQwuYtJSwiUk5eK7L+aLdoyaC69i7SyC7815ewQzzkcURToBvOZ+oxoR5HHnTNhIG3poU//vrLedUEb8csh0b+EDlK1DwCwlN768ME0WjDKIEBwzwqwnRjJ5nBpoxKb/1WKLHOimgE5aM1oHWmJOm3yoAbErCPXy8QVo++3tvw8HrQCNQ5/GLvgvHQ6tf0E9Nl4kStYKGAkPsutqE3+FX5Xven9MOfasM+cjDHtP4Mih/fPNJun/GUMWYmgrb0qvpdpcmikruTWiXLdly4y8dAFBe20bwx06q1lQVoYehc2mH6bso5sGgWZIKeojgC2NHwCUCwI6e69Tz7t7U+li95fkLbtsBYHdOx5+RgmFGA18pu+tAEa1Kv2H2Z4N+ZqJHtuygjcGNvUqa7LM8V2Emsb4AB3Mj93If+21mVEsCrgz76O11Vd5uLSIPZRgLg5G7ZsIDKioeqKhJhdNEG4DdLGgHR+3OjGEmF0wgV4B7MHFjj3FcSX8/uy5YFdBEsCY7NZqrAl1PPEVq9Kc/cTkLDS3I8OqooourfpDikw1SfIxz47PCjc7CAkjO8JyUb2zbA==
+    client_secret: AgBg1Nm6oRcgz1eEJr77RPbwQPJiBTe1bGK5Rx5YxG4IncV56QDdZR3/y3pEtZl1tu8lYgf7RLI/wA3JrEqBxhf8bBetQPqrWPiUSHhI45ZckEbcnz6VyL/CiVxCtHGedbWpkzQHEYmGsZCnu15aSuwulPJeKRM1ysnvoWdALtBAC3uIpKZHFrZR6JuWCPn+8kPYAQ8K6xDhfLdHnknjVE8O7EnG8wguIy8Q3715/Ue1eJaCltRE0Ivhp/ESXQGjsr14QPrTcJ9wi90FkEnJAl4+BwswTtBvf6Yuz9J2MnIxj1BYg1RvCJ384PgZZsASQDEYRFZUoze/G7F2YTg8xw0IhVWEpmwttKCXCxEeTTnKuqKChqwUu6rox+4TPqF8N9Q/p5Hx8fUTwgitMSRHe61Smd/pxcaJ/xA0dI3bKne6AvpbaBsbyRuNz8+RvLANV+u2T4RvvNrnZrR09/X6sv1mFXS9z94rq11ithLPQQCsPGRJgFzfJJIWMSzERGhTbf7pHYbjzYxzqMVPvl4onZWqjkkQtEq6FJAAXyoKzNwWuYhb8lAgM6GgBEcHwUjuJdeJG91rhRfNl1DVOPic0AWPn+y6UgjGdn/tzLBg2QcLHotbQ0Bffmj10FwW0ezlPxIRro8TBgq1VKP75BfE6yzB9P9yTM9QKvXEEdGqSwHLvbAlmBKgJz1LvL7sniEOW6YnionKKHPRsCDcA/uXmfQ/GNdis/8byDuVY6ctyxmjZTlV1U6VIkIwtiqKJlz6wRFgUDXISbKVXctMIfzFGROU
+  template:
+    metadata:
+      name: operator-oauth-token
+      namespace: tailscale
+---
+# Source: applications/tailscale/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://raw.githubusercontent.com/tailscale/tailscale/refs/tags/v1.88.1/cmd/k8s-operator/deploy/manifests/operator.yaml
+  - base/secrets.yaml
+  - base/coredns-custom.yaml
+
+patches:
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRole
+      name: tailscale-operator
+    patch: |-
+      - op: add
+        path: /rules/-
+        value:
+          apiGroups:
+            - ""
+          resources:
+            - secrets
+          verbs:
+            - get
+            - list
+            - watch
+            - create
+            - update
+            - patch
+            - delete
+      - op: add
+        path: /rules/-
+        value:
+          apiGroups:
+            - ""
+          resources:
+            - nodes
+          verbs:
+            - get
+            - list
+            - watch
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: operator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/0/secret/secretName
+        value: operator-oauth-token
+---
+# Source: applications/temporal/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - load-balancer.yaml
+
+helmCharts:
+  - name: temporal
+    repo: https://go.temporal.io/helm-charts
+    version: 0.65.0
+    releaseName: temporal
+    namespace: temporal
+    includeCRDs: true
+    valuesInline:
+      prometheus:
+        enabled: false
+      grafana:
+        enabled: false
+      web:
+        # https://docs.temporal.io/references/web-ui-environment-variables
+        additionalEnv:
+          - name: TEMPORAL_CSRF_COOKIE_INSECURE
+            value: "true"
+---
+# Source: applications/temporal/load-balancer.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-web-lb
+  namespace: temporal
+  annotations:
+    tailscale.com/hostname: temporal
+spec:
+  type: LoadBalancer
+  loadBalancerClass: tailscale
+  selector:
+    app.kubernetes.io/component: web
+    app.kubernetes.io/instance: temporal
+    app.kubernetes.io/name: temporal
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+---
+# Source: applications/tigresse/crd.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tigerbeetleclusters.infrastructure.proompteng.ai
+spec:
+  group: infrastructure.proompteng.ai
+  names:
+    kind: TigerBeetleCluster
+    listKind: TigerBeetleClusterList
+    plural: tigerbeetleclusters
+    singular: tigerbeetlecluster
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [clusterID, image, port, replicas, storageSize]
+              properties:
+                clusterID:
+                  type: string
+                  pattern: "^[0-9]+$"
+                image:
+                  type: string
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+                replicas:
+                  type: integer
+                  minimum: 1
+                storageClassName:
+                  type: string
+                  nullable: true
+                  default: longhorn
+                storageSize:
+                  type: string
+            status:
+              type: object
+              properties:
+                readyReplicas:
+                  type: integer
+      additionalPrinterColumns:
+        - name: Ready
+          type: string
+          jsonPath: .status.readyReplicas
+        - name: Replicas
+          type: integer
+          jsonPath: .spec.replicas
+        - name: Image
+          type: string
+          jsonPath: .spec.image
+---
+# Source: applications/tigresse/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tigresse-controller-manager
+  namespace: tigresse-system
+  labels:
+    app.kubernetes.io/name: tigresse
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tigresse
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tigresse
+        app.kubernetes.io/component: controller
+    spec:
+      serviceAccountName: tigresse-controller-manager
+      containers:
+        - name: manager
+          image: registry.ide-newton.ts.net/lab/tigresse:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --leader-elect
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+          ports:
+            - containerPort: 8080
+              name: metrics
+            - containerPort: 8081
+              name: probes
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+# Source: applications/tigresse/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tigresse-system
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - role.yaml
+  - rolebinding.yaml
+  - deployment.yaml
+  - crd.yaml
+---
+# Source: applications/tigresse/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tigresse-system
+  labels:
+    app.kubernetes.io/name: tigresse
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/managed-by: argocd
+---
+# Source: applications/tigresse/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tigresse-manager-role
+  labels:
+    app.kubernetes.io/name: tigresse
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "events", "services"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["infrastructure.proompteng.ai"]
+    resources: ["tigerbeetleclusters", "tigerbeetleclusters/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# Source: applications/tigresse/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tigresse-manager-rolebinding
+  labels:
+    app.kubernetes.io/name: tigresse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tigresse-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: tigresse-controller-manager
+    namespace: tigresse-system
+---
+# Source: applications/tigresse/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tigresse-controller-manager
+  namespace: tigresse-system
+  labels:
+    app.kubernetes.io/name: tigresse
+    app.kubernetes.io/component: controller
+---
+# Source: applications/verdaccio/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: verdaccio
+helmCharts:
+  - name: verdaccio
+    repo: https://charts.verdaccio.org
+    version: 4.22.0
+    releaseName: verdaccio
+    namespace: verdaccio
+    includeCRDs: true
+    valuesFile: verdaccio-values.yaml
+---
+# Source: applications/verdaccio/verdaccio-values.yaml
+ingress:
+  enabled: true
+  className: traefik
+  paths:
+    - /
+  hosts:
+    - npm.lan
+---
+# Source: applicationsets/bootstrap.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: bootstrap
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: argocd
+            path: argocd/applications/argocd
+            namespace: argocd
+            annotations:
+              argocd.argoproj.io/sync-wave: "-2"
+            automation: auto
+            enabled: true
+          - name: sealed-secrets
+            path: argocd/applications/sealed-secrets
+            namespace: sealed-secrets
+            annotations:
+              argocd.argoproj.io/sync-wave: "-2"
+            automation: auto
+            enabled: true
+          - name: cert-manager
+            path: argocd/applications/cert-manager
+            namespace: cert-manager
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: auto
+            enabled: true
+            ignoreDifferences:
+              - group: admissionregistration.k8s.io
+                kind: MutatingWebhookConfiguration
+                name: cert-manager-webhook
+                jqPathExpressions:
+                  - .webhooks[]?.clientConfig.caBundle
+              - group: admissionregistration.k8s.io
+                kind: ValidatingWebhookConfiguration
+                name: cert-manager-webhook
+                jqPathExpressions:
+                  - .webhooks[]?.clientConfig.caBundle
+              - group: apiextensions.k8s.io
+                kind: CustomResourceDefinition
+                nameRegex: '.*cert-manager.io'
+                jqPathExpressions:
+                  - .spec.conversion.webhook.clientConfig.caBundle
+              - group: apiregistration.k8s.io
+                kind: APIService
+                nameRegex: '.*cert-manager.io'
+                jqPathExpressions:
+                  - .spec.caBundle
+          - name: longhorn
+            path: argocd/applications/longhorn
+            namespace: longhorn-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: auto
+            enabled: true
+          - name: metallb-system
+            path: argocd/applications/metallb-system
+            namespace: metallb-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: auto
+            enabled: true
+          - name: tailscale
+            path: argocd/applications/tailscale
+            namespace: tailscale
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: auto
+            enabled: true
+          - name: registry
+            path: argocd/applications/registry
+            namespace: registry
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+            automation: auto
+            enabled: true
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: '{{ .name }}'
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: '{{ .path }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- $auto := eq .automation "auto" -}}
+    {{- $needsSpec := or $useLovely (or $auto (hasKey . "ignoreDifferences")) -}}
+    {{- if $needsSpec }}
+    spec:
+      {{- if $useLovely }}
+      source:
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if $auto }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+      {{- end }}
+      {{- if hasKey . "ignoreDifferences" }}
+      ignoreDifferences: {{ toJson .ignoreDifferences }}
+      {{- end }}
+    {{- end }}
+---
+# Source: applicationsets/cdk8s.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: cdk8s
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: bonjour
+            path: packages/bonjour
+            namespace: bonjour
+            image: registry.ide-newton.ts.net/lab/bonjour:latest
+            automation: manual
+            enabled: true
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}"
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
+        plugin:
+          name: cdk8s
+          env:
+            - name: IMAGE
+              value: '{{ if hasKey . "image" }}{{ .image }}{{ else }}registry.ide-newton.ts.net/lab/bonjour:latest{{ end }}'
+            - name: NAMESPACE
+              value: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $auto := eq .automation "auto" -}}
+    {{- if $auto }}
+    spec:
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+    {{- end }}
+---
+# Source: applicationsets/helm-apps.yaml
+# this template is created to use OCI helm charts
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: appset-helm
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements: []
+  template:
+    metadata:
+      name: "{{.name}}"
+      namespace: argocd
+    spec:
+      project: default
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.namespace}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+      source:
+        repoURL: "{{.repoUrl}}"
+        chart: "{{.chart}}"
+        targetRevision: "{{.version}}"
+        helm:
+          releaseName: "{{.releaseName}}"
+          skipCrds: false
+  templatePatch: |
+    {{- if hasKey . "valuesObject" }}
+    spec:
+      source:
+        helm:
+          valuesObject: {{- .valuesObject | toYaml | nindent 12 }}
+    {{- end }}
+---
+# Source: applicationsets/platform.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: cloudnative-pg
+            path: argocd/applications/cloudnative-pg
+            namespace: cloudnative-pg
+            annotations:
+              argocd.argoproj.io/sync-wave: "-1"
+            automation: manual
+            enabled: "true"
+          - name: external-dns
+            path: argocd/applications/external-dns
+            namespace: external-dns
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+            enabled: "false"
+          - name: cloudflare
+            path: argocd/applications/cloudflare
+            namespace: cloudflare
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+            enabled: "false"
+          - name: istio-system
+            path: argocd/applications/istio-system
+            namespace: istio-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "0"
+            automation: manual
+            enabled: "true"
+          - name: istio-ingress
+            path: argocd/applications/istio-ingress
+            namespace: istio-ingress
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+            automation: manual
+            enabled: "true"
+          - name: knative
+            path: argocd/applications/knative
+            namespace: knative
+            annotations:
+              argocd.argoproj.io/sync-wave: "1"
+            automation: manual
+            enabled: "true"
+          - name: knative-serving
+            path: argocd/applications/knative-serving
+            namespace: knative-serving
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+            enabled: "true"
+          - name: knative-eventing
+            path: argocd/applications/knative-eventing
+            namespace: knative-eventing
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+            enabled: "true"
+          - name: fission
+            path: argocd/applications/fission
+            namespace: fission
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+            enabled: "false"
+          - name: kafka
+            path: argocd/applications/kafka
+            namespace: kafka
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: manual
+            enabled: "true"
+          - name: lgtm
+            path: argocd/applications/lgtm
+            namespace: lgtm
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "true"
+          - name: minio
+            path: argocd/applications/minio
+            namespace: minio
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "false"
+          - name: milvus
+            path: argocd/applications/milvus
+            namespace: milvus
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
+          - name: tigresse
+            path: argocd/applications/tigresse
+            namespace: tigresse-system
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "false"
+          - name: temporal
+            path: argocd/applications/temporal
+            namespace: temporal
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
+          - name: airbyte
+            path: argocd/applications/airbyte
+            namespace: airbyte
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
+          - name: dagster
+            path: argocd/applications/dagster
+            namespace: dagster
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
+          - name: verdaccio
+            path: argocd/applications/verdaccio
+            namespace: verdaccio
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "false"
+          - name: spark
+            path: argocd/applications/spark
+            namespace: spark
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "false"
+          - name: coder
+            path: argocd/applications/coder
+            namespace: coder
+            annotations:
+              argocd.argoproj.io/sync-wave: "3"
+            automation: manual
+            enabled: "true"
+          - name: arc
+            path: argocd/applications/arc
+            namespace: arc
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "true"
+          - name: backstage
+            path: argocd/applications/backstage
+            namespace: backstage
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
+          - name: convex
+            path: argocd/applications/convex
+            namespace: convex
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}"
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+      ignoreDifferences:
+        - kind: StatefulSet
+          group: apps
+          namespace: dagster
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates
+        - kind: StatefulSet
+          group: apps
+          namespace: lgtm
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates[].apiVersion
+            - .spec.volumeClaimTemplates[].kind
+            - .spec.volumeClaimTemplates[].spec.volumeMode
+            - .spec.volumeClaimTemplates[].status
+            - .spec.persistentVolumeClaimRetentionPolicy
+            - .spec.podManagementPolicy
+            - .spec.updateStrategy.type
+            - .spec.updateStrategy.rollingUpdate.partition
+            - .spec.template.spec.serviceAccount
+            - .spec.template.spec.dnsPolicy
+            - .spec.template.spec.restartPolicy
+            - .spec.template.spec.schedulerName
+            - .spec.template.spec.volumes[].configMap.defaultMode
+            - .spec.template.spec.containers[].livenessProbe.failureThreshold
+            - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].livenessProbe.periodSeconds
+            - .spec.template.spec.containers[].livenessProbe.successThreshold
+            - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+            - .spec.template.spec.containers[].readinessProbe.failureThreshold
+            - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+            - .spec.template.spec.containers[].readinessProbe.periodSeconds
+            - .spec.template.spec.containers[].readinessProbe.successThreshold
+            - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+        - kind: Deployment
+          group: apps
+          namespace: istio-system
+          name: istiod
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: DaemonSet
+          group: apps
+          namespace: istio-system
+          name: istio-cni-node
+          jqPathExpressions:
+            - .spec.template.spec.containers[].env[].valueFrom.resourceFieldRef.divisor
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istio-validator-istio-system
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ValidatingWebhookConfiguration
+          group: admissionregistration.k8s.io
+          name: istiod-default-validator
+          jqPathExpressions:
+            - .webhooks[].failurePolicy
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-eventing-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+        - kind: ClusterRole
+          group: rbac.authorization.k8s.io
+          name: knative-serving-operator-aggregated-stable
+          jqPathExpressions:
+            - .rules
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- if or $useLovely (eq .automation "auto") }}
+    spec:
+      {{- if $useLovely }}
+      source:
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if eq .automation "auto" }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+      {{- end }}
+    {{- end }}
+---
+# Source: applicationsets/product.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: product
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - name: proompteng
+            path: argocd/applications/proompteng
+            namespace: proompteng
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: proompteng=registry.ide-newton.ts.net/lab/proompteng
+              argocd-image-updater.argoproj.io/proompteng: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
+            automation: auto
+            enabled: true
+          - name: docs
+            path: argocd/applications/docs
+            namespace: docs
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: docs=registry.ide-newton.ts.net/lab/docs
+              argocd-image-updater.argoproj.io/docs: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
+            automation: auto
+            enabled: true
+          - name: kitty-krew
+            path: argocd/applications/kitty-krew
+            namespace: kitty-krew
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: kitty-krew=registry.ide-newton.ts.net/lab/kitty-krew
+              argocd-image-updater.argoproj.io/kitty-krew: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
+            automation: manual
+            enabled: false
+          - name: reviseur
+            path: argocd/applications/reviseur
+            namespace: reviseur
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+              argocd-image-updater.argoproj.io/image-list: reviseur=registry.ide-newton.ts.net/lab/reviseur
+              argocd-image-updater.argoproj.io/reviseur: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
+            automation: manual
+            enabled: false
+          - name: prt
+            path: argocd/applications/prt
+            namespace: prt
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "5"
+            automation: manual
+            enabled: true
+          - name: ecran
+            path: argocd/applications/ecran
+            namespace: ecran
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: false
+          - name: eclair
+            path: argocd/applications/eclair
+            namespace: eclair
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: false
+          - name: galette
+            path: argocd/applications/galette
+            namespace: galette
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: false
+          - name: miel
+            path: argocd/applications/miel
+            namespace: miel
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: false
+          - name: froussard
+            path: argocd/applications/froussard
+            namespace: froussard
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: true
+      selector:
+        matchExpressions:
+          - key: enabled
+            operator: NotIn
+            values: ["false", "False", "0"]
+  template:
+    metadata:
+      name: "{{ .name }}"
+    spec:
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+  templatePatch: |
+    {{- if .annotations }}
+    metadata:
+      annotations:
+    {{- range $key, $value := .annotations }}
+        {{ $key }}: {{ $value | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+    {{- if or $useLovely (eq .automation "auto") }}
+    spec:
+      {{- if $useLovely }}
+      source:
+        plugin:
+          name: lovely
+      {{- end }}
+      {{- if eq .automation "auto" }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+      {{- end }}
+    {{- end }}
+---
+# Source: root.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/gregkonush/lab.git
+    targetRevision: main
+    path: argocd/applicationsets
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd

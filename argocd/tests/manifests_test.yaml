@@ -1,0 +1,7 @@
+suite: Argocd manifests snapshot
+templates:
+  - templates/all-manifests.yaml
+tests:
+  - it: matches snapshot for argocd manifests
+    asserts:
+      - matchSnapshot: {}
