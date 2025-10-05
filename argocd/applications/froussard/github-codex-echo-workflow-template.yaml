@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: github-codex-echo
+  namespace: argo-workflows
+spec:
+  serviceAccountName: argo-workflows-workflow
+  entrypoint: show
+  arguments:
+    parameters:
+      - name: rawEvent
+        value: '{}'
+      - name: eventBody
+        value: '{}'
+      - name: holdSeconds
+        value: '600'
+  templates:
+    - name: show
+      inputs:
+        parameters:
+          - name: rawEvent
+          - name: eventBody
+          - name: holdSeconds
+      container:
+        image: cgr.dev/chainguard/bash:latest
+        command: ["/bin/bash", "-lc"]
+        args:
+          - |
+            set -euo pipefail
+            echo "Raw CloudEvent:" >&2
+            echo '{{inputs.parameters.rawEvent}}'
+            echo
+            echo "Kafka body:" >&2
+            echo '{{inputs.parameters.eventBody}}'
+            sleep '{{inputs.parameters.holdSeconds}}'
