@@ -19,7 +19,6 @@
 ### Tooling Notes
 
 - **kubectl**: the default kubeconfig on these hosts already targets the shared cluster. Avoid overriding `KUBECONFIG` unless you intentionally need another context; doing so can surface TLS or auth errors that do not occur with the default config.
-- **argocd CLI**: platform automation performs syncs post-merge. Only run `argocd app sync` if explicitly requested; when you just need status, use `argocd app get` or `argocd app list` after authenticating with `argocd login argocd.proompteng.ai --sso`.
 - **gh CLI**: when passing markdown in flags, wrap the entire value in single quotes or use `--body-file` with a heredoc. Backticks inside double-quoted arguments trigger shell command substitution and will break commands like `gh pr create`.
 
 ## Coding Style & Naming Conventions
