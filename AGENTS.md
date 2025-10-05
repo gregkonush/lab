@@ -16,6 +16,11 @@
 - Run backend workflows through `go test ./...` and `go build ./...`.
 - Infra flow: `pnpm run tf:plan` (review), `pnpm run tf:apply` (approved), and `pnpm run ansible` for playbooks.
 
+### Tooling Notes
+
+- **kubectl**: the default kubeconfig on these hosts already targets the shared cluster. Avoid overriding `KUBECONFIG` unless you intentionally need another context; doing so can surface TLS or auth errors that do not occur with the default config.
+- **gh CLI**: when passing markdown in flags, wrap the entire value in single quotes or use `--body-file` with a heredoc. Backticks inside double-quoted arguments trigger shell command substitution and will break commands like `gh pr create`.
+
 ## Coding Style & Naming Conventions
 
 - Run Biome before commits; it enforces two-space indentation, single quotes, trailing commas, and 120-character lines.
