@@ -84,8 +84,8 @@ kubectl -n "$NAMESPACE" wait --for=condition=Ready pod/"$POD_NAME" --timeout=120
 echo "Streaming $MAX_MESSAGES messages from topic '$TOPIC'" >&2
 kubectl -n "$NAMESPACE" exec "$POD_NAME" -- /bin/sh -c "set -euo pipefail; \
   JAAS=\$(cat /etc/kafka-credentials/$JAAS_FILE); \
-  printf 'sasl.mechanism=%s\\n' $SASL_MECHANISM >/tmp/client.properties; \
-  printf 'security.protocol=%s\\n' $SECURITY_PROTOCOL >> /tmp/client.properties; \
+  printf 'sasl.mechanism=%s\\n' "$SASL_MECHANISM" >/tmp/client.properties; \
+  printf 'security.protocol=%s\\n' "$SECURITY_PROTOCOL" >> /tmp/client.properties; \
   printf 'sasl.jaas.config=%s\\n' \"\$JAAS\" >> /tmp/client.properties; \
   /opt/kafka/bin/kafka-console-consumer.sh \
     --bootstrap-server $BOOTSTRAP \
