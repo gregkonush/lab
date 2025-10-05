@@ -9,6 +9,18 @@ data:
   application.resourceTrackingMethod: annotation
   timeout.reconciliation: 180s
   dex.config: |
+    issuer: https://argocd.proompteng.ai/api/dex
+    storage:
+      type: kubernetes
+      config:
+        inCluster: true
+    web:
+      http: 0.0.0.0:5556
+    telemetry:
+      http: 0.0.0.0:5558
+    grpc:
+      addr: 0.0.0.0:5557
+    enablePasswordDB: true
     staticClients:
       - id: argo-workflows-sso
         name: Argo Workflows
