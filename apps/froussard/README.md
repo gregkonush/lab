@@ -1,133 +1,56 @@
-# TypeScript HTTP Function
+# Froussard GitHub Webhook Bridge
 
-Welcome to your new TypeScript function project! The boilerplate function code can be found in [`index.ts`](./index.ts). This function will respond to incoming HTTP GET and POST requests.
+Froussard is a TypeScript function that receives GitHub webhook deliveries, verifies
+signatures, and forwards structured payloads into Kafka for downstream automation such as
+Argo Workflows.
 
-## Local execution
+## End-to-end Data Flow
 
-To run locally
-
-```console
-npm install
-npm run build
-npm run local
+```mermaid
+flowchart LR
+  Issue[GitHub issue / reaction event] --> Webhook[GitHub webhook delivery]
+  Webhook --> Froussard[Froussard webhook server]
+  subgraph Kafka Topics
+    K1[github.webhook.events]
+    K2[github.codex.tasks]
+  end
+  Froussard -->|raw body| K1
+  Froussard -->|codex task payload| K2
+  Kafka --> Sensor[Argo Events sensor]
+  Sensor -->|templated parameters| Workflow[Argo WorkflowTemplate `github-codex-echo`]
+  Workflow --> Pod[Workflow pod logs payload]
 ```
 
-The runtime will expose three endpoints.
+## Runtime Responsibilities
 
-- `/` The endpoint for your function.
-- `/health/readiness` The endpoint for a readiness health check
-- `/health/liveness` The endpoint for a liveness health check
+- Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
+- Emit the original JSON event (`github.webhook.events`) and Codex task messages
+  (`github.codex.tasks`) via Kafka.
+- Surface health checks on `/health/liveness` and `/health/readiness`.
 
-The parameter provided to the function endpoint at invocation is a `Context` object containing HTTP request information.
+## Local Development
 
-```js
-function handleRequest(context) {
-  const log = context.log;
-  log.info(context.httpVersion);
-  log.info(context.method); // the HTTP request method (only GET or POST supported)
-  log.info(context.query); // if query parameters are provided in a GET request
-  log.info(context.body); // contains the request body for a POST request
-  log.info(context.headers); // all HTTP headers sent with the event
-}
+```bash
+pnpm install
+pnpm run build
+pnpm run local
 ```
 
-The health checks can be accessed in your browser at [http://localhost:8080/health/readiness]() and [http://localhost:8080/health/liveness](). You can use `curl` to `POST` an event to the function endpoint:
+The local runtime exposes:
 
-```console
-curl -X POST -d '{"hello": "world"}' \
-  -H'Content-type: application/json' \
-  http://localhost:8080
-```
+- `POST /webhooks/github` for GitHub event simulation.
+- `/health/liveness` and `/health/readiness` for probes.
 
-The readiness and liveness endpoints use [overload-protection](https://www.npmjs.com/package/overload-protection) and will respond with `HTTP 503 Service Unavailable` with a `Client-Retry` header if your function is determined to be overloaded, based on the memory usage and event loop delay.
+## Deployment Notes
 
-## The Function Interface
+- Environment configuration is provided via the ArgoCD `froussard` application.
+- Kafka credentials are mounted from `kafka-codex-credentials` secrets.
+- The Argo Events sensor in `argocd/applications/froussard/github-codex-echo-sensor.yaml`
+  maps CloudEvent payloads into the `github-codex-echo` Workflow arguments.
 
-The `src/index.ts` file may export a single function or a `Function`
-object. The `Function` object allows developers to add lifecycle hooks for
-initialization and shutdown, as well as providing a way to implement custom
-health checks.
+## Verification Checklist
 
-The `Function` interface is defined as:
-
-```typescript
-export interface Function {
-  // The initialization function, called before the server is started
-  // This function is optional and should be synchronous.
-  init?: () => any;
-
-  // The shutdown function, called after the server is stopped
-  // This function is optional and should be synchronous.
-  shutdown?: () => any;
-
-  // The liveness function, called to check if the server is alive
-  // This function is optional and should return 200/OK if the server is alive.
-  liveness?: HealthCheck;
-
-  // The readiness function, called to check if the server is ready to accept requests
-  // This function is optional and should return 200/OK if the server is ready.
-  readiness?: HealthCheck;
-
-  logLevel?: LogLevel;
-
-  // The function to handle HTTP requests
-  handle: CloudEventFunction | HTTPFunction;
-}
-```
-
-## Handle Signature
-
-The HTTP function interface is defined as:
-
-```typescript
-interface HTTPFunction {
-  (context: Context, body?: IncomingBody): HTTPFunctionReturn;
-}
-```
-
-Where the `IncomingBody` is either a string, a Buffer, a JavaScript object, or undefined, depending on what was supplied in the HTTP POST message body. The `HTTTPFunctionReturn` type is defined as:
-
-```typescript
-type HTTPFunctionReturn = Promise<StructuredReturn> | StructuredReturn | ResponseBody | void;
-```
-
-Where the `StructuredReturn` is a JavaScript object with the following properties:
-
-```typescript
-interface StructuredReturn {
-  statusCode?: number;
-  headers?: Record<string, string>;
-  body?: ResponseBody;
-}
-```
-
-If the function returns a `StructuredReturn` object, then the `statusCode` and `headers` properties are used to construct the HTTP response. If the `body` property is present, it is used as the response body. If the function returns `void` or `undefined`, then the response body is empty.
-
-The `ResponseBody` is either a string, a JavaScript object, or a Buffer. JavaScript objects will be serialized as JSON. Buffers will be sent as binary data.
-
-### Health Checks
-
-The `Function` interface also allows for the addition of a `liveness` and `readiness` function. These functions are used to implement health checks for the function. The `liveness` function is called to check if the function is alive. The `readiness` function is called to check if the function is ready to accept requests. If either of these functions returns a non-200 status code, then the function is considered unhealthy.
-
-A health check function is defined as:
-
-```typescript
-/**
- * The HealthCheck interface describes a health check function,
- * including the optional path to which it should be bound.
- */
-export interface HealthCheck {
-  (request: Http2ServerRequest, reply: Http2ServerResponse): any;
-  path?: string;
-}
-```
-
-By default, the health checks are bound to the `/health/liveness` and `/health/readiness` paths. You can override this by setting the `path` property on the `HealthCheck` object, or by setting the `LIVENESS_URL` and `READINESS_URL` environment variables.
-
-## Testing
-
-This function project includes a [unit test](./test/unit.ts) and an [integration test](./test/integration.ts). Modify these, or add additional tests for your business logic.
-
-```console
-npm test
-```
+1. Create a GitHub issue in `gregkonush/lab` as the Codex trigger user.
+2. Ensure Argo Events produces a Workflow named `github-codex-echo-*` in
+   `argo-workflows` namespace.
+3. Inspect pod logs to confirm the payload mirrors the Kafka message.

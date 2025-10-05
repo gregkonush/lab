@@ -6,7 +6,7 @@ resources:
   - event-bus.yaml
   - kafka-credentials-secret.yaml
   - kafka-eventsource.yaml
-  - kafka-sensor.yaml
   - github-webhook-topic.yaml
   - github-codex-topic.yaml
-  - github-codex-workflow-template.yaml
+  - github-codex-echo-workflow-template.yaml
+  - github-codex-echo-sensor.yaml
