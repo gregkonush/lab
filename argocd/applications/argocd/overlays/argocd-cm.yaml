@@ -22,10 +22,6 @@ data:
     grpc:
       addr: 0.0.0.0:5557
     enablePasswordDB: true
-    connectors:
-      - type: local
-        id: local
-        name: Local
     staticClients:
       - id: argo-workflows-sso
         name: Argo Workflows
@@ -34,6 +30,6 @@ data:
         secretEnv: ARGO_WORKFLOWS_SSO_CLIENT_SECRET
     staticPasswords:
       - email: admin@proompteng.ai
-        hash: {{ getenv "ARGO_WORKFLOWS_SSO_PASSWORD_HASH" }}
+        hash: $$2a$10$kqHbxJcBTUu3kd48g49PZO4ZOC7UMW4I9d30PjUr45cn5J6gFmDgO
         username: admin
         userID: 86c47abf-4b23-4818-9b4c-76a2d17e7c98
