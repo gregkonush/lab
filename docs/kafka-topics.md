@@ -38,6 +38,6 @@ Add new rows whenever a topic is provisioned so downstream teams can reason abou
 Messages published to `github.codex.tasks` now include a `stage` field so downstream workflows can distinguish planning from implementation runs:
 
 - `planning` – triggered when `gregkonush` opens an issue. The Codex container is expected to comment an execution plan on the issue using the marker `<!-- codex:plan -->` and stop.
-- `implementation` – triggered when the same issue receives a 👍 reaction on the plan comment. The payload echoes the approved plan (`planCommentBody`) so the coding workflow can implement it and open a pull request.
+- `implementation` – triggered when the same issue receives an `execute plan` comment from `gregkonush`. The payload includes the metadata needed for Codex implementation runs and can optionally echo the approved plan (`planCommentBody`) when available.
 
 Both stages carry the common metadata (`repository`, `base`, `head`, `issueNumber`, etc.) to keep the workflows symmetric.

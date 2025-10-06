@@ -4,14 +4,7 @@ import { Kafka } from 'kafkajs'
 import type { Producer } from 'kafkajs'
 import { randomUUID } from 'node:crypto'
 
-import {
-  PLAN_COMMENT_MARKER,
-  buildCodexBranchName,
-  buildCodexPrompt,
-  normalizeLogin,
-  type CodexTaskMessage,
-  type Nullable,
-} from './codex'
+import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage, type Nullable } from './codex'
 import { postIssueReaction } from './github'
 import { selectReactionRepository } from './codex-workflow'
 
@@ -34,6 +27,7 @@ const KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID ?? 'froussard-webhook-produc
 const CODEX_BASE_BRANCH = process.env.CODEX_BASE_BRANCH ?? 'main'
 const CODEX_BRANCH_PREFIX = process.env.CODEX_BRANCH_PREFIX ?? 'codex/issue-'
 const CODEX_TRIGGER_LOGIN = (process.env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase()
+const CODEX_IMPLEMENTATION_TRIGGER_PHRASE = (process.env.CODEX_IMPLEMENTATION_TRIGGER ?? 'execute plan').trim()
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? null
 const GITHUB_ACK_REACTION = process.env.GITHUB_ACK_REACTION ?? '+1'
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com'
@@ -128,14 +122,8 @@ interface GithubComment {
   user?: Nullable<GithubUser>
 }
 
-interface GithubReaction {
-  content?: Nullable<string>
-}
-
-interface GithubReactionEventPayload {
+interface GithubIssueCommentEventPayload {
   action?: Nullable<string>
-  reaction?: Nullable<GithubReaction>
-  subject_type?: Nullable<string>
   issue?: Nullable<GithubIssue>
   comment?: Nullable<GithubComment>
   sender?: Nullable<GithubUser>
@@ -151,11 +139,11 @@ const isGithubIssueEvent = (payload: unknown): payload is GithubIssueEventPayloa
   return 'issue' in payload
 }
 
-const isGithubReactionEvent = (payload: unknown): payload is GithubReactionEventPayload => {
+const isGithubIssueCommentEvent = (payload: unknown): payload is GithubIssueCommentEventPayload => {
   if (!isRecord(payload)) {
     return false
   }
-  return 'reaction' in payload
+  return 'comment' in payload
 }
 
 const deriveRepositoryFullName = (
@@ -412,84 +400,73 @@ const app = new Elysia()
           }
         }
 
-        if (eventName === 'reaction' && actionValue === 'created' && isGithubReactionEvent(parsedPayload)) {
-          const reactionContent = parsedPayload.reaction?.content
+        if (eventName === 'issue_comment' && actionValue === 'created' && isGithubIssueCommentEvent(parsedPayload)) {
+          const commentBodyRaw = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body : ''
+          const commentBody = commentBodyRaw.trim()
           const senderLoginValue = parsedPayload.sender?.login
           const senderLogin = typeof senderLoginValue === 'string' ? senderLoginValue : ''
 
           if (
-            (reactionContent === '+1' || reactionContent === 'thumbs_up') &&
+            commentBody.length > 0 &&
+            commentBody === CODEX_IMPLEMENTATION_TRIGGER_PHRASE &&
             normalizeLogin(senderLoginValue) === CODEX_TRIGGER_LOGIN
           ) {
-            const commentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body : ''
+            const issue = parsedPayload.issue ?? undefined
+            const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
+            const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
+            const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
 
-            if (commentBody.includes(PLAN_COMMENT_MARKER)) {
-              const issue = parsedPayload.issue ?? undefined
-              const reactionRepository = selectReactionRepository(issue, parsedPayload.repository)
-              const repositoryFullName = deriveRepositoryFullName(reactionRepository, issue?.repository_url)
+            if (issueNumber && repositoryFullName) {
+              const baseBranch = issueRepository?.default_branch ?? CODEX_BASE_BRANCH
+              const headBranch = buildCodexBranchName(issueNumber, deliveryId, CODEX_BRANCH_PREFIX)
+              const issueTitle =
+                typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
+              const issueBody = typeof issue?.body === 'string' ? issue.body : ''
+              const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
 
-              const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
+              const prompt = buildCodexPrompt({
+                stage: 'implementation',
+                issueTitle,
+                issueBody,
+                repositoryFullName,
+                issueNumber,
+                baseBranch,
+                headBranch,
+                issueUrl,
+              })
 
-              if (issueNumber && repositoryFullName) {
-                const baseBranch = reactionRepository?.default_branch ?? CODEX_BASE_BRANCH
-                const headBranch = buildCodexBranchName(issueNumber, deliveryId, CODEX_BRANCH_PREFIX)
-                const issueTitle =
-                  typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
-                const issueBody = typeof issue?.body === 'string' ? issue.body : ''
-                const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
-                const planCommentId =
-                  typeof parsedPayload.comment?.id === 'number' ? parsedPayload.comment.id : undefined
-                const planCommentUrl =
-                  typeof parsedPayload.comment?.html_url === 'string' ? parsedPayload.comment.html_url : undefined
-
-                const prompt = buildCodexPrompt({
-                  stage: 'implementation',
-                  issueTitle,
-                  issueBody,
-                  repositoryFullName,
-                  issueNumber,
-                  baseBranch,
-                  headBranch,
-                  issueUrl,
-                  planCommentBody: commentBody,
-                })
-
-                const codexMessage: CodexTaskMessage = {
-                  stage: 'implementation',
-                  prompt,
-                  repository: repositoryFullName,
-                  base: baseBranch,
-                  head: headBranch,
-                  issueNumber,
-                  issueUrl,
-                  issueTitle,
-                  issueBody,
-                  sender: senderLogin,
-                  issuedAt: new Date().toISOString(),
-                  planCommentId,
-                  planCommentUrl,
-                  planCommentBody: commentBody,
-                }
-
-                await publishKafkaMessage({
-                  topic: KAFKA_CODEX_TOPIC,
-                  key: `issue-${issueNumber}-implementation`,
-                  value: JSON.stringify(codexMessage),
-                  headers: {
-                    ...kafkaHeaders,
-                    'x-codex-task-stage': 'implementation',
-                  },
-                })
-
-                codexStageTriggered = 'implementation'
-                console.log(
-                  `Implementation task dispatched for issue ${issueNumber} to topic ${KAFKA_CODEX_TOPIC} (delivery ${deliveryId}).`,
-                )
-              } else {
-                console.warn(
-                  `Skipping implementation task dispatch: missing repository or issue number for delivery ${deliveryId}.`,
-                )
+              const codexMessage: CodexTaskMessage = {
+                stage: 'implementation',
+                prompt,
+                repository: repositoryFullName,
+                base: baseBranch,
+                head: headBranch,
+                issueNumber,
+                issueUrl,
+                issueTitle,
+                issueBody,
+                sender: senderLogin,
+                issuedAt: new Date().toISOString(),
               }
+
+              await publishKafkaMessage({
+                topic: KAFKA_CODEX_TOPIC,
+                key: `issue-${issueNumber}-implementation`,
+                value: JSON.stringify(codexMessage),
+                headers: {
+                  ...kafkaHeaders,
+                  'x-codex-task-stage': 'implementation',
+                },
+              })
+
+              codexStageTriggered = 'implementation'
+              console.log(
+                `Implementation task dispatched for issue ${issueNumber} to topic ${KAFKA_CODEX_TOPIC} (delivery ${deliveryId}).`,
+              )
+            } else {
+              console.warn(
+                `Skipping implementation task dispatch: missing repository or issue number for delivery ${deliveryId}.`,
+              )
             }
           }
         }

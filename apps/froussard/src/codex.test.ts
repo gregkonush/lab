@@ -54,23 +54,28 @@ describe('buildCodexPrompt', () => {
     })
 
     expect(prompt).toContain('Plan for the next Codex automation run. Keep it concise, specific, and executable.')
+    expect(prompt).toContain('### Planning Workflow')
     expect(prompt).toContain(
-      'Review relevant code and tests, then manage the issue reactions and comment lifecycle this way:',
+      '1. Take a deliberate breath, review relevant code/tests, and jot bullet notes on constraints before writing the plan.',
     )
     expect(prompt).toContain(
-      '1. Immediately add :eyes: to the issue itself (replace an existing :+1: on the issue if present) before doing anything else.',
+      '2. Immediately add :eyes: to the issue itself (replace an existing :+1: on the issue if present) before doing anything else.',
     )
     expect(prompt).toContain(
-      '2. Immediately post (or update) a single comment that reads `_Planning in progress…_` to signal work in progress.',
+      '3. Immediately post (or update) a single comment that reads `_Planning in progress…_` to signal work in progress.',
     )
-    expect(prompt).toContain('3. When the plan is ready, edit that same comment to contain exactly:')
+    expect(prompt).toContain('### Plan Format')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
     expect(prompt).toContain(
       '### Proposed Work - numbered steps with files/modules, rationale, and needed collaborators.',
     )
     expect(prompt).toContain('### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.')
+    expect(prompt).toContain('### Final Steps')
     expect(prompt).toContain(
-      'After editing the comment, swap the issue reaction from :eyes: to :rocket: to signal the plan is ready.',
+      'After publishing the plan, swap the issue reaction from :eyes: to :rocket: to signal completeness.',
+    )
+    expect(prompt).toContain(
+      'Reply to the issue with the exact phrase `execute plan` when you want automation to start implementation.',
     )
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
