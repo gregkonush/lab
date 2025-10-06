@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
-  name: github-codex-echo
+  name: github-codex-planning
   namespace: argo-workflows
 spec:
   serviceAccountName: argo-workflows-workflow
@@ -48,7 +48,7 @@ spec:
             export CODEX_PROMPT="$(cat "$PROMPT_FILE")"
             export ISSUE_REPO="$(jq -r '.repository // empty' "$EVENT_FILE")"
             export ISSUE_NUMBER="$(jq -r '.issueNumber // empty' "$EVENT_FILE")"
-            export OUTPUT_PATH=/workspace/lab/.codex-plan-output.md
+            export OUTPUT_PATH="${PLAN_OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}"
             export POST_TO_GITHUB=true
 
             if [[ -z "$ISSUE_REPO" || -z "$ISSUE_NUMBER" || "$ISSUE_NUMBER" == "null" ]]; then

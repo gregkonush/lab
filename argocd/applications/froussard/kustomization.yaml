@@ -9,5 +9,6 @@ resources:
   - kafka-eventsource.yaml
   - github-webhook-topic.yaml
   - github-codex-topic.yaml
-  - github-codex-echo-workflow-template.yaml
-  - github-codex-echo-sensor.yaml
+  - github-codex-planning-workflow-template.yaml
+  - github-codex-implementation-workflow-template.yaml
+  - github-codex-sensor.yaml

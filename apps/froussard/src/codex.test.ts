@@ -53,20 +53,24 @@ describe('buildCodexPrompt', () => {
       issueUrl: 'https://github.com/gregkonush/lab/issues/77',
     })
 
-    expect(prompt).toContain('Repository: gregkonush/lab')
-    expect(prompt).toContain('Issue: #77 – Improve webhook reliability')
-    expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
-    expect(prompt).toContain(PLAN_COMMENT_MARKER)
-    expect(prompt.startsWith('You are the senior staff engineer responsible for this repository.')).toBe(true)
+    expect(prompt).toContain('Plan for the next Codex automation run. Keep it concise, specific, and executable.')
     expect(prompt).toContain(
-      'Deliver a detailed yet straightforward execution plan that sticks to existing patterns—no overengineering.',
+      'Review relevant code and tests, then manage the issue reactions and comment lifecycle this way:',
     )
-    expect(prompt).toContain('Replace the existing :+1: reaction on this issue with :eyes:')
-    expect(prompt).toContain('_Planning in progress…_')
-    expect(prompt).toContain('Respond with Markdown using this exact structure:')
-    expect(prompt).toContain('### Maintainer Checklist')
-    expect(prompt).toContain('replace the :eyes: reaction with :rocket:')
-    expect(prompt).toContain('You have access to the full repository checkout; inspect code and tests as needed')
+    expect(prompt).toContain(
+      '1. Immediately add :eyes: to the issue (replace an existing :+1: if present) before doing anything else.',
+    )
+    expect(prompt).toContain(
+      '2. Immediately post (or update) a single comment that reads `_Planning in progress…_` to signal work in progress.',
+    )
+    expect(prompt).toContain('3. When the plan is ready, edit that same comment to contain exactly:')
+    expect(prompt).toContain(PLAN_COMMENT_MARKER)
+    expect(prompt).toContain(
+      '### Proposed Work - numbered steps with files/modules, rationale, and needed collaborators.',
+    )
+    expect(prompt).toContain('### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.')
+    expect(prompt).toContain('After editing the comment, swap :eyes: for :rocket: to signal the plan is ready.')
+    expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
 
   it('constructs an implementation prompt that embeds the approved plan', () => {
@@ -82,8 +86,11 @@ describe('buildCodexPrompt', () => {
       planCommentBody: `${PLAN_COMMENT_MARKER}\n1. Step one`,
     })
 
+    expect(prompt).toContain('Execute the approved plan end to end. Stay concise and surface deviations with reasons.')
     expect(prompt).toContain('Approved plan:')
     expect(prompt).toContain('1. Step one')
-    expect(prompt).toContain('Create or reuse a feature branch')
+    expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
+    expect(prompt).toContain('Run formatters, lint, tests, and record outputs or failures.')
+    expect(prompt).toContain('Closes #77')
   })
 })

@@ -3,6 +3,9 @@ FROM ghcr.io/openai/codex-universal:latest
 
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
+    WORKTREE=/workspace/lab \
+    PLAN_OUTPUT_PATH=/workspace/lab/.codex-plan-output.md \
+    IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local
 
@@ -33,7 +36,8 @@ RUN git config --global user.name "codex-automation" \
 
 COPY apps/froussard/scripts/codex-bootstrap.sh /usr/local/bin/codex-bootstrap.sh
 COPY apps/froussard/scripts/codex-plan.sh /usr/local/bin/codex-plan.sh
-RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh
+COPY apps/froussard/scripts/codex-implement.sh /usr/local/bin/codex-implement.sh
+RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh /usr/local/bin/codex-implement.sh
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap.sh"]
