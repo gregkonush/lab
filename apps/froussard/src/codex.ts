@@ -75,7 +75,6 @@ const buildPlanningPrompt = ({
     '### Validation - required test automation, manual QA, observability, rollout tasks.',
     '### Risks & Questions - blockers, assumptions, migrations, sequencing concerns.',
     '### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.',
-    '### Last section - exact phrase "write `execute plan` to start implementation"',
     '',
     '### Final Steps',
     'Do not perform implementation steps; the follow-up run executes the plan.',
