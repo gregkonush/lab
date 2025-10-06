@@ -40,8 +40,50 @@ export interface BuildCodexPromptOptions {
   planCommentBody?: string
 }
 
-export const buildCodexPrompt = ({
-  stage,
+const fallbackBody = 'No description provided.'
+
+const buildPlanningPrompt = ({
+  issueTitle,
+  issueBody,
+  repositoryFullName,
+  issueNumber,
+  baseBranch,
+  headBranch,
+  issueUrl,
+}: BuildCodexPromptOptions): string => {
+  const trimmedBody = issueBody.trim() || fallbackBody
+
+  return [
+    'Plan for the next Codex automation run. Keep it concise, specific, and executable.',
+    `Repository: ${repositoryFullName}`,
+    `Issue: #${issueNumber} – ${issueTitle}`,
+    `Issue URL: ${issueUrl}`,
+    `Base branch: ${baseBranch}`,
+    `Suggested feature branch: ${headBranch}`,
+    '',
+    'Review relevant code and tests, then manage the issue reactions and comment lifecycle this way:',
+    '1. Immediately add :eyes: to the issue (replace an existing :+1: if present) before doing anything else.',
+    '2. Immediately post (or update) a single comment that reads `_Planning in progress…_` to signal work in progress.',
+    '3. When the plan is ready, edit that same comment to contain exactly:',
+    `${PLAN_COMMENT_MARKER}`,
+    '### Summary - key bullets on the user problem and desired outcome.',
+    '### Proposed Work - numbered steps with files/modules, rationale, and needed collaborators.',
+    '### Validation - required automation, manual QA, observability, rollout tasks.',
+    '### Risks & Questions - blockers, assumptions, migrations, sequencing concerns.',
+    '### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.',
+    '### Maintainer Checklist - 3-4 checkboxes ending with “React with 👍 when this plan looks good.”',
+    '',
+    'Do not perform implementation steps; the follow-up run will execute the plan.',
+    'After editing the comment, swap :eyes: for :rocket: to signal the plan is ready.',
+    '',
+    'Issue body for context:',
+    '"""',
+    trimmedBody,
+    '"""',
+  ].join('\n')
+}
+
+const buildImplementationPrompt = ({
   issueTitle,
   issueBody,
   repositoryFullName,
@@ -51,80 +93,47 @@ export const buildCodexPrompt = ({
   issueUrl,
   planCommentBody,
 }: BuildCodexPromptOptions): string => {
-  const trimmedBody = issueBody.trim() || 'No description provided.'
-
-  if (stage === 'planning') {
-    return [
-      'You are the senior staff engineer responsible for this repository.',
-      'Deliver a detailed yet straightforward execution plan that sticks to existing patterns—no overengineering.',
-      'Output only the GitHub issue comment—no intro or trailing narration.',
-      `Repository: ${repositoryFullName}`,
-      `Issue: #${issueNumber} – ${issueTitle}`,
-      `Issue URL: ${issueUrl}`,
-      `Base branch: ${baseBranch}`,
-      `Proposed feature branch: ${headBranch}`,
-      '',
-      'Before drafting the plan:',
-      '- Replace the existing :+1: reaction on this issue with :eyes: to signal the plan is in progress. If :+1: is absent, just add :eyes:.',
-      "- Immediately post (or update) a temporary issue comment that reads `_Planning in progress…_`. Do not include '" +
-        PLAN_COMMENT_MARKER +
-        '` yet; you will edit this same comment once the plan is ready.',
-      '',
-      'When the plan is ready, edit that in-progress comment so it matches the structure below.',
-      '',
-      'Respond with Markdown using this exact structure:',
-      '1. ' + PLAN_COMMENT_MARKER,
-      '2. `### Summary` — 1–2 bullets describing the user problem and desired outcome.',
-      '3. `### Proposed Work` — numbered steps (3–7). Each step must name the key files, services, or schemas to touch and the change to make.',
-      '4. `### Validation` — bullets covering automated checks, manual QA, and monitoring/observability updates.',
-      '5. `### Risks & Questions` — bullets for blockers, assumptions to confirm, or dependencies.',
-      '6. `### Maintainer Checklist` — 3–4 checkboxes summarising what reviewers must confirm; end with “React with 👍 when this plan looks good.”',
-      '',
-      'Guidelines:',
-      '- Stay in planning mode only—no code edits, PR steps, or mentions of future automation.',
-      '- Keep the plan simple to execute but detailed enough for hand-off, with clear sequencing.',
-      '- Reuse existing modules/patterns where possible and call out dependencies or follow-up items.',
-      '- Flag missing information and the follow-up required to obtain it.',
-      '- After publishing the final comment, replace the :eyes: reaction with :rocket: to signal completion.',
-      '',
-      'Issue body for context:',
-      '"""',
-      trimmedBody,
-      '"""',
-      '',
-      'You have access to the full repository checkout; inspect code and tests as needed before proposing the plan.',
-    ].join('\n')
-  }
-
+  const trimmedBody = issueBody.trim() || fallbackBody
   const sanitizedPlanBody = (planCommentBody ?? '').trim() || 'No approved plan content was provided.'
 
   return [
-    'Act as a technical fellow-level software engineer and drive the effort end to end.',
+    'Execute the approved plan end to end. Stay concise and surface deviations with reasons.',
     `Repository: ${repositoryFullName}`,
     `Issue: #${issueNumber} – ${issueTitle}`,
     `Issue URL: ${issueUrl}`,
+    `Base branch: ${baseBranch}`,
+    `Implementation branch: ${headBranch}`,
     '',
-    'An approved implementation plan (produced earlier and marked with `' +
-      PLAN_COMMENT_MARKER +
-      '`) is provided below. Execute it faithfully, adjusting only when you uncover new information. If you must diverge, document why.',
     'Approved plan:',
     '"""',
     sanitizedPlanBody,
     '"""',
     '',
-    'Implementation requirements:',
-    '- Create or reuse a feature branch named `' + headBranch + '` based on `' + baseBranch + '`.',
-    '- Make the required code changes, keeping commits small and referencing the issue number.',
-    '- Run formatters, linters, and automated tests relevant to the touched areas; capture their results.',
-    '- Open a draft pull request targeting `' +
-      baseBranch +
-      '` with a summary, testing notes, and link back to the issue.',
-    '- Post a follow-up comment on the issue summarizing what changed and link to the draft PR.',
+    'Execution checklist:',
+    '- Work in the existing checkout; keep commits small and reference the issue.',
+    `- Create or update the \`${headBranch}\` branch from \`${baseBranch}\`.`,
+    '- Follow the plan step by step, noting context for any adjustments.',
+    '- Run formatters, lint, tests, and record outputs or failures.',
+    `- Open a draft pull request targeting \`${baseBranch}\` that summarises the work, validation, and references "Closes #${issueNumber}" to auto-close the issue on merge.`,
+    '- Comment on the issue with the PR link, highlights, and remaining follow-ups.',
     '',
-    'Quality guardrails:',
-    '- Highlight any risks or follow-up work that remains.',
-    '- Note additional validation or deployment steps for reviewers.',
+    'Risk management:',
+    '- Call out blockers or new risks with mitigation ideas.',
+    '- Note manual QA or deployment actions owners must schedule.',
+    '',
+    'Issue body for quick reference:',
+    '"""',
+    trimmedBody,
+    '"""',
   ].join('\n')
+}
+
+export const buildCodexPrompt = (options: BuildCodexPromptOptions): string => {
+  if (options.stage === 'planning') {
+    return buildPlanningPrompt(options)
+  }
+
+  return buildImplementationPrompt(options)
 }
 
 export interface CodexTaskMessage {

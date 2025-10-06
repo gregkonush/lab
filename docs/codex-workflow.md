@@ -4,11 +4,13 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. When the plan comment later receives a 👍 from the same user it publishes an `implementation` message.
-2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages and launches the `github-codex-task` `WorkflowTemplate`.
-3. **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
-   - `stage=planning`: generate a `<!-- codex:plan -->` comment.
-   - `stage=implementation`: follow the approved plan, push a branch, open a **draft** PR, and comment back with the results.
+1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. When the plan comment later receives a 👍 from the same user it publishes an `implementation` message that includes the approved plan body and metadata for the future branch/PR.
+2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to two workflow templates:
+   - `github-codex-planning` for planning requests.
+   - `github-codex-implementation` for approved plans.
+3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
+   - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
+   - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, comments back on the issue, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
 
 ## Prerequisites
 
@@ -19,10 +21,10 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 ## Manual End-to-End Test
 
 1. **Create a test issue** in `gregkonush/lab` (while logged in as `gregkonush`).
-   - Check `argo get @latest -n argo-workflows` to see the planning workflow run.
+   - Check `argo get @latest -n argo-workflows` to see the planning workflow run via `github-codex-planning`.
    - Confirm the issue received a comment beginning with `<!-- codex:plan -->`.
 2. **Approve the plan** with a 👍 reaction on that comment.
-   - Watch for the implementation workflow; it should push a branch and open a draft PR.
+   - Watch for a new workflow named `github-codex-implementation-*`; it should push a branch ( `codex/issue-<number>-*` ), open a draft PR, and upload `.codex-implementation.log` as an artifact.
    - The issue gains a follow-up comment linking to the PR.
 
 ## Helpful Commands
@@ -45,19 +47,20 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 Submit the template manually to isolate execution from GitHub/Kafka:
 
 ```bash
-argo submit --from workflowtemplate/github-codex-task -n argo-workflows \
-  -p stage=planning \
-  -p prompt="Dry run" \
-  -p repository=gregkonush/lab \
-  -p base=main \
-  -p head=codex/test \
-  -p issueNumber=999 \
-  -p issueUrl=https://github.com/gregkonush/lab/issues/999 \
-  -p issueTitle="Codex dry run" \
-  -p issueBody="Testing orchestration"
+argo submit --from workflowtemplate/github-codex-planning -n argo-workflows \
+  -p rawEvent='{}' \
+  -p eventBody='{"stage":"planning","prompt":"Dry run","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration"}'
 ```
 
-Repeat with `stage=implementation` and pass `planCommentBody` (the approved plan text) plus any comment metadata.
+Trigger the implementation flow directly when you have an approved plan payload handy:
+
+```bash
+argo submit --from workflowtemplate/github-codex-implementation -n argo-workflows \
+  -p rawEvent='{}' \
+  -p eventBody='{"stage":"implementation","prompt":"<codex prompt>","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}'
+```
+
+The implementation workflow writes verbose output to `/workspace/lab/.codex-implementation.log`; inspect the artifact in Argo if you need the full Codex transcript.
 
 ## Manifest & CI Safety Checks
 

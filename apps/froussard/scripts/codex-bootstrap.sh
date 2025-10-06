@@ -2,8 +2,13 @@
 set -euo pipefail
 
 REPO_URL=${REPO_URL:-https://github.com/gregkonush/lab}
+WORKTREE_DEFAULT=${WORKTREE:-/workspace/lab}
+TARGET_DIR=${TARGET_DIR:-$WORKTREE_DEFAULT}
 BASE_BRANCH=${BASE_BRANCH:-main}
-TARGET_DIR=${TARGET_DIR:-/workspace/lab}
+HEAD_BRANCH=${HEAD_BRANCH:-}
+
+export WORKTREE="$WORKTREE_DEFAULT"
+export TARGET_DIR BASE_BRANCH HEAD_BRANCH
 
 mkdir -p "$(dirname "$TARGET_DIR")"
 

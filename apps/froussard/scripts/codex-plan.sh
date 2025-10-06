@@ -7,7 +7,9 @@ set -euo pipefail
 
 WORKTREE=${WORKTREE:-/workspace/lab}
 BASE_BRANCH=${BASE_BRANCH:-main}
-OUTPUT_PATH=${OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}
+DEFAULT_OUTPUT_PATH=${PLAN_OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}
+OUTPUT_PATH=${OUTPUT_PATH:-$DEFAULT_OUTPUT_PATH}
+mkdir -p "$(dirname "$OUTPUT_PATH")"
 
 PROMPT=$(python3 - <<'PY'
 import os, textwrap

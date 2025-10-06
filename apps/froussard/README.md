@@ -17,7 +17,7 @@ flowchart LR
   Froussard -->|raw body| K1
   Froussard -->|codex task payload| K2
   Kafka --> Sensor[Argo Events sensor]
-  Sensor -->|templated parameters| Workflow[Argo WorkflowTemplate `github-codex-echo`]
+  Sensor -->|templated parameters| Workflow[Argo WorkflowTemplate `github-codex-planning`]
   Workflow --> Pod[Workflow pod logs payload]
 ```
 
@@ -45,13 +45,13 @@ The local runtime exposes:
 
 - Environment configuration is provided via the ArgoCD `froussard` application.
 - Kafka credentials are mounted from `kafka-codex-credentials` secrets.
-- The Argo Events sensor in `argocd/applications/froussard/github-codex-echo-sensor.yaml`
-  maps CloudEvent payloads into the `github-codex-echo` Workflow arguments.
+- The Argo Events sensor in `argocd/applications/froussard/github-codex-sensor.yaml`
+  maps CloudEvent payloads into the `github-codex-planning` Workflow arguments.
 
 ## Verification Checklist
 
 1. Create a GitHub issue in `gregkonush/lab` as the Codex trigger user.
-2. Ensure Argo Events produces a Workflow named `github-codex-echo-*` in
+2. Ensure Argo Events produces a Workflow named `github-codex-planning-*` in
    `argo-workflows` namespace.
 3. Inspect pod logs to confirm the payload mirrors the Kafka message.
 

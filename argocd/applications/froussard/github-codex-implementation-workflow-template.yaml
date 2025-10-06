@@ -1,0 +1,50 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: github-codex-implementation
+  namespace: argo-workflows
+spec:
+  serviceAccountName: argo-workflows-workflow
+  entrypoint: implement
+  arguments:
+    parameters:
+      - name: rawEvent
+        value: '{}'
+      - name: eventBody
+        value: '{}'
+  templates:
+    - name: implement
+      inputs:
+        parameters:
+          - name: rawEvent
+          - name: eventBody
+      outputs:
+        artifacts:
+          - name: codex-implementation-log
+            path: /workspace/lab/.codex-implementation.log
+            optional: true
+      container:
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        command: ["/usr/local/bin/codex-bootstrap.sh"]
+        args:
+          - "/bin/bash"
+          - "-lc"
+          - |
+            set -euo pipefail
+
+            EVENT_FILE=$(mktemp)
+            cat <<'JSON' > "$EVENT_FILE"
+            {{inputs.parameters.eventBody}}
+            JSON
+
+            STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
+            if [[ "$STAGE" != "implementation" ]]; then
+              echo "Skipping unsupported stage: '$STAGE'"
+              exit 0
+            fi
+
+            export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
+            export POST_TO_GITHUB=true
+
+            echo "Executing implementation workflow" >&2
+            codex-implement.sh "$EVENT_FILE"
