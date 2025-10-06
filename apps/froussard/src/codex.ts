@@ -55,7 +55,8 @@ export const buildCodexPrompt = ({
 
   if (stage === 'planning') {
     return [
-      'You are GPT-5 Codex acting as the planning lead for this GitHub issue.',
+      'You are the senior staff engineer responsible for this repository.',
+      'Deliver a detailed yet straightforward execution plan that sticks to existing patterns—no overengineering.',
       'Output only the GitHub issue comment—no intro or trailing narration.',
       `Repository: ${repositoryFullName}`,
       `Issue: #${issueNumber} – ${issueTitle}`,
@@ -81,7 +82,8 @@ export const buildCodexPrompt = ({
       '',
       'Guidelines:',
       '- Stay in planning mode only—no code edits, PR steps, or mentions of future automation.',
-      '- Keep sentences concise, call out sequencing, and surface any external dependencies.',
+      '- Keep the plan simple to execute but detailed enough for hand-off, with clear sequencing.',
+      '- Reuse existing modules/patterns where possible and call out dependencies or follow-up items.',
       '- Flag missing information and the follow-up required to obtain it.',
       '- After publishing the final comment, replace the :eyes: reaction with :rocket: to signal completion.',
       '',
