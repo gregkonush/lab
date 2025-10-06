@@ -66,16 +66,11 @@ describe('buildCodexPrompt', () => {
     )
     expect(prompt).toContain('### Plan Format')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
-    expect(prompt).toContain(
-      '### Proposed Work - numbered steps with files/modules, rationale, and needed collaborators.',
-    )
+    expect(prompt).toContain('### Risks & Questions - blockers, assumptions, migrations, sequencing concerns.')
     expect(prompt).toContain('### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.')
     expect(prompt).toContain('### Final Steps')
     expect(prompt).toContain(
       'After publishing the plan, swap the issue reaction from :eyes: to :rocket: to signal completeness.',
-    )
-    expect(prompt).toContain(
-      'Reply to the issue with the exact phrase `execute plan` when you want automation to start implementation.',
     )
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
