@@ -66,9 +66,7 @@ describe('buildCodexPrompt', () => {
     )
     expect(prompt).toContain('### Plan Format')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
-    expect(prompt).toContain(
-      '### Proposed Work - numbered steps with files/modules, rationale, and needed collaborators.',
-    )
+    expect(prompt).toContain('### Risks & Questions - blockers, assumptions, migrations, sequencing concerns.')
     expect(prompt).toContain('### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.')
     expect(prompt).toContain('### Final Steps')
     expect(prompt).toContain(
