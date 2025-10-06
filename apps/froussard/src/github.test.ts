@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { postIssueReaction } from './github'
+import { PLAN_COMMENT_MARKER } from './codex'
+import { findLatestPlanComment, postIssueReaction } from './github'
 
 describe('postIssueReaction', () => {
   it('reports missing token when GITHUB_TOKEN is not configured', async () => {
@@ -138,5 +139,64 @@ describe('postIssueReaction', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     const [url] = fetchSpy.mock.calls[0]
     expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/5/reactions')
+  })
+})
+
+describe('findLatestPlanComment', () => {
+  it('returns the latest comment containing the plan marker', async () => {
+    const payload = [
+      { id: 101, body: 'Regular comment' },
+      { id: 202, body: `${PLAN_COMMENT_MARKER}\nApproved steps`, html_url: 'https://example.com/comment/202' },
+    ]
+
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'gregkonush/lab',
+      issueNumber: 12,
+      fetchImplementation: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(payload),
+      }),
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.comment.id).toBe(202)
+    expect(result.comment.body).toContain('Approved steps')
+    expect(result.comment.htmlUrl).toBe('https://example.com/comment/202')
+  })
+
+  it('returns not-found when no comment carries the plan marker', async () => {
+    const payload = [{ id: 303, body: 'No marker here' }]
+
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'gregkonush/lab',
+      issueNumber: 99,
+      fetchImplementation: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(payload),
+      }),
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'not-found' })
+  })
+
+  it('rejects repositories without owner and name segments', async () => {
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'invalid-repo',
+      issueNumber: 5,
+      fetchImplementation: async () => {
+        throw new Error('fetch should not be called')
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.reason).toBe('invalid-repository')
   })
 })
