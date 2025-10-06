@@ -10,3 +10,4 @@ resources:
   - github-codex-topic.yaml
   - github-codex-echo-workflow-template.yaml
   - github-codex-echo-sensor.yaml
+  - codex-image-prepull.yaml
