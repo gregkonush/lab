@@ -13,6 +13,7 @@ import {
   type Nullable,
 } from './codex'
 import { postIssueReaction } from './github'
+import { selectReactionRepository } from './codex-workflow'
 
 const requireEnv = (name: string): string => {
   const value = process.env[name]
@@ -424,7 +425,7 @@ const app = new Elysia()
 
             if (commentBody.includes(PLAN_COMMENT_MARKER)) {
               const issue = parsedPayload.issue ?? undefined
-              const reactionRepository = issue?.repository ?? parsedPayload.repository ?? undefined
+              const reactionRepository = selectReactionRepository(issue, parsedPayload.repository)
               const repositoryFullName = deriveRepositoryFullName(reactionRepository, issue?.repository_url)
 
               const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
