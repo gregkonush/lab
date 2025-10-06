@@ -95,4 +95,35 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Run formatters, lint, tests, and record outputs or failures.')
     expect(prompt).toContain('Closes #77')
   })
+
+  it('falls back to a default plan body when the approved plan is empty', () => {
+    const prompt = buildCodexPrompt({
+      stage: 'implementation',
+      issueTitle: 'Stabilise deployment workflow',
+      issueBody: 'Improve release cadence.',
+      repositoryFullName: 'gregkonush/lab',
+      issueNumber: 88,
+      baseBranch: 'main',
+      headBranch: 'codex/issue-88-xyz987',
+      issueUrl: 'https://github.com/gregkonush/lab/issues/88',
+      planCommentBody: '   ',
+    })
+
+    expect(prompt).toContain('"""\nNo approved plan content was provided.\n"""')
+  })
+
+  it('uses a default issue body when none is supplied', () => {
+    const prompt = buildCodexPrompt({
+      stage: 'planning',
+      issueTitle: 'Refine metrics dashboards',
+      issueBody: '   ',
+      repositoryFullName: 'gregkonush/lab',
+      issueNumber: 101,
+      baseBranch: 'main',
+      headBranch: 'codex/issue-101-abc123',
+      issueUrl: 'https://github.com/gregkonush/lab/issues/101',
+    })
+
+    expect(prompt).toContain('"""\nNo description provided.\n"""')
+  })
 })

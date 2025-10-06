@@ -88,4 +88,55 @@ describe('postIssueReaction', () => {
       expect(result.detail).toBe('forbidden')
     }
   })
+
+  it('indicates when no fetch implementation is available', async () => {
+    const result = await postIssueReaction({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 13,
+      token: 'token',
+      reactionContent: 'heart',
+      fetchImplementation: null,
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'no-fetch' })
+  })
+
+  it('surfaces network errors thrown by the fetch implementation', async () => {
+    const result = await postIssueReaction({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 99,
+      token: 'token',
+      reactionContent: 'eyes',
+      fetchImplementation: async () => {
+        throw new Error('boom')
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('network-error')
+      expect(result.detail).toBe('boom')
+    }
+  })
+
+  it('removes trailing slashes from the API base URL before sending the request', async () => {
+    const fetchSpy = vi.fn(async (_url: string) => ({
+      ok: true,
+      status: 201,
+      text: async () => '',
+    }))
+
+    await postIssueReaction({
+      repositoryFullName: 'acme/widgets',
+      issueNumber: 5,
+      token: 'secret-token',
+      reactionContent: 'rocket',
+      apiBaseUrl: 'https://example.test/api/',
+      fetchImplementation: fetchSpy,
+    })
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [url] = fetchSpy.mock.calls[0]
+    expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/5/reactions')
+  })
 })
