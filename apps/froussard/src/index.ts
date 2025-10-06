@@ -34,7 +34,7 @@ const CODEX_BASE_BRANCH = process.env.CODEX_BASE_BRANCH ?? 'main'
 const CODEX_BRANCH_PREFIX = process.env.CODEX_BRANCH_PREFIX ?? 'codex/issue-'
 const CODEX_TRIGGER_LOGIN = (process.env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase()
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? null
-const GITHUB_ACK_REACTION = process.env.GITHUB_ACK_REACTION ?? 'rocket'
+const GITHUB_ACK_REACTION = process.env.GITHUB_ACK_REACTION ?? '+1'
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com'
 const GITHUB_USER_AGENT = process.env.GITHUB_USER_AGENT ?? 'froussard-webhook'
 
