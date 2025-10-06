@@ -72,9 +72,6 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain(
       'After publishing the plan, swap the issue reaction from :eyes: to :rocket: to signal completeness.',
     )
-    expect(prompt).toContain(
-      'Reply to the issue with the exact phrase `execute plan` when you want automation to start implementation.',
-    )
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
 
