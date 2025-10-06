@@ -138,6 +138,7 @@ interface GithubReactionEventPayload {
   issue?: Nullable<GithubIssue>
   comment?: Nullable<GithubComment>
   sender?: Nullable<GithubUser>
+  repository?: Nullable<GithubRepository>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
@@ -423,12 +424,13 @@ const app = new Elysia()
 
             if (commentBody.includes(PLAN_COMMENT_MARKER)) {
               const issue = parsedPayload.issue ?? undefined
-              const repositoryFullName = deriveRepositoryFullName(issue?.repository, issue?.repository_url)
+              const reactionRepository = issue?.repository ?? parsedPayload.repository ?? undefined
+              const repositoryFullName = deriveRepositoryFullName(reactionRepository, issue?.repository_url)
 
               const issueNumber = typeof issue?.number === 'number' ? issue.number : undefined
 
               if (issueNumber && repositoryFullName) {
-                const baseBranch = issue?.repository?.default_branch ?? CODEX_BASE_BRANCH
+                const baseBranch = reactionRepository?.default_branch ?? CODEX_BASE_BRANCH
                 const headBranch = buildCodexBranchName(issueNumber, deliveryId, CODEX_BRANCH_PREFIX)
                 const issueTitle =
                   typeof issue?.title === 'string' && issue.title.length > 0 ? issue.title : `Issue #${issueNumber}`
