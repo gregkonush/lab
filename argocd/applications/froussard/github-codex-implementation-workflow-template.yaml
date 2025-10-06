@@ -18,11 +18,6 @@ spec:
         parameters:
           - name: rawEvent
           - name: eventBody
-      outputs:
-        artifacts:
-          - name: codex-implementation-log
-            path: /workspace/lab/.codex-implementation.log
-            optional: true
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
         command: ["/usr/local/bin/codex-bootstrap.sh"]
@@ -46,5 +41,7 @@ spec:
             export OUTPUT_PATH="${IMPLEMENTATION_OUTPUT_PATH:-/workspace/lab/.codex-implementation.log}"
             export POST_TO_GITHUB=true
 
+            WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
+
             echo "Executing implementation workflow" >&2
-            codex-implement.sh "$EVENT_FILE"
+            "${WORKTREE_DIR}/apps/froussard/scripts/codex-implement.sh" "$EVENT_FILE"
