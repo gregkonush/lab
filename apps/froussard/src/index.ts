@@ -5,7 +5,7 @@ import type { Producer } from 'kafkajs'
 import { randomUUID } from 'node:crypto'
 
 import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage, type Nullable } from './codex'
-import { postIssueReaction } from './github'
+import { findLatestPlanComment, postIssueReaction } from './github'
 import { selectReactionRepository } from './codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from './github-payload'
 
@@ -339,6 +339,46 @@ const app = new Elysia()
               const issueBody = typeof issue?.body === 'string' ? issue.body : ''
               const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
 
+              let planCommentBody: string | undefined
+              let planCommentId: number | undefined
+              let planCommentUrl: string | undefined
+
+              const planLookup = await findLatestPlanComment({
+                repositoryFullName,
+                issueNumber,
+                token: GITHUB_TOKEN,
+                apiBaseUrl: GITHUB_API_BASE_URL,
+                userAgent: GITHUB_USER_AGENT,
+              })
+
+              if (planLookup.ok) {
+                planCommentBody = planLookup.comment.body
+                planCommentId = planLookup.comment.id
+                planCommentUrl = planLookup.comment.htmlUrl ?? undefined
+                console.log(
+                  `Found approved plan comment ${planCommentId} for issue ${issueNumber} in ${repositoryFullName}.`,
+                )
+              } else {
+                const detailSuffix = planLookup.detail ? ` Detail: ${planLookup.detail}` : ''
+                switch (planLookup.reason) {
+                  case 'not-found':
+                    console.warn(
+                      `No approved plan comment found for issue ${issueNumber} in ${repositoryFullName}.${detailSuffix}`,
+                    )
+                    break
+                  case 'http-error':
+                    console.error(
+                      `GitHub API returned status ${planLookup.status ?? 'unknown'} when fetching plan comment for issue ${issueNumber}.${detailSuffix}`,
+                    )
+                    break
+                  default:
+                    console.error(
+                      `Failed to retrieve approved plan comment for issue ${issueNumber} (reason: ${planLookup.reason}).${detailSuffix}`,
+                    )
+                    break
+                }
+              }
+
               const prompt = buildCodexPrompt({
                 stage: 'implementation',
                 issueTitle,
@@ -348,6 +388,7 @@ const app = new Elysia()
                 baseBranch,
                 headBranch,
                 issueUrl,
+                planCommentBody,
               })
 
               const codexMessage: CodexTaskMessage = {
@@ -362,6 +403,9 @@ const app = new Elysia()
                 issueBody,
                 sender: senderLogin,
                 issuedAt: new Date().toISOString(),
+                planCommentBody,
+                planCommentId,
+                planCommentUrl,
               }
 
               await publishKafkaMessage({
