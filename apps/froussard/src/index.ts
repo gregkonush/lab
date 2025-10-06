@@ -49,6 +49,8 @@ if (kafkaBrokers.length === 0) {
 
 const webhooks = new Webhooks({ secret: GITHUB_WEBHOOK_SECRET })
 
+// KafkaJS emits TimeoutNegativeWarning on newer Node timers while the request
+// queue catches up; tracked here: https://github.com/tulios/kafkajs/issues/1751
 const kafka = new Kafka({
   clientId: KAFKA_CLIENT_ID,
   brokers: kafkaBrokers,
