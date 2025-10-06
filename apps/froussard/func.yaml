@@ -25,9 +25,11 @@ run:
     value: '{{ secret:froussard-kafka:username }}'
   - name: KAFKA_PASSWORD
     value: '{{ secret:froussard-kafka:password }}'
+  - name: GITHUB_TOKEN
+    value: '{{ secret:github-token:token }}'
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:4759b53a622b64d6bd3873384771ec21eda73b44d20d19c4c2a411732ea7d72b
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:767387b082b089a6ae2dd8457aa4896754e2a79762ada1163cc173c7a9d2cdb4
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:

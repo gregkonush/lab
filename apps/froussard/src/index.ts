@@ -34,7 +34,7 @@ const CODEX_BASE_BRANCH = process.env.CODEX_BASE_BRANCH ?? 'main'
 const CODEX_BRANCH_PREFIX = process.env.CODEX_BRANCH_PREFIX ?? 'codex/issue-'
 const CODEX_TRIGGER_LOGIN = (process.env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase()
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? null
-const GITHUB_ACK_REACTION = process.env.GITHUB_ACK_REACTION ?? 'rocket'
+const GITHUB_ACK_REACTION = process.env.GITHUB_ACK_REACTION ?? '+1'
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com'
 const GITHUB_USER_AGENT = process.env.GITHUB_USER_AGENT ?? 'froussard-webhook'
 
@@ -49,6 +49,8 @@ if (kafkaBrokers.length === 0) {
 
 const webhooks = new Webhooks({ secret: GITHUB_WEBHOOK_SECRET })
 
+// KafkaJS emits TimeoutNegativeWarning on newer Node timers while the request
+// queue catches up; tracked here: https://github.com/tulios/kafkajs/issues/1751
 const kafka = new Kafka({
   clientId: KAFKA_CLIENT_ID,
   brokers: kafkaBrokers,

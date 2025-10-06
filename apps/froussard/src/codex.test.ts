@@ -57,9 +57,16 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Issue: #77 – Improve webhook reliability')
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
-    expect(
-      prompt.startsWith('Act as a technical fellow-level software engineer and drive the effort end to end.'),
-    ).toBe(true)
+    expect(prompt.startsWith('You are the senior staff engineer responsible for this repository.')).toBe(true)
+    expect(prompt).toContain(
+      'Deliver a detailed yet straightforward execution plan that sticks to existing patterns—no overengineering.',
+    )
+    expect(prompt).toContain('Replace the existing :+1: reaction on this issue with :eyes:')
+    expect(prompt).toContain('_Planning in progress…_')
+    expect(prompt).toContain('Respond with Markdown using this exact structure:')
+    expect(prompt).toContain('### Maintainer Checklist')
+    expect(prompt).toContain('replace the :eyes: reaction with :rocket:')
+    expect(prompt).toContain('You have access to the full repository checkout; inspect code and tests as needed')
   })
 
   it('constructs an implementation prompt that embeds the approved plan', () => {
