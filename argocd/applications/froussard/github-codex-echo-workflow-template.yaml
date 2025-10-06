@@ -4,6 +4,7 @@ metadata:
   name: github-codex-echo
   namespace: argo-workflows
 spec:
+  serviceAccountName: argo-workflows-workflow
   entrypoint: plan
   arguments:
     parameters:

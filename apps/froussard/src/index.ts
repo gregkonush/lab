@@ -12,6 +12,7 @@ import {
   type CodexTaskMessage,
   type Nullable,
 } from './codex'
+import { postIssueReaction } from './github'
 
 const requireEnv = (name: string): string => {
   const value = process.env[name]
@@ -32,6 +33,10 @@ const KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID ?? 'froussard-webhook-produc
 const CODEX_BASE_BRANCH = process.env.CODEX_BASE_BRANCH ?? 'main'
 const CODEX_BRANCH_PREFIX = process.env.CODEX_BRANCH_PREFIX ?? 'codex/issue-'
 const CODEX_TRIGGER_LOGIN = (process.env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase()
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? null
+const GITHUB_ACK_REACTION = process.env.GITHUB_ACK_REACTION ?? 'rocket'
+const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com'
+const GITHUB_USER_AGENT = process.env.GITHUB_USER_AGENT ?? 'froussard-webhook'
 
 const kafkaBrokers = KAFKA_BROKERS.split(',')
   .map((broker) => broker.trim())
@@ -354,6 +359,46 @@ const app = new Elysia()
                 console.log(
                   `Planning task dispatched for issue ${issue.number} to topic ${KAFKA_CODEX_TOPIC} (delivery ${deliveryId}).`,
                 )
+
+                const reactionResult = await postIssueReaction({
+                  repositoryFullName,
+                  issueNumber: issue.number,
+                  token: GITHUB_TOKEN,
+                  reactionContent: GITHUB_ACK_REACTION,
+                  apiBaseUrl: GITHUB_API_BASE_URL,
+                  userAgent: GITHUB_USER_AGENT,
+                })
+
+                if (reactionResult.ok) {
+                  console.log(
+                    `Added :${GITHUB_ACK_REACTION}: reaction to issue ${issue.number} in ${repositoryFullName} (delivery ${deliveryId}).`,
+                  )
+                } else {
+                  const detailSuffix = reactionResult.detail ? ` Detail: ${reactionResult.detail}` : ''
+                  switch (reactionResult.reason) {
+                    case 'missing-token':
+                      console.warn('Skipping planning acknowledgement reaction: GITHUB_TOKEN not configured.')
+                      break
+                    case 'invalid-repository':
+                      console.warn(
+                        `Skipping planning acknowledgement reaction: repository '${repositoryFullName}' is invalid.`,
+                      )
+                      break
+                    case 'no-fetch':
+                      console.warn('Skipping planning acknowledgement reaction: fetch implementation unavailable.')
+                      break
+                    case 'http-error':
+                      console.error(
+                        `GitHub API rejected reaction for issue ${issue.number} (status ${reactionResult.status ?? 'unknown'}).${detailSuffix}`,
+                      )
+                      break
+                    case 'network-error':
+                      console.error(
+                        `Failed to deliver reaction for issue ${issue.number} due to network error.${detailSuffix}`,
+                      )
+                      break
+                  }
+                }
               } else {
                 console.warn(
                   `Skipping planning task dispatch: repository.full_name missing for issue ${issue.number} (delivery ${deliveryId}).`,
