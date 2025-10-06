@@ -4,32 +4,59 @@ metadata:
   name: github-codex-echo
   namespace: argo-workflows
 spec:
-  serviceAccountName: argo-workflows-workflow
-  entrypoint: show
+  entrypoint: plan
   arguments:
     parameters:
       - name: rawEvent
         value: '{}'
       - name: eventBody
         value: '{}'
-      - name: holdSeconds
-        value: '600'
   templates:
-    - name: show
+    - name: plan
       inputs:
         parameters:
           - name: rawEvent
           - name: eventBody
-          - name: holdSeconds
       container:
-        image: cgr.dev/chainguard/bash:latest
-        command: ["/bin/bash", "-lc"]
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        command: ["/usr/local/bin/codex-bootstrap.sh"]
         args:
+          - "/bin/bash"
+          - "-lc"
           - |
             set -euo pipefail
-            echo "Raw CloudEvent:" >&2
-            echo '{{inputs.parameters.rawEvent}}'
-            echo
-            echo "Kafka body:" >&2
-            echo '{{inputs.parameters.eventBody}}'
-            sleep '{{inputs.parameters.holdSeconds}}'
+
+            EVENT_FILE=$(mktemp)
+            cat <<'JSON' > "$EVENT_FILE"
+            {{inputs.parameters.eventBody}}
+            JSON
+
+            STAGE=$(jq -r '.stage // ""' "$EVENT_FILE")
+            if [[ "$STAGE" != "planning" ]]; then
+              echo "Skipping unsupported stage: '$STAGE'"
+              exit 0
+            fi
+
+            PROMPT_FILE=$(mktemp)
+            jq -r '.prompt // empty' "$EVENT_FILE" > "$PROMPT_FILE"
+            if [[ ! -s "$PROMPT_FILE" ]]; then
+              echo "Missing Codex prompt in event payload" >&2
+              exit 1
+            fi
+
+            export CODEX_PROMPT="$(cat "$PROMPT_FILE")"
+            export ISSUE_REPO="$(jq -r '.repository // empty' "$EVENT_FILE")"
+            export ISSUE_NUMBER="$(jq -r '.issueNumber // empty' "$EVENT_FILE")"
+            export OUTPUT_PATH=/workspace/lab/.codex-plan-output.md
+            export POST_TO_GITHUB=true
+
+            if [[ -z "$ISSUE_REPO" || -z "$ISSUE_NUMBER" || "$ISSUE_NUMBER" == "null" ]]; then
+              echo "Missing repository or issue number in event payload" >&2
+              exit 1
+            fi
+
+            echo "Generating plan for $ISSUE_REPO#$ISSUE_NUMBER"
+            codex-plan.sh
+
+            echo "Codex plan output:" >&2
+            cat "$OUTPUT_PATH" >&2
