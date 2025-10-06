@@ -92,6 +92,9 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Approved plan:')
     expect(prompt).toContain('1. Step one')
     expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
+    expect(prompt).toContain(
+      'Post an emoji-led progress update on the issue hourly, summarizing findings and completed work so far.',
+    )
     expect(prompt).toContain('Run formatters, lint, tests, and record outputs or failures.')
     expect(prompt).toContain('Closes #77')
   })

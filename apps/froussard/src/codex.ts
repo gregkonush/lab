@@ -118,6 +118,7 @@ const buildImplementationPrompt = ({
     '- Work in the existing checkout; keep commits small and reference the issue.',
     `- Create or update the \`${headBranch}\` branch from \`${baseBranch}\`.`,
     '- Follow the plan step by step, noting context for any adjustments.',
+    '- Post an emoji-led progress update on the issue hourly, summarizing findings and completed work so far.',
     '- Run formatters, lint, tests, and record outputs or failures.',
     `- Open a draft pull request targeting \`${baseBranch}\` that summarises the work, validation, and references "Closes #${issueNumber}" to auto-close the issue on merge.`,
     '- Comment on the issue with the PR link, highlights, and remaining follow-ups.',
