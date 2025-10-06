@@ -58,7 +58,7 @@ describe('buildCodexPrompt', () => {
       'Review relevant code and tests, then manage the issue reactions and comment lifecycle this way:',
     )
     expect(prompt).toContain(
-      '1. Immediately add :eyes: to the issue (replace an existing :+1: if present) before doing anything else.',
+      '1. Immediately add :eyes: to the issue itself (replace an existing :+1: on the issue if present) before doing anything else.',
     )
     expect(prompt).toContain(
       '2. Immediately post (or update) a single comment that reads `_Planning in progress…_` to signal work in progress.',
@@ -69,7 +69,9 @@ describe('buildCodexPrompt', () => {
       '### Proposed Work - numbered steps with files/modules, rationale, and needed collaborators.',
     )
     expect(prompt).toContain('### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.')
-    expect(prompt).toContain('After editing the comment, swap :eyes: for :rocket: to signal the plan is ready.')
+    expect(prompt).toContain(
+      'After editing the comment, swap the issue reaction from :eyes: to :rocket: to signal the plan is ready.',
+    )
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
 
