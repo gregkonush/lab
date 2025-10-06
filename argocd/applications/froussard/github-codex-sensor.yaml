@@ -7,18 +7,29 @@ spec:
   dependencies:
     - eventName: github-codex-tasks
       eventSourceName: github-codex
-      name: codex-event
+      name: planning-event
+      filters:
+        data:
+          - path: body.stage
+            type: string
+            value:
+              - planning
+    - eventName: github-codex-tasks
+      eventSourceName: github-codex
+      name: implementation-event
+      filters:
+        data:
+          - path: body.stage
+            type: string
+            value:
+              - implementation
   eventBusName: default
-  loggingFields: null
   template:
     serviceAccountName: github-codex-sensor
   triggers:
     - template:
-        log: {}
-        name: log-event
-    - template:
         name: planning-workflow
-        when: "{{ .Input.body.stage }} == 'planning'"
+        conditions: "planning-event"
         k8s:
           group: argoproj.io
           version: v1alpha1
@@ -26,12 +37,12 @@ spec:
           parameters:
             - dest: spec.arguments.parameters.0.value
               src:
+                dependencyName: planning-event
                 dataTemplate: '{{ .Input | toJson }}'
-                dependencyName: codex-event
             - dest: spec.arguments.parameters.1.value
               src:
+                dependencyName: planning-event
                 dataTemplate: '{{ .Input.body | toJson }}'
-                dependencyName: codex-event
           resource: workflows
           source:
             resource:
@@ -51,7 +62,7 @@ spec:
                   name: github-codex-planning
     - template:
         name: implementation-workflow
-        when: "{{ .Input.body.stage }} == 'implementation'"
+        conditions: "implementation-event"
         k8s:
           group: argoproj.io
           version: v1alpha1
@@ -59,12 +70,12 @@ spec:
           parameters:
             - dest: spec.arguments.parameters.0.value
               src:
+                dependencyName: implementation-event
                 dataTemplate: '{{ .Input | toJson }}'
-                dependencyName: codex-event
             - dest: spec.arguments.parameters.1.value
               src:
+                dependencyName: implementation-event
                 dataTemplate: '{{ .Input.body | toJson }}'
-                dependencyName: codex-event
           resource: workflows
           source:
             resource:
