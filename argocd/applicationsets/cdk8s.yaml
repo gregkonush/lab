@@ -13,7 +13,7 @@ spec:
             path: packages/bonjour
             namespace: bonjour
             image: registry.ide-newton.ts.net/lab/bonjour:latest
-            automation: manual
+            automation: auto
             enabled: true
             annotations:
               argocd.argoproj.io/sync-wave: "6"

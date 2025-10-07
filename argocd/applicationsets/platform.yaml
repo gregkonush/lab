@@ -14,77 +14,77 @@ spec:
             namespace: cloudnative-pg
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: redis-operator
             path: argocd/applications/redis-operator
             namespace: redis-operator
             annotations:
               argocd.argoproj.io/sync-wave: "-1"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: external-dns
             path: argocd/applications/external-dns
             namespace: external-dns
             annotations:
               argocd.argoproj.io/sync-wave: "0"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: cloudflare
             path: argocd/applications/cloudflare
             namespace: cloudflare
             annotations:
               argocd.argoproj.io/sync-wave: "0"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: istio-system
             path: argocd/applications/istio-system
             namespace: istio-system
             annotations:
               argocd.argoproj.io/sync-wave: "0"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: istio-ingress
             path: argocd/applications/istio-ingress
             namespace: istio-ingress
             annotations:
               argocd.argoproj.io/sync-wave: "1"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: knative
             path: argocd/applications/knative
             namespace: knative
             annotations:
               argocd.argoproj.io/sync-wave: "1"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: knative-serving
             path: argocd/applications/knative-serving
             namespace: knative-serving
             annotations:
               argocd.argoproj.io/sync-wave: "2"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: knative-eventing
             path: argocd/applications/knative-eventing
             namespace: knative-eventing
             annotations:
               argocd.argoproj.io/sync-wave: "2"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: fission
             path: argocd/applications/fission
             namespace: fission
             annotations:
               argocd.argoproj.io/sync-wave: "2"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: kafka
             path: argocd/applications/kafka
             namespace: kafka
             annotations:
               argocd.argoproj.io/sync-wave: "2"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: argo-workflows
             path: argocd/applications/argo-workflows
@@ -98,91 +98,91 @@ spec:
             namespace: lgtm
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: minio
             path: argocd/applications/minio
             namespace: minio
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: milvus
             path: argocd/applications/milvus
             namespace: milvus
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: tigresse
             path: argocd/applications/tigresse
             namespace: tigresse-system
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: temporal
             path: argocd/applications/temporal
             namespace: temporal
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: airbyte
             path: argocd/applications/airbyte
             namespace: airbyte
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: dagster
             path: argocd/applications/dagster
             namespace: dagster
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: verdaccio
             path: argocd/applications/verdaccio
             namespace: verdaccio
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: spark
             path: argocd/applications/spark
             namespace: spark
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: coder
             path: argocd/applications/coder
             namespace: coder
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: arc
             path: argocd/applications/arc
             namespace: arc
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: backstage
             path: argocd/applications/backstage
             namespace: backstage
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "false"
           - name: convex
             path: argocd/applications/convex
             namespace: convex
             annotations:
               argocd.argoproj.io/sync-wave: "4"
-            automation: manual
+            automation: auto
             enabled: "false"
       selector:
         matchExpressions:

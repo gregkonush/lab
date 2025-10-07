@@ -49,7 +49,7 @@ spec:
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
-            automation: manual
+            automation: auto
             enabled: false
           - name: reviseur
             path: argocd/applications/reviseur
@@ -63,7 +63,7 @@ spec:
               argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
-            automation: manual
+            automation: auto
             enabled: false
           - name: prt
             path: argocd/applications/prt
@@ -71,35 +71,35 @@ spec:
             renderWithLovely: false
             annotations:
               argocd.argoproj.io/sync-wave: "5"
-            automation: manual
+            automation: auto
             enabled: true
           - name: ecran
             path: argocd/applications/ecran
             namespace: ecran
             annotations:
               argocd.argoproj.io/sync-wave: "6"
-            automation: manual
+            automation: auto
             enabled: false
           - name: eclair
             path: argocd/applications/eclair
             namespace: eclair
             annotations:
               argocd.argoproj.io/sync-wave: "6"
-            automation: manual
+            automation: auto
             enabled: false
           - name: galette
             path: argocd/applications/galette
             namespace: galette
             annotations:
               argocd.argoproj.io/sync-wave: "6"
-            automation: manual
+            automation: auto
             enabled: false
           - name: miel
             path: argocd/applications/miel
             namespace: miel
             annotations:
               argocd.argoproj.io/sync-wave: "6"
-            automation: manual
+            automation: auto
             enabled: false
           - name: froussard
             path: argocd/applications/froussard
