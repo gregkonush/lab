@@ -27,6 +27,7 @@ export interface AppConfig {
   codex: {
     triggerLogin: string
     implementationTriggerPhrase: string
+    oneShotTriggerPhrase: string
   }
   github: {
     token: string | null
@@ -61,6 +62,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     codex: {
       triggerLogin: (env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase(),
       implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'execute plan').trim(),
+      oneShotTriggerPhrase: (env.CODEX_ONE_SHOT_TRIGGER ?? 'execute one-shot').trim(),
     },
     github: {
       token: env.GITHUB_TOKEN ?? null,

@@ -63,7 +63,8 @@ RUN git config --global user.name "codex-automation" \
 COPY apps/froussard/scripts/codex-bootstrap.sh /usr/local/bin/codex-bootstrap.sh
 COPY apps/froussard/scripts/codex-plan.sh /usr/local/bin/codex-plan.sh
 COPY apps/froussard/scripts/codex-implement.sh /usr/local/bin/codex-implement.sh
-RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh /usr/local/bin/codex-implement.sh
+COPY apps/froussard/scripts/codex-one-shot.sh /usr/local/bin/codex-one-shot.sh
+RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh /usr/local/bin/codex-implement.sh /usr/local/bin/codex-one-shot.sh
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap.sh"]

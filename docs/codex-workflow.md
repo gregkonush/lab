@@ -4,19 +4,22 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. When the same user later comments `execute plan` on the issue it publishes an `implementation` message that carries the metadata Codex needs for the branch/PR handoff.
-2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to two workflow templates:
+1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. Comment keywords controlled by `CODEX_IMPLEMENTATION_TRIGGER` (default `execute plan`) and `CODEX_ONE_SHOT_TRIGGER` (default `execute one-shot`) publish `implementation` or `one-shot` messages with the metadata Codex needs for follow-up automation.
+2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to three workflow templates:
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
+   - `github-codex-one-shot` for combined runs that generate a plan and immediately execute it.
 3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
    - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
    - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.sh`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
+   - `stage=one-shot`: `codex-one-shot.sh` runs `codex-plan.sh`, captures the generated plan, rewrites the event payload with that plan, and finally invokes `codex-implement.sh` so both stages complete inside a single workflow pod.
 
 ## Prerequisites
 
 - Secrets `github-token` and `codex-openai` in `argo-workflows` namespace.
 - Kafka topics `github.webhook.events` and `github.codex.tasks` deployed via Strimzi.
 - Argo Events resources under `argocd/applications/froussard/` synced.
+- Environment variables `CODEX_IMPLEMENTATION_TRIGGER` and `CODEX_ONE_SHOT_TRIGGER` set for the Froussard deployment (defaults `execute plan` / `execute one-shot`).
 
 ## Manual End-to-End Test
 
@@ -36,6 +39,10 @@ This guide explains how the two-stage Codex automation pipeline works and how to
    - Watch for a new workflow named `github-codex-implementation-*`; it should push a branch ( `codex/issue-<number>-*` ), open a draft PR, and upload `.codex-implementation.log` as an artifact.
    - Confirm a single progress comment remains on the issue, anchored by `<!-- codex:progress -->`, with the checklist reflecting the plan and validation state.
    - The issue gains a follow-up comment linking to the PR.
+3. **Trigger a combined one-shot run** by commenting `execute one-shot` on a fresh issue (or reuse the test issue after clearing previous automation artifacts).
+   - Expect a workflow named `github-codex-one-shot-*` that first posts a plan comment (check `.codex-plan-output.md` and the GitHub issue) and then executes the implementation phase without waiting for an additional human approval.
+   - The workflow pod invokes `codex-one-shot.sh`, so you should see both `.codex-plan-output.md` and `.codex-implementation.log` artifacts attached to the same workflow.
+   - If the implementation half fails, update the issue manually to capture rollback guidance and re-run once the failure is addressed.
 
 ## Helpful Commands
 
@@ -68,6 +75,14 @@ Trigger the implementation flow directly when you have an approved plan payload 
 argo submit --from workflowtemplate/github-codex-implementation -n argo-workflows \
   -p rawEvent='{}' \
   -p eventBody='{"stage":"implementation","prompt":"<codex prompt>","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}'
+```
+
+Exercise the combined workflow without touching GitHub by providing both prompts. Ensure the implementation prompt includes the `{{CODEX_ONE_SHOT_PLAN_BODY}}` placeholder so the script can substitute the generated plan:
+
+```bash
+argo submit --from workflowtemplate/github-codex-one-shot -n argo-workflows \
+  -p rawEvent='{}' \
+  -p eventBody='{"stage":"one-shot","planningPrompt":"<planning prompt>","implementationPrompt":"Execute plan:\n{{CODEX_ONE_SHOT_PLAN_BODY}}","planPlaceholder":"{{CODEX_ONE_SHOT_PLAN_BODY}}","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration"}'
 ```
 
 The implementation workflow writes verbose output to `/workspace/lab/.codex-implementation.log`; inspect the artifact in Argo if you need the full Codex transcript.

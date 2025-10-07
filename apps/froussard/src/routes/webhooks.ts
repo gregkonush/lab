@@ -1,7 +1,13 @@
 import { Webhooks } from '@octokit/webhooks'
 import { randomUUID } from 'node:crypto'
 
-import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage } from '@/codex'
+import {
+  buildCodexBranchName,
+  buildCodexOneShotPrompts,
+  buildCodexPrompt,
+  normalizeLogin,
+  type CodexTaskMessage,
+} from '@/codex'
 import { selectReactionRepository } from '@/codex-workflow'
 import { KafkaManager, type KafkaMessage } from '@/services/kafka'
 import { findLatestPlanComment, postIssueReaction } from '@/services/github'
@@ -20,6 +26,7 @@ export interface WebhookConfig {
   }
   codexTriggerLogin: string
   codexImplementationTriggerPhrase: string
+  codexOneShotTriggerPhrase: string
   topics: {
     raw: string
     codex: string
@@ -168,11 +175,11 @@ export const createWebhookHandler = ({
       if (eventName === 'issue_comment' && actionValue === 'created' && isGithubIssueCommentEvent(parsedPayload)) {
         const commentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body.trim() : ''
         const senderLoginValue = parsedPayload.sender?.login
+        const normalizedSender = normalizeLogin(senderLoginValue)
+        const isImplementationTrigger = commentBody === config.codexImplementationTriggerPhrase
+        const isOneShotTrigger = commentBody === config.codexOneShotTriggerPhrase
 
-        if (
-          commentBody === config.codexImplementationTriggerPhrase &&
-          normalizeLogin(senderLoginValue) === config.codexTriggerLogin
-        ) {
+        if ((isImplementationTrigger || isOneShotTrigger) && normalizedSender === config.codexTriggerLogin) {
           const issue = parsedPayload.issue
           const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
           const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
@@ -186,61 +193,98 @@ export const createWebhookHandler = ({
             const issueBody = typeof issue?.body === 'string' ? issue.body : ''
             const issueUrl = typeof issue?.html_url === 'string' ? issue.html_url : ''
 
-            let planCommentBody: string | undefined
-            let planCommentId: number | undefined
-            let planCommentUrl: string | undefined
+            if (isOneShotTrigger) {
+              const prompts = buildCodexOneShotPrompts({
+                issueTitle,
+                issueBody,
+                repositoryFullName,
+                issueNumber,
+                baseBranch,
+                headBranch,
+                issueUrl,
+              })
 
-            const planLookup = await findLatestPlanComment({
-              repositoryFullName,
-              issueNumber,
-              token: config.github.token,
-              apiBaseUrl: config.github.apiBaseUrl,
-              userAgent: config.github.userAgent,
-            })
+              const codexMessage: CodexTaskMessage = {
+                stage: 'one-shot',
+                planningPrompt: prompts.planningPrompt,
+                implementationPrompt: prompts.implementationPrompt,
+                planPlaceholder: prompts.planPlaceholder,
+                repository: repositoryFullName,
+                base: baseBranch,
+                head: headBranch,
+                issueNumber,
+                issueUrl,
+                issueTitle,
+                issueBody,
+                sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
+                issuedAt: new Date().toISOString(),
+              }
 
-            if (planLookup.ok) {
-              planCommentBody = planLookup.comment.body
-              planCommentId = planLookup.comment.id
-              planCommentUrl = planLookup.comment.htmlUrl ?? undefined
+              await publishMessage(kafka, {
+                topic: config.topics.codex,
+                key: `issue-${issueNumber}-one-shot`,
+                value: JSON.stringify(codexMessage),
+                headers: { ...headers, 'x-codex-task-stage': 'one-shot' },
+              })
+
+              codexStageTriggered = 'one-shot'
+            } else if (isImplementationTrigger) {
+              let planCommentBody: string | undefined
+              let planCommentId: number | undefined
+              let planCommentUrl: string | undefined
+
+              const planLookup = await findLatestPlanComment({
+                repositoryFullName,
+                issueNumber,
+                token: config.github.token,
+                apiBaseUrl: config.github.apiBaseUrl,
+                userAgent: config.github.userAgent,
+              })
+
+              if (planLookup.ok) {
+                planCommentBody = planLookup.comment.body
+                planCommentId = planLookup.comment.id
+                planCommentUrl = planLookup.comment.htmlUrl ?? undefined
+              }
+
+              const prompt = buildCodexPrompt({
+                stage: 'implementation',
+                issueTitle,
+                issueBody,
+                repositoryFullName,
+                issueNumber,
+                baseBranch,
+                headBranch,
+                issueUrl,
+                planCommentBody,
+              })
+
+              const codexMessage: CodexTaskMessage = {
+                stage: 'implementation',
+                prompt,
+                repository: repositoryFullName,
+                base: baseBranch,
+                head: headBranch,
+                issueNumber,
+                issueUrl,
+                issueTitle,
+                issueBody,
+                sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
+                issuedAt: new Date().toISOString(),
+                planCommentBody,
+                planCommentId,
+                planCommentUrl,
+              }
+
+              await publishMessage(kafka, {
+                topic: config.topics.codex,
+                key: `issue-${issueNumber}-implementation`,
+                value: JSON.stringify(codexMessage),
+                headers: { ...headers, 'x-codex-task-stage': 'implementation' },
+              })
+
+              codexStageTriggered = 'implementation'
             }
-
-            const prompt = buildCodexPrompt({
-              stage: 'implementation',
-              issueTitle,
-              issueBody,
-              repositoryFullName,
-              issueNumber,
-              baseBranch,
-              headBranch,
-              issueUrl,
-              planCommentBody,
-            })
-
-            const codexMessage: CodexTaskMessage = {
-              stage: 'implementation',
-              prompt,
-              repository: repositoryFullName,
-              base: baseBranch,
-              head: headBranch,
-              issueNumber,
-              issueUrl,
-              issueTitle,
-              issueBody,
-              sender: typeof senderLoginValue === 'string' ? senderLoginValue : '',
-              issuedAt: new Date().toISOString(),
-              planCommentBody,
-              planCommentId,
-              planCommentUrl,
-            }
-
-            await publishMessage(kafka, {
-              topic: config.topics.codex,
-              key: `issue-${issueNumber}-implementation`,
-              value: JSON.stringify(codexMessage),
-              headers: { ...headers, 'x-codex-task-stage': 'implementation' },
-            })
-
-            codexStageTriggered = 'implementation'
           }
         }
       }

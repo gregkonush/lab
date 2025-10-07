@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto'
 
 export type Nullable<T> = T | null | undefined
 
-export type CodexTaskStage = 'planning' | 'implementation'
+export type CodexTaskStage = 'planning' | 'implementation' | 'one-shot'
 
 export const PLAN_COMMENT_MARKER = '<!-- codex:plan -->'
 export const PROGRESS_COMMENT_MARKER = '<!-- codex:progress -->'
+export const ONE_SHOT_PLAN_PLACEHOLDER = '{{CODEX_ONE_SHOT_PLAN_BODY}}'
 
 export const normalizeLogin = (login?: Nullable<string>): string | null => {
   if (typeof login === 'string' && login.trim().length > 0) {
@@ -29,8 +30,10 @@ export const buildCodexBranchName = (issueNumber: number, deliveryId: string, br
   return `${sanitizedPrefix}${issueNumber}-${suffix}`
 }
 
+type CodexSequentialStage = 'planning' | 'implementation'
+
 export interface BuildCodexPromptOptions {
-  stage: CodexTaskStage
+  stage: CodexSequentialStage
   issueTitle: string
   issueBody: string
   repositoryFullName: string
@@ -134,9 +137,44 @@ export const buildCodexPrompt = (options: BuildCodexPromptOptions): string => {
   return buildImplementationPrompt(options)
 }
 
+export interface BuildCodexOneShotPromptOptions extends Omit<BuildCodexPromptOptions, 'stage' | 'planCommentBody'> {
+  planPlaceholder?: string
+}
+
+export interface CodexOneShotPrompts {
+  planningPrompt: string
+  implementationPrompt: string
+  planPlaceholder: string
+}
+
+export const buildCodexOneShotPrompts = ({
+  planPlaceholder = ONE_SHOT_PLAN_PLACEHOLDER,
+  ...options
+}: BuildCodexOneShotPromptOptions): CodexOneShotPrompts => {
+  const planningPrompt = buildPlanningPrompt({
+    ...options,
+    stage: 'planning',
+  })
+
+  const implementationPrompt = buildImplementationPrompt({
+    ...options,
+    stage: 'implementation',
+    planCommentBody: planPlaceholder,
+  })
+
+  return {
+    planningPrompt,
+    implementationPrompt,
+    planPlaceholder,
+  }
+}
+
 export interface CodexTaskMessage {
   stage: CodexTaskStage
-  prompt: string
+  prompt?: string
+  planningPrompt?: string
+  implementationPrompt?: string
+  planPlaceholder?: string
   repository: string
   base: string
   head: string

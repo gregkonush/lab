@@ -4,6 +4,11 @@ import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 
 vi.mock('@/codex', () => ({
   buildCodexBranchName: vi.fn(() => 'codex/issue-1-test'),
+  buildCodexOneShotPrompts: vi.fn(() => ({
+    planningPrompt: 'PLANNING_PROMPT',
+    implementationPrompt: 'IMPLEMENTATION_PROMPT',
+    planPlaceholder: '{{PLAN}}',
+  })),
   buildCodexPrompt: vi.fn(() => 'PROMPT'),
   normalizeLogin: vi.fn((value: string | undefined | null) => (value ? value.toLowerCase() : null)),
 }))
@@ -53,6 +58,7 @@ describe('createWebhookHandler', () => {
     },
     codexTriggerLogin: 'user',
     codexImplementationTriggerPhrase: 'execute plan',
+    codexOneShotTriggerPhrase: 'execute one-shot',
     topics: {
       raw: 'raw-topic',
       codex: 'codex-topic',
@@ -158,5 +164,61 @@ describe('createWebhookHandler', () => {
       }),
     )
     expect(kafka.publish).toHaveBeenCalledWith(expect.objectContaining({ topic: 'raw-topic', key: 'delivery-999' }))
+  })
+
+  it('publishes one-shot message when the one-shot trigger comment is received', async () => {
+    const { findLatestPlanComment } = await import('@/services/github')
+    const { buildCodexOneShotPrompts } = await import('@/codex')
+
+    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'created',
+      issue: {
+        number: 3,
+        title: 'Combined workflow issue',
+        body: 'Body',
+        html_url: 'https://issue',
+      },
+      repository: { default_branch: 'main' },
+      sender: { login: 'USER' },
+      comment: { body: 'execute one-shot' },
+    }
+
+    const response = await handler(
+      buildRequest(payload, {
+        'x-github-event': 'issue_comment',
+        'x-github-delivery': 'delivery-1000',
+        'x-hub-signature-256': 'sig',
+        'content-type': 'application/json',
+      }),
+      'github',
+    )
+
+    expect(response.status).toBe(202)
+    expect(buildCodexOneShotPrompts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueNumber: 3,
+        headBranch: 'codex/issue-1-test',
+      }),
+    )
+    expect(findLatestPlanComment).not.toHaveBeenCalled()
+
+    const publishCalls = vi.mocked(kafka.publish).mock.calls as unknown as Array<[Record<string, unknown>]>
+    const codexCall = publishCalls.find(([message]) => (message.topic as string | undefined) === 'codex-topic')
+    expect(codexCall).toBeDefined()
+    if (!codexCall) {
+      throw new Error('codex-topic message not published')
+    }
+    const [codexMessage] = codexCall
+    const typedCodexMessage = codexMessage as { value: string; headers: Record<string, string>; key: string }
+    expect(typedCodexMessage.key).toBe('issue-3-one-shot')
+    expect(typedCodexMessage.headers['x-codex-task-stage']).toBe('one-shot')
+    const parsed = JSON.parse(typedCodexMessage.value ?? '{}')
+    expect(parsed.stage).toBe('one-shot')
+    expect(parsed.planningPrompt).toBe('PLANNING_PROMPT')
+    expect(parsed.implementationPrompt).toBe('IMPLEMENTATION_PROMPT')
+    expect(parsed.planPlaceholder).toBe('{{PLAN}}')
+
+    expect(kafka.publish).toHaveBeenCalledWith(expect.objectContaining({ topic: 'raw-topic', key: 'delivery-1000' }))
   })
 })

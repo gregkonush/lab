@@ -23,6 +23,15 @@ spec:
             type: string
             value:
               - implementation
+    - eventName: github-codex-tasks
+      eventSourceName: github-codex
+      name: one-shot-event
+      filters:
+        data:
+          - path: body.stage
+            type: string
+            value:
+              - one-shot
   eventBusName: default
   template:
     serviceAccountName: github-codex-sensor
@@ -93,3 +102,36 @@ spec:
                       value: '{}'
                 workflowTemplateRef:
                   name: github-codex-implementation
+    - template:
+        name: one-shot-workflow
+        conditions: "one-shot-event"
+        k8s:
+          group: argoproj.io
+          version: v1alpha1
+          operation: create
+          parameters:
+            - dest: spec.arguments.parameters.0.value
+              src:
+                dependencyName: one-shot-event
+                dataTemplate: '{{ .Input | toJson }}'
+            - dest: spec.arguments.parameters.1.value
+              src:
+                dependencyName: one-shot-event
+                dataTemplate: '{{ .Input.body | toJson }}'
+          resource: workflows
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: github-codex-one-shot-
+                namespace: argo-workflows
+              spec:
+                arguments:
+                  parameters:
+                    - name: rawEvent
+                      value: '{}'
+                    - name: eventBody
+                      value: '{}'
+                workflowTemplateRef:
+                  name: github-codex-one-shot

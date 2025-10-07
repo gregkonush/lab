@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ONE_SHOT_PLAN_PLACEHOLDER,
   PLAN_COMMENT_MARKER,
   PROGRESS_COMMENT_MARKER,
   buildCodexBranchName,
+  buildCodexOneShotPrompts,
   buildCodexPrompt,
   normalizeLogin,
   sanitizeBranchComponent,
@@ -123,5 +125,38 @@ describe('buildCodexPrompt', () => {
     })
 
     expect(prompt).toContain('"""\nNo description provided.\n"""')
+  })
+
+  it('builds one-shot prompts with the default plan placeholder', () => {
+    const prompts = buildCodexOneShotPrompts({
+      issueTitle: 'Automate combined workflow',
+      issueBody: 'Ensure one-shot flow runs plan then implementation.',
+      repositoryFullName: 'gregkonush/lab',
+      issueNumber: 303,
+      baseBranch: 'main',
+      headBranch: 'codex/issue-303-xyz',
+      issueUrl: 'https://github.com/gregkonush/lab/issues/303',
+    })
+
+    expect(prompts.planPlaceholder).toBe(ONE_SHOT_PLAN_PLACEHOLDER)
+    expect(prompts.planningPrompt).toContain('Draft the plan the next Codex run will execute.')
+    expect(prompts.implementationPrompt).toContain(ONE_SHOT_PLAN_PLACEHOLDER)
+    expect(prompts.implementationPrompt).toContain('Execute the approved plan end to end.')
+  })
+
+  it('builds one-shot prompts with a custom placeholder override', () => {
+    const prompts = buildCodexOneShotPrompts({
+      issueTitle: 'Automate combined workflow',
+      issueBody: 'Ensure one-shot flow runs plan then implementation.',
+      repositoryFullName: 'gregkonush/lab',
+      issueNumber: 304,
+      baseBranch: 'main',
+      headBranch: 'codex/issue-304-xyz',
+      issueUrl: 'https://github.com/gregkonush/lab/issues/304',
+      planPlaceholder: '__PLAN_BODY__',
+    })
+
+    expect(prompts.planPlaceholder).toBe('__PLAN_BODY__')
+    expect(prompts.implementationPrompt).toContain('__PLAN_BODY__')
   })
 })
