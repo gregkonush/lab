@@ -1,23 +1,17 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import Link from 'next/link'
+import { Button } from '@/components/ui/button'
 
 const NAV_ITEMS = [
-  { href: "#platform", label: "platform" },
-  { href: "#governance", label: "governance" },
-  { href: "#playbook", label: "playbook" },
-  { href: "#faq", label: "faq" },
-];
+  { href: '#platform', label: 'platform' },
+  { href: '#governance', label: 'governance' },
+  { href: '#playbook', label: 'playbook' },
+  { href: '#faq', label: 'faq' },
+]
 
 export default function Navbar() {
   return (
-    <nav
-      aria-label="primary"
-      className="flex flex-wrap items-center justify-between gap-4 py-6"
-    >
-      <Link
-        href="/"
-        className="text-xl font-semibold tracking-tight text-foreground transition hover:text-primary"
-      >
+    <nav aria-label="primary" className="flex flex-wrap items-center justify-between gap-4 py-6">
+      <Link href="/" className="text-xl font-semibold tracking-tight text-foreground transition hover:text-primary">
         proompteng
       </Link>
       <div className="hidden flex-1 items-center justify-center gap-6 text-sm text-muted-foreground md:flex">
@@ -48,5 +42,5 @@ export default function Navbar() {
         </Button>
       </div>
     </nav>
-  );
+  )
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { PLAN_COMMENT_MARKER } from './codex'
-import { findLatestPlanComment, postIssueReaction } from './github'
+import { PLAN_COMMENT_MARKER } from '@/codex'
+import { findLatestPlanComment, postIssueReaction } from '@/services/github'
 
 describe('postIssueReaction', () => {
   it('reports missing token when GITHUB_TOKEN is not configured', async () => {
@@ -52,7 +52,11 @@ describe('postIssueReaction', () => {
 
     expect(result).toEqual({ ok: true })
     expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchSpy.mock.calls[0]
+    const firstCall = fetchSpy.mock.calls[0]
+    if (!firstCall) {
+      throw new Error('Expected fetch to be called')
+    }
+    const [url, init] = firstCall
     expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/7/reactions')
     expect(init?.method).toBe('POST')
     expect(init?.headers).toMatchObject({
@@ -137,7 +141,11 @@ describe('postIssueReaction', () => {
     })
 
     expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const [url] = fetchSpy.mock.calls[0]
+    const trailingCall = fetchSpy.mock.calls[0]
+    if (!trailingCall) {
+      throw new Error('Expected fetch to be called')
+    }
+    const [url] = trailingCall
     expect(url).toBe('https://example.test/api/repos/acme/widgets/issues/5/reactions')
   })
 })
@@ -194,9 +202,81 @@ describe('findLatestPlanComment', () => {
     })
 
     expect(result.ok).toBe(false)
-    if (result.ok) {
-      return
+    if (!result.ok) {
+      expect(result.reason).toBe('invalid-repository')
     }
-    expect(result.reason).toBe('invalid-repository')
+  })
+
+  it('returns invalid-json when the response body is not an array', async () => {
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 4,
+      fetchImplementation: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ foo: 'bar' }),
+      }),
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'invalid-json', detail: 'Expected array of issue comments' })
+  })
+
+  it('returns invalid-comment when id cannot be coerced to a number', async () => {
+    const payload = [{ id: 'abc', body: `${PLAN_COMMENT_MARKER} body` }]
+
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 6,
+      fetchImplementation: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(payload),
+      }),
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'invalid-comment', detail: 'Missing numeric comment id' })
+  })
+
+  it('propagates JSON parse errors as invalid-json', async () => {
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 7,
+      fetchImplementation: async () => ({
+        ok: true,
+        status: 200,
+        text: async () => '{invalid}',
+      }),
+    })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.reason).toBe('invalid-json')
+    }
+  })
+
+  it('returns http-error when GitHub responds with failure', async () => {
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 8,
+      fetchImplementation: async () => ({
+        ok: false,
+        status: 500,
+        text: async () => 'server failure',
+      }),
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'http-error', status: 500, detail: 'server failure' })
+  })
+
+  it('returns network-error when fetch implementation throws', async () => {
+    const result = await findLatestPlanComment({
+      repositoryFullName: 'owner/repo',
+      issueNumber: 9,
+      fetchImplementation: async () => {
+        throw new Error('network down')
+      },
+    })
+
+    expect(result).toEqual({ ok: false, reason: 'network-error', detail: 'network down' })
   })
 })

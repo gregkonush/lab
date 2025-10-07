@@ -45,3 +45,10 @@ spec:
 
             echo "Executing implementation workflow" >&2
             "${WORKTREE_DIR}/apps/froussard/scripts/codex-implement.sh" "$EVENT_FILE"
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "6"
+            memory: 12Gi

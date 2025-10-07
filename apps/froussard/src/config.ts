@@ -1,0 +1,72 @@
+import { parseBrokerList } from '@/services/kafka'
+
+const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
+  const value = env[name]
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`)
+  }
+  return value
+}
+
+export interface AppConfig {
+  githubWebhookSecret: string
+  kafka: {
+    brokers: string[]
+    username: string
+    password: string
+    clientId: string
+    topics: {
+      raw: string
+      codex: string
+    }
+  }
+  codebase: {
+    baseBranch: string
+    branchPrefix: string
+  }
+  codex: {
+    triggerLogin: string
+    implementationTriggerPhrase: string
+  }
+  github: {
+    token: string | null
+    ackReaction: string
+    apiBaseUrl: string
+    userAgent: string
+  }
+}
+
+export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
+  const brokers = parseBrokerList(requireEnv(env, 'KAFKA_BROKERS'))
+  if (brokers.length === 0) {
+    throw new Error('KAFKA_BROKERS must include at least one broker host:port')
+  }
+
+  return {
+    githubWebhookSecret: requireEnv(env, 'GITHUB_WEBHOOK_SECRET'),
+    kafka: {
+      brokers,
+      username: requireEnv(env, 'KAFKA_USERNAME'),
+      password: requireEnv(env, 'KAFKA_PASSWORD'),
+      clientId: env.KAFKA_CLIENT_ID ?? 'froussard-webhook-producer',
+      topics: {
+        raw: requireEnv(env, 'KAFKA_TOPIC'),
+        codex: requireEnv(env, 'KAFKA_CODEX_TOPIC'),
+      },
+    },
+    codebase: {
+      baseBranch: env.CODEX_BASE_BRANCH ?? 'main',
+      branchPrefix: env.CODEX_BRANCH_PREFIX ?? 'codex/issue-',
+    },
+    codex: {
+      triggerLogin: (env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase(),
+      implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'execute plan').trim(),
+    },
+    github: {
+      token: env.GITHUB_TOKEN ?? null,
+      ackReaction: env.GITHUB_ACK_REACTION ?? '+1',
+      apiBaseUrl: env.GITHUB_API_BASE_URL ?? 'https://api.github.com',
+      userAgent: env.GITHUB_USER_AGENT ?? 'froussard-webhook',
+    },
+  }
+}

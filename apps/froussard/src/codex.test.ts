@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   PLAN_COMMENT_MARKER,
+  PROGRESS_COMMENT_MARKER,
   buildCodexBranchName,
   buildCodexPrompt,
   normalizeLogin,
@@ -53,25 +54,16 @@ describe('buildCodexPrompt', () => {
       issueUrl: 'https://github.com/gregkonush/lab/issues/77',
     })
 
-    expect(prompt).toContain('Plan for the next Codex automation run. Keep it concise, specific, and executable.')
-    expect(prompt).toContain('### Planning Workflow')
+    expect(prompt).toContain('Draft the plan the next Codex run will execute.')
+    expect(prompt).toContain('Planning checklist:')
     expect(prompt).toContain(
-      '1. Take a deliberate breath, review relevant code/tests, and jot bullet notes on constraints before writing the plan.',
+      'React to the issue with :eyes: while drafting; switch to :rocket: once the final comment is posted.',
     )
-    expect(prompt).toContain(
-      '2. Immediately add :eyes: to the issue itself (replace an existing :+1: on the issue if present) before doing anything else.',
-    )
-    expect(prompt).toContain(
-      '3. Immediately post (or update) a single comment that reads `_Planning in progress…_` to signal work in progress.',
-    )
-    expect(prompt).toContain('### Plan Format')
+    expect(prompt).toContain('Plan template (copy verbatim):')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
-    expect(prompt).toContain('### Risks & Questions - blockers, assumptions, migrations, sequencing concerns.')
-    expect(prompt).toContain('### Automation Handoff Notes - env vars, credentials, long jobs, temp assets to prepare.')
-    expect(prompt).toContain('### Final Steps')
-    expect(prompt).toContain(
-      'After publishing the plan, swap the issue reaction from :eyes: to :rocket: to signal completeness.',
-    )
+    expect(prompt).toContain('### Steps')
+    expect(prompt).toContain('### Handoff Notes')
+    expect(prompt).toContain('Guidance: describe concrete files, commands, or checks; note why each step matters.')
     expect(prompt).toContain('"""\nFocus on retry logic and logging.\n"""')
   })
 
@@ -88,12 +80,18 @@ describe('buildCodexPrompt', () => {
       planCommentBody: `${PLAN_COMMENT_MARKER}\n1. Step one`,
     })
 
-    expect(prompt).toContain('Execute the approved plan end to end. Stay concise and surface deviations with reasons.')
+    expect(prompt).toContain(
+      'Execute the approved plan end to end. Keep notes concise and call out any deviations with their rationale.',
+    )
     expect(prompt).toContain('Approved plan:')
     expect(prompt).toContain('1. Step one')
     expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
-    expect(prompt).toContain('Run formatters, lint, tests, and record outputs or failures.')
+    expect(prompt).toContain('Execution requirements:')
     expect(prompt).toContain('Closes #77')
+    expect(prompt).toContain(
+      `Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/scripts/codex-progress-comment.sh`,
+    )
+    expect(prompt).toContain('apps/froussard/scripts/codex-progress-comment.sh')
   })
 
   it('falls back to a default plan body when the approved plan is empty', () => {
