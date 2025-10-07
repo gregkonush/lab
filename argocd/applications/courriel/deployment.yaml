@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: courriel
+  namespace: argo-workflows
+  labels:
+    app.kubernetes.io/name: courriel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: courriel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: courriel
+    spec:
+      serviceAccountName: courriel
+      containers:
+        - name: courriel
+          image: registry.ide-newton.ts.net/lab/courriel:0.1.0
+          imagePullPolicy: Always
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka:9092
+            - name: KAFKA_TOPIC
+              value: argo.workflows.completions
+            - name: KAFKA_CLIENT_ID
+              value: courriel
+            - name: KAFKA_GROUP_ID
+              value: courriel
+            - name: KAFKA_SASL_MECHANISM
+              value: scram-sha-512
+            - name: KAFKA_USE_SSL
+              value: "true"
+            - name: KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-codex-credentials
+                  key: username
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-codex-credentials
+                  key: password
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: courriel-resend
+                  key: api-key
+            - name: RESEND_FROM
+              value: Courriel <courriel@proompteng.ai>
+            - name: RESEND_TO
+              value: data-team@proompteng.ai
+            - name: COURIEL_SUBJECT_PREFIX
+              value: "[Argo]"
+            - name: COURIEL_LOG_LEVEL
+              value: info
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

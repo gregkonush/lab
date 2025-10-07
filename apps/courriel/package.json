@@ -1,0 +1,23 @@
+{
+  "name": "courriel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "pino": "^10.0.0",
+    "resend": "^6.1.2",
+    "tsx": "^4.20.6",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "vitest": "^3.2.4"
+  }
+}
