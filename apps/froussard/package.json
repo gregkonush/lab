@@ -24,6 +24,6 @@
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },
-  "module": "src/index.ts",
+  "module": "src/server.ts",
   "type": "module"
 }
