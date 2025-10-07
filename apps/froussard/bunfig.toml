@@ -1,2 +1,2 @@
 [alias]
-"@" = "./apps/froussard/src"
+"@" = "./src"

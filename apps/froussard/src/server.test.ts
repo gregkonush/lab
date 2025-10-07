@@ -1,16 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockApp = {
+const mockApp: any = {
   get: vi.fn(() => mockApp),
   on: vi.fn(() => mockApp),
   onError: vi.fn(() => mockApp),
   post: vi.fn(() => mockApp),
-  listen: vi.fn(() => ({ server: { hostname: '127.0.0.1', port: 8080 } })),
+  listen: vi.fn(function () {
+    mockApp.server = { hostname: '127.0.0.1', port: 8080 }
+    return mockApp
+  }),
 }
 
 const mockKafkaManager = {
   connect: vi.fn(async () => undefined),
   disconnect: vi.fn(async () => undefined),
+  isReady: vi.fn(() => false),
 }
 
 vi.mock('@/config', () => ({
@@ -76,10 +80,12 @@ describe('server bootstrap', () => {
   afterEach(() => {
     process.env = oldEnv
     vi.resetModules()
+    vi.clearAllMocks()
   })
 
   it('bootstraps server without throwing', async () => {
-    await import('@/server')
+    const { startServer } = await import('@/index')
+    startServer()
     expect(mockApp.listen).toHaveBeenCalled()
     expect(mockKafkaManager.connect).toHaveBeenCalled()
   })

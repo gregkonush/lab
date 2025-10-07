@@ -25,11 +25,13 @@ run:
     value: '{{ secret:froussard-kafka:username }}'
   - name: KAFKA_PASSWORD
     value: '{{ secret:froussard-kafka:password }}'
+  - name: KAFKAJS_NO_PARTITIONER_WARNING
+    value: "1"
   - name: GITHUB_TOKEN
     value: '{{ secret:github-token:token }}'
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:9936f05f23d54303a0a795a331f4489d77a426597a6f21b74327e77d36c19c0a
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:8114bb0a29ff810da99cd41a9497ea3da2e7cae569a271ce6bed6a74d528d099
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:
