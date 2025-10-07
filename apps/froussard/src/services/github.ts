@@ -1,4 +1,4 @@
-import { PLAN_COMMENT_MARKER } from './codex'
+import { PLAN_COMMENT_MARKER } from '@/codex'
 
 type FetchInit = {
   method?: string

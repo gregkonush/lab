@@ -61,3 +61,10 @@ spec:
 
             echo "Codex plan output:" >&2
             cat "$OUTPUT_PATH" >&2
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "6"
+            memory: 12Gi

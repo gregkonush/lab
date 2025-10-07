@@ -1,53 +1,53 @@
-import Link from "next/link";
+import Link from 'next/link'
 
-import { MODEL_CATALOG } from "@/app/config";
-import BenefitsGrid from "@/components/benefits-grid";
-import ClosingCta from "@/components/closing-cta";
-import ContentCards from "@/components/content-cards";
-import FaqList from "@/components/faq-list";
-import FeatureShowcase from "@/components/feature-showcase";
-import Hero from "@/components/hero";
-import Metrics from "@/components/metrics";
-import Navbar from "@/components/navbar";
-import PlaybookTimeline from "@/components/playbook-timeline";
-import SocialProof from "@/components/social-proof";
-import Testimonial from "@/components/testimonial";
+import { MODEL_CATALOG } from '@/app/config'
+import BenefitsGrid from '@/components/benefits-grid'
+import ClosingCta from '@/components/closing-cta'
+import ContentCards from '@/components/content-cards'
+import FaqList from '@/components/faq-list'
+import FeatureShowcase from '@/components/feature-showcase'
+import Hero from '@/components/hero'
+import Metrics from '@/components/metrics'
+import Navbar from '@/components/navbar'
+import PlaybookTimeline from '@/components/playbook-timeline'
+import SocialProof from '@/components/social-proof'
+import Testimonial from '@/components/testimonial'
 
 export default function Home() {
   const footerGroups = [
     {
-      heading: "product",
+      heading: 'product',
       links: [
-        { label: "platform", href: "#platform" },
-        { label: "governance", href: "#governance" },
-        { label: "playbook", href: "#playbook" },
-        { label: "login", href: "/app" },
+        { label: 'platform', href: '#platform' },
+        { label: 'governance', href: '#governance' },
+        { label: 'playbook', href: '#playbook' },
+        { label: 'login', href: '/app' },
       ],
     },
     {
-      heading: "resources",
+      heading: 'resources',
       links: [
         {
-          label: "docs",
-          href: "https://docs.proompteng.ai",
+          label: 'docs',
+          href: 'https://docs.proompteng.ai',
           isExternal: true,
         },
-        { label: "changelog", href: "#" },
-        { label: "status", href: "#" },
+        { label: 'changelog', href: '#' },
+        { label: 'status', href: '#' },
       ],
     },
     {
-      heading: "company",
+      heading: 'company',
       links: [
-        { label: "careers", href: "#" },
-        { label: "security", href: "#" },
-        { label: "contact", href: "mailto:greg@proompteng.ai" },
+        { label: 'careers', href: '#' },
+        { label: 'security', href: '#' },
+        { label: 'contact', href: 'mailto:greg@proompteng.ai' },
       ],
     },
   ] satisfies {
-    heading: string;
-    links: { label: string; href: string; isExternal?: boolean }[];
-  }[];
+    heading: string
+    links: { label: string; href: string; isExternal?: boolean }[]
+  }[]
 
   return (
     <div className="font-sans">
@@ -63,11 +63,7 @@ export default function Home() {
             <Metrics />
             <BenefitsGrid />
             <FeatureShowcase />
-            <ContentCards
-              id="models"
-              title="model catalog"
-              items={MODEL_CATALOG}
-            />
+            <ContentCards id="models" title="model catalog" items={MODEL_CATALOG} />
             <PlaybookTimeline />
             <Testimonial />
             <FaqList />
@@ -76,19 +72,15 @@ export default function Home() {
           <footer className="mt-16 border-t border-border/60 pt-12 pb-10 text-sm text-muted-foreground sm:mt-24">
             <div className="grid gap-10 sm:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
               <div>
-                <p className="text-lg font-semibold text-foreground">
-                  proompteng
-                </p>
+                <p className="text-lg font-semibold text-foreground">proompteng</p>
                 <p className="mt-3 max-w-sm text-sm">
-                  The open control plane for AI agents — security,
-                  observability, and model freedom without vendor lock-in.
+                  The open control plane for AI agents — security, observability, and model freedom without vendor
+                  lock-in.
                 </p>
               </div>
               {footerGroups.map(({ heading, links }) => (
                 <div key={heading} className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-foreground/70">
-                    {heading}
-                  </p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-foreground/70">{heading}</p>
                   <ul className="space-y-2">
                     {links.map((link) => (
                       <li key={link.label}>
@@ -96,8 +88,8 @@ export default function Home() {
                           className="transition hover:text-foreground"
                           href={link.href}
                           prefetch={!link.isExternal}
-                          target={link.isExternal ? "_blank" : undefined}
-                          rel={link.isExternal ? "noreferrer" : undefined}
+                          target={link.isExternal ? '_blank' : undefined}
+                          rel={link.isExternal ? 'noreferrer' : undefined}
                         >
                           {link.label}
                         </Link>
@@ -108,12 +100,11 @@ export default function Home() {
               ))}
             </div>
             <p className="mt-10 text-xs text-muted-foreground">
-              © {new Date().getFullYear()} proompteng. Built for builders who
-              need production-grade AI agents.
+              © {new Date().getFullYear()} proompteng. Built for builders who need production-grade AI agents.
             </p>
           </footer>
         </div>
       </div>
     </div>
-  );
+  )
 }

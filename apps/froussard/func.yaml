@@ -29,7 +29,7 @@ run:
     value: '{{ secret:github-token:token }}'
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:5b2dee55521e1a6e56a349658f9f8706bf6f9f96b7ef542798745f37a87f47a8
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:9936f05f23d54303a0a795a331f4489d77a426597a6f21b74327e77d36c19c0a
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:

@@ -78,6 +78,16 @@
   ```
 - Non-zero exit codes indicate command failures; inspect stderr for details.
 
+## Codex Progress Comment Flow
+
+- Maintain exactly one implementation progress comment per issue, anchored by `<!-- codex:progress -->`.
+- Use `apps/froussard/scripts/codex-progress-comment.sh` to create or update that comment; provide the markdown via stdin or `--body-file`.
+- Required env vars: `ISSUE_REPO` and `ISSUE_NUMBER`. Optional overrides: `CODEX_PROGRESS_COMMENT_MARKER` and `CODEX_PROGRESS_COMMENT_LOG_PATH` (falls back to `.codex-implementation.log`).
+- Kickoff body should restate the approved plan as a checklist, flag the active step, and capture risks/tests so reviewers can track work in flight.
+- Update the comment after each milestone—reuse the same comment rather than adding new ones—and include links to validation where helpful.
+- At completion, mark the checklist done, replace the status block with the final summary/validation, and confirm the helper logs the resulting `comment_id`/`comment_url`.
+- Use `--dry-run` when validating locally; it prints the resolved action/body without mutating GitHub.
+
 ## Security & Operations Notes
 
 - ArgoCD reconciles desired state; edit manifests in `argocd/` or `kubernetes/` and let automation deploy.
