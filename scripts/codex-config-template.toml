@@ -1,8 +1,21 @@
 model = "gpt-5-codex"
+model_verbosity = "high"
+model_reasoning_summary = "detailed"
 model_reasoning_effort = "high"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
 
-[projects."{{LOCAL_PROJECT}}"]
+[tools]
+web_search = true
+
+[shell_environment_policy]
+ignore_default_excludes = true
+
+[projects."{{REMOTE_PROJECT}}"]
 trust_level = "trusted"
 
-[projects."{{LOCAL_HOME}}"]
+[projects."{{REMOTE_HOME}}"]
+trust_level = "trusted"
+
+[projects."/root"]
 trust_level = "trusted"

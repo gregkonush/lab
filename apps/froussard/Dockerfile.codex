@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.6
 FROM ghcr.io/openai/codex-universal:latest
 
+ARG ARGO_VERSION=v3.6.3
+ARG KUBECONFORM_VERSION=v0.6.7
+
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
     WORKTREE=/workspace/lab \
@@ -12,6 +15,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git gh jq python3 curl \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/argo-linux-amd64.gz "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz" \
+    && gunzip -c /tmp/argo-linux-amd64.gz > /usr/local/bin/argo \
+    && chmod +x /usr/local/bin/argo \
+    && rm /tmp/argo-linux-amd64.gz \
+    && curl -fsSL -o /tmp/kubeconform-linux-amd64.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+    && tar -xzf /tmp/kubeconform-linux-amd64.tar.gz -C /tmp kubeconform \
+    && install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform \
+    && rm /tmp/kubeconform-linux-amd64.tar.gz /tmp/kubeconform
 
 RUN curl -fsSL https://bun.sh/install | bash \
     && mkdir -p /opt/homebrew/bin \
@@ -27,9 +39,10 @@ RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
 
 COPY apps/froussard/scripts/codex-config-container.toml /root/.codex/config.toml
 
-# Authenticate gh using provided token
+# Authenticate gh using provided token and wire git credential helper
 RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
-    gh auth login --with-token < /tmp/gh_token
+    gh auth login --with-token < /tmp/gh_token \
+    && gh auth setup-git
 
 RUN git config --global user.name "codex-automation" \
     && git config --global user.email "codex-automation@users.noreply.github.com"
