@@ -2,6 +2,8 @@ name: froussard
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "apps/froussard/**"
       - ".github/workflows/froussard-ci.yml"

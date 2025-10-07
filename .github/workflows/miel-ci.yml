@@ -2,6 +2,8 @@ name: miel
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "services/miel/**"
       - ".github/workflows/miel-ci.yml"
