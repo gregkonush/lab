@@ -26,4 +26,9 @@ else
 fi
 
 cd "$TARGET_DIR"
+
+if command -v pnpm >/dev/null 2>&1 && [[ -f pnpm-lock.yaml || -f pnpm-workspace.yaml ]]; then
+  pnpm install --frozen-lockfile
+fi
+
 exec "$@"
