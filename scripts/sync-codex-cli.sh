@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_WORKSPACE="proompteng"
+DEFAULT_WORKSPACE="lab"
 DEFAULT_LOCAL_AUTH="$HOME/.codex/auth.json"
 DEFAULT_CONFIG_TEMPLATE="$SCRIPT_DIR/codex-config-template.toml"
 DEFAULT_REMOTE_AUTH='~/.codex/auth.json'
@@ -143,13 +143,14 @@ trap 'if [[ -n "$tmp_config" && -f "$tmp_config" ]]; then rm -f "$tmp_config"; f
 
 local_home="$(cd "$HOME" && pwd)"
 local_repo="${local_home%/}/github.com/lab"
-remote_default_repo="${remote_home%/}/github.com/lab"
 remote_config_payload=$(cat "$template_path")
 remote_config_payload=${remote_config_payload//$'\r'/}
-remote_config_payload=${remote_config_payload//"{{LOCAL_PROJECT}}"/"$local_repo"}
-remote_config_payload=${remote_config_payload//"{{LOCAL_HOME}}"/"$local_home"}
-remote_config_payload=${remote_config_payload//"$local_repo"/"$remote_repo"}
-remote_config_payload=${remote_config_payload//"$local_home"/"$remote_home"}
+remote_config_payload=${remote_config_payload//"{{REMOTE_PROJECT}}"/"$remote_repo"}
+remote_config_payload=${remote_config_payload//"{{REMOTE_HOME}}"/"$remote_home"}
+remote_config_payload=${remote_config_payload//"{{LOCAL_PROJECT}}"/"$remote_repo"}
+remote_config_payload=${remote_config_payload//"{{LOCAL_HOME}}"/"$remote_home"}
+remote_config_payload=${remote_config_payload//"{{LOCAL_PROJECT_PATH}}"/"$local_repo"}
+remote_config_payload=${remote_config_payload//"{{LOCAL_HOME_PATH}}"/"$local_home"}
 if [[ "$remote_config_payload" != *$'\n' ]]; then
   remote_config_payload+=$'\n'
 fi
