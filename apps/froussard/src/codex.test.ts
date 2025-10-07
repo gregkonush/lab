@@ -91,6 +91,9 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain(
       `Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/scripts/codex-progress-comment.sh`,
     )
+    expect(prompt).toContain(
+      'Commit and push after each meaningful milestone so the remote branch stays current—do not wait until the end.',
+    )
     expect(prompt).toContain('apps/froussard/scripts/codex-progress-comment.sh')
   })
 
