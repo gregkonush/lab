@@ -20,6 +20,25 @@ spec:
           - name: eventBody
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        env:
+          - name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: bot-token
+                optional: true
+          - name: DISCORD_GUILD_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: guild-id
+                optional: true
+          - name: DISCORD_CATEGORY_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: category-id
+                optional: true
         command: ["/usr/local/bin/codex-bootstrap.sh"]
         args:
           - "/bin/bash"
@@ -50,6 +69,13 @@ spec:
             export ISSUE_NUMBER="$(jq -r '.issueNumber // empty' "$EVENT_FILE")"
             export OUTPUT_PATH="${PLAN_OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}"
             export POST_TO_GITHUB=true
+            export CODEX_STAGE=planning
+
+            ISSUE_TITLE=$(jq -r '.issueTitle // empty' "$EVENT_FILE")
+            if [[ "$ISSUE_TITLE" == "null" ]]; then
+              ISSUE_TITLE=""
+            fi
+            export ISSUE_TITLE
 
             if [[ -z "$ISSUE_REPO" || -z "$ISSUE_NUMBER" || "$ISSUE_NUMBER" == "null" ]]; then
               echo "Missing repository or issue number in event payload" >&2

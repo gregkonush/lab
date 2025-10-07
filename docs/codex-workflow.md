@@ -15,10 +15,35 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 ## Prerequisites
 
 - Secrets `github-token` and `codex-openai` in `argo-workflows` namespace.
+- SealedSecret `discord-codex-bot` seeded with the Discord bot token, guild id, and optional category id.
 - Kafka topics `github.webhook.events` and `github.codex.tasks` deployed via Strimzi.
 - Argo Events resources under `argocd/applications/froussard/` synced.
 
 ## Manual End-to-End Test
+
+### Discord Relay Integration
+
+Codex now mirrors planning and implementation output into a per-run Discord channel when the bot credentials are present.
+
+1. **Provision the secret**
+   - Edit `argocd/applications/froussard/discord-codex-secret.yaml` with sealed values for `bot-token`, `guild-id`, and (optionally) `category-id` using your cluster's `kubeseal` public certificate.
+   - Argo CD reconciles the sealed secret into an opaque secret named `discord-codex-bot` in `argo-workflows`.
+2. **Verify workflow envs**
+   - Both `github-codex-planning` and `github-codex-implementation` templates now inject `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, and `DISCORD_CATEGORY_ID` into the Codex container. The relay only activates when the token and guild id are present.
+3. **Dry-run locally**
+   - Exercise the relay without touching Discord by piping sample output:
+     ```bash
+     printf 'hello discord\nthis is a dry run\n' | \
+       bunx tsx apps/froussard/scripts/discord-relay.ts \
+         --stage planning \
+         --repo gregkonush/lab \
+         --issue 999 \
+         --run-id local-test \
+         --dry-run
+     ```
+   - Expect stderr to show the fabricated channel name, metadata banner, and echoed log lines.
+4. **End-to-end smoke check**
+   - Trigger the planning workflow and confirm a new Discord channel appears under the configured category with the Codex transcript streaming live. Implementation runs reuse the same secret and stage metadata but post into their own channels.
 
 ### Implementation Progress Comment Lifecycle
 
