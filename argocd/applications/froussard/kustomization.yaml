@@ -7,6 +7,9 @@ resources:
   - event-bus.yaml
   - kafka-credentials-secret.yaml
   - kafka-eventsource.yaml
+  - workflow-completions-eventsource.yaml
+  - workflow-completions-sensor.yaml
+  - argo-workflows-completions-topic.yaml
   - github-webhook-topic.yaml
   - github-codex-topic.yaml
   - github-codex-planning-workflow-template.yaml

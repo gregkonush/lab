@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: workflow-completions
+  namespace: argo-workflows
+spec:
+  eventBusName: default
+  template:
+    serviceAccountName: workflow-completions-eventsource
+  resource:
+    workflowCompletions:
+      namespace: argo-workflows
+      group: argoproj.io
+      version: v1alpha1
+      resource: workflows
+      eventTypes:
+        - UPDATE
+      filter:
+        fields:
+          - key: status.phase
+            operation: "!="
+            value: Pending
+          - key: status.phase
+            operation: "!="
+            value: Running
+          - key: status.phase
+            operation: "!="
+            value: Unknown
+          - key: status.finishedAt
+            operation: "!="
+            value: ""

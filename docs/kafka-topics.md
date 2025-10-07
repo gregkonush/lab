@@ -30,6 +30,7 @@ spec:
 | ----------- | ------- | ----- |
 | `github.webhook.events` | Raw GitHub webhook payloads published by the `froussard` service. | Strimzi resource: `github-webhook-events`. 7-day retention. |
 | `github.codex.tasks` | Issue-driven automation tasks consumed by Argo Workflows and Codex. | Defined in `argocd/applications/froussard/github-codex-topic.yaml`. |
+| `argo.workflows.completions` | Normalized Argo Workflow completion events emitted by Argo Events. | Defined in `argocd/applications/froussard/argo-workflows-completions-topic.yaml`. Mirrors Codex topic retention (7 days). |
 
 Add new rows whenever a topic is provisioned so downstream teams can reason about ownership and retention.
 
