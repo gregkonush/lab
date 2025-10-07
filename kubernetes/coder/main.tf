@@ -636,6 +636,39 @@ resource "coder_script" "bootstrap_tools" {
       ln -sf "$HOME/.local/bin/argocd" /tmp/coder-script-data/bin/argocd
     fi
 
+    if ! command -v gh >/dev/null 2>&1; then
+      log "Installing GitHub CLI"
+      GH_ARCH="$(uname -m)"
+      case "$GH_ARCH" in
+        aarch64|arm64) GH_ARCH="arm64" ;;
+        x86_64|amd64)  GH_ARCH="amd64" ;;
+        *)             GH_ARCH="amd64" ;;
+      esac
+      GH_VERSION="$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest 2>/dev/null | grep -m1 '\"tag_name\"' | sed -E 's/.*\"tag_name\": *\"v?([^\" ]+)\".*/\\1/')"
+      if [ -z "$GH_VERSION" ]; then
+        GH_VERSION="2.55.0"
+        log "Unable to determine latest GitHub CLI version; falling back to $GH_VERSION"
+      fi
+      GH_TMP="$(mktemp -d)"
+      GH_TAR="$GH_TMP/gh.tar.gz"
+      if ! curl -fsSLo "$GH_TAR" "https://github.com/cli/cli/releases/download/v$${GH_VERSION}/gh_$${GH_VERSION}_linux_$${GH_ARCH}.tar.gz" 2>"$LOG_DIR/gh-install.log"; then
+        rm -rf "$GH_TMP"
+        fail "GitHub CLI download failed; see $LOG_DIR/gh-install.log"
+      fi
+      if ! tar -xzf "$GH_TAR" -C "$GH_TMP" >>"$LOG_DIR/gh-install.log" 2>&1; then
+        rm -rf "$GH_TMP"
+        fail "GitHub CLI extract failed; see $LOG_DIR/gh-install.log"
+      fi
+      GH_DIR="$(find "$GH_TMP" -maxdepth 1 -type d -name 'gh_*' | head -n1)"
+      if [ -z "$GH_DIR" ] || [ ! -x "$GH_DIR/bin/gh" ]; then
+        rm -rf "$GH_TMP"
+        fail "GitHub CLI archive missing expected binary; see $LOG_DIR/gh-install.log"
+      fi
+      install -m 0755 "$GH_DIR/bin/gh" "$HOME/.local/bin/gh"
+      ln -sf "$HOME/.local/bin/gh" /tmp/coder-script-data/bin/gh
+      rm -rf "$GH_TMP"
+    fi
+
     NVM_SNIPPET="$(cat <<BASH_SNIPPET
 export NVM_DIR="$NVM_DIR"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
