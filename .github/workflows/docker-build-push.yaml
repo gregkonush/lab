@@ -99,7 +99,7 @@ jobs:
     with:
       image_name: kitty-krew
       dockerfile: ./apps/kitty-krew/Dockerfile
-      context: ./apps/kitty-krew
+      context: .
       new_tag: ${{ needs.version.outputs.new_tag }}
 
   build-reviseur:

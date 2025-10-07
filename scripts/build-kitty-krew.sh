@@ -2,8 +2,14 @@
 
 # Set variables
 IMAGE_NAME="registry.ide-newton.ts.net/lab/kitty-krew"
-DOCKERFILE="Dockerfile"
-CONTEXT_PATH="apps/kitty-krew"
+DOCKERFILE="apps/kitty-krew/Dockerfile"
+CONTEXT_PATH="."
+LOCAL_ONLY=${LOCAL_ONLY:-0}
+PUSH_FLAG="--push"
+
+if [ "$LOCAL_ONLY" = "1" ]; then
+  PUSH_FLAG="--load"
+fi
 
 # Check if a tag is provided as an argument
 if [ $# -eq 1 ]; then
@@ -18,26 +24,27 @@ FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
 
 # Build the Docker image
 echo "Building Docker image: ${FULL_IMAGE_NAME}"
-docker buildx build --platform linux/arm64 -t ${FULL_IMAGE_NAME} -f ${CONTEXT_PATH}/${DOCKERFILE} ${CONTEXT_PATH} --push
+docker buildx build --platform linux/arm64 -t ${FULL_IMAGE_NAME} -f ${DOCKERFILE} ${CONTEXT_PATH} ${PUSH_FLAG}
 
 # Check if the build was successful
 if [ $? -eq 0 ]; then
-    echo "Docker image built and pushed successfully: ${FULL_IMAGE_NAME}"
+    echo "Docker image built successfully: ${FULL_IMAGE_NAME}"
 
-    # Print instructions for updating kustomization
-    echo ""
-    echo "To update the application deployment, edit the kustomization.yaml in your environment overlay:"
-    echo "--------------------------------------------------------"
-    echo "images:"
-    echo "  - name: kitty-krew"
-    echo "    newName: ${IMAGE_NAME}"
-    echo "    newTag: ${TAG}"
-    echo "--------------------------------------------------------"
+    if [ "$LOCAL_ONLY" != "1" ]; then
+        # Print instructions for updating kustomization
+        echo ""
+        echo "To update the application deployment, edit the kustomization.yaml in your environment overlay:"
+        echo "--------------------------------------------------------"
+        echo "images:"
+        echo "  - name: kitty-krew"
+        echo "    newName: ${IMAGE_NAME}"
+        echo "    newTag: ${TAG}"
+        echo "--------------------------------------------------------"
 
-    # Automatically run the container locally for testing
-    echo ""
-    echo "Running container locally for testing..."
-    docker pull ${FULL_IMAGE_NAME}
+        echo ""
+        echo "Running container locally for testing..."
+        docker pull ${FULL_IMAGE_NAME}
+    fi
 
     echo "Starting container with --rm flag (will be removed after stopping)..."
     docker run --rm -d -p 3000:3000 --name kitty-krew-test ${FULL_IMAGE_NAME}

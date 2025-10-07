@@ -2,6 +2,8 @@ name: galette
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "services/galette/**"
       - ".github/workflows/galette-ci.yml"
