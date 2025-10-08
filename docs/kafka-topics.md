@@ -28,7 +28,7 @@ spec:
 
 | Kafka Topic | Purpose | Notes |
 | ----------- | ------- | ----- |
-| `discord.events` | Discord gateway and slash command payloads published for downstream automation. | Defined in `argocd/applications/froussard/discord-events-topic.yaml`. 7-day retention. |
+| `discord.webhook.events` | Discord gateway and slash command payloads published for downstream automation. | Defined in `argocd/applications/froussard/discord-events-topic.yaml`. 7-day retention. |
 | `github.webhook.events` | Raw GitHub webhook payloads published by the `froussard` service. | Strimzi resource: `github-webhook-events`. 7-day retention. |
 | `github.codex.tasks` | Issue-driven automation tasks consumed by Argo Workflows and Codex. | Defined in `argocd/applications/froussard/github-codex-topic.yaml`. |
 | `argo.workflows.completions` | Normalized Argo Workflow completion events emitted by Argo Events. | Defined in `argocd/applications/froussard/argo-workflows-completions-topic.yaml`. Mirrors Codex topic retention (7 days). |

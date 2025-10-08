@@ -21,14 +21,14 @@ flowchart LR
   Workflow --> Pod[Workflow pod logs payload]
 ```
 
-The Argo CD application also provisions the `discord.events` Kafka topic so Discord automation can publish into the shared cluster alongside GitHub event streams.
+The Argo CD application also provisions the `discord.webhook.events` Kafka topic so Discord automation can publish into the shared cluster alongside GitHub event streams.
 
 ## Runtime Responsibilities
 
 - Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
 - Emit the original JSON event (`github.webhook.events`) and Codex task messages
   (`github.codex.tasks`) via Kafka.
-- Provision the `discord.events` Kafka topic for upcoming Discord automation integrations.
+- Provision the `discord.webhook.events` Kafka topic for upcoming Discord automation integrations.
 - Surface health checks on `/health/liveness` and `/health/readiness`.
 
 ## Local Development
