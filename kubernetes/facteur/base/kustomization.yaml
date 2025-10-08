@@ -3,9 +3,9 @@ kind: Kustomization
 resources:
   - serviceaccount.yaml
   - rolebinding.yaml
-  - deployment.yaml
   - service.yaml
   - workflowtemplate.yaml
+  - redis.yaml
 configMapGenerator:
   - name: facteur-config
     files:

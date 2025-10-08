@@ -1,8 +1,10 @@
+server:
+  listen_address: ":8080"
 discord:
   public_key: ""
   guild_id: ""
 redis:
-  url: ""
+  url: redis://facteur-redis:6379/0
 argo:
   namespace: argo
   workflow_template: facteur-dispatch
