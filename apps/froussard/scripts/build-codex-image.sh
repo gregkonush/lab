@@ -24,6 +24,15 @@ if [[ ! -f "$CODEX_CONFIG" ]]; then
   exit 1
 fi
 
+if command -v sha256sum >/dev/null 2>&1; then
+  CODEX_AUTH_CHECKSUM=$(sha256sum "$CODEX_AUTH" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  CODEX_AUTH_CHECKSUM=$(shasum -a 256 "$CODEX_AUTH" | awk '{print $1}')
+else
+  echo "Neither sha256sum nor shasum is available to hash $CODEX_AUTH" >&2
+  exit 1
+fi
+
 GH_TOKEN_FILE=""
 cleanup() {
   if [[ -n "$GH_TOKEN_FILE" && -f "$GH_TOKEN_FILE" ]]; then
@@ -55,6 +64,7 @@ export DOCKER_BUILDKIT=1
 echo "Building $IMAGE_TAG from $DOCKERFILE"
 docker build \
   -f "$DOCKERFILE" \
+  --build-arg CODEX_AUTH_CHECKSUM="$CODEX_AUTH_CHECKSUM" \
   --secret id=codex_auth,src="$CODEX_AUTH" \
   --secret id=codex_config,src="$CODEX_CONFIG" \
   --secret id=github_token,src="$GH_TOKEN_FILE" \
