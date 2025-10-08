@@ -22,6 +22,7 @@ spec:
           - name: eventBody
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
         env:
           - name: DISCORD_BOT_TOKEN
             valueFrom:
@@ -41,6 +42,16 @@ spec:
                 name: discord-codex-bot
                 key: category-id
                 optional: true
+          - name: GH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-token
+                key: token
         command: ["/usr/local/bin/codex-bootstrap.sh"]
         args:
           - "/bin/bash"
