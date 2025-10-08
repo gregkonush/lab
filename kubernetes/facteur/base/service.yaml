@@ -1,12 +1,53 @@
-apiVersion: v1
+apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: facteur
   namespace: facteur
 spec:
-  selector:
-    app: facteur
-  ports:
-    - name: http
-      port: 8080
-      targetPort: http
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/target: "100"
+    spec:
+      serviceAccountName: facteur
+      containers:
+        - name: facteur
+          image: registry.ide-newton.ts.net/lab/facteur:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http1
+          env:
+            - name: FACTEUR_CONFIG_FILE
+              value: /config/config.yaml
+            - name: FACTEUR_DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: facteur-discord
+                  key: bot-token
+            - name: FACTEUR_DISCORD_APPLICATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: facteur-discord
+                  key: application-id
+            - name: FACTEUR_REDIS_URL
+              value: redis://facteur-redis:6379/0
+            - name: FACTEUR_ARGO_NAMESPACE
+              value: argo
+            - name: FACTEUR_ARGO_WORKFLOW_TEMPLATE
+              value: facteur-dispatch
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: config
+          configMap:
+            name: facteur-config

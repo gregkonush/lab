@@ -27,6 +27,8 @@ argo:
   service_account: facteur
   parameters:
     environment: staging
+server:
+  listen_address: ":9000"
 role_map:
   dispatch:
     - admin
@@ -49,6 +51,7 @@ role_map:
 		require.Equal(t, "facteur-dispatch", cfg.Argo.WorkflowTemplate)
 		require.Equal(t, "facteur", cfg.Argo.ServiceAccount)
 		require.Equal(t, map[string]string{"environment": "staging"}, cfg.Argo.Parameters)
+		require.Equal(t, ":9000", cfg.Server.ListenAddress)
 		require.Equal(t, map[string][]string{
 			"dispatch": []string{"admin", "operator"},
 			"status":   []string{"moderator"},
@@ -76,6 +79,7 @@ argo:
 		require.NoError(t, err)
 		require.Equal(t, "env-token", cfg.Discord.BotToken)
 		require.Equal(t, "env-template", cfg.Argo.WorkflowTemplate)
+		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {
@@ -106,6 +110,7 @@ redis:
 		require.Equal(t, "token", cfg.Discord.BotToken)
 		require.Equal(t, "app", cfg.Discord.ApplicationID)
 		require.Equal(t, "redis://localhost:6379/1", cfg.Redis.URL)
+		require.Equal(t, ":8080", cfg.Server.ListenAddress)
 		require.NotNil(t, cfg.RoleMap)
 		require.Empty(t, cfg.RoleMap)
 	})

@@ -4,11 +4,9 @@ namespace: facteur
 resources:
   - ../../base
 images:
-  - name: ghcr.io/gregkonush/facteur
-    newName: ghcr.io/gregkonush/lab/facteur
-    newTag: v0.1.0
+  - name: registry.ide-newton.ts.net/lab/facteur
+    newTag: main
 patchesStrategicMerge:
-  - deployment-redis-secret.yaml
 configMapGenerator:
   - name: facteur-config
     behavior: replace

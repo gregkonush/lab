@@ -14,6 +14,7 @@ type Config struct {
 	Redis   RedisConfig         `mapstructure:"redis"`
 	Argo    ArgoConfig          `mapstructure:"argo"`
 	RoleMap map[string][]string `mapstructure:"role_map"`
+	Server  ServerConfig        `mapstructure:"server"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -35,6 +36,11 @@ type ArgoConfig struct {
 	WorkflowTemplate string            `mapstructure:"workflow_template"`
 	ServiceAccount   string            `mapstructure:"service_account"`
 	Parameters       map[string]string `mapstructure:"parameters"`
+}
+
+// ServerConfig contains HTTP server runtime options.
+type ServerConfig struct {
+	ListenAddress string `mapstructure:"listen_address"`
 }
 
 // Options customises how configuration should be loaded.
@@ -69,6 +75,7 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		"argo.service_account",
 		"argo.parameters",
 		"role_map",
+		"server.listen_address",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("bind env %s: %w", key, err)
@@ -102,6 +109,9 @@ func normaliseConfig(cfg *Config) {
 	}
 	if cfg.Argo.Parameters == nil {
 		cfg.Argo.Parameters = map[string]string{}
+	}
+	if cfg.Server.ListenAddress == "" {
+		cfg.Server.ListenAddress = ":8080"
 	}
 }
 

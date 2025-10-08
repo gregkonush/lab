@@ -1,0 +1,42 @@
+name: facteur
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "services/facteur/**"
+      - ".github/workflows/facteur-ci.yml"
+  pull_request:
+    paths:
+      - "services/facteur/**"
+      - ".github/workflows/facteur-ci.yml"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.1"
+          cache: true
+
+      - name: Download dependencies
+        working-directory: services/facteur
+        run: go mod download
+
+      - name: Build
+        working-directory: services/facteur
+        run: go build ./...
+
+      - name: Vet
+        working-directory: services/facteur
+        run: go vet ./...
+
+      - name: Test
+        working-directory: services/facteur
+        run: go test ./...

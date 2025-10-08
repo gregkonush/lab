@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7-labs
 
-FROM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
@@ -9,7 +11,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/facteur ./cmd/facteur
+	CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags='-s -w' -o /out/facteur ./cmd/facteur
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/facteur /usr/local/bin/facteur

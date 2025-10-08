@@ -1,11 +1,13 @@
 # Example configuration for the facteur Discord ↔ Argo bridge.
+server:
+  listen_address: ":8080"
 discord:
   bot_token: your-discord-bot-token
   application_id: "123456789012345678"
   public_key: your-discord-public-key
   guild_id: "987654321098765432"
 redis:
-  url: redis://redis:6379/0
+  url: redis://facteur-redis:6379/0
 argo:
   namespace: argo
   workflow_template: facteur-dispatch

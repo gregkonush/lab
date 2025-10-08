@@ -44,7 +44,9 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 ## Deployment artifacts
 
 - `services/facteur/Dockerfile` builds a distroless container.
-- Kubernetes manifests live under `kubernetes/facteur` (base + overlays) and include Deployment, Service, ConfigMap, RBAC, and WorkflowTemplate resources.
+- Pushes to `main` run `.github/workflows/facteur-build-push.yaml`, cross-building the image for linux/amd64 and linux/arm64 and publishing it to `registry.ide-newton.ts.net/lab/facteur`.
+- Kubernetes manifests live under `kubernetes/facteur` (base + overlays) and include a Knative `Service`, ConfigMap, RBAC, a Redis custom resource, and WorkflowTemplate resources so the runtime can scale-to-zero when idle.
+- `kubernetes/facteur/base/redis.yaml` provisions an in-cluster Redis instance via the OT-Container-Kit Redis Operator; confirm the platform `redis-operator` Application stays healthy before syncing facteur.
 - Argo CD applications reside in `argocd/applications/facteur` and are referenced by `argocd/applicationsets/product.yaml` so the automation discovers and syncs the service.
 
 ## Next steps
