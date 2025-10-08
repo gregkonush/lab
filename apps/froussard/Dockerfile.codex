@@ -3,7 +3,7 @@ FROM ghcr.io/openai/codex-universal:latest
 
 ARG ARGO_VERSION=v3.6.3
 ARG KUBECONFORM_VERSION=v0.6.7
-ARG TARGETARCH
+ARG TARGETARCH=arm64
 
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
@@ -18,7 +18,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
-    ARCH=${TARGETARCH:-amd64}; \
+    ARCH=${TARGETARCH:-arm64}; \
     case "${ARCH}" in \
       amd64|arm64) \
         ;; \
