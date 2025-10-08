@@ -142,7 +142,6 @@ if [[ "$DISCORD_READY" -eq 1 ]]; then
   set -e
 
   codex_status=${pipe_statuses[1]:-1}
-  tee_json_status=${pipe_statuses[2]:-1}
   jq_status=${pipe_statuses[3]:-1}
   relay_status=${pipe_statuses[4]:-1}
 
@@ -173,7 +172,6 @@ else
   set -e
 
   codex_status=${pipe_statuses[1]:-1}
-  tee_json_status=${pipe_statuses[2]:-1}
   jq_status=${pipe_statuses[3]:-1}
 
   if [[ $codex_status -ne 0 ]]; then
