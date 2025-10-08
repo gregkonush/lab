@@ -94,6 +94,13 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: auto
             enabled: false
+          - name: facteur
+            path: argocd/applications/facteur
+            namespace: facteur
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+            automation: manual
+            enabled: false
           - name: miel
             path: argocd/applications/miel
             namespace: miel

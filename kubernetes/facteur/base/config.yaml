@@ -1,0 +1,16 @@
+discord:
+  public_key: ""
+  guild_id: ""
+redis:
+  url: redis://redis:6379/0
+argo:
+  namespace: argo
+  workflow_template: facteur-dispatch
+  service_account: facteur
+  parameters:
+    environment: staging
+role_map:
+  dispatch:
+    - "123456789012345678"
+  status:
+    - "123456789012345678"
