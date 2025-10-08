@@ -79,4 +79,21 @@ spec:
                   {{- $wf := .Input.body -}}
                   {{- $meta := coalesce (index $wf "metadata") (dict) -}}
                   {{- $labels := coalesce (index $meta "labels") (dict) -}}
-                  {{- default "" (index $labels "codex.stage") }}
+                  {{- $labelStage := default "" (index $labels "codex.stage") -}}
+                  {{- if $labelStage -}}
+                    {{- $labelStage -}}
+                  {{- else -}}
+                    {{- $spec := coalesce (index $wf "spec") (dict) -}}
+                    {{- $templateRef := coalesce (index $spec "workflowTemplateRef") (dict) -}}
+                    {{- $templateName := default "" (index $templateRef "name") -}}
+                    {{- if $templateName -}}
+                      {{- $segments := splitList "-" $templateName -}}
+                      {{- if gt (len $segments) 0 -}}
+                        {{- index $segments (sub (len $segments) 1) -}}
+                      {{- else -}}
+                        {{- "" -}}
+                      {{- end -}}
+                    {{- else -}}
+                      {{- "" -}}
+                    {{- end -}}
+                  {{- end -}}
