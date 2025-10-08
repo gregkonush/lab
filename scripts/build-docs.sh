@@ -17,21 +17,17 @@ fi
 FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
 
 # Determine whether to push or load locally
+build_cmd=(docker buildx build -t "${FULL_IMAGE_NAME}" -f "${DOCKERFILE}" "${CONTEXT_PATH}")
+
 if [ "${SKIP_PUSH:-0}" = "1" ]; then
-    BUILD_OUTPUT="--load"
-    PLATFORM=""
     echo "Building Docker image locally without pushing (SKIP_PUSH=1)."
+    build_cmd+=(--load)
 else
-    BUILD_OUTPUT="--push"
-    PLATFORM="--platform linux/arm64"
     echo "Building and pushing Docker image: ${FULL_IMAGE_NAME}"
+    build_cmd+=(--platform linux/arm64 --push)
 fi
 
-# Build the Docker image
-docker buildx build ${PLATFORM} -t ${FULL_IMAGE_NAME} -f ${DOCKERFILE} ${CONTEXT_PATH} ${BUILD_OUTPUT}
-
-# Check if the build was successful
-if [ $? -eq 0 ]; then
+if "${build_cmd[@]}"; then
     if [ "${SKIP_PUSH:-0}" = "1" ]; then
         echo "Docker image built and loaded locally: ${FULL_IMAGE_NAME}"
     else

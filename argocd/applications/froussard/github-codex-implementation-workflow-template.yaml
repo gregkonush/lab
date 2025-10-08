@@ -20,6 +20,25 @@ spec:
           - name: eventBody
       container:
         image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        env:
+          - name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: bot-token
+                optional: true
+          - name: DISCORD_GUILD_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: guild-id
+                optional: true
+          - name: DISCORD_CATEGORY_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: category-id
+                optional: true
         command: ["/usr/local/bin/codex-bootstrap.sh"]
         args:
           - "/bin/bash"
