@@ -12,74 +12,97 @@
 IMAGE_NAME=${IMAGE_NAME-baozi-candidate}
 
 # Determining system utility executables (darwin compatibility check)
-READLINK_EXEC="readlink -zf"
-MKTEMP_EXEC="mktemp --suffix=.cid"
-if [[ "$OSTYPE" =~ 'darwin' ]]; then
-  READLINK_EXEC="readlink"
-  MKTEMP_EXEC="mktemp"
-  ! type -a "greadlink" &>"/dev/null" || READLINK_EXEC="greadlink"
-  ! type -a "gmktemp" &>"/dev/null" || MKTEMP_EXEC="gmktemp"
+readlink_cmd=(readlink -zf)
+mktemp_cmd=(mktemp --suffix=.cid -u)
+if [[ "$OSTYPE" =~ darwin ]]; then
+  readlink_cmd=(readlink)
+  mktemp_cmd=(mktemp -u)
+  if command -v greadlink >/dev/null 2>&1; then
+    readlink_cmd=(greadlink)
+  fi
+  if command -v gmktemp >/dev/null 2>&1; then
+    mktemp_cmd=(gmktemp -u)
+  fi
 fi
 
 _dir="$(dirname "${BASH_SOURCE[0]}")"
-test_dir="$($READLINK_EXEC ${_dir} || echo ${_dir})"
-image_dir=$($READLINK_EXEC ${test_dir}/.. || echo ${test_dir}/..)
-scripts_url="${image_dir}/.s2i/bin"
-cid_file=$($MKTEMP_EXEC -u)
+if ! test_dir="$("${readlink_cmd[@]}" "$_dir" 2>/dev/null)"; then
+  test_dir="$_dir"
+fi
+cid_file="$("${mktemp_cmd[@]}")"
 
 # Since we built the candidate image locally, we don't want S2I to attempt to pull
 # it from Docker hub
-s2i_args="--pull-policy=never --loglevel=2"
+s2i_args=(--pull-policy=never --loglevel=2)
 
 # Port the image exposes service to be tested
 test_port=8080
 
 image_exists() {
-  docker inspect $1 &>/dev/null
+  docker inspect "$1" &>/dev/null
 }
 
 container_exists() {
-  image_exists $(cat $cid_file)
+  [[ -s "$cid_file" ]] || return 1
+  local cid
+  cid="$(<"$cid_file")"
+  image_exists "$cid"
+}
+
+container_endpoint() {
+  [[ -s "$cid_file" ]] || return 1
+  local cid
+  local endpoint
+  cid="$(<"$cid_file")"
+  endpoint="$(docker port "$cid" "${test_port}/tcp" 2>/dev/null | head -n1)"
+  [[ -n "$endpoint" ]] || return 1
+  echo "$endpoint"
 }
 
 container_ip() {
-  docker inspect --format="{{(index .NetworkSettings.Ports \"$test_port/tcp\" 0).HostIp }}" $(cat $cid_file) | sed 's/0.0.0.0/localhost/'
+  local endpoint
+  endpoint="$(container_endpoint)"
+  endpoint="${endpoint%%:*}"
+  printf '%s\n' "${endpoint//0.0.0.0/localhost}"
 }
 
 container_port() {
-  docker inspect --format="{{(index .NetworkSettings.Ports \"$test_port/tcp\" 0).HostPort }}" "$(cat "${cid_file}")"
+  local endpoint
+  endpoint="$(container_endpoint)"
+  printf '%s\n' "${endpoint##*:}"
 }
 
 run_s2i_build() {
-  s2i build --incremental=true ${s2i_args} ${test_dir}/test-app ${IMAGE_NAME} ${IMAGE_NAME}-testapp
+  s2i build --incremental=true "${s2i_args[@]}" "${test_dir}/test-app" "${IMAGE_NAME}" "${IMAGE_NAME}-testapp"
 }
 
 prepare() {
-  if ! image_exists ${IMAGE_NAME}; then
+  if ! image_exists "${IMAGE_NAME}"; then
     echo "ERROR: The image ${IMAGE_NAME} must exist before this script is executed."
     exit 1
   fi
   # s2i build requires the application is a valid 'Git' repository
-  pushd ${test_dir}/test-app >/dev/null
+  pushd "${test_dir}/test-app" >/dev/null || exit 1
   git init
   git config user.email "build@localhost" && git config user.name "builder"
   git add -A && git commit -m "Sample commit"
-  popd >/dev/null
+  popd >/dev/null || exit 1
   run_s2i_build
 }
 
 run_test_application() {
-  docker run --rm --cidfile=${cid_file} -p ${test_port}:${test_port} ${IMAGE_NAME}-testapp
+  docker run --rm --cidfile="${cid_file}" -p "${test_port}:${test_port}" "${IMAGE_NAME}-testapp"
 }
 
 cleanup() {
-  if [ -f $cid_file ]; then
+  if [ -f "$cid_file" ]; then
     if container_exists; then
-      docker stop $(cat $cid_file)
+      docker stop "$(cat "$cid_file")"
     fi
+    rm -f "$cid_file"
   fi
-  if image_exists ${IMAGE_NAME}-testapp; then
-    docker rmi ${IMAGE_NAME}-testapp
+  if image_exists "${IMAGE_NAME}-testapp"; then
+    docker rmi "${IMAGE_NAME}-testapp"
   fi
 }
 
@@ -88,7 +111,7 @@ check_result() {
   if [[ "$result" != "0" ]]; then
     echo "S2I image '${IMAGE_NAME}' test FAILED (exit code: ${result})"
     cleanup
-    exit $result
+    exit "$result"
   fi
 }
 
@@ -96,18 +119,17 @@ wait_for_cid() {
   local max_attempts=10
   local sleep_time=1
   local attempt=1
-  local result=1
-  while [ $attempt -le $max_attempts ]; do
-    [ -f $cid_file ] && break
+  while [ "$attempt" -le "$max_attempts" ]; do
+    [ -f "$cid_file" ] && break
     echo "Waiting for container to start..."
-    attempt=$(( $attempt + 1 ))
-    sleep $sleep_time
+    attempt=$((attempt + 1))
+    sleep "$sleep_time"
   done
 }
 
 test_usage() {
   echo "Testing 's2i usage'..."
-  s2i usage ${s2i_args} ${IMAGE_NAME} &>/dev/null
+  s2i usage "${s2i_args[@]}" "${IMAGE_NAME}" &>/dev/null
 }
 
 test_connection() {
@@ -116,18 +138,20 @@ test_connection() {
   local sleep_time=1
   local attempt=1
   local result=1
-  while [ $attempt -le $max_attempts ]; do
+  while [ "$attempt" -le "$max_attempts" ]; do
     echo "Sending GET request to http://$(container_ip):$(container_port)/"
-    response_code=$(curl -s -w %{http_code} -o /dev/null http://$(container_ip):$(container_port)/)
+    local response_code
+    local status
+    response_code=$(curl -s -w '%{http_code}' -o /dev/null "http://$(container_ip):$(container_port)/")
     status=$?
-    if [ $status -eq 0 ]; then
-      if [ $response_code -eq 200 ]; then
+    if [ "$status" -eq 0 ]; then
+      if [ "$response_code" -eq 200 ]; then
         result=0
       fi
       break
     fi
-    attempt=$(( $attempt + 1 ))
-    sleep $sleep_time
+    attempt=$((attempt + 1))
+    sleep "$sleep_time"
   done
   return $result
 }
@@ -152,4 +176,3 @@ test_connection
 check_result $?
 
 cleanup
-
