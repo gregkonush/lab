@@ -4,6 +4,7 @@ FROM ghcr.io/openai/codex-universal:latest
 ARG ARGO_VERSION=v3.6.3
 ARG KUBECONFORM_VERSION=v0.6.7
 ARG TARGETARCH=arm64
+ARG CODEX_AUTH_CHECKSUM=unspecified
 
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
@@ -48,7 +49,8 @@ RUN mkdir -p "$WORKSPACE" /root/.codex
 
 # Copy Codex auth secret during build (requires BuildKit secret)
 RUN --mount=type=secret,id=codex_auth,target=/tmp/codex_auth.json \
-    cp /tmp/codex_auth.json /root/.codex/auth.json
+    cp /tmp/codex_auth.json /root/.codex/auth.json \
+    && printf '%s\n' "${CODEX_AUTH_CHECKSUM}" > /root/.codex/auth.checksum
 
 COPY apps/froussard/scripts/codex-config-container.toml /root/.codex/config.toml
 
