@@ -9,7 +9,7 @@ This guide explains how the two-stage Codex automation pipeline works and how to
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
 3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
-   - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
+   - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) writes the plan to `PLAN.md`, then calls `apps/froussard/scripts/upsert-plan-comment.sh` to create or update the `<!-- codex:plan -->` issue comment. The helper output and Codex transcript land in `.codex-plan-output.md`.
    - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.sh`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - Both templates carry a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
 
@@ -57,7 +57,7 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
 
 1. **Create a test issue** in `gregkonush/lab` (while logged in as `gregkonush`).
    - Check `argo get @latest -n argo-workflows` to see the planning workflow run via `github-codex-planning`.
-   - Confirm the issue received a comment beginning with `<!-- codex:plan -->` that follows the Summary/Steps/Validation/Risks/Handoff Notes template.
+   - Confirm the issue received (or updated) a comment beginning with `<!-- codex:plan -->` that follows the Summary/Steps/Validation/Risks/Handoff Notes template—even after retrying the workflow there should still be a single plan comment.
 2. **Approve the plan** by replying `execute plan` on the issue (as `gregkonush`).
    - Watch for a new workflow named `github-codex-implementation-*`; it should push a branch ( `codex/issue-<number>-*` ), open a draft PR, and upload `.codex-implementation.log` as an artifact.
    - Confirm a single progress comment remains on the issue, anchored by `<!-- codex:progress -->`, with the checklist reflecting the plan and validation state.

@@ -53,10 +53,10 @@ base_branch = os.environ.get('BASE_BRANCH', 'main')
 addon = textwrap.dedent(f"""
 Execution notes (do not restate plan requirements above):
 - Work from the existing checkout at {worktree}, already aligned with origin/{base_branch}.
-- After generating the plan, write it to PLAN.md.
-- Post it with `gh issue comment --repo {issue_repo} {issue_number} --body-file PLAN.md`.
-- Echo the final plan (PLAN.md contents) and the GH CLI output to stdout.
-- If posting fails, surface the GH error and exit non-zero; otherwise exit 0.
+- After generating the plan, write it to {worktree}/PLAN.md.
+- Echo the final plan (PLAN.md contents) to stdout.
+- Do not call the GitHub API; the wrapper handles posting the plan comment.
+- If writing fails, surface the error and exit non-zero; otherwise exit 0.
 """).strip()
 
 print(f"{base_prompt}\n\n{addon}")
@@ -105,3 +105,23 @@ else
 fi
 
 echo "Codex interaction logged to $OUTPUT_PATH"
+
+PLAN_FILE_PATH=${PLAN_FILE:-$WORKTREE/PLAN.md}
+PLAN_HELPER=${PLAN_HELPER:-apps/froussard/scripts/upsert-plan-comment.sh}
+
+if [[ "$PLAN_HELPER" != /* ]]; then
+  PLAN_HELPER="$WORKTREE/$PLAN_HELPER"
+fi
+
+if [[ ! -f "$PLAN_FILE_PATH" ]]; then
+  echo "Plan file not found at $PLAN_FILE_PATH" >&2
+  exit 1
+fi
+
+if [[ ! -x "$PLAN_HELPER" ]]; then
+  echo "Plan helper not executable: $PLAN_HELPER" >&2
+  exit 1
+fi
+
+echo "Upserting plan comment via $PLAN_HELPER"
+ISSUE_REPO="$ISSUE_REPO" ISSUE_NUMBER="$ISSUE_NUMBER" PLAN_FILE="$PLAN_FILE_PATH" "$PLAN_HELPER"

@@ -1,3 +1,9 @@
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
@@ -278,5 +284,163 @@ describe('findLatestPlanComment', () => {
     })
 
     expect(result).toEqual({ ok: false, reason: 'network-error', detail: 'network down' })
+  })
+})
+
+describe('upsertPlanComment.sh', () => {
+  const scriptPath = fileURLToPath(new URL('../../scripts/upsert-plan-comment.sh', import.meta.url))
+  const ghStub = [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    '',
+    'state_file="${UPSERT_PLAN_STATE_FILE:?}"',
+    'mode="${UPSERT_PLAN_MODE:?}"',
+    'log_file="${UPSERT_PLAN_LOG:?}"',
+    '',
+    'call_index="$(cat "${state_file}" 2>/dev/null || echo "0")"',
+    '',
+    'if [[ "${call_index}" == "0" ]]; then',
+    '  echo "1" >"${state_file}"',
+    '  if [[ "${1:-}" == "api" ]]; then',
+    '    shift',
+    '  fi',
+    '  echo "GET $*" >>"${log_file}"',
+    '  if [[ "${mode}" == "create" ]]; then',
+    "    printf '[]'",
+    '  else',
+    '    printf \'[{"id":42,"body":"<!-- codex:plan --> existing","html_url":"https://example.com/comment/42"}]\'',
+    '  fi',
+    '  exit 0',
+    'fi',
+    '',
+    'if [[ "${call_index}" == "1" ]]; then',
+    '  echo "2" >"${state_file}"',
+    '  if [[ "${1:-}" == "api" ]]; then',
+    '    shift',
+    '  fi',
+    '  url="${1:-}"',
+    '  shift || true',
+    '  method=""',
+    '  input_file=""',
+    '  while [[ $# -gt 0 ]]; do',
+    '    case "$1" in',
+    '      --method)',
+    '        method="${2:-}"',
+    '        shift 2',
+    '        ;;',
+    '      --input)',
+    '        input_file="${2:-}"',
+    '        shift 2',
+    '        ;;',
+    '      *)',
+    '        shift',
+    '        ;;',
+    '    esac',
+    '  done',
+    '',
+    '  echo "MUTATE ${method:-none} ${url:-missing}" >>"${log_file}"',
+    '',
+    '  if [[ "${mode}" == "create" ]]; then',
+    '    if [[ "${method}" != "POST" ]]; then',
+    '      echo "Expected POST during create, got ${method:-<none>}" >&2',
+    '      exit 1',
+    '    fi',
+    '    printf \'{"id":555,"html_url":"https://example.com/comment/555","body":"<!-- codex:plan --> created"}\'',
+    '  else',
+    '    if [[ "${method}" != "PATCH" ]]; then',
+    '      echo "Expected PATCH during update, got ${method:-<none>}" >&2',
+    '      exit 1',
+    '    fi',
+    '    printf \'{"id":42,"html_url":"https://example.com/comment/42","body":"<!-- codex:plan --> updated"}\'',
+    '  fi',
+    '  exit 0',
+    'fi',
+    '',
+    'echo "Unexpected call count" >&2',
+    'exit 1',
+  ].join('\n')
+
+  it('creates a plan comment when none exist', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'codex-upsert-create-'))
+    try {
+      const planFile = join(tempDir, 'PLAN.md')
+      writeFileSync(planFile, `${PLAN_COMMENT_MARKER}\nPlan body\n`, 'utf8')
+
+      const stateFile = join(tempDir, 'state')
+      const logFile = join(tempDir, 'log')
+      writeFileSync(stateFile, '0', 'utf8')
+      writeFileSync(logFile, '', 'utf8')
+
+      const ghPath = join(tempDir, 'gh')
+      writeFileSync(ghPath, ghStub, 'utf8')
+      chmodSync(ghPath, 0o755)
+
+      const output = execFileSync(scriptPath, {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+          ISSUE_REPO: 'acme/widgets',
+          ISSUE_NUMBER: '17',
+          PLAN_FILE: planFile,
+          WORKTREE: process.cwd(),
+          UPSERT_PLAN_MODE: 'create',
+          UPSERT_PLAN_STATE_FILE: stateFile,
+          UPSERT_PLAN_LOG: logFile,
+        },
+        encoding: 'utf8',
+      })
+
+      expect(output).toContain('action=create')
+      expect(output).toContain('comment_url=https://example.com/comment/555')
+
+      const log = readFileSync(logFile, 'utf8')
+      expect(log).toContain('GET repos/acme/widgets/issues/17/comments --paginate')
+      expect(log).toContain('MUTATE POST repos/acme/widgets/issues/17/comments')
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('updates an existing plan comment when the marker is present', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'codex-upsert-update-'))
+    try {
+      const planFile = join(tempDir, 'PLAN.md')
+      writeFileSync(planFile, `${PLAN_COMMENT_MARKER}\nUpdated plan body\n`, 'utf8')
+
+      const stateFile = join(tempDir, 'state')
+      const logFile = join(tempDir, 'log')
+      writeFileSync(stateFile, '0', 'utf8')
+      writeFileSync(logFile, '', 'utf8')
+
+      const ghPath = join(tempDir, 'gh')
+      writeFileSync(ghPath, ghStub, 'utf8')
+      chmodSync(ghPath, 0o755)
+
+      const output = execFileSync(scriptPath, {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${process.env.PATH ?? ''}`,
+          ISSUE_REPO: 'acme/widgets',
+          ISSUE_NUMBER: '42',
+          PLAN_FILE: planFile,
+          WORKTREE: process.cwd(),
+          UPSERT_PLAN_MODE: 'update',
+          UPSERT_PLAN_STATE_FILE: stateFile,
+          UPSERT_PLAN_LOG: logFile,
+        },
+        encoding: 'utf8',
+      })
+
+      expect(output).toContain('action=update')
+      expect(output).toContain('comment_url=https://example.com/comment/42')
+
+      const log = readFileSync(logFile, 'utf8')
+      expect(log).toContain('GET repos/acme/widgets/issues/42/comments --paginate')
+      expect(log).toContain('MUTATE PATCH repos/acme/widgets/issues/comments/42')
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
