@@ -11,6 +11,62 @@ DEFAULT_OUTPUT_PATH=${PLAN_OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}
 OUTPUT_PATH=${OUTPUT_PATH:-$DEFAULT_OUTPUT_PATH}
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 export CODEX_STAGE=${CODEX_STAGE:-planning}
+export RUST_LOG=${RUST_LOG:-codex_core=info,codex_exec=debug}
+export RUST_BACKTRACE=${RUST_BACKTRACE:-1}
+
+LGTM_LOKI_ENDPOINT=${LGTM_LOKI_ENDPOINT:-http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push}
+JSON_OUTPUT_PATH=${JSON_OUTPUT_PATH:-/workspace/lab/.codex-plan-events.jsonl}
+AGENT_OUTPUT_PATH=${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-plan-agent.log}
+mkdir -p "$(dirname "$JSON_OUTPUT_PATH")" "$(dirname "$AGENT_OUTPUT_PATH")"
+: >"$JSON_OUTPUT_PATH"
+: >"$AGENT_OUTPUT_PATH"
+
+push_codex_events_to_loki() {
+  local stage="$1"
+  local json_path="$2"
+  local endpoint="$3"
+
+  if [[ -z "$endpoint" ]]; then
+    echo "LGTM Loki endpoint not configured; skipping log export" >&2
+    return 0
+  fi
+
+  if [[ ! -s "$json_path" ]]; then
+    echo "Codex JSON event log is empty; skipping log export" >&2
+    return 0
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "jq not available; cannot format Loki payload" >&2
+    return 0
+  fi
+
+  local base_ts payload
+  base_ts=$(date +%s%N)
+  if ! payload=$(jq -sc --arg stage "$stage" --argjson base_ts "$base_ts" '
+      def entry_ts($base; $idx): ($base + ($idx | tonumber));
+      {streams:[
+        {stream:{job:"codex-exec",stage:$stage},
+         values:(to_entries | map( [ (entry_ts($base_ts; .key) | tostring), (.value | tojson) ] ))}
+      ]}
+    ' "$json_path"); then
+    echo "Failed to build Loki payload from Codex JSON events" >&2
+    return 0
+  fi
+
+  if [[ "$payload" == '{"streams":[]}' ]]; then
+    echo "Codex JSON event payload empty; skipping log export" >&2
+    return 0
+  fi
+
+  if ! curl -fsS -X POST -H "Content-Type: application/json" --data "$payload" "$endpoint" >/dev/null; then
+    echo "Failed to push Codex events to Loki at $endpoint" >&2
+    return 1
+  fi
+
+  echo "Pushed Codex events to Loki at $endpoint" >&2
+  return 0
+}
 
 RELAY_SCRIPT=${RELAY_SCRIPT:-apps/froussard/scripts/discord-relay.ts}
 RELAY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -76,32 +132,76 @@ if [[ "$DISCORD_READY" -eq 1 ]]; then
   fi
   set +e
   set +o pipefail
-  printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox - | tee >("${relay_cmd[@]}" "${relay_args[@]}") "$OUTPUT_PATH"
+  printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
+    | tee >(cat >"$JSON_OUTPUT_PATH") \
+    | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
+    | tee >("${relay_cmd[@]}" "${relay_args[@]}") >(cat >"$AGENT_OUTPUT_PATH")
   pipeline_status=$?
   pipe_statuses=("${PIPESTATUS[@]}")
   set -o pipefail
   set -e
 
   codex_status=${pipe_statuses[1]:-1}
-  tee_status=${pipe_statuses[2]:-1}
+  tee_json_status=${pipe_statuses[2]:-1}
+  jq_status=${pipe_statuses[3]:-1}
+  relay_status=${pipe_statuses[4]:-1}
 
   if [[ $codex_status -ne 0 ]]; then
     echo "Codex execution failed" >&2
     exit 1
   fi
 
-  if [[ $pipeline_status -ne 0 && $tee_status -ne 0 ]]; then
-    if ! cat "$OUTPUT_PATH" >/dev/null 2>&1; then
-      echo "Codex execution failed: unable to persist output to $OUTPUT_PATH" >&2
-      exit 1
+  if [[ $jq_status -ne 0 ]]; then
+    echo "jq pipeline exited with status $jq_status during Codex run" >&2
+  fi
+
+  if [[ $pipeline_status -ne 0 ]]; then
+    if [[ $relay_status -ne 0 ]]; then
+      echo "Discord relay failed (status $relay_status); continuing without Discord mirror" >&2
     fi
-    echo "Discord relay failed (status $tee_status); continuing without Discord mirror" >&2
   fi
 else
-  if ! printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox - | tee "$OUTPUT_PATH"; then
+  set +e
+  set +o pipefail
+  printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
+    | tee >(cat >"$JSON_OUTPUT_PATH") \
+    | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
+    | tee >(cat >"$AGENT_OUTPUT_PATH")
+  pipeline_status=$?
+  pipe_statuses=("${PIPESTATUS[@]}")
+  set -o pipefail
+  set -e
+
+  codex_status=${pipe_statuses[1]:-1}
+  tee_json_status=${pipe_statuses[2]:-1}
+  jq_status=${pipe_statuses[3]:-1}
+
+  if [[ $codex_status -ne 0 ]]; then
     echo "Codex execution failed" >&2
     exit 1
   fi
+
+  if [[ $jq_status -ne 0 ]]; then
+    echo "jq pipeline exited with status $jq_status during Codex run" >&2
+  fi
+fi
+
+if [[ ! -s "$OUTPUT_PATH" && -s "$AGENT_OUTPUT_PATH" ]]; then
+  cp "$AGENT_OUTPUT_PATH" "$OUTPUT_PATH"
+fi
+
+if command -v jq >/dev/null 2>&1; then
+  push_codex_events_to_loki "$CODEX_STAGE" "$JSON_OUTPUT_PATH" "$LGTM_LOKI_ENDPOINT" || true
+else
+  echo "Skipping Loki export because jq is not installed" >&2
+fi
+
+if [[ -s "$OUTPUT_PATH" ]]; then
+  echo "Codex plan output:" >&2
+  cat "$OUTPUT_PATH" >&2
 fi
 
 echo "Codex interaction logged to $OUTPUT_PATH"
+if [[ -s "$JSON_OUTPUT_PATH" ]]; then
+  echo "Codex JSON events stored at $JSON_OUTPUT_PATH" >&2
+fi
