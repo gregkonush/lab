@@ -11,8 +11,9 @@ k3sup install --host 192.168.1.150 \
 
 echo "Fetching the server's node-token into memory"
 
-export NODE_TOKEN=$(k3sup node-token --host 192.168.1.150 --user kalmyk \
+NODE_TOKEN=$(k3sup node-token --host 192.168.1.150 --user kalmyk \
 --ssh-key "$HOME/.ssh/id_ed25519")
+export NODE_TOKEN
 
 echo "Setting up additional server: 2"
 k3sup join \
@@ -303,4 +304,3 @@ k3sup join \
 --user kalmyk \
 --ssh-key "$HOME/.ssh/id_ed25519" \
 --k3s-extra-args '--kubelet-arg=cpu-manager-policy=static --kubelet-arg=topology-manager-policy=single-numa-node --kubelet-arg=reserved-cpus=0-1 --kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi --kubelet-arg=container-log-max-size=10Mi --kubelet-arg=container-log-max-files=3 --kubelet-arg=serialize-image-pulls=false'
-

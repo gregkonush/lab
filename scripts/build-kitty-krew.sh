@@ -24,14 +24,10 @@ FULL_IMAGE_NAME="${IMAGE_NAME}:${TAG}"
 
 # Build the Docker image
 echo "Building Docker image: ${FULL_IMAGE_NAME}"
-docker buildx build --platform linux/arm64 -t ${FULL_IMAGE_NAME} -f ${DOCKERFILE} ${CONTEXT_PATH} ${PUSH_FLAG}
-
-# Check if the build was successful
-if [ $? -eq 0 ]; then
+if docker buildx build --platform linux/arm64 -t "${FULL_IMAGE_NAME}" -f "${DOCKERFILE}" "${CONTEXT_PATH}" "$PUSH_FLAG"; then
     echo "Docker image built successfully: ${FULL_IMAGE_NAME}"
 
     if [ "$LOCAL_ONLY" != "1" ]; then
-        # Print instructions for updating kustomization
         echo ""
         echo "To update the application deployment, edit the kustomization.yaml in your environment overlay:"
         echo "--------------------------------------------------------"
@@ -43,21 +39,20 @@ if [ $? -eq 0 ]; then
 
         echo ""
         echo "Running container locally for testing..."
-        docker pull ${FULL_IMAGE_NAME}
+        if ! docker pull "${FULL_IMAGE_NAME}"; then
+            echo "Failed to pull ${FULL_IMAGE_NAME}" >&2
+            exit 1
+        fi
     fi
 
     echo "Starting container with --rm flag (will be removed after stopping)..."
-    docker run --rm -d -p 3000:3000 --name kitty-krew-test ${FULL_IMAGE_NAME}
-
-    if [ $? -eq 0 ]; then
+    if docker run --rm -d -p 3000:3000 --name kitty-krew-test "${FULL_IMAGE_NAME}"; then
         echo "Container is running! Access it at: http://localhost:3000"
         echo "To stop the container: docker stop kitty-krew-test"
 
-        # Wait for the container to initialize
         echo "Waiting for application to start..."
         sleep 5
 
-        # Test the application with curl
         echo "Testing application health endpoint..."
         HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health)
 
@@ -72,7 +67,8 @@ if [ $? -eq 0 ]; then
             echo "Try manually checking the endpoints after a few more seconds."
         fi
     else
-        echo "Failed to run the container"
+        echo "Failed to run the container" >&2
+        exit 1
     fi
 else
     echo "Docker image build or push failed"

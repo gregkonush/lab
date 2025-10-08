@@ -10,6 +10,7 @@ resources:
   - workflow-completions-eventsource.yaml
   - workflow-completions-sensor.yaml
   - argo-workflows-completions-topic.yaml
+  - discord-codex-secret.yaml
   - github-webhook-topic.yaml
   - github-codex-topic.yaml
   - github-codex-planning-workflow-template.yaml

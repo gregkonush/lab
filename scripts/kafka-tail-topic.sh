@@ -82,16 +82,25 @@ kubectl apply -f "$MANIFEST" >/dev/null
 kubectl -n "$NAMESPACE" wait --for=condition=Ready pod/"$POD_NAME" --timeout=120s >/dev/null
 
 echo "Streaming $MAX_MESSAGES messages from topic '$TOPIC'" >&2
-kubectl -n "$NAMESPACE" exec "$POD_NAME" -- /bin/sh -c "set -euo pipefail; \
-  JAAS=\$(cat /etc/kafka-credentials/$JAAS_FILE); \
-  printf 'sasl.mechanism=%s\\n' "$SASL_MECHANISM" >/tmp/client.properties; \
-  printf 'security.protocol=%s\\n' "$SECURITY_PROTOCOL" >> /tmp/client.properties; \
-  printf 'sasl.jaas.config=%s\\n' \"\$JAAS\" >> /tmp/client.properties; \
-  /opt/kafka/bin/kafka-console-consumer.sh \
-    --bootstrap-server $BOOTSTRAP \
-    --topic $TOPIC \
-    --from-beginning \
-    --max-messages $MAX_MESSAGES \
-    --property print.key=true \
-    --property key.separator=' : ' \
-    --consumer.config /tmp/client.properties"
+kubectl -n "$NAMESPACE" exec "$POD_NAME" -- env \
+  BOOTSTRAP="$BOOTSTRAP" \
+  TOPIC="$TOPIC" \
+  MAX_MESSAGES="$MAX_MESSAGES" \
+  SASL_MECHANISM="$SASL_MECHANISM" \
+  SECURITY_PROTOCOL="$SECURITY_PROTOCOL" \
+  JAAS_FILE="$JAAS_FILE" \
+  /bin/sh <<'REMOTE'
+set -euo pipefail
+JAAS=$(cat "/etc/kafka-credentials/${JAAS_FILE}")
+printf 'sasl.mechanism=%s\n' "$SASL_MECHANISM" >/tmp/client.properties
+printf 'security.protocol=%s\n' "$SECURITY_PROTOCOL" >>/tmp/client.properties
+printf 'sasl.jaas.config=%s\n' "$JAAS" >>/tmp/client.properties
+/opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server "$BOOTSTRAP" \
+  --topic "$TOPIC" \
+  --from-beginning \
+  --max-messages "$MAX_MESSAGES" \
+  --property print.key=true \
+  --property key.separator=' : ' \
+  --consumer.config /tmp/client.properties
+REMOTE

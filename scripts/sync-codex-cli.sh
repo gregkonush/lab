@@ -3,11 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_WORKSPACE="lab"
+DEFAULT_REMOTE_HOME='/home/coder'
 DEFAULT_LOCAL_AUTH="$HOME/.codex/auth.json"
 DEFAULT_CONFIG_TEMPLATE="$SCRIPT_DIR/codex-config-template.toml"
-DEFAULT_REMOTE_AUTH='~/.codex/auth.json'
-DEFAULT_REMOTE_CONFIG='~/.codex/config.toml'
-DEFAULT_REMOTE_HOME='/home/coder'
+DEFAULT_REMOTE_AUTH="${DEFAULT_REMOTE_HOME}/.codex/auth.json"
+DEFAULT_REMOTE_CONFIG="${DEFAULT_REMOTE_HOME}/.codex/config.toml"
 
 usage() {
   cat <<'USAGE'
@@ -131,11 +131,13 @@ fi
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10)
 
 init_cmd="set -euo pipefail; mkdir -p $(shell_escape "$remote_auth_dir") $(shell_escape "$remote_config_dir"); rm -f $(shell_escape "$remote_auth") $(shell_escape "$remote_config")"
+# shellcheck disable=SC2029
 ssh "${ssh_opts[@]}" "$coder_host" "$init_cmd"
 
 echo "Copying auth.json to $(shell_escape "$workspace:$remote_auth")"
 RSYNC_RSH="ssh -o BatchMode=yes -o ConnectTimeout=10" rsync -av --progress "$local_auth" "$coder_host:$remote_auth"
 
+# shellcheck disable=SC2029
 ssh "${ssh_opts[@]}" "$coder_host" "chmod 600 $(shell_escape "$remote_auth")"
 
 tmp_config=""
@@ -161,6 +163,7 @@ printf '%s' "$remote_config_payload" >"$tmp_config"
 echo "Copying config.toml to $(shell_escape "$workspace:$remote_config")"
 RSYNC_RSH="ssh -o BatchMode=yes -o ConnectTimeout=10" rsync -av --progress "$tmp_config" "$coder_host:$remote_config"
 
+# shellcheck disable=SC2029
 ssh "${ssh_opts[@]}" "$coder_host" "chmod 600 $(shell_escape "$remote_config")"
 
 ssh "${ssh_opts[@]}" "$coder_host" bash -s <<'REMOTE'
