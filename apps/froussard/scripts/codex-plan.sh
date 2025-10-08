@@ -74,9 +74,28 @@ if [[ "$DISCORD_READY" -eq 1 ]]; then
   if [[ "${DISCORD_RELAY_DRY_RUN:-}" == "1" ]]; then
     relay_args+=(--dry-run)
   fi
-  if ! printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox - | tee >("${relay_cmd[@]}" "${relay_args[@]}") "$OUTPUT_PATH"; then
+  set +e
+  set +o pipefail
+  printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox - | tee >("${relay_cmd[@]}" "${relay_args[@]}") "$OUTPUT_PATH"
+  pipeline_status=$?
+  pipe_statuses=("${PIPESTATUS[@]}")
+  set -o pipefail
+  set -e
+
+  codex_status=${pipe_statuses[1]:-1}
+  tee_status=${pipe_statuses[2]:-1}
+
+  if [[ $codex_status -ne 0 ]]; then
     echo "Codex execution failed" >&2
     exit 1
+  fi
+
+  if [[ $pipeline_status -ne 0 && $tee_status -ne 0 ]]; then
+    if ! cat "$OUTPUT_PATH" >/dev/null 2>&1; then
+      echo "Codex execution failed: unable to persist output to $OUTPUT_PATH" >&2
+      exit 1
+    fi
+    echo "Discord relay failed (status $tee_status); continuing without Discord mirror" >&2
   fi
 else
   if ! printf '%s' "$PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox - | tee "$OUTPUT_PATH"; then
