@@ -42,10 +42,10 @@ spec:
 
             echo "Executing one-shot Codex workflow" >&2
             "${WORKTREE_DIR}/apps/froussard/scripts/codex-one-shot.sh" "$EVENT_FILE"
-      resources:
-        requests:
-          cpu: "4"
-          memory: 8Gi
-        limits:
-          cpu: "6"
-          memory: 12Gi
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "6"
+            memory: 12Gi
