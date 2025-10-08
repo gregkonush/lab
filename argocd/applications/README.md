@@ -55,3 +55,9 @@ Create a namespace
 ```bash
 temporal operator namespace create default
 ```
+
+### facteur
+
+- Git path: `argocd/applications/facteur`
+- Deploys: `kubernetes/facteur/overlays/cluster`
+- Secrets: `facteur-discord`, `facteur-redis` (provide SealedSecrets in `overlays/cluster/secrets.yaml` before enabling sync)

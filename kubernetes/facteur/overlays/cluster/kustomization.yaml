@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: facteur
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/gregkonush/facteur
+    newName: ghcr.io/gregkonush/lab/facteur
+    newTag: v0.1.0
+patchesStrategicMerge:
+  - deployment-redis-secret.yaml
+configMapGenerator:
+  - name: facteur-config
+    behavior: replace
+    files:
+      - config.yaml
+generatorOptions:
+  disableNameSuffixHash: true

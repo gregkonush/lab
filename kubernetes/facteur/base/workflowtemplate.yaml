@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: facteur-dispatch
+  namespace: argo
+spec:
+  entrypoint: run-dispatch
+  arguments:
+    parameters:
+      - name: target
+        value: cluster-a
+      - name: environment
+        value: staging
+  templates:
+    - name: run-dispatch
+      steps:
+        - - name: log-target
+            template: echo
+            arguments:
+              parameters:
+                - name: message
+                  value: "Dispatching workflow for {{workflow.parameters.target}} in {{workflow.parameters.environment}}"
+    - name: echo
+      inputs:
+        parameters:
+          - name: message
+      container:
+        image: alpine:3.20
+        command:
+          - sh
+          - -c
+        args:
+          - echo "{{inputs.parameters.message}}"

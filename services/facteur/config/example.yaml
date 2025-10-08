@@ -1,0 +1,20 @@
+# Example configuration for the facteur Discord ↔ Argo bridge.
+discord:
+  bot_token: your-discord-bot-token
+  application_id: "123456789012345678"
+  public_key: your-discord-public-key
+  guild_id: "987654321098765432"
+redis:
+  url: redis://redis:6379/0
+argo:
+  namespace: argo
+  workflow_template: facteur-dispatch
+  service_account: facteur
+  parameters:
+    environment: staging
+role_map:
+  dispatch:
+    - "123456789012345678"
+    - "234567890123456789"
+  status:
+    - "345678901234567890"
