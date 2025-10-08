@@ -2,162 +2,137 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
+  cat <<'USAGE' >&2
 Usage: codex-post-run.sh <transcript-path> <stage> <exit-code> [attempt-label]
 
-Generates a post-run summary by prompting Codex with metadata and a trimmed
-section of the run transcript. Prints the summary to stdout and writes it to
-${WORKTREE:-/workspace/lab}/.codex-<stage>-summary.md (override via SUMMARY_PATH).
+Summarises a Codex transcript by piping a trimmed log excerpt into `codex exec`.
+Writes the generated summary to stdout and to ${WORKTREE}/.codex-<stage>-summary.md
+unless SUMMARY_PATH is provided.
 USAGE
 }
 
-if [[ $# -lt 3 ]]; then
-  usage >&2
-  exit 1
-fi
-
-TRANSCRIPT_PATH=$1
-STAGE_RAW=$2
-EXIT_CODE=$3
+TRANSCRIPT_PATH=${1:-}
+STAGE=${2:-}
+EXIT_CODE_RAW=${3:-}
 ATTEMPT_LABEL=${4:-}
 
-if [[ ! -f "$TRANSCRIPT_PATH" ]]; then
-  echo "Transcript not found at '$TRANSCRIPT_PATH'" >&2
+if [[ -z "$TRANSCRIPT_PATH" || -z "$STAGE" || -z "$EXIT_CODE_RAW" ]]; then
+  usage
   exit 1
 fi
 
-if ! [[ "$EXIT_CODE" =~ ^-?[0-9]+$ ]]; then
-  echo "Exit code must be an integer, got '$EXIT_CODE'" >&2
+if [[ ! -f "$TRANSCRIPT_PATH" ]]; then
+  echo "Transcript path not found: $TRANSCRIPT_PATH" >&2
+  exit 1
+fi
+
+if ! [[ "$EXIT_CODE_RAW" =~ ^-?[0-9]+$ ]]; then
+  echo "Exit code must be an integer, received '$EXIT_CODE_RAW'" >&2
+  exit 1
+fi
+EXIT_CODE=$EXIT_CODE_RAW
+
+if ! command -v codex >/dev/null 2>&1; then
+  echo "codex CLI is required but not found in PATH" >&2
   exit 1
 fi
 
 WORKTREE=${WORKTREE:-/workspace/lab}
-SUMMARY_STAGE=$(printf '%s' "$STAGE_RAW" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-')
-SUMMARY_STAGE=${SUMMARY_STAGE:-run}
-DEFAULT_SUMMARY_PATH="${WORKTREE}/.codex-${SUMMARY_STAGE}-summary.md"
+
+DEFAULT_SUMMARY_PATH="${WORKTREE}/.codex-${STAGE}-summary.md"
 SUMMARY_PATH=${SUMMARY_PATH:-$DEFAULT_SUMMARY_PATH}
 mkdir -p "$(dirname "$SUMMARY_PATH")"
 
-MAX_LINES=${CODEX_SUMMARY_MAX_LINES:-400}
-MAX_CHARS=${CODEX_SUMMARY_MAX_CHARS:-16000}
-
-ensure_command() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "Missing required command: $1" >&2
-    exit 1
-  fi
-}
-
-ensure_command codex
-ensure_command python3
-
-SNIPPET_FILE=$(mktemp)
-
-python3 - "$TRANSCRIPT_PATH" "$MAX_LINES" "$MAX_CHARS" >"$SNIPPET_FILE" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-transcript = Path(sys.argv[1])
-max_lines = int(sys.argv[2])
-max_chars = int(sys.argv[3])
-
-text = transcript.read_text(errors='replace')
-lines = text.splitlines()
-
-if max_lines > 0 and len(lines) > max_lines:
-  lines = lines[-max_lines:]
-
-snippet = "\n".join(lines)
-
-if max_chars > 0 and len(snippet) > max_chars:
-  snippet = snippet[-max_chars:]
-
-ansi_re = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
-snippet = ansi_re.sub('', snippet)
-
-print(snippet)
-PY
-
-LOG_LEN=$(wc -c <"$SNIPPET_FILE" | tr -d '[:space:]')
-LOG_LINES=$(wc -l <"$SNIPPET_FILE" | tr -d '[:space:]')
-
-OUTCOME="failure"
-if [[ "$EXIT_CODE" -eq 0 ]]; then
-  OUTCOME="success"
+MAX_BYTES_DEFAULT=60000
+MAX_BYTES_ENV=${CODEX_POST_RUN_MAX_BYTES:-${CODEX_SUMMARY_MAX_CHARS:-}}
+if [[ -n "$MAX_BYTES_ENV" && "$MAX_BYTES_ENV" =~ ^[0-9]+$ ]]; then
+  MAX_BYTES=$MAX_BYTES_ENV
+else
+  MAX_BYTES=$MAX_BYTES_DEFAULT
+fi
+if ! [[ "$MAX_BYTES" =~ ^[0-9]+$ ]]; then
+  MAX_BYTES=$MAX_BYTES_DEFAULT
 fi
 
-TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+PROMPT_TEMPLATE=${CODEX_POST_RUN_PROMPT:-}
 
-PROMPT=${CODEX_SUMMARY_PROMPT_OVERRIDE:-}
-if [[ -z "$PROMPT" ]]; then
-  PROMPT=$(STAGE="$SUMMARY_STAGE" EXIT_CODE="$EXIT_CODE" OUTCOME="$OUTCOME" TIMESTAMP="$TIMESTAMP" ATTEMPT_LABEL="$ATTEMPT_LABEL" LOG_LINES="$LOG_LINES" LOG_LEN="$LOG_LEN" python3 - <<'PY'
-import json
+trimmed_transcript=$(TRANSCRIPT_PATH="$TRANSCRIPT_PATH" MAX_BYTES="$MAX_BYTES" python3 - <<'PY' 2>/dev/null || true
 import os
 import sys
 
-stage = os.environ['STAGE']
-exit_code = int(os.environ['EXIT_CODE'])
-outcome = os.environ['OUTCOME']
-timestamp = os.environ['TIMESTAMP']
-attempt = os.environ.get('ATTEMPT_LABEL', '').strip()
-log_lines = int(os.environ['LOG_LINES'])
-log_bytes = int(os.environ['LOG_LEN'])
+path = os.environ['TRANSCRIPT_PATH']
+max_bytes = int(os.environ['MAX_BYTES'])
 
-sections = [
-    "You are summarizing an automated Codex workflow run.",
-    f"- Stage: {stage}",
-    f"- Outcome: {outcome} (exit code {exit_code})",
-    f"- Timestamp (UTC): {timestamp}",
-    f"- Log excerpt: {log_lines} lines / {log_bytes} bytes (trailing portion of transcript)",
-]
+try:
+    with open(path, 'r', encoding='utf-8', errors='ignore') as fh:
+        data = fh.read()
+except FileNotFoundError:
+    sys.exit(1)
 
-if attempt:
-    sections.append(f"- Attempt: {attempt}")
-
-instructions = """Produce concise Markdown with:
-- **Outcome** line summarizing status and key signal.
-- Bullet list of the most important actions or observations.
-- \"Follow-ups\" subsection only when more work is required (otherwise omit).
-- Avoid speculation; base statements strictly on the provided logs.
-- Keep total length under 140 words."""
-
-sections.append("")
-sections.append(instructions)
-sections.append("")
-sections.append("Log excerpt follows between <log></log> tags.")
-sections.append("<log>")
-
-print("\n".join(sections))
+if len(data.encode('utf-8')) <= max_bytes:
+    print(data.strip())
+else:
+    encoded = data.encode('utf-8')
+    trimmed = encoded[-max_bytes:]
+    text = trimmed.decode('utf-8', errors='ignore')
+    print("…(truncated log)…\n" + text.strip())
 PY
+)
+
+if [[ -z "$trimmed_transcript" ]]; then
+  echo "Transcript at $TRANSCRIPT_PATH is empty; skipping summary generation" >&2
+  : >"$SUMMARY_PATH"
+  exit 0
+fi
+
+if [[ -n "$PROMPT_TEMPLATE" ]]; then
+  summarisation_prompt="$PROMPT_TEMPLATE"
+else
+  exit_label="success"
+  if [[ "$EXIT_CODE" -ne 0 ]]; then
+    exit_label="failure (exit $EXIT_CODE)"
+  fi
+  attempt_line=""
+  if [[ -n "$ATTEMPT_LABEL" ]]; then
+    attempt_line=$'\n'"- Attempt: ${ATTEMPT_LABEL}"
+  fi
+  summarisation_prompt=$(cat <<EOF
+You are assisting with summarising Codex automation runs.
+
+Provide a concise Markdown summary with:
+- Result (success/failure) and any notable errors or TODOs.
+- Recommended follow-up or retry guidance.
+- Key files touched or commands executed, when identifiable.
+
+Keep it under ~180 words. Use bullet lists when enumerating items.
+
+Run details:
+- Stage: ${STAGE}
+- Exit status: ${exit_label}${attempt_line}
+
+Transcript:
+EOF
 )
 fi
 
-SUMMARY_INPUT=$(mktemp)
-cleanup() {
-  rm -f "$SNIPPET_FILE" "$SUMMARY_INPUT"
-}
-trap cleanup EXIT
+tmp_summary=$(mktemp)
+tmp_output=$(mktemp)
+trap 'rm -f "$tmp_summary" "$tmp_output"' EXIT
 
-{
-  printf '%s\n' "$PROMPT"
-  cat "$SNIPPET_FILE"
-  printf '\n</log>\n'
-} >"$SUMMARY_INPUT"
-
-set +e
-codex exec --dangerously-bypass-approvals-and-sandbox --output-last-message "$SUMMARY_PATH" - <"$SUMMARY_INPUT" >/dev/null
-CODEX_STATUS=$?
-set -e
-
-if [[ $CODEX_STATUS -ne 0 ]]; then
-  echo "codex exec failed while generating post-run summary (exit $CODEX_STATUS)" >&2
-  exit $CODEX_STATUS
-fi
-
-if [[ ! -s "$SUMMARY_PATH" ]]; then
-  echo "Summary file not created at '$SUMMARY_PATH'" >&2
+if ! printf '%s\n\n%s\n' "$summarisation_prompt" "$trimmed_transcript" \
+  | codex exec --dangerously-bypass-approvals-and-sandbox --output-last-message "$tmp_summary" - \
+    >"$tmp_output" 2>&1; then
+  cat "$tmp_output" >&2
+  echo "codex exec failed during summary generation" >&2
   exit 1
 fi
 
-cat "$SUMMARY_PATH"
+summary=$(sed 's/\r$//' "$tmp_summary")
+
+if [[ -z "$summary" ]]; then
+  echo "codex summary is empty; transcript may be unsuitable" >&2
+  : >"$SUMMARY_PATH"
+  exit 0
+fi
+
+printf '%s\n' "$summary" | tee "$SUMMARY_PATH"

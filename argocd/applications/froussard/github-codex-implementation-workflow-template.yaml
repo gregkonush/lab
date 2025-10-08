@@ -60,6 +60,8 @@ spec:
             value: /workspace/lab/.codex-implementation-summary.md
           - name: CODEX_IMPLEMENTATION_MAX_ATTEMPTS
             value: "2"
+          - name: CODEX_POST_RUN_MAX_BYTES
+            value: "60000"
           - name: CODEX_SUMMARY_MAX_LINES
             value: "400"
           - name: CODEX_SUMMARY_MAX_CHARS
