@@ -38,7 +38,7 @@ describe('postIssueReaction', () => {
   })
 
   it('posts reaction payload to the GitHub API', async () => {
-    const fetchSpy = vi.fn(async (_input: string, init) => {
+    const fetchSpy = vi.fn(async (_input: string, _init) => {
       return {
         ok: true,
         status: 201,
@@ -289,76 +289,75 @@ describe('findLatestPlanComment', () => {
 
 describe('upsertPlanComment.sh', () => {
   const scriptPath = fileURLToPath(new URL('../../scripts/upsert-plan-comment.sh', import.meta.url))
-  const ghStub = [
-    '#!/usr/bin/env bash',
-    'set -euo pipefail',
-    '',
-    'state_file="${UPSERT_PLAN_STATE_FILE:?}"',
-    'mode="${UPSERT_PLAN_MODE:?}"',
-    'log_file="${UPSERT_PLAN_LOG:?}"',
-    '',
-    'call_index="$(cat "${state_file}" 2>/dev/null || echo "0")"',
-    '',
-    'if [[ "${call_index}" == "0" ]]; then',
-    '  echo "1" >"${state_file}"',
-    '  if [[ "${1:-}" == "api" ]]; then',
-    '    shift',
-    '  fi',
-    '  echo "GET $*" >>"${log_file}"',
-    '  if [[ "${mode}" == "create" ]]; then',
-    "    printf '[]'",
-    '  else',
-    '    printf \'[{"id":42,"body":"<!-- codex:plan --> existing","html_url":"https://example.com/comment/42"}]\'',
-    '  fi',
-    '  exit 0',
-    'fi',
-    '',
-    'if [[ "${call_index}" == "1" ]]; then',
-    '  echo "2" >"${state_file}"',
-    '  if [[ "${1:-}" == "api" ]]; then',
-    '    shift',
-    '  fi',
-    '  url="${1:-}"',
-    '  shift || true',
-    '  method=""',
-    '  input_file=""',
-    '  while [[ $# -gt 0 ]]; do',
-    '    case "$1" in',
-    '      --method)',
-    '        method="${2:-}"',
-    '        shift 2',
-    '        ;;',
-    '      --input)',
-    '        input_file="${2:-}"',
-    '        shift 2',
-    '        ;;',
-    '      *)',
-    '        shift',
-    '        ;;',
-    '    esac',
-    '  done',
-    '',
-    '  echo "MUTATE ${method:-none} ${url:-missing}" >>"${log_file}"',
-    '',
-    '  if [[ "${mode}" == "create" ]]; then',
-    '    if [[ "${method}" != "POST" ]]; then',
-    '      echo "Expected POST during create, got ${method:-<none>}" >&2',
-    '      exit 1',
-    '    fi',
-    '    printf \'{"id":555,"html_url":"https://example.com/comment/555","body":"<!-- codex:plan --> created"}\'',
-    '  else',
-    '    if [[ "${method}" != "PATCH" ]]; then',
-    '      echo "Expected PATCH during update, got ${method:-<none>}" >&2',
-    '      exit 1',
-    '    fi',
-    '    printf \'{"id":42,"html_url":"https://example.com/comment/42","body":"<!-- codex:plan --> updated"}\'',
-    '  fi',
-    '  exit 0',
-    'fi',
-    '',
-    'echo "Unexpected call count" >&2',
-    'exit 1',
-  ].join('\n')
+  const ghStub = `#!/usr/bin/env bash
+set -euo pipefail
+
+state_file="\${UPSERT_PLAN_STATE_FILE:?}"
+mode="\${UPSERT_PLAN_MODE:?}"
+log_file="\${UPSERT_PLAN_LOG:?}"
+
+call_index="$(cat "\${state_file}" 2>/dev/null || echo "0")"
+
+if [[ "\${call_index}" == "0" ]]; then
+  echo "1" >"\${state_file}"
+  if [[ "\${1:-}" == "api" ]]; then
+    shift
+  fi
+  echo "GET $*" >>"\${log_file}"
+  if [[ "\${mode}" == "create" ]]; then
+    printf '[]'
+  else
+    printf '[{"id":42,"body":"<!-- codex:plan --> existing","html_url":"https://example.com/comment/42"}]'
+  fi
+  exit 0
+fi
+
+if [[ "\${call_index}" == "1" ]]; then
+  echo "2" >"\${state_file}"
+  if [[ "\${1:-}" == "api" ]]; then
+    shift
+  fi
+  url="\${1:-}"
+  shift || true
+  method=""
+  input_file=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method)
+        method="\${2:-}"
+        shift 2
+        ;;
+      --input)
+        input_file="\${2:-}"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  echo "MUTATE \${method:-none} \${url:-missing}" >>"\${log_file}"
+
+  if [[ "\${mode}" == "create" ]]; then
+    if [[ "\${method}" != "POST" ]]; then
+      echo "Expected POST during create, got \${method:-<none>}" >&2
+      exit 1
+    fi
+    printf '{"id":555,"html_url":"https://example.com/comment/555","body":"<!-- codex:plan --> created"}'
+  else
+    if [[ "\${method}" != "PATCH" ]]; then
+      echo "Expected PATCH during update, got \${method:-<none>}" >&2
+      exit 1
+    fi
+    printf '{"id":42,"html_url":"https://example.com/comment/42","body":"<!-- codex:plan --> updated"}'
+  fi
+  exit 0
+fi
+
+echo "Unexpected call count" >&2
+exit 1
+`
 
   it('creates a plan comment when none exist', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'codex-upsert-create-'))
