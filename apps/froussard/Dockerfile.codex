@@ -3,6 +3,7 @@ FROM ghcr.io/openai/codex-universal:latest
 
 ARG ARGO_VERSION=v3.6.3
 ARG KUBECONFORM_VERSION=v0.6.7
+ARG TARGETARCH=arm64
 
 ENV DEBIAN_FRONTEND=noninteractive \
     WORKSPACE=/workspace \
@@ -16,14 +17,26 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git gh jq python3 curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL -o /tmp/argo-linux-amd64.gz "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz" \
-    && gunzip -c /tmp/argo-linux-amd64.gz > /usr/local/bin/argo \
-    && chmod +x /usr/local/bin/argo \
-    && rm /tmp/argo-linux-amd64.gz \
-    && curl -fsSL -o /tmp/kubeconform-linux-amd64.tar.gz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
-    && tar -xzf /tmp/kubeconform-linux-amd64.tar.gz -C /tmp kubeconform \
-    && install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform \
-    && rm /tmp/kubeconform-linux-amd64.tar.gz /tmp/kubeconform
+RUN set -eux; \
+    ARCH=${TARGETARCH:-arm64}; \
+    case "${ARCH}" in \
+      amd64|arm64) \
+        ;; \
+      *) \
+        echo "Unsupported TARGETARCH: ${ARCH}" >&2; \
+        exit 1; \
+        ;; \
+    esac; \
+    ARGO_ARCHIVE="/tmp/argo-linux-${ARCH}.gz"; \
+    KUBECONFORM_ARCHIVE="/tmp/kubeconform-linux-${ARCH}.tar.gz"; \
+    curl -fsSL -o "${ARGO_ARCHIVE}" "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-${ARCH}.gz"; \
+    gunzip -c "${ARGO_ARCHIVE}" > /tmp/argo; \
+    install -m 0755 /tmp/argo /usr/local/bin/argo; \
+    rm -f "${ARGO_ARCHIVE}" /tmp/argo; \
+    curl -fsSL -o "${KUBECONFORM_ARCHIVE}" "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH}.tar.gz"; \
+    tar -xzf "${KUBECONFORM_ARCHIVE}" -C /tmp kubeconform; \
+    install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform; \
+    rm -f "${KUBECONFORM_ARCHIVE}" /tmp/kubeconform
 
 RUN curl -fsSL https://bun.sh/install | bash \
     && mkdir -p /opt/homebrew/bin \
