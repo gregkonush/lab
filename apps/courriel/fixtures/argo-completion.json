@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "name": "notify-artifacts-20251005-1700",
+    "namespace": "argo-workflows",
+    "uid": "2b4e2d68-1f62-4fb8-9a7f-67a2cb3986aa",
+    "labels": {
+      "workflows.argoproj.io/completed": "true",
+      "workflows.argoproj.io/creator": "pipeline-bot",
+      "workflows.argoproj.io/phase": "Succeeded"
+    },
+    "annotations": {
+      "courriel/email-to": "data-team@example.com, ops@example.com",
+      "courriel/email-from": "Argo Bot <argo-bot@example.com>",
+      "courriel/email-subject": "Dataset refresh completed",
+      "courriel/email-reply-to": "ml-oncall@example.com"
+    }
+  },
+  "status": {
+    "phase": "Succeeded",
+    "message": "workflow completed successfully",
+    "progress": "5/5",
+    "startedAt": "2025-10-05T17:03:23Z",
+    "finishedAt": "2025-10-05T17:05:42Z",
+    "nodes": {
+      "notify-artifacts-20251005-1700": {
+        "displayName": "notify-artifacts-20251005-1700",
+        "type": "Workflow",
+        "phase": "Succeeded",
+        "startedAt": "2025-10-05T17:03:23Z",
+        "finishedAt": "2025-10-05T17:05:42Z",
+        "outputs": {
+          "artifacts": [
+            {
+              "name": "summary",
+              "s3": {
+                "key": "workflows/notify-artifacts-20251005-1700/summary.json",
+                "bucket": "argo-artifacts",
+                "endpoint": "https://s3.example.com"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "spec": {
+    "arguments": {
+      "parameters": [
+        {
+          "name": "notify_to",
+          "value": "pipeline-owner@example.com"
+        }
+      ]
+    }
+  }
+}

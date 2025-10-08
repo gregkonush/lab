@@ -163,6 +163,13 @@ spec:
               argocd.argoproj.io/sync-wave: "3"
             automation: auto
             enabled: "true"
+          - name: courriel
+            path: argocd/applications/courriel
+            namespace: argo-workflows
+            annotations:
+              argocd.argoproj.io/sync-wave: "4"
+            automation: manual
+            enabled: "false"
           - name: arc
             path: argocd/applications/arc
             namespace: arc
