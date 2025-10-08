@@ -11,6 +11,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WORKTREE=/workspace/lab \
     PLAN_OUTPUT_PATH=/workspace/lab/.codex-plan-output.md \
     IMPLEMENTATION_OUTPUT_PATH=/workspace/lab/.codex-implementation.log \
+    PLANNING_SUMMARY_PATH=/workspace/lab/.codex-planning-summary.md \
+    IMPLEMENTATION_SUMMARY_PATH=/workspace/lab/.codex-implementation-summary.md \
+    CODEX_IMPLEMENTATION_MAX_ATTEMPTS=2 \
+    CODEX_SUMMARY_MAX_LINES=400 \
+    CODEX_SUMMARY_MAX_CHARS=16000 \
     GIT_TERMINAL_PROMPT=0 \
     BUN_INSTALL=/usr/local
 
@@ -65,7 +70,8 @@ RUN git config --global user.name "codex-automation" \
 COPY apps/froussard/scripts/codex-bootstrap.sh /usr/local/bin/codex-bootstrap.sh
 COPY apps/froussard/scripts/codex-plan.sh /usr/local/bin/codex-plan.sh
 COPY apps/froussard/scripts/codex-implement.sh /usr/local/bin/codex-implement.sh
-RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh /usr/local/bin/codex-implement.sh
+COPY apps/froussard/scripts/codex-post-run.sh /usr/local/bin/codex-post-run.sh
+RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh /usr/local/bin/codex-implement.sh /usr/local/bin/codex-post-run.sh
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/codex-bootstrap.sh"]

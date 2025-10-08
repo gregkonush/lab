@@ -54,6 +54,16 @@ spec:
                 key: token
           - name: LGTM_LOKI_ENDPOINT
             value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
+          - name: CODEX_POST_RUN_SCRIPT
+            value: /usr/local/bin/codex-post-run.sh
+          - name: IMPLEMENTATION_SUMMARY_PATH
+            value: /workspace/lab/.codex-implementation-summary.md
+          - name: CODEX_IMPLEMENTATION_MAX_ATTEMPTS
+            value: "2"
+          - name: CODEX_SUMMARY_MAX_LINES
+            value: "400"
+          - name: CODEX_SUMMARY_MAX_CHARS
+            value: "16000"
         command: ["/usr/local/bin/codex-bootstrap.sh"]
         args:
           - "/bin/bash"
@@ -86,6 +96,3 @@ spec:
           limits:
             cpu: "6"
             memory: 12Gi
-      retryStrategy:
-        limit: 3
-        retryPolicy: OnFailure

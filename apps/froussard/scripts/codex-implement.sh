@@ -75,6 +75,29 @@ push_codex_events_to_loki() {
   echo "Pushed Codex events to Loki at $endpoint" >&2
   return 0
 }
+
+path_for_attempt() {
+  local base_path=$1
+  local attempt_idx=$2
+
+  if [[ -z "$base_path" ]]; then
+    echo ""
+    return
+  fi
+
+  local dir filename stem ext
+  dir=$(dirname "$base_path")
+  filename=$(basename "$base_path")
+  stem=$filename
+  ext=""
+
+  if [[ "$filename" == *.* ]]; then
+    ext=".${filename##*.}"
+    stem=${filename%.*}
+  fi
+
+  printf '%s/%s.attempt%s%s\n' "$dir" "$stem" "$attempt_idx" "$ext"
+}
 RELAY_SCRIPT=${RELAY_SCRIPT:-apps/froussard/scripts/discord-relay.ts}
 RELAY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 RELAY_RUN_ID=${CODEX_RELAY_RUN_ID:-${ARGO_WORKFLOW_NAME:-${ARGO_WORKFLOW_UID:-}}}
@@ -164,85 +187,165 @@ export PLAN_COMMENT_BODY="$plan_comment_body"
 export WORKTREE
 export OUTPUT_PATH
 export ISSUE_TITLE=${ISSUE_TITLE:-$event_issue_title}
+POST_RUN_SUMMARY_SCRIPT=${CODEX_POST_RUN_SCRIPT:-${WORKTREE}/apps/froussard/scripts/codex-post-run.sh}
+IMPLEMENTATION_SUMMARY_PATH=${IMPLEMENTATION_SUMMARY_PATH:-${WORKTREE}/.codex-implementation-summary.md}
+
+MAX_ATTEMPTS_RAW=${CODEX_IMPLEMENTATION_MAX_ATTEMPTS:-${CODEX_MAX_ATTEMPTS:-2}}
+if ! [[ "$MAX_ATTEMPTS_RAW" =~ ^[0-9]+$ ]] || [[ "$MAX_ATTEMPTS_RAW" -lt 1 ]]; then
+  MAX_ATTEMPTS=2
+else
+  MAX_ATTEMPTS=$MAX_ATTEMPTS_RAW
+fi
+
+relay_args_base=()
 
 echo "Running Codex implementation for ${ISSUE_REPO}#${ISSUE_NUMBER}" >&2
 
 if [[ "$DISCORD_READY" -eq 1 ]]; then
-  relay_args=(--stage implementation --repo "$ISSUE_REPO" --issue "$ISSUE_NUMBER" --timestamp "$RELAY_TIMESTAMP")
+  relay_args_base=(--stage implementation --repo "$ISSUE_REPO" --issue "$ISSUE_NUMBER" --timestamp "$RELAY_TIMESTAMP")
   if [[ -n "$RELAY_RUN_ID" ]]; then
-    relay_args+=(--run-id "$RELAY_RUN_ID")
+    relay_args_base+=(--run-id "$RELAY_RUN_ID")
   fi
   if [[ -n "$event_issue_title" ]]; then
-    relay_args+=(--title "$event_issue_title")
+    relay_args_base+=(--title "$event_issue_title")
   fi
   if [[ "${DISCORD_RELAY_DRY_RUN:-}" == "1" ]]; then
-    relay_args+=(--dry-run)
+    relay_args_base+=(--dry-run)
   fi
+fi
+
+run_codex_attempt() {
+  local attempt=$1
+  local attempt_label=$2
+  local use_discord=$3
+  local attempt_output_path=$4
+  local attempt_json_path=$5
+  local attempt_agent_path=$6
+
+  mkdir -p "$(dirname "$attempt_output_path")" "$(dirname "$attempt_json_path")" "$(dirname "$attempt_agent_path")"
+  : >"$attempt_json_path"
+  : >"$attempt_agent_path"
+
+  local pipeline_status=0
+  local codex_status=0
+  local jq_status=0
+  local relay_status=0
+
   set +e
   set +o pipefail
-  printf '%s' "$CODEX_PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
-    | tee >(cat >"$JSON_OUTPUT_PATH") \
-    | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
-    | tee >("${relay_cmd[@]}" "${relay_args[@]}") >(cat >"$AGENT_OUTPUT_PATH")
-  pipeline_status=$?
-  pipe_statuses=("${PIPESTATUS[@]}")
+  if [[ "$use_discord" -eq 1 && "$DISCORD_READY" -eq 1 ]]; then
+    local relay_args=("${relay_args_base[@]}")
+    printf '%s' "$CODEX_PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$attempt_output_path" - \
+      | tee >(cat >"$attempt_json_path") \
+      | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
+      | tee >("${relay_cmd[@]}" "${relay_args[@]}") >(cat >"$attempt_agent_path")
+    pipeline_status=$?
+    local pipe_statuses=("${PIPESTATUS[@]}")
+    codex_status=${pipe_statuses[1]:-1}
+    jq_status=${pipe_statuses[3]:-1}
+    relay_status=${pipe_statuses[4]:-1}
+  else
+    printf '%s' "$CODEX_PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$attempt_output_path" - \
+      | tee >(cat >"$attempt_json_path") \
+      | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
+      | tee >(cat >"$attempt_agent_path")
+    pipeline_status=$?
+    local pipe_statuses=("${PIPESTATUS[@]}")
+    codex_status=${pipe_statuses[1]:-1}
+    jq_status=${pipe_statuses[3]:-1}
+  fi
   set -o pipefail
   set -e
 
-  codex_status=${pipe_statuses[1]:-1}
-  jq_status=${pipe_statuses[3]:-1}
-  relay_status=${pipe_statuses[4]:-1}
-
   if [[ $codex_status -ne 0 ]]; then
-    echo "Codex execution failed" >&2
-    exit 1
+    echo "Codex execution failed on ${attempt_label} (exit $codex_status)" >&2
   fi
 
   if [[ $jq_status -ne 0 ]]; then
-    echo "jq pipeline exited with status $jq_status during Codex run" >&2
+    echo "jq pipeline exited with status $jq_status during Codex run (${attempt_label})" >&2
   fi
 
-  if [[ $pipeline_status -ne 0 ]]; then
-    if [[ $relay_status -ne 0 ]]; then
-      echo "Discord relay failed (status $relay_status); continuing without Discord mirror" >&2
-    fi
-  fi
-else
-  set +e
-  set +o pipefail
-  printf '%s' "$CODEX_PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
-    | tee >(cat >"$JSON_OUTPUT_PATH") \
-    | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
-    | tee >(cat >"$AGENT_OUTPUT_PATH")
-  pipeline_status=$?
-  pipe_statuses=("${PIPESTATUS[@]}")
-  set -o pipefail
-  set -e
-
-  codex_status=${pipe_statuses[1]:-1}
-  jq_status=${pipe_statuses[3]:-1}
-
-  if [[ $codex_status -ne 0 ]]; then
-    echo "Codex execution failed" >&2
-    exit 1
+  if [[ $pipeline_status -ne 0 && $relay_status -ne 0 && "$use_discord" -eq 1 && "$DISCORD_READY" -eq 1 ]]; then
+    echo "Discord relay failed on ${attempt_label} (status $relay_status); continuing without Discord mirror" >&2
   fi
 
-  if [[ $jq_status -ne 0 ]]; then
-    echo "jq pipeline exited with status $jq_status during Codex run" >&2
+  if [[ ! -s "$attempt_output_path" && -s "$attempt_agent_path" ]]; then
+    cp "$attempt_agent_path" "$attempt_output_path"
   fi
+
+  if command -v jq >/dev/null 2>&1; then
+    push_codex_events_to_loki "$CODEX_STAGE" "$attempt_json_path" "$LGTM_LOKI_ENDPOINT" || true
+  else
+    echo "Skipping Loki export because jq is not installed" >&2
+  fi
+
+  if [[ -x "$POST_RUN_SUMMARY_SCRIPT" ]]; then
+    SUMMARY_PATH="$IMPLEMENTATION_SUMMARY_PATH" "$POST_RUN_SUMMARY_SCRIPT" "$attempt_agent_path" "$CODEX_STAGE" "$codex_status" "$attempt_label" || \
+      echo "Post-run summary failed for ${attempt_label}" >&2
+  else
+    echo "Skipping post-run summary: script '$POST_RUN_SUMMARY_SCRIPT' missing or not executable" >&2
+  fi
+
+  LAST_OUTPUT_PATH="$attempt_output_path"
+  LAST_JSON_PATH="$attempt_json_path"
+  LAST_AGENT_PATH="$attempt_agent_path"
+
+  return "$codex_status"
+}
+
+final_status=1
+LAST_OUTPUT_PATH=""
+LAST_JSON_PATH=""
+LAST_AGENT_PATH=""
+
+attempt=1
+while [[ $attempt -le $MAX_ATTEMPTS ]]; do
+  attempt_label="attempt ${attempt}/${MAX_ATTEMPTS}"
+  attempt_output_path=$(path_for_attempt "$OUTPUT_PATH" "$attempt")
+  attempt_json_path=$(path_for_attempt "$JSON_OUTPUT_PATH" "$attempt")
+  attempt_agent_path=$(path_for_attempt "$AGENT_OUTPUT_PATH" "$attempt")
+  use_discord=0
+  if [[ $attempt -eq 1 && "$DISCORD_READY" -eq 1 ]]; then
+    use_discord=1
+  fi
+
+  run_codex_attempt "$attempt" "$attempt_label" "$use_discord" "$attempt_output_path" "$attempt_json_path" "$attempt_agent_path"
+  attempt_status=$?
+
+  if [[ $attempt_status -eq 0 ]]; then
+    final_status=0
+    break
+  fi
+
+  if [[ $attempt -ge $MAX_ATTEMPTS ]]; then
+    final_status=$attempt_status
+    break
+  fi
+
+  echo "Retrying Codex implementation (next attempt) after ${attempt_label} failed" >&2
+  attempt=$((attempt + 1))
+done
+
+if [[ -n "$LAST_OUTPUT_PATH" && "$LAST_OUTPUT_PATH" != "$OUTPUT_PATH" ]]; then
+  cp "$LAST_OUTPUT_PATH" "$OUTPUT_PATH"
 fi
 
-if [[ ! -s "$OUTPUT_PATH" && -s "$AGENT_OUTPUT_PATH" ]]; then
-  cp "$AGENT_OUTPUT_PATH" "$OUTPUT_PATH"
+if [[ -n "$LAST_JSON_PATH" && "$LAST_JSON_PATH" != "$JSON_OUTPUT_PATH" ]]; then
+  cp "$LAST_JSON_PATH" "$JSON_OUTPUT_PATH"
 fi
 
-if command -v jq >/dev/null 2>&1; then
-  push_codex_events_to_loki "$CODEX_STAGE" "$JSON_OUTPUT_PATH" "$LGTM_LOKI_ENDPOINT" || true
-else
-  echo "Skipping Loki export because jq is not installed" >&2
+if [[ -n "$LAST_AGENT_PATH" && "$LAST_AGENT_PATH" != "$AGENT_OUTPUT_PATH" ]]; then
+  cp "$LAST_AGENT_PATH" "$AGENT_OUTPUT_PATH"
 fi
 
-echo "Codex execution logged to $OUTPUT_PATH" >&2
+if [[ -s "$OUTPUT_PATH" ]]; then
+  echo "Codex execution logged to $OUTPUT_PATH" >&2
+fi
 if [[ -s "$JSON_OUTPUT_PATH" ]]; then
   echo "Codex JSON events stored at $JSON_OUTPUT_PATH" >&2
 fi
+if [[ -s "$IMPLEMENTATION_SUMMARY_PATH" ]]; then
+  echo "Codex summary stored at $IMPLEMENTATION_SUMMARY_PATH" >&2
+fi
+
+exit "$final_status"

@@ -9,8 +9,8 @@ This guide explains how the two-stage Codex automation pipeline works and how to
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
 3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
-   - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
-   - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.sh`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
+   - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment, logs its GH CLI output to `.codex-plan-output.md`, and calls `codex-post-run.sh` to produce a short Markdown recap at `.codex-planning-summary.md`.
+   - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.sh`, records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact), and runs `codex-post-run.sh` after each attempt to capture `.codex-implementation-summary.md`. The script owns the single in-container retry, so Argo no longer retries the workflow template.
    - Both templates carry a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
 
 ## Prerequisites
