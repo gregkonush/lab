@@ -36,16 +36,16 @@ RELAY_RUN_ID=$(printf '%s' "$RELAY_RUN_ID" | tr '[:upper:]' '[:lower:]')
 
 DISCORD_READY=0
 if [[ -n "${DISCORD_BOT_TOKEN:-}" && -n "${DISCORD_GUILD_ID:-}" && -f "$RELAY_SCRIPT" ]]; then
-  if command -v bunx >/dev/null 2>&1; then
+  if command -v bun >/dev/null 2>&1; then
     DISCORD_READY=1
   else
-    echo "Discord relay disabled: bunx not available in PATH" >&2
+    echo "Discord relay disabled: bun not available in PATH" >&2
   fi
 else
   echo "Discord relay disabled: missing credentials or relay script" >&2
 fi
 
-relay_cmd=(bunx tsx "$RELAY_SCRIPT")
+relay_cmd=(bun run "$RELAY_SCRIPT")
 
 event_prompt=$(jq -r '.prompt // empty' "$EVENT_PATH")
 if [[ -z "$event_prompt" ]]; then
