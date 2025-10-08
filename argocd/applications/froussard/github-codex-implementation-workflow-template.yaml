@@ -3,6 +3,8 @@ kind: WorkflowTemplate
 metadata:
   name: github-codex-implementation
   namespace: argo-workflows
+  labels:
+    codex.stage: implementation
 spec:
   serviceAccountName: argo-workflows-workflow
   entrypoint: implement

@@ -4,6 +4,18 @@ metadata:
   name: github-codex-sensor
   namespace: argo-workflows
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflow-completions-eventsource
+  namespace: argo-workflows
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflow-completions-sensor
+  namespace: argo-workflows
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -18,6 +30,28 @@ rules:
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflow-completions-eventsource
+  namespace: argo-workflows
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflow-completions-sensor
+  namespace: argo-workflows
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - kafka-codex-credentials
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: github-codex-sensor
@@ -30,6 +64,34 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: github-codex-sensor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflow-completions-eventsource
+  namespace: argo-workflows
+subjects:
+  - kind: ServiceAccount
+    name: workflow-completions-eventsource
+    namespace: argo-workflows
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workflow-completions-eventsource
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflow-completions-sensor
+  namespace: argo-workflows
+subjects:
+  - kind: ServiceAccount
+    name: workflow-completions-sensor
+    namespace: argo-workflows
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workflow-completions-sensor
 ---
 apiVersion: v1
 kind: ServiceAccount

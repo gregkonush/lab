@@ -3,6 +3,8 @@ kind: WorkflowTemplate
 metadata:
   name: github-codex-planning
   namespace: argo-workflows
+  labels:
+    codex.stage: planning
 spec:
   serviceAccountName: argo-workflows-workflow
   entrypoint: plan
