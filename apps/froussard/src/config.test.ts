@@ -9,6 +9,8 @@ const baseEnv = {
   KAFKA_PASSWORD: 'pass',
   KAFKA_TOPIC: 'raw-topic',
   KAFKA_CODEX_TOPIC: 'codex-topic',
+  KAFKA_DISCORD_COMMAND_TOPIC: 'discord.commands.incoming',
+  DISCORD_PUBLIC_KEY: 'public-key',
 }
 
 describe('loadConfig', () => {
@@ -20,6 +22,8 @@ describe('loadConfig', () => {
     expect(config.codebase.branchPrefix).toBe('codex/issue-')
     expect(config.codex.triggerLogin).toBe('gregkonush')
     expect(config.codex.implementationTriggerPhrase).toBe('execute plan')
+    expect(config.discord.publicKey).toBe('public-key')
+    expect(config.discord.defaultResponse.ephemeral).toBe(true)
   })
 
   it('allows overriding defaults via env', () => {
@@ -30,6 +34,7 @@ describe('loadConfig', () => {
       CODEX_TRIGGER_LOGIN: 'TESTUSER',
       CODEX_IMPLEMENTATION_TRIGGER: 'run it',
       GITHUB_ACK_REACTION: 'eyes',
+      DISCORD_DEFAULT_EPHEMERAL: 'false',
     }
 
     const config = loadConfig(env)
@@ -38,10 +43,13 @@ describe('loadConfig', () => {
     expect(config.codex.triggerLogin).toBe('testuser')
     expect(config.codex.implementationTriggerPhrase).toBe('run it')
     expect(config.github.ackReaction).toBe('eyes')
+    expect(config.discord.defaultResponse.ephemeral).toBe(false)
   })
 
   it('throws when required env is missing', () => {
     expect(() => loadConfig({ ...baseEnv, KAFKA_BROKERS: '' })).toThrow()
     expect(() => loadConfig({ ...baseEnv, GITHUB_WEBHOOK_SECRET: undefined })).toThrow()
+    expect(() => loadConfig({ ...baseEnv, KAFKA_DISCORD_COMMAND_TOPIC: undefined })).toThrow()
+    expect(() => loadConfig({ ...baseEnv, DISCORD_PUBLIC_KEY: undefined })).toThrow()
   })
 })

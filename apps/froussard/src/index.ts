@@ -27,6 +27,10 @@ export const createApp = () => {
     codexTriggerLogin: config.codex.triggerLogin,
     codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
     topics: config.kafka.topics,
+    discord: {
+      publicKey: config.discord.publicKey,
+      response: config.discord.defaultResponse,
+    },
   }
 
   const webhookHandler = createWebhookHandler({

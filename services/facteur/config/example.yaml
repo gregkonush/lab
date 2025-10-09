@@ -15,8 +15,12 @@ argo:
   parameters:
     environment: staging
 role_map:
-  dispatch:
+  plan:
     - "123456789012345678"
     - "234567890123456789"
-  status:
+  implement:
+    - "234567890123456789"
+  review:
+    - "123456789012345678"
+    - "234567890123456789"
     - "345678901234567890"

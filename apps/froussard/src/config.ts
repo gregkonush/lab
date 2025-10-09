@@ -18,6 +18,7 @@ export interface AppConfig {
     topics: {
       raw: string
       codex: string
+      discordCommands: string
     }
   }
   codebase: {
@@ -27,6 +28,13 @@ export interface AppConfig {
   codex: {
     triggerLogin: string
     implementationTriggerPhrase: string
+  }
+  discord: {
+    publicKey: string
+    defaultResponse: {
+      deferType: 'channel-message'
+      ephemeral: boolean
+    }
   }
   github: {
     token: string | null
@@ -52,6 +60,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
       topics: {
         raw: requireEnv(env, 'KAFKA_TOPIC'),
         codex: requireEnv(env, 'KAFKA_CODEX_TOPIC'),
+        discordCommands: requireEnv(env, 'KAFKA_DISCORD_COMMAND_TOPIC'),
       },
     },
     codebase: {
@@ -61,6 +70,13 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     codex: {
       triggerLogin: (env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase(),
       implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'execute plan').trim(),
+    },
+    discord: {
+      publicKey: requireEnv(env, 'DISCORD_PUBLIC_KEY'),
+      defaultResponse: {
+        deferType: 'channel-message',
+        ephemeral: (env.DISCORD_DEFAULT_EPHEMERAL ?? 'true').toLowerCase() === 'true',
+      },
     },
     github: {
       token: env.GITHUB_TOKEN ?? null,

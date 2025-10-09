@@ -25,7 +25,7 @@ vi.mock('@/config', () => ({
       username: 'user',
       password: 'pass',
       clientId: 'client',
-      topics: { raw: 'raw', codex: 'codex' },
+      topics: { raw: 'raw', codex: 'codex', discordCommands: 'discord' },
     },
     codebase: {
       baseBranch: 'main',
@@ -34,6 +34,10 @@ vi.mock('@/config', () => ({
     codex: {
       triggerLogin: 'gregkonush',
       implementationTriggerPhrase: 'execute plan',
+    },
+    discord: {
+      publicKey: 'public',
+      defaultResponse: { deferType: 'channel-message', ephemeral: true },
     },
     github: {
       token: 'token',
