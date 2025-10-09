@@ -14,6 +14,6 @@ spec:
       limits:
         cpu: 200m
         memory: 256Mi
-  securityContext:
+  podSecurityContext:
     runAsUser: 1000
     fsGroup: 1000

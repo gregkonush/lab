@@ -10,6 +10,7 @@ import (
 
 	"github.com/gregkonush/lab/services/facteur/internal/config"
 	"github.com/gregkonush/lab/services/facteur/internal/server"
+	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
 
 // NewServeCommand scaffolds the "serve" CLI command.
@@ -33,9 +34,21 @@ func NewServeCommand() *cobra.Command {
 				return fmt.Errorf("load configuration: %w", err)
 			}
 
+			store, err := session.NewRedisStoreFromURL(cfg.Redis.URL)
+			if err != nil {
+				return fmt.Errorf("init redis store: %w", err)
+			}
+
+			dispatcher, err := buildDispatcher(cfg)
+			if err != nil {
+				return err
+			}
+
 			srv, err := server.New(server.Options{
 				ListenAddress: cfg.Server.ListenAddress,
 				Prefork:       prefork,
+				Dispatcher:    dispatcher,
+				Store:         store,
 			})
 			if err != nil {
 				return fmt.Errorf("init server: %w", err)

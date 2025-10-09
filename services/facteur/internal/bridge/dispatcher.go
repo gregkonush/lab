@@ -9,9 +9,11 @@ import (
 
 // DispatchRequest describes a workflow submission triggered by a Discord command.
 type DispatchRequest struct {
-	Command string
-	UserID  string
-	Options map[string]string
+	Command       string
+	UserID        string
+	Options       map[string]string
+	CorrelationID string
+	TraceID       string
 }
 
 // DispatchResult captures workflow submission metadata to echo back to Discord.
@@ -20,6 +22,7 @@ type DispatchResult struct {
 	WorkflowName  string
 	Message       string
 	CorrelationID string
+	TraceID       string
 }
 
 // StatusReport summarises the configured workflow template state.
@@ -90,11 +93,17 @@ func (d *WorkflowDispatcher) Dispatch(ctx context.Context, req DispatchRequest) 
 
 	message := fmt.Sprintf("Workflow `%s` submitted to namespace `%s`.", result.WorkflowName, result.Namespace)
 
+	correlationID := req.CorrelationID
+	if correlationID == "" {
+		correlationID = result.WorkflowName
+	}
+
 	return DispatchResult{
 		Namespace:     result.Namespace,
 		WorkflowName:  result.WorkflowName,
 		Message:       message,
-		CorrelationID: result.WorkflowName,
+		CorrelationID: correlationID,
+		TraceID:       req.TraceID,
 	}, nil
 }
 

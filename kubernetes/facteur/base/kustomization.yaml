@@ -6,6 +6,7 @@ resources:
   - service.yaml
   - workflowtemplate.yaml
   - redis.yaml
+  - kafkasource.yaml
 configMapGenerator:
   - name: facteur-config
     files:

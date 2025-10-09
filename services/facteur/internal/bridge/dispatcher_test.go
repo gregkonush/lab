@@ -44,6 +44,28 @@ func TestWorkflowDispatcherDispatch(t *testing.T) {
 	}, runner.lastRunInput)
 }
 
+func TestWorkflowDispatcherDispatchUsesRequestCorrelation(t *testing.T) {
+	ctx := context.Background()
+	runner := &fakeRunner{
+		runResult: argo.RunResult{Namespace: "argo", WorkflowName: "dispatch-456"},
+	}
+
+	dispatcher, err := bridge.NewDispatcher(runner, bridge.ServiceConfig{
+		Namespace:        "argo",
+		WorkflowTemplate: "facteur-dispatch",
+	})
+	require.NoError(t, err)
+
+	result, err := dispatcher.Dispatch(ctx, bridge.DispatchRequest{
+		Command:       "dispatch",
+		CorrelationID: "corr-abc",
+		TraceID:       "trace-123",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "corr-abc", result.CorrelationID)
+	require.Equal(t, "trace-123", result.TraceID)
+}
+
 func TestWorkflowDispatcherStatus(t *testing.T) {
 	runner := &fakeRunner{templateStatus: argo.TemplateStatus{Name: "facteur-dispatch", Namespace: "argo", Ready: true}}
 	dispatcher, err := bridge.NewDispatcher(runner, bridge.ServiceConfig{Namespace: "argo", WorkflowTemplate: "facteur-dispatch"})
