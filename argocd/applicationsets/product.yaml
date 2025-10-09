@@ -72,7 +72,7 @@ spec:
             annotations:
               argocd.argoproj.io/sync-wave: "5"
             automation: auto
-            enabled: true
+            enabled: false
           - name: ecran
             path: argocd/applications/ecran
             namespace: ecran
