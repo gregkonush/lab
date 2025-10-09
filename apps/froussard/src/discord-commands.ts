@@ -168,7 +168,7 @@ export const toCommandEvent = (
     locale: interaction.locale,
     guildLocale: interaction.guild_locale,
     response: {
-      type: 5,
+      type: 4,
       ...(responseConfig.ephemeral ? { flags: 1 << 6 } : {}),
     },
     timestamp: new Date().toISOString(),

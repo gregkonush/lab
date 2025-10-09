@@ -107,7 +107,7 @@
       "properties": {
         "type": {
           "type": "integer",
-          "const": 5
+          "const": 4
         },
         "flags": {
           "type": "integer"

@@ -85,7 +85,7 @@ describe('toCommandEvent', () => {
       discriminator: '1234',
     })
     expect(event.member?.roles).toEqual(['role-1'])
-    expect(event.response).toEqual({ type: 5, flags: 64 })
+    expect(event.response).toEqual({ type: 4, flags: 64 })
   })
 
   it('throws when interaction type unsupported', () => {
