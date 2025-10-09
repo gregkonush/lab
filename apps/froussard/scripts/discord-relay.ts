@@ -45,24 +45,39 @@ const parseArgs = (argv: string[]): ParsedArgs => {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
+    if (typeof arg === 'undefined') {
+      continue
+    }
+
+    const requireValue = (flag: string): string => {
+      const value = argv[i + 1]
+      if (typeof value === 'undefined') {
+        console.error(`Option ${flag} requires a value`)
+        usage()
+        process.exit(1)
+      }
+      i += 1
+      return value
+    }
+
     switch (arg) {
       case '--stage':
-        options.stage = argv[++i]
+        options.stage = requireValue('--stage')
         break
       case '--repo':
-        options.repository = argv[++i]
+        options.repository = requireValue('--repo')
         break
       case '--issue':
-        options.issue = argv[++i]
+        options.issue = requireValue('--issue')
         break
       case '--title':
-        options.title = argv[++i]
+        options.title = requireValue('--title')
         break
       case '--run-id':
-        options.runId = argv[++i]
+        options.runId = requireValue('--run-id')
         break
       case '--timestamp':
-        options.timestamp = argv[++i]
+        options.timestamp = requireValue('--timestamp')
         break
       case '--dry-run':
         options.dryRun = true

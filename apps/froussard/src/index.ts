@@ -26,6 +26,7 @@ export const createApp = () => {
     github: config.github,
     codexTriggerLogin: config.codex.triggerLogin,
     codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
+    codexOneShotTriggerPhrase: config.codex.oneShotTriggerPhrase,
     topics: config.kafka.topics,
   }
 
