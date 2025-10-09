@@ -8,6 +8,20 @@ discord:
   guild_id: "987654321098765432"
 redis:
   url: redis://facteur-redis:6379/0
+consumer:
+  enabled: true
+  brokers:
+    - localhost:9092
+  topic: discord.commands.incoming
+  group_id: facteur
+  dlq:
+    enabled: false
+    topic: discord.commands.incoming.dlq
+  tls:
+    enabled: false
+    insecure_skip_verify: false
+  sasl:
+    enabled: false
 argo:
   namespace: argo
   workflow_template: facteur-dispatch

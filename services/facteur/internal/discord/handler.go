@@ -105,7 +105,7 @@ func (h *Handler) handleDispatch(ctx context.Context, interaction Interaction) (
 		if marshalErr != nil {
 			return Response{}, fmt.Errorf("discord: marshal dispatch result: %w", marshalErr)
 		}
-		if err := h.store.Set(ctx, dispatchKey(interaction.UserID), payload, 15*time.Minute); err != nil {
+		if err := h.store.Set(ctx, session.DispatchKey(interaction.UserID), payload, 15*time.Minute); err != nil {
 			return Response{}, fmt.Errorf("discord: persist dispatch result: %w", err)
 		}
 	}
@@ -130,7 +130,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction Interaction) (Re
 	}
 
 	if h.store != nil && interaction.UserID != "" {
-		payload, serr := h.store.Get(ctx, dispatchKey(interaction.UserID))
+		payload, serr := h.store.Get(ctx, session.DispatchKey(interaction.UserID))
 		if serr == nil {
 			var last bridge.DispatchResult
 			if err := json.Unmarshal(payload, &last); err == nil && last.CorrelationID != "" {
@@ -158,8 +158,4 @@ func contains(values []string, candidate string) bool {
 		}
 	}
 	return false
-}
-
-func dispatchKey(userID string) string {
-	return fmt.Sprintf("dispatch:%s", userID)
 }
