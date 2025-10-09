@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,10 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/gregkonush/lab/services/facteur/internal/bridge"
+	"github.com/gregkonush/lab/services/facteur/internal/consumer"
+	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
 
 const (
@@ -22,6 +27,9 @@ const (
 type Options struct {
 	ListenAddress string
 	Prefork       bool
+	Dispatcher    bridge.Dispatcher
+	Store         session.Store
+	SessionTTL    time.Duration
 }
 
 // Server wraps a Fiber application with lifecycle helpers.
@@ -35,6 +43,9 @@ func New(opts Options) (*Server, error) {
 	if opts.ListenAddress == "" {
 		opts.ListenAddress = defaultListenAddress
 	}
+	if opts.SessionTTL <= 0 {
+		opts.SessionTTL = consumer.DefaultSessionTTL
+	}
 
 	app := fiber.New(fiber.Config{
 		Prefork:               opts.Prefork,
@@ -45,7 +56,7 @@ func New(opts Options) (*Server, error) {
 		IdleTimeout:           60 * time.Second,
 	})
 
-	registerRoutes(app)
+	registerRoutes(app, opts)
 
 	return &Server{
 		app:  app,
@@ -110,7 +121,7 @@ func isServerClosedError(err error) bool {
 	return msg == "" || strings.Contains(strings.ToLower(msg), "server closed")
 }
 
-func registerRoutes(app *fiber.App) {
+func registerRoutes(app *fiber.App, opts Options) {
 	app.Get("/healthz", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
@@ -124,6 +135,36 @@ func registerRoutes(app *fiber.App) {
 			"service": "facteur",
 			"version": "0.1.0",
 			"status":  "ok",
+		})
+	})
+
+	app.Post("/events", func(c *fiber.Ctx) error {
+		if opts.Dispatcher == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dispatcher unavailable"})
+		}
+
+		var event consumer.CommandEvent
+		if err := json.Unmarshal(c.Body(), &event); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
+		}
+
+		ctx := c.UserContext()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		result, err := consumer.ProcessEvent(ctx, event, opts.Dispatcher, opts.Store, opts.SessionTTL)
+		if err != nil {
+			log.Printf("event dispatch failed: %v", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "dispatch failed"})
+		}
+
+		log.Printf("event dispatch succeeded: command=%s workflow=%s namespace=%s correlation=%s trace=%s", event.Command, result.WorkflowName, result.Namespace, result.CorrelationID, event.TraceID)
+
+		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
+			"workflowName":  result.WorkflowName,
+			"namespace":     result.Namespace,
+			"correlationId": result.CorrelationID,
 		})
 	})
 }

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	defaultSessionTTL = 15 * time.Minute
+	DefaultSessionTTL = 15 * time.Minute
 )
 
 // Reader exposes the kafka-go reader surface required by the consumer.
@@ -86,7 +86,7 @@ func NewCommandConsumer(reader Reader, dispatcher bridge.Dispatcher, opts ...Opt
 		reader:     reader,
 		dispatcher: dispatcher,
 		logger:     log.Default(),
-		sessionTTL: defaultSessionTTL,
+		sessionTTL: DefaultSessionTTL,
 	}
 	for _, opt := range opts {
 		opt(consumer)
@@ -142,36 +142,10 @@ func (c *CommandConsumer) handleMessage(ctx context.Context, msg kafka.Message) 
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		return fmt.Errorf("decode event: %w", err)
 	}
-	if event.Command == "" {
-		return fmt.Errorf("missing command field")
-	}
-	if event.Options == nil {
-		event.Options = map[string]string{}
-	}
 
-	result, err := c.dispatcher.Dispatch(ctx, bridge.DispatchRequest{
-		Command:       event.Command,
-		UserID:        event.UserID,
-		Options:       event.Options,
-		CorrelationID: event.CorrelationID,
-		TraceID:       event.TraceID,
-	})
+	result, err := ProcessEvent(ctx, event, c.dispatcher, c.store, c.sessionTTL)
 	if err != nil {
-		return fmt.Errorf("dispatch command: %w", err)
-	}
-
-	if event.CorrelationID != "" && result.CorrelationID == "" {
-		result.CorrelationID = event.CorrelationID
-	}
-
-	if c.store != nil && event.UserID != "" {
-		payload, marshalErr := json.Marshal(result)
-		if marshalErr != nil {
-			return fmt.Errorf("persist dispatch result: %w", marshalErr)
-		}
-		if err := c.store.Set(ctx, session.DispatchKey(event.UserID), payload, c.sessionTTL); err != nil {
-			return fmt.Errorf("persist dispatch result: %w", err)
-		}
+		return err
 	}
 
 	correlation := result.CorrelationID
@@ -209,4 +183,48 @@ type CommandEvent struct {
 	UserID        string            `json:"userId"`
 	CorrelationID string            `json:"correlationId"`
 	TraceID       string            `json:"traceId"`
+}
+
+// ProcessEvent dispatches a command event and persists session metadata when a store is provided.
+func ProcessEvent(ctx context.Context, event CommandEvent, dispatcher bridge.Dispatcher, store session.Store, ttl time.Duration) (bridge.DispatchResult, error) {
+	if dispatcher == nil {
+		return bridge.DispatchResult{}, fmt.Errorf("consumer: dispatcher is required")
+	}
+	if event.Command == "" {
+		return bridge.DispatchResult{}, fmt.Errorf("missing command field")
+	}
+	if event.Options == nil {
+		event.Options = map[string]string{}
+	}
+
+	result, err := dispatcher.Dispatch(ctx, bridge.DispatchRequest{
+		Command:       event.Command,
+		UserID:        event.UserID,
+		Options:       event.Options,
+		CorrelationID: event.CorrelationID,
+		TraceID:       event.TraceID,
+	})
+	if err != nil {
+		return bridge.DispatchResult{}, fmt.Errorf("dispatch command: %w", err)
+	}
+
+	if event.CorrelationID != "" && result.CorrelationID == "" {
+		result.CorrelationID = event.CorrelationID
+	}
+
+	if store != nil && event.UserID != "" {
+		payload, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			return bridge.DispatchResult{}, fmt.Errorf("persist dispatch result: %w", marshalErr)
+		}
+		sessionTTL := ttl
+		if sessionTTL <= 0 {
+			sessionTTL = DefaultSessionTTL
+		}
+		if err := store.Set(ctx, session.DispatchKey(event.UserID), payload, sessionTTL); err != nil {
+			return bridge.DispatchResult{}, fmt.Errorf("persist dispatch result: %w", err)
+		}
+	}
+
+	return result, nil
 }

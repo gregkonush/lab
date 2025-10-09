@@ -33,6 +33,8 @@ The consumer is gated behind `consumer.enabled` in the configuration and default
 
 To submit workflows the process needs Kubernetes API credentials. When running outside the cluster, set `FACTEUR_KUBECONFIG` (or rely on `KUBECONFIG`) to the path of a kubeconfig file that has access to the target namespace.
 
+In Kubernetes we delegate ingestion to Knative Eventing. See `kubernetes/facteur/base/kafkasource.yaml` for the `KafkaSource` that forwards `discord.commands.incoming` events to the Knative Service at `/events`.
+
 ## Container image
 
 The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `kubernetes/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.

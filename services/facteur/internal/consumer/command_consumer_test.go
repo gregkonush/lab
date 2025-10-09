@@ -75,6 +75,30 @@ func TestCommandConsumerFailureWithoutDLQ(t *testing.T) {
 	require.Equal(t, 0, len(reader.committed))
 }
 
+func TestProcessEventPersistsSession(t *testing.T) {
+	dispatcher := &fakeDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123"}}
+	store := &fakeStore{}
+
+	result, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{
+		Command:       "dispatch",
+		UserID:        "user-1",
+		Options:       map[string]string{"env": "staging"},
+		CorrelationID: "corr-1",
+	}, dispatcher, store, time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, "wf-123", result.WorkflowName)
+	require.True(t, store.setCalled)
+	require.Equal(t, session.DispatchKey("user-1"), store.lastKey)
+	// correlation should stick to provided value if dispatcher result empty
+	require.Equal(t, "corr-1", dispatcher.lastReq.CorrelationID)
+}
+
+func TestProcessEventValidatesCommand(t *testing.T) {
+	_, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{}, &fakeDispatcher{}, nil, 0)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "missing command")
+}
+
 type fakeReader struct {
 	messages  []kafka.Message
 	index     int
