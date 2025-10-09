@@ -24,9 +24,10 @@ spec:
       owner: facteur
       dataChecksums: true
       encoding: "UTF8"
-      postInitApplicationSQL:
+      postInitSQL:
         - CREATE EXTENSION IF NOT EXISTS vector;
         - CREATE EXTENSION IF NOT EXISTS pgcrypto;
+      postInitApplicationSQL:
         - |
           CREATE SCHEMA IF NOT EXISTS codex_kb AUTHORIZATION facteur;
         - |
