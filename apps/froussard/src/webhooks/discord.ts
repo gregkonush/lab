@@ -1,9 +1,4 @@
-import {
-  buildDeferredResponsePayload,
-  INTERACTION_TYPE,
-  toCommandEvent,
-  verifyDiscordRequest,
-} from '@/discord-commands'
+import { INTERACTION_TYPE, toCommandEvent, verifyDiscordRequest } from '@/discord-commands'
 import type { KafkaManager } from '@/services/kafka'
 
 import type { WebhookConfig } from './types'
@@ -93,7 +88,13 @@ export const createDiscordWebhookHandler =
       headers: kafkaHeaders,
     })
 
-    const responsePayload = buildDeferredResponsePayload(config.discord.response)
+    const responsePayload = {
+      type: 4,
+      data: {
+        content: `Command \`/${event.command}\` received. Workflow hand-off in progress…`,
+        ...(config.discord.response.ephemeral ? { flags: 1 << 6 } : {}),
+      },
+    }
 
     return new Response(JSON.stringify(responsePayload), {
       status: 200,

@@ -24,10 +24,8 @@ const commands: SlashCommand[] = [
     name: 'plan',
     description: 'Shape upcoming work and capture acceptance checkpoints.',
     options: [
-      { name: 'project', description: 'Project or repository slug', type: 3, required: true },
       { name: 'objective', description: 'Short description of the desired outcome', type: 3, required: true },
-      { name: 'deadline', description: 'Target date (ISO YYYY-MM-DD)', type: 3 },
-      { name: 'notes', description: 'Additional context for the automation', type: 3 },
+      { name: 'project', description: 'Project or repository slug (optional)', type: 3 },
     ],
   },
   {

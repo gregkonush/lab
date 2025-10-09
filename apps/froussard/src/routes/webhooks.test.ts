@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 
-const { mockVerifyDiscordRequest, mockToCommandEvent, mockBuildDeferredResponsePayload } = vi.hoisted(() => ({
+const { mockVerifyDiscordRequest, mockToCommandEvent } = vi.hoisted(() => ({
   mockVerifyDiscordRequest: vi.fn(async () => true),
   mockToCommandEvent: vi.fn(() => ({
     provider: 'discord' as const,
@@ -20,13 +20,11 @@ const { mockVerifyDiscordRequest, mockToCommandEvent, mockBuildDeferredResponseP
     response: { type: 5, flags: 64 },
     timestamp: '2025-10-09T00:00:00.000Z',
   })),
-  mockBuildDeferredResponsePayload: vi.fn(() => ({ type: 5, data: { flags: 64 } })),
 }))
 
 vi.mock('@/discord-commands', () => ({
   verifyDiscordRequest: mockVerifyDiscordRequest,
   toCommandEvent: mockToCommandEvent,
-  buildDeferredResponsePayload: mockBuildDeferredResponsePayload,
   INTERACTION_TYPE: { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3 },
 }))
 
@@ -257,8 +255,13 @@ describe('createWebhookHandler', () => {
 
     const payload = await response.json()
     expect(response.status).toBe(200)
-    expect(payload).toEqual({ type: 5, data: { flags: 64 } })
-    expect(mockBuildDeferredResponsePayload).toHaveBeenCalledWith(baseConfig.discord.response)
+    expect(payload).toEqual({
+      type: 4,
+      data: {
+        content: 'Command `/plan` received. Workflow hand-off in progress…',
+        flags: 64,
+      },
+    })
   })
 
   it('responds to Discord ping interactions', async () => {
