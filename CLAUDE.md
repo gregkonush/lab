@@ -107,10 +107,10 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 ### Key Technologies
 
 - **Frontend**: Next.js 15, React 19, TanStack Router, tRPC, Tailwind CSS
-- **Backend**: Go 1.24, Node.js 22.14, Python 3.9-3.13
+- **Backend**: Go 1.24, Node.js 22.20, Python 3.9-3.13
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
 - **Infrastructure**: Kubernetes (K3s), ArgoCD, Harvester, Ansible
-- **Tooling**: PNPM 9.15.2, Biome, Turbo, Docker, UV
+- **Tooling**: PNPM 10.18.1, Biome, Turbo, Docker, UV
 
 ### Application Patterns
 

@@ -4,8 +4,8 @@ This guide consolidates the CLI and runtime tooling used across the Experimentat
 
 ## Node.js, pnpm, and Bun
 
-- Node.js 22.19.0 (managed by `nvm` inside the Coder template)
-- pnpm 9.x (installed automatically by `corepack` in the template)
+- Node.js 22.20.0 (managed by `nvm` inside the Coder template)
+- pnpm 10.18.1 (installed automatically by `corepack` in the template)
 - Optional Bun runtime:
   ```bash
   curl -fsSL https://bun.sh/install | bash
