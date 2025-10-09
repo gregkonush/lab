@@ -46,8 +46,10 @@ describe('chunkContent', () => {
     const { chunks, remainder } = consumeChunks(sample, 100)
 
     expect(chunks.length).toBeGreaterThan(0)
-    expect(chunks[0].endsWith('line-010')).toBeTruthy()
-    expect(chunks[1].startsWith('line-011')).toBeTruthy()
+    expect(chunks[0]).toBeDefined()
+    expect(chunks[0]?.endsWith('line-010')).toBeTruthy()
+    expect(chunks[1]).toBeDefined()
+    expect(chunks[1]?.startsWith('line-011')).toBeTruthy()
     expect(chunks.every((chunk) => chunk.length <= 100)).toBeTruthy()
     expect(chunks.at(-1)?.length ?? 0).toBeLessThanOrEqual(100)
     expect(remainder.startsWith('line-110')).toBeTruthy()

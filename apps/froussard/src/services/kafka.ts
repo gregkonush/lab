@@ -9,8 +9,8 @@ export { parseBrokerList } from '@/utils/kafka'
 export interface KafkaMessage {
   topic: string
   key: string
-  value: string
-  headers: Record<string, string>
+  value: string | Uint8Array | Buffer
+  headers?: Record<string, string | Uint8Array | Buffer>
 }
 
 export interface KafkaProducerService {
@@ -73,8 +73,8 @@ export const KafkaProducerLayer = Layer.scoped(
                 messages: [
                   {
                     key: message.key,
-                    value: message.value,
-                    headers: message.headers,
+                    value: normalizeValue(message.value),
+                    headers: normalizeHeaders(message.headers),
                   },
                 ],
               }),
@@ -117,3 +117,37 @@ export const KafkaProducerLayer = Layer.scoped(
     )
   }),
 )
+
+const normalizeValue = (value: KafkaMessage['value']): Buffer => {
+  if (typeof value === 'string') {
+    return Buffer.from(value)
+  }
+
+  if (Buffer.isBuffer(value)) {
+    return value
+  }
+
+  return Buffer.from(value)
+}
+
+const normalizeHeaders = (
+  headers: KafkaMessage['headers'],
+): Record<string, Buffer> | undefined => {
+  if (!headers) {
+    return undefined
+  }
+
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => {
+      if (typeof value === 'string') {
+        return [key, Buffer.from(value)]
+      }
+
+      if (Buffer.isBuffer(value)) {
+        return [key, value]
+      }
+
+      return [key, Buffer.from(value)]
+    }),
+  )
+}

@@ -11,6 +11,7 @@
     "build:reviseur": "pnpm --filter reviseur build",
     "start:proompteng": "pnpm --filter proompteng start",
     "lint:proompteng": "pnpm --filter proompteng lint",
+    "proto:generate": "./scripts/generate-proto.sh",
     "clean": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
     "format": "biome format --write",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
