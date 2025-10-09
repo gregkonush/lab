@@ -309,8 +309,11 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
     use_discord=1
   fi
 
-  run_codex_attempt "$attempt" "$attempt_label" "$use_discord" "$attempt_output_path" "$attempt_json_path" "$attempt_agent_path"
-  attempt_status=$?
+  if run_codex_attempt "$attempt" "$attempt_label" "$use_discord" "$attempt_output_path" "$attempt_json_path" "$attempt_agent_path"; then
+    attempt_status=0
+  else
+    attempt_status=$?
+  fi
 
   if [[ $attempt_status -eq 0 ]]; then
     final_status=0
