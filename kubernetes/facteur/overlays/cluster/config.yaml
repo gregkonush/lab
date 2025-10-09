@@ -11,6 +11,20 @@ argo:
   service_account: facteur
   parameters:
     environment: production
+consumer:
+  enabled: true
+  brokers:
+    - kafka-kafka-bootstrap.kafka:9092
+  topic: discord.commands.incoming
+  group_id: facteur
+  dlq:
+    enabled: true
+    topic: discord.commands.incoming.dlq
+  tls:
+    enabled: false
+    insecure_skip_verify: false
+  sasl:
+    enabled: false
 role_map:
   dispatch:
     - "987654321098765432"

@@ -11,6 +11,20 @@ argo:
   service_account: facteur
   parameters:
     environment: staging
+consumer:
+  enabled: true
+  brokers:
+    - localhost:9092
+  topic: discord.commands.incoming
+  group_id: facteur
+  dlq:
+    enabled: false
+    topic: discord.commands.incoming.dlq
+  tls:
+    enabled: false
+    insecure_skip_verify: false
+  sasl:
+    enabled: false
 role_map:
   dispatch:
     - "123456789012345678"

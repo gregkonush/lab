@@ -4,6 +4,7 @@ resources:
   - serviceaccount.yaml
   - rolebinding.yaml
   - service.yaml
+  - consumer-deployment.yaml
   - workflowtemplate.yaml
   - redis.yaml
 configMapGenerator:
