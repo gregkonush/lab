@@ -6,10 +6,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/spf13/cobra"
+
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 
 	"github.com/gregkonush/lab/services/facteur/internal/argo"
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
@@ -138,8 +143,19 @@ func NewConsumeCommand() *cobra.Command {
 }
 
 func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, error) {
-	// TODO: replace with real Argo client wiring once the API client package lands.
-	return bridge.NewDispatcher(&noopRunner{namespace: cfg.Argo.Namespace}, bridge.ServiceConfig{
+	restCfg, err := resolveRESTConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	argoClient, err := argo.NewKubernetesClientForConfig(restCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	runner := argo.NewWorkflowRunner(argoClient)
+
+	return bridge.NewDispatcher(runner, bridge.ServiceConfig{
 		Namespace:        cfg.Argo.Namespace,
 		WorkflowTemplate: cfg.Argo.WorkflowTemplate,
 		ServiceAccount:   cfg.Argo.ServiceAccount,
@@ -147,14 +163,35 @@ func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, error) {
 	})
 }
 
-type noopRunner struct {
-	namespace string
-}
+func resolveRESTConfig() (*rest.Config, error) {
+	if path := os.Getenv("FACTEUR_KUBECONFIG"); path != "" {
+		cfg, err := clientcmd.BuildConfigFromFlags("", path)
+		if err != nil {
+			return nil, fmt.Errorf("kubeconfig %s: %w", path, err)
+		}
+		return cfg, nil
+	}
 
-func (n *noopRunner) Run(context.Context, argo.RunInput) (argo.RunResult, error) {
-	return argo.RunResult{}, fmt.Errorf("argo runner wiring not yet implemented")
-}
+	if env := os.Getenv("KUBECONFIG"); env != "" {
+		cfg, err := clientcmd.BuildConfigFromFlags("", env)
+		if err == nil {
+			return cfg, nil
+		}
+	}
 
-func (n *noopRunner) TemplateStatus(context.Context, string, string) (argo.TemplateStatus, error) {
-	return argo.TemplateStatus{Namespace: n.namespace, Ready: false}, fmt.Errorf("argo runner wiring not yet implemented")
+	if cfg, err := rest.InClusterConfig(); err == nil {
+		return cfg, nil
+	}
+
+	if home := homedir.HomeDir(); home != "" {
+		path := filepath.Join(home, ".kube", "config")
+		if _, err := os.Stat(path); err == nil {
+			cfg, err := clientcmd.BuildConfigFromFlags("", path)
+			if err == nil {
+				return cfg, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("unable to locate Kubernetes configuration; set FACTEUR_KUBECONFIG or KUBECONFIG")
 }
