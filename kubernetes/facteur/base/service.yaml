@@ -9,13 +9,13 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "100"
-        deploy.knative.dev/rollout: "2025-10-09T04:30:00Z"
+        deploy.knative.dev/rollout: "2025-10-09T05:05:00Z"
     spec:
       serviceAccountName: facteur
       containers:
         - name: facteur
           image: registry.ide-newton.ts.net/lab/facteur:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: http1
