@@ -20,6 +20,8 @@ AGENT_OUTPUT_PATH=${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-plan-agent.log}
 mkdir -p "$(dirname "$JSON_OUTPUT_PATH")" "$(dirname "$AGENT_OUTPUT_PATH")"
 : >"$JSON_OUTPUT_PATH"
 : >"$AGENT_OUTPUT_PATH"
+POST_RUN_SUMMARY_SCRIPT=${CODEX_POST_RUN_SCRIPT:-${WORKTREE}/apps/froussard/scripts/codex-post-run.sh}
+PLANNING_SUMMARY_PATH=${PLANNING_SUMMARY_PATH:-${WORKTREE}/.codex-planning-summary.md}
 
 push_codex_events_to_loki() {
   local stage="$1"
@@ -192,6 +194,13 @@ if command -v jq >/dev/null 2>&1; then
   push_codex_events_to_loki "$CODEX_STAGE" "$JSON_OUTPUT_PATH" "$LGTM_LOKI_ENDPOINT" || true
 else
   echo "Skipping Loki export because jq is not installed" >&2
+fi
+
+if [[ -x "$POST_RUN_SUMMARY_SCRIPT" ]]; then
+  SUMMARY_PATH="$PLANNING_SUMMARY_PATH" "$POST_RUN_SUMMARY_SCRIPT" "$AGENT_OUTPUT_PATH" "$CODEX_STAGE" "$codex_status" "planning run" || \
+    echo "Post-run summary failed for planning stage" >&2
+else
+  echo "Skipping post-run summary: script '$POST_RUN_SUMMARY_SCRIPT' missing or not executable" >&2
 fi
 
 if [[ -s "$OUTPUT_PATH" ]]; then
