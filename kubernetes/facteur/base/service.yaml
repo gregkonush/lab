@@ -19,6 +19,7 @@ spec:
           ports:
             - containerPort: 8080
               name: http1
+              protocol: TCP
           env:
             - name: FACTEUR_CONFIG_FILE
               value: /config/config.yaml
@@ -38,6 +39,10 @@ spec:
               value: argo
             - name: FACTEUR_ARGO_WORKFLOW_TEMPLATE
               value: facteur-dispatch
+          readinessProbe:
+            successThreshold: 1
+            tcpSocket:
+              port: http1
           resources:
             requests:
               cpu: 50m
@@ -48,6 +53,7 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+              readOnly: true
       volumes:
         - name: config
           configMap:
