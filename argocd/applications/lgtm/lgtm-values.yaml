@@ -45,6 +45,13 @@ grafana:
               datasourceUid: prom
             serviceMap:
               datasourceUid: prom
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+      provider:
+        foldersFromFilesStructure: true
 
 loki:
   enabled: true
