@@ -59,7 +59,7 @@ Facteur now owns a dedicated CloudNativePG cluster so Codex automation can persi
 - Schema: `codex_kb` with two tables.
   - `runs` – UUID primary key (defaults to `gen_random_uuid()`), stores `repo_slug`, `issue_number`, `workflow`, lifecycle timestamps, and JSONB `metadata`. Intended to capture one Codex execution per issue/workflow combination.
   - `entries` – UUID primary key with a foreign key to `runs.id`, carries `step_label`, `artifact_type`, `artifact_stage`, free-form `content`, JSONB `metadata`, and a `vector(1536)` embedding column. An IVFFLAT index (`codex_kb_entries_embedding_idx`, cosine distance, 100 lists) accelerates similarity search.
-- Privileges: the bootstrap script grants the `facteur` role usage on the schema plus default table privileges so new objects remain writeable without extra migrations.
+- Privileges: the bootstrap script assigns ownership of `runs` and `entries` to the `facteur` role, grants schema usage, applies direct CRUD privileges on existing tables, and sets default table grants so future objects remain writeable without extra migrations.
 
 Future changes to the embedding dimensionality will require `ALTER TABLE codex_kb.entries ALTER COLUMN embedding TYPE vector(<new_dim>)` followed by `REINDEX INDEX codex_kb_entries_embedding_idx`.
 
