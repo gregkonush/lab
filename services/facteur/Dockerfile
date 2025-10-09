@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 	CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags='-s -w' -o /out/facteur ./cmd/facteur
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/facteur /usr/local/bin/facteur
+COPY --from=build --chmod=0555 /out/facteur /usr/local/bin/facteur
 
 ENTRYPOINT ["/usr/local/bin/facteur"]
 CMD ["serve"]
