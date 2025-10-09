@@ -49,6 +49,20 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 - `kubernetes/facteur/base/redis.yaml` provisions an in-cluster Redis instance via the OT-Container-Kit Redis Operator; confirm the platform `redis-operator` Application stays healthy before syncing facteur.
 - Argo CD applications reside in `argocd/applications/facteur` and are referenced by `argocd/applicationsets/product.yaml` so the automation discovers and syncs the service.
 
+## Codex knowledge base persistence
+
+Facteur now owns a dedicated CloudNativePG cluster so Codex automation can persist the artefacts generated during `plan` → `implement` → `review` runs.
+
+- Cluster: `facteur-vector-cluster` (namespace `facteur`) running `registry.ide-newton.ts.net/lab/vecteur:16`, three instances, 20&nbsp;Gi Longhorn volumes with data checksums enabled.
+- Database: `facteur_kb`, owned by the `facteur` role. The bootstrap routine enables the `pgcrypto` and `vector` extensions before seeding schema objects.
+- Connection secret: `facteur-vector-cluster-app` (namespace `facteur`). It follows the standard CloudNativePG app secret contract (`host`, `port`, `dbname`, `user`, `password`, `uri`). Mount or template this secret into consuming workloads to hydrate Codex clients.
+- Schema: `codex_kb` with two tables.
+  - `runs` – UUID primary key (defaults to `gen_random_uuid()`), stores `repo_slug`, `issue_number`, `workflow`, lifecycle timestamps, and JSONB `metadata`. Intended to capture one Codex execution per issue/workflow combination.
+  - `entries` – UUID primary key with a foreign key to `runs.id`, carries `step_label`, `artifact_type`, `artifact_stage`, free-form `content`, JSONB `metadata`, and a `vector(1536)` embedding column. An IVFFLAT index (`codex_kb_entries_embedding_idx`, cosine distance, 100 lists) accelerates similarity search.
+- Privileges: the bootstrap script assigns ownership of `runs` and `entries` to the `facteur` role, grants schema usage, applies direct CRUD privileges on existing tables, and sets default table grants so future objects remain writeable without extra migrations.
+
+Future changes to the embedding dimensionality will require `ALTER TABLE codex_kb.entries ALTER COLUMN embedding TYPE vector(<new_dim>)` followed by `REINDEX INDEX codex_kb_entries_embedding_idx`.
+
 ## Initial command contract
 
 The first public cut will ship three Discord slash commands that map to the existing workflow submission bridge. All commands run against the configured `argo.workflow_template`; the dispatcher injects an `action` parameter that mirrors the command name, and the Discord option names become workflow parameters after merging with static defaults defined under `argo.parameters`. The dispatcher still prefixes workflow names with the command that was invoked so we can trace intent in Argo.

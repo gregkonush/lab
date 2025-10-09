@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - ../../base
   - secrets.yaml
+  - facteur-vector-cluster.yaml
