@@ -16,5 +16,6 @@ resources:
   - github-codex-topic.yaml
   - github-codex-planning-workflow-template.yaml
   - github-codex-implementation-workflow-template.yaml
+  - github-codex-one-shot-workflow-template.yaml
   - github-codex-sensor.yaml
   - coder-workspace-access.yaml

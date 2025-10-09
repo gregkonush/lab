@@ -4,14 +4,16 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. When the same user later comments `execute plan` on the issue it publishes an `implementation` message that carries the metadata Codex needs for the branch/PR handoff.
-2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to two workflow templates:
+1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. When the same user later comments `execute plan` (configurable via `CODEX_IMPLEMENTATION_TRIGGER`) it publishes an `implementation` message with the metadata Codex needs for the branch/PR handoff. Commenting `execute plan one-shot` (configurable via `CODEX_ONE_SHOT_TRIGGER`) publishes a `one-shot` message that bundles both the planning and implementation prompts so a single workflow can run end to end.
+2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to three workflow templates:
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
+   - `github-codex-one-shot` for combined plan + execution runs.
 3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
    - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
    - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.sh`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
-   - Both templates carry a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
+   - `stage=one-shot`: `codex-one-shot.sh` first reruns planning inside the workflow pod, captures the generated plan, rewrites the Kafka payload with that plan embedded, and then calls `codex-implement.sh` to finish the run.
+   - All templates carry a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
 
 ## Prerequisites
 
@@ -19,6 +21,7 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 - SealedSecret `discord-codex-bot` seeded with the Discord bot token, guild id, and optional category id.
 - Kafka topics `github.webhook.events` and `github.codex.tasks` deployed via Strimzi.
 - Argo Events resources under `argocd/applications/froussard/` synced.
+- Configure the Froussard deployment with `CODEX_ONE_SHOT_TRIGGER` (defaults to `execute plan one-shot`) alongside `CODEX_IMPLEMENTATION_TRIGGER` so operators can intentionally opt into the combined workflow.
 
 ## Manual End-to-End Test
 
@@ -62,6 +65,10 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
    - Watch for a new workflow named `github-codex-implementation-*`; it should push a branch ( `codex/issue-<number>-*` ), open a draft PR, and upload `.codex-implementation.log` as an artifact.
    - Confirm a single progress comment remains on the issue, anchored by `<!-- codex:progress -->`, with the checklist reflecting the plan and validation state.
    - The issue gains a follow-up comment linking to the PR.
+3. **Run the one-shot path** by replying `execute plan one-shot` (or your `CODEX_ONE_SHOT_TRIGGER` override) on a fresh issue.
+   - Expect a `github-codex-one-shot-*` workflow that first posts the generated plan and then immediately runs the implementation half inside the same pod.
+   - The workflow logs include both `.codex-one-shot-plan.md` (from the planning sub-step) and the usual `.codex-implementation.log` artifact.
+   - Verify the issue now has the approved plan comment, the progress comment, and a draft PR link without needing a second manual trigger.
 
 ## Helpful Commands
 
@@ -97,6 +104,16 @@ argo submit --from workflowtemplate/github-codex-implementation -n argo-workflow
 ```
 
 The implementation workflow writes verbose output to `/workspace/lab/.codex-implementation.log`; inspect the artifact in Argo if you need the full Codex transcript.
+
+Exercise the combined workflow with both prompts embedded:
+
+```bash
+argo submit --from workflowtemplate/github-codex-one-shot -n argo-workflows \
+  -p rawEvent='{}' \
+  -p eventBody='{"stage":"one-shot","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","prompts":{"planning":"Draft a concise plan for the dry run.","implementation":"Consume the plan:\n\"\"\"\n__CODEX_ONE_SHOT_PLAN_PLACEHOLDER__\n\"\"\"\nand execute it end to end."}}'
+```
+
+When the workflow completes, the event payload is rewritten so the implementation phase receives the rendered plan in place of `__CODEX_ONE_SHOT_PLAN_PLACEHOLDER__`.
 
 ## Manifest & CI Safety Checks
 

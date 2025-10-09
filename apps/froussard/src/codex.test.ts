@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest'
 import {
   PLAN_COMMENT_MARKER,
   PROGRESS_COMMENT_MARKER,
+  buildCodexOneShotPrompts,
   buildCodexBranchName,
   buildCodexPrompt,
+  ONE_SHOT_PLAN_PLACEHOLDER,
   normalizeLogin,
   sanitizeBranchComponent,
 } from './codex'
@@ -123,5 +125,50 @@ describe('buildCodexPrompt', () => {
     })
 
     expect(prompt).toContain('"""\nNo description provided.\n"""')
+  })
+
+  it('throws when attempting to build a one-shot prompt directly', () => {
+    expect(() =>
+      buildCodexPrompt({
+        stage: 'one-shot',
+        issueTitle: 'Unsupported one-shot direct call',
+        issueBody: 'Body',
+        repositoryFullName: 'gregkonush/lab',
+        issueNumber: 55,
+        baseBranch: 'main',
+        headBranch: 'codex/issue-55-abc123',
+        issueUrl: 'https://github.com/gregkonush/lab/issues/55',
+      }),
+    ).toThrow(/one-shot/i)
+  })
+})
+
+describe('buildCodexOneShotPrompts', () => {
+  const commonOptions = {
+    issueTitle: 'Ship combined workflow',
+    issueBody: 'Ensure seamless handoff between planning and implementation.',
+    repositoryFullName: 'gregkonush/lab',
+    issueNumber: 200,
+    baseBranch: 'main',
+    headBranch: 'codex/issue-200-abc123',
+    issueUrl: 'https://github.com/gregkonush/lab/issues/200',
+  }
+
+  it('returns both planning and implementation prompts with a placeholder plan body', () => {
+    const prompts = buildCodexOneShotPrompts(commonOptions)
+
+    expect(prompts.planning).toContain(PLAN_COMMENT_MARKER)
+    expect(prompts.implementation).toContain(ONE_SHOT_PLAN_PLACEHOLDER)
+    expect(prompts.implementation).toContain('Approved plan:')
+  })
+
+  it('uses provided plan body when available', () => {
+    const prompts = buildCodexOneShotPrompts({
+      ...commonOptions,
+      planCommentBody: `${PLAN_COMMENT_MARKER}\n1. Step`,
+    })
+
+    expect(prompts.implementation).toContain('1. Step')
+    expect(prompts.implementation).not.toContain(ONE_SHOT_PLAN_PLACEHOLDER)
   })
 })

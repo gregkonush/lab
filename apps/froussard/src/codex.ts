@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 export type Nullable<T> = T | null | undefined
 
-export type CodexTaskStage = 'planning' | 'implementation'
+export type CodexTaskStage = 'planning' | 'implementation' | 'one-shot'
 
 export const PLAN_COMMENT_MARKER = '<!-- codex:plan -->'
 export const PROGRESS_COMMENT_MARKER = '<!-- codex:progress -->'
@@ -131,12 +131,14 @@ export const buildCodexPrompt = (options: BuildCodexPromptOptions): string => {
     return buildPlanningPrompt(options)
   }
 
-  return buildImplementationPrompt(options)
+  if (options.stage === 'implementation') {
+    return buildImplementationPrompt(options)
+  }
+
+  throw new Error('buildCodexPrompt does not support the one-shot stage. Use buildCodexOneShotPrompts instead.')
 }
 
-export interface CodexTaskMessage {
-  stage: CodexTaskStage
-  prompt: string
+interface CodexTaskSharedFields {
   repository: string
   base: string
   head: string
@@ -149,4 +151,46 @@ export interface CodexTaskMessage {
   planCommentId?: number
   planCommentUrl?: string
   planCommentBody?: string
+}
+
+export type CodexTaskMessage =
+  | (CodexTaskSharedFields & {
+      stage: 'planning'
+      prompt: string
+    })
+  | (CodexTaskSharedFields & {
+      stage: 'implementation'
+      prompt: string
+    })
+  | (CodexTaskSharedFields & {
+      stage: 'one-shot'
+      prompts: CodexOneShotPrompts
+    })
+
+export const ONE_SHOT_PLAN_PLACEHOLDER = '__CODEX_ONE_SHOT_PLAN_PLACEHOLDER__'
+
+export interface CodexOneShotPrompts {
+  planning: string
+  implementation: string
+}
+
+export interface BuildCodexOneShotPromptsOptions extends Omit<BuildCodexPromptOptions, 'stage'> {
+  planCommentBody?: string
+}
+
+export const buildCodexOneShotPrompts = ({
+  planCommentBody,
+  ...options
+}: BuildCodexOneShotPromptsOptions): CodexOneShotPrompts => {
+  const planning = buildPlanningPrompt({
+    ...options,
+    stage: 'planning',
+  })
+  const implementation = buildImplementationPrompt({
+    ...options,
+    stage: 'implementation',
+    planCommentBody: planCommentBody ?? ONE_SHOT_PLAN_PLACEHOLDER,
+  })
+
+  return { planning, implementation }
 }
