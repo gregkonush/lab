@@ -21,10 +21,6 @@ spec:
         secretKeyRef:
           name: facteur-kafka
           key: password
-      type:
-        secretKeyRef:
-          name: facteur-kafka
-          key: saslType
   sink:
     ref:
       apiVersion: v1
