@@ -20,6 +20,19 @@ go run . serve --config config/example.yaml
 
 The `--config` flag is optional if you provide the required `FACTEUR_*` environment variables. Press `Ctrl+C` to stop the server; it will shut down gracefully.
 
+## Observability
+
+Facteur boots with OpenTelemetry telemetry enabled. Traces and metrics are exported via OTLP/HTTP, targeting the in-cluster LGTM deployment by default. The Knative manifest supplies the following environment variables:
+
+- `OTEL_SERVICE_NAME=facteur`
+- `OTEL_SERVICE_NAMESPACE` (populated from the pod namespace)
+- `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces`
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics`
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push`
+
+When running locally, point these values at your LGTM environment to keep telemetry flowing. The service emits counters such as `facteur_command_events_processed_total`, `facteur_command_events_failed_total`, and `facteur_command_events_dlq_total`, and wraps the Fiber HTTP server with OTEL middleware so HTTP requests appear in traces.
+
 ## Container image
 
 The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `kubernetes/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
