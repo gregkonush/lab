@@ -3,6 +3,8 @@ package consumer_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,6 +64,23 @@ func TestCommandConsumerFailureWithDLQ(t *testing.T) {
 	require.NoError(t, cons.Run(context.Background()))
 	require.Equal(t, 1, len(dlq.messages))
 	require.Equal(t, 1, len(reader.committed))
+}
+
+func TestCommandConsumerLogsMetadata(t *testing.T) {
+	reader := &fakeReader{messages: []kafka.Message{{
+		Value: []byte(`{"command":"dispatch","userId":"user-1","correlationId":"corr-1","traceId":"trace-1"}`),
+	}}}
+	dispatcher := &fakeDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf", CorrelationID: "corr-1"}}
+	logger := &captureLogger{}
+
+	cons, err := consumer.NewCommandConsumer(reader, dispatcher, consumer.WithLogger(logger))
+	require.NoError(t, err)
+
+	require.NoError(t, cons.Run(context.Background()))
+
+	joined := strings.Join(logger.entries, " ")
+	require.Contains(t, joined, "command consumer received: command=dispatch user=user-1 correlation=corr-1 trace=trace-1")
+	require.Contains(t, joined, "command consumer success: command=dispatch user=user-1 workflow=wf namespace=argo correlation=corr-1 trace=trace-1")
 }
 
 func TestCommandConsumerFailureWithoutDLQ(t *testing.T) {
@@ -170,3 +189,11 @@ func (f *fakeWriter) WriteMessages(_ context.Context, msgs ...kafka.Message) err
 type noopLogger struct{}
 
 func (noopLogger) Printf(string, ...interface{}) {}
+
+type captureLogger struct {
+	entries []string
+}
+
+func (c *captureLogger) Printf(format string, v ...interface{}) {
+	c.entries = append(c.entries, fmt.Sprintf(format, v...))
+}
