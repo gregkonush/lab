@@ -1,0 +1,50 @@
+name: Vecteur Manual Build and Push
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Tag to publish (e.g., pg18-trixie)'
+        required: true
+        default: 'pg18-trixie'
+      platforms:
+        description: 'Comma-separated platforms to build (default: linux/arm64)'
+        required: false
+        default: 'linux/arm64'
+
+jobs:
+  build-and-push:
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: registry.ide-newton.ts.net/lab/vecteur
+          tags: |
+            type=raw,value=${{ inputs.image_tag }}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: services/vecteur
+          file: services/vecteur/Dockerfile
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/vecteur:latest
+          cache-to: type=inline

@@ -5,7 +5,7 @@ metadata:
   name: facteur-vector-cluster
   namespace: facteur
 spec:
-  imageName: registry.ide-newton.ts.net/lab/vecteur:16
+  imageName: registry.ide-newton.ts.net/lab/vecteur:pg18-trixie
   imagePullPolicy: Always
   instances: 3
   resources:

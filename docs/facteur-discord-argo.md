@@ -53,7 +53,7 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 
 Facteur now owns a dedicated CloudNativePG cluster so Codex automation can persist the artefacts generated during `plan` → `implement` → `review` runs.
 
-- Cluster: `facteur-vector-cluster` (namespace `facteur`) running `registry.ide-newton.ts.net/lab/vecteur:16`, three instances, 20&nbsp;Gi Longhorn volumes with data checksums enabled.
+- Cluster: `facteur-vector-cluster` (namespace `facteur`) running `registry.ide-newton.ts.net/lab/vecteur:pg18-trixie`, three instances, 20&nbsp;Gi Longhorn volumes with data checksums enabled.
 - Database: `facteur_kb`, owned by the `facteur` role. The bootstrap routine enables the `pgcrypto` and `vector` extensions before seeding schema objects.
 - Connection secret: `facteur-vector-cluster-app` (namespace `facteur`). It follows the standard CloudNativePG app secret contract (`host`, `port`, `dbname`, `user`, `password`, `uri`). Mount or template this secret into consuming workloads to hydrate Codex clients.
 - Schema: `codex_kb` with two tables.
