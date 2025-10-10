@@ -48,7 +48,7 @@ export const logger = pino(
   multistream(destinations),
 )
 
-function normaliseLokiEndpoint(value: string): { host: string; endpoint?: string } {
+export function normaliseLokiEndpoint(value: string): { host: string; endpoint?: string } {
   try {
     const parsed = new URL(value)
     const endpoint = parsed.pathname === '/' ? undefined : parsed.pathname
