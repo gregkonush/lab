@@ -50,7 +50,7 @@ spec:
             step_label TEXT NOT NULL,
             artifact_type TEXT NOT NULL,
             artifact_stage TEXT NOT NULL,
-            embedding vector(1536),
+            embedding public.vector(1536),
             content TEXT NOT NULL,
             metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -60,7 +60,7 @@ spec:
         - |
           CREATE INDEX IF NOT EXISTS codex_kb_entries_embedding_idx
           ON codex_kb.entries
-          USING ivfflat (embedding vector_cosine_ops)
+          USING ivfflat (embedding public.vector_cosine_ops)
           WITH (lists = 100);
         - |
           GRANT USAGE ON SCHEMA codex_kb TO facteur;
