@@ -2,8 +2,9 @@ apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
   name: facteur-dispatch
-  namespace: argo
+  namespace: argo-workflows
 spec:
+  serviceAccountName: facteur-workflow
   entrypoint: run-dispatch
   arguments:
     parameters:

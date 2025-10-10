@@ -1,32 +1,32 @@
-server:
-  listen_address: ":8080"
-discord:
-  public_key: ""
-  guild_id: ""
-redis:
-  url: redis://facteur-redis:6379/0
 argo:
-  namespace: argo
-  workflow_template: facteur-dispatch
-  service_account: facteur
+  namespace: argo-workflows
   parameters:
     environment: staging
+  service_account: facteur
+  workflow_template: facteur-dispatch
 consumer:
-  enabled: true
   brokers:
-    - localhost:9092
-  topic: discord.commands.incoming
-  group_id: facteur
+  - localhost:9092
   dlq:
     enabled: false
     topic: discord.commands.incoming.dlq
+  enabled: true
+  group_id: facteur
+  sasl:
+    enabled: false
   tls:
     enabled: false
     insecure_skip_verify: false
-  sasl:
-    enabled: false
+  topic: discord.commands.incoming
+discord:
+  guild_id: ''
+  public_key: ''
+redis:
+  url: redis://facteur-redis:6379/0
 role_map:
   dispatch:
-    - "123456789012345678"
+  - '123456789012345678'
   status:
-    - "123456789012345678"
+  - '123456789012345678'
+server:
+  listen_address: :8080

@@ -148,6 +148,14 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
 		}
 
+		log.Printf(
+			"event received: command=%s user=%s correlation=%s trace=%s",
+			event.Command,
+			event.UserID,
+			emptyIfNone(event.CorrelationID),
+			emptyIfNone(event.TraceID),
+		)
+
 		ctx := c.UserContext()
 		if ctx == nil {
 			ctx = context.Background()
@@ -176,4 +184,11 @@ func RunWithLogger(ctx context.Context, srv *Server) error {
 		return err
 	}
 	return nil
+}
+
+func emptyIfNone(value string) string {
+	if value == "" {
+		return "(none)"
+	}
+	return value
 }

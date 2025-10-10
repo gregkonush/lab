@@ -143,6 +143,16 @@ func (c *CommandConsumer) handleMessage(ctx context.Context, msg kafka.Message) 
 		return fmt.Errorf("decode event: %w", err)
 	}
 
+	c.logf(
+		"command consumer received: command=%s user=%s correlation=%s trace=%s partition=%d offset=%d",
+		event.Command,
+		event.UserID,
+		emptyIfZero(event.CorrelationID),
+		emptyIfZero(event.TraceID),
+		msg.Partition,
+		msg.Offset,
+	)
+
 	result, err := ProcessEvent(ctx, event, c.dispatcher, c.store, c.sessionTTL)
 	if err != nil {
 		return err
@@ -174,6 +184,13 @@ func (c *CommandConsumer) logf(format string, v ...interface{}) {
 		return
 	}
 	log.Printf(format, v...)
+}
+
+func emptyIfZero(value string) string {
+	if value == "" {
+		return "(none)"
+	}
+	return value
 }
 
 // CommandEvent matches the JSON schema published by Froussard.

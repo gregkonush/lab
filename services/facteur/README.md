@@ -39,6 +39,17 @@ In Kubernetes we delegate ingestion to Knative Eventing. See `kubernetes/facteur
 
 The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `kubernetes/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
 
+## Deploying with `kn`
+
+When you need to reconcile the Knative Service directly, you can apply the manifest with the Knative CLI:
+
+```bash
+# From the repository root
+kn service apply -f kubernetes/facteur/base/service.yaml
+```
+
+The command mirrors the manifest-driven deployment used by the rest of the repo, so it is safe to run between Argo CD syncs when you want to force a rollout.
+
 ## Infrastructure dependencies
 
 `kubernetes/facteur/base/redis.yaml` requests a standalone `Redis` instance managed by the OT-Container-Kit Redis Operator. The Knative Service targets the generated ClusterIP service (`redis://facteur-redis:6379/0`). Ensure the platform `redis-operator` Application remains healthy before syncing facteur; it must be available to reconcile the custom resource.
