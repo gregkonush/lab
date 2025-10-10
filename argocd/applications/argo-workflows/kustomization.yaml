@@ -73,10 +73,10 @@ helmCharts:
             value: otlp
           - name: OTEL_LOGS_EXPORTER
             value: otlp
-        workflow:
-          serviceAccount:
-            create: true
-            name: argo-workflows-workflow
+      workflow:
+        serviceAccount:
+          create: true
+          name: argo-workflows-workflow
       artifactRepository:
         archiveLogs: true
   - name: argo-events
