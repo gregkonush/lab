@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofiber/contrib/otelfiber"
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
@@ -55,6 +56,8 @@ func New(opts Options) (*Server, error) {
 		WriteTimeout:          15 * time.Second,
 		IdleTimeout:           60 * time.Second,
 	})
+
+	app.Use(otelfiber.Middleware())
 
 	registerRoutes(app, opts)
 

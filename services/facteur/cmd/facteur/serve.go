@@ -1,16 +1,19 @@
 package facteur
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/gregkonush/lab/services/facteur/internal/config"
 	"github.com/gregkonush/lab/services/facteur/internal/server"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/gregkonush/lab/services/facteur/internal/telemetry"
 )
 
 // NewServeCommand scaffolds the "serve" CLI command.
@@ -33,6 +36,22 @@ func NewServeCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load configuration: %w", err)
 			}
+
+			teleShutdown, err := telemetry.Setup(cmd.Context(), "facteur", "")
+			if err != nil {
+				return fmt.Errorf("init telemetry: %w", err)
+			}
+			defer func() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if flushErr := telemetry.ForceFlush(shutdownCtx); flushErr != nil {
+					cmd.PrintErrf("telemetry force flush: %v\n", flushErr)
+				}
+				if shutdownErr := teleShutdown(shutdownCtx); shutdownErr != nil {
+					cmd.PrintErrf("telemetry shutdown: %v\n", shutdownErr)
+				}
+			}()
 
 			store, err := session.NewRedisStoreFromURL(cfg.Redis.URL)
 			if err != nil {

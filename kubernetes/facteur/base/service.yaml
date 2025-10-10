@@ -39,6 +39,20 @@ spec:
               value: argo-workflows
             - name: FACTEUR_ARGO_WORKFLOW_TEMPLATE
               value: facteur-dispatch
+            - name: OTEL_SERVICE_NAME
+              value: facteur
+            - name: OTEL_SERVICE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
           readinessProbe:
             successThreshold: 1
             tcpSocket:

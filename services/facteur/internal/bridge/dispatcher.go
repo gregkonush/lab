@@ -4,7 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/gregkonush/lab/services/facteur/internal/argo"
+	"github.com/gregkonush/lab/services/facteur/internal/telemetry"
 )
 
 // DispatchRequest describes a workflow submission triggered by a Discord command.
@@ -78,6 +83,19 @@ func NewDispatcher(runner argo.Runner, cfg ServiceConfig) (*WorkflowDispatcher, 
 
 // Dispatch submits a WorkflowRun based on the configured template.
 func (d *WorkflowDispatcher) Dispatch(ctx context.Context, req DispatchRequest) (DispatchResult, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "facteur.bridge.dispatch", trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("facteur.command", req.Command),
+		attribute.String("facteur.user_id", req.UserID),
+		attribute.String("facteur.workflow_template", d.cfg.WorkflowTemplate),
+		attribute.String("facteur.target_namespace", d.cfg.Namespace),
+	)
+	if req.TraceID != "" {
+		span.SetAttributes(attribute.String("facteur.trace_id", req.TraceID))
+	}
+
 	merged := mergeParameters(d.cfg.Parameters, req.Options)
 
 	result, err := d.runner.Run(ctx, argo.RunInput{
@@ -88,6 +106,8 @@ func (d *WorkflowDispatcher) Dispatch(ctx context.Context, req DispatchRequest) 
 		GenerateNamePrefix: req.Command,
 	})
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return DispatchResult{}, fmt.Errorf("bridge: dispatch workflow: %w", err)
 	}
 
@@ -97,6 +117,12 @@ func (d *WorkflowDispatcher) Dispatch(ctx context.Context, req DispatchRequest) 
 	if correlationID == "" {
 		correlationID = result.WorkflowName
 	}
+
+	span.SetAttributes(
+		attribute.String("facteur.workflow_name", result.WorkflowName),
+		attribute.String("facteur.workflow_namespace", result.Namespace),
+	)
+	span.SetStatus(codes.Ok, "workflow dispatched")
 
 	return DispatchResult{
 		Namespace:     result.Namespace,
@@ -109,8 +135,18 @@ func (d *WorkflowDispatcher) Dispatch(ctx context.Context, req DispatchRequest) 
 
 // Status verifies that the configured WorkflowTemplate is available.
 func (d *WorkflowDispatcher) Status(ctx context.Context) (StatusReport, error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "facteur.bridge.status", trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("facteur.workflow_template", d.cfg.WorkflowTemplate),
+		attribute.String("facteur.target_namespace", d.cfg.Namespace),
+	)
+
 	status, err := d.runner.TemplateStatus(ctx, d.cfg.Namespace, d.cfg.WorkflowTemplate)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return StatusReport{}, fmt.Errorf("bridge: template status: %w", err)
 	}
 
@@ -118,6 +154,12 @@ func (d *WorkflowDispatcher) Status(ctx context.Context) (StatusReport, error) {
 	if !status.Ready {
 		message = fmt.Sprintf("Workflow template `%s` in namespace `%s` is not ready.", status.Name, status.Namespace)
 	}
+
+	span.SetAttributes(
+		attribute.Bool("facteur.template_ready", status.Ready),
+		attribute.String("facteur.status_message", message),
+	)
+	span.SetStatus(codes.Ok, "status retrieved")
 
 	return StatusReport{
 		Namespace:        status.Namespace,

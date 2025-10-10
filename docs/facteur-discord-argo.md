@@ -122,11 +122,26 @@ workflow completes.
   - `/review`: allow both leads and engineers so that any stakeholder can trigger reviews.
 - The handler short-circuits with a friendly error when the invoking user lacks the necessary role, and the request is not forwarded to Argo.
 
+## Observability
+
+Facteur initialises OpenTelemetry during startup, enabling spans and metrics across the HTTP server (via `otelfiber`), Kafka consumer, and Argo dispatcher. The Knative Service populates default LGTM endpoints:
+
+| Variable | Value | Purpose |
+| --- | --- | --- |
+| `OTEL_SERVICE_NAME` | `facteur` | Identifies the service in telemetry backends. |
+| `OTEL_SERVICE_NAMESPACE` | `metadata.namespace` | Mirrors the Kubernetes namespace in resource metadata. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Aligns with LGTM's OTLP HTTP gateways. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces` | Tempo ingestion endpoint. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics` | Mimir ingestion endpoint. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push` | Loki ingestion endpoint (reserved for future log exporting). |
+
+Locally, point the same variables at your LGTM environment to capture traces and metrics. Instrumentation surfaces counters such as `facteur_command_events_processed_total`, `facteur_command_events_failed_total`, and `facteur_command_events_dlq_total`, plus spans scoped to Kafka message handling and workflow submissions.
+
 ## Next steps
 
 Future issues will implement:
 
 - Discord interaction handling (slash commands, component interactions).
 - Authentication with real Discord and Argo APIs.
-- Observability (logging, metrics, tracing) and operational runbooks.
+- Operational runbooks and playbooks.
 - End-to-end validation against staging workflows.
