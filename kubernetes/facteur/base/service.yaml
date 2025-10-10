@@ -9,7 +9,7 @@ spec:
       annotations:
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/target: "100"
-        deploy.knative.dev/rollout: "2025-10-09T05:05:00Z"
+        deploy.knative.dev/rollout: "2025-10-10T05:52:55Z"
     spec:
       serviceAccountName: facteur
       containers:
@@ -36,7 +36,7 @@ spec:
             - name: FACTEUR_REDIS_URL
               value: redis://facteur-redis:6379/0
             - name: FACTEUR_ARGO_NAMESPACE
-              value: argo
+              value: argo-workflows
             - name: FACTEUR_ARGO_WORKFLOW_TEMPLATE
               value: facteur-dispatch
           readinessProbe:

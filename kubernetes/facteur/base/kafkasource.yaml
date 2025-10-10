@@ -10,9 +10,21 @@ spec:
     - discord.commands.incoming
   consumerGroup: facteur-consumer
   initialOffset: earliest
+  net:
+    sasl:
+      enable: true
+      user:
+        secretKeyRef:
+          name: facteur-kafka
+          key: username
+      password:
+        secretKeyRef:
+          name: facteur-kafka
+          key: password
   sink:
     ref:
-      apiVersion: serving.knative.dev/v1
+      apiVersion: v1
       kind: Service
-      name: facteur
+      name: facteur-internal
+      namespace: facteur
     uri: /events

@@ -1,33 +1,19 @@
-server:
-  listen_address: ":8080"
-discord:
-  public_key: ""
-  guild_id: ""
-redis:
-  url: redis://facteur-redis:6379/0
 argo:
-  namespace: argo
-  workflow_template: facteur-dispatch
-  service_account: facteur
+  namespace: argo-workflows
   parameters:
     environment: production
-consumer:
-  enabled: true
-  brokers:
-    - kafka-kafka-bootstrap.kafka:9092
-  topic: discord.commands.incoming
-  group_id: facteur
-  dlq:
-    enabled: true
-    topic: discord.commands.incoming.dlq
-  tls:
-    enabled: false
-    insecure_skip_verify: false
-  sasl:
-    enabled: false
+  service_account: facteur-workflow
+  workflow_template: facteur-dispatch
+discord:
+  guild_id: ''
+  public_key: ''
+redis:
+  url: redis://facteur-redis:6379/0
 role_map:
   dispatch:
-    - "987654321098765432"
-    - "876543210987654321"
+  - '987654321098765432'
+  - '876543210987654321'
   status:
-    - "987654321098765432"
+  - '987654321098765432'
+server:
+  listen_address: :8080
