@@ -4,7 +4,7 @@
 IMAGE_NAME="registry.ide-newton.ts.net/lab/vecteur"
 DOCKERFILE="services/vecteur/Dockerfile"
 CONTEXT_PATH="services/vecteur"
-DEFAULT_TAG="pg18-trixie"
+DEFAULT_TAG="18-trixie"
 TARGETARCH="arm64"
 
 # Check if a tag is provided as an argument
