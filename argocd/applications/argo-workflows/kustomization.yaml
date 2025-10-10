@@ -14,6 +14,25 @@ helmCharts:
       controller:
         workflowNamespaces:
           - argo-workflows
+        extraEnv:
+          - name: OTEL_SERVICE_NAME
+            value: argo-workflows-controller
+          - name: OTEL_SERVICE_NAMESPACE
+            value: argo-workflows
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: http/protobuf
+          - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            value: http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces
+          - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+            value: http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics
+          - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
+          - name: OTEL_METRICS_EXPORTER
+            value: otlp
+          - name: OTEL_TRACES_EXPORTER
+            value: otlp
+          - name: OTEL_LOGS_EXPORTER
+            value: otlp
       server:
         secure: false
         authModes:
@@ -35,10 +54,29 @@ helmCharts:
           rbac:
             enabled: true
           insecureSkipVerify: true
-      workflow:
-        serviceAccount:
-          create: true
-          name: argo-workflows-workflow
+        extraEnv:
+          - name: OTEL_SERVICE_NAME
+            value: argo-workflows-server
+          - name: OTEL_SERVICE_NAMESPACE
+            value: argo-workflows
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: http/protobuf
+          - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+            value: http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces
+          - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+            value: http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics
+          - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+            value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
+          - name: OTEL_METRICS_EXPORTER
+            value: otlp
+          - name: OTEL_TRACES_EXPORTER
+            value: otlp
+          - name: OTEL_LOGS_EXPORTER
+            value: otlp
+        workflow:
+          serviceAccount:
+            create: true
+            name: argo-workflows-workflow
       artifactRepository:
         archiveLogs: true
   - name: argo-events
