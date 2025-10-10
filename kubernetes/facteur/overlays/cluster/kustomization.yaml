@@ -10,5 +10,6 @@ images:
 - name: registry.ide-newton.ts.net/lab/facteur
   newTag: main
 kind: Kustomization
+namespace: facteur
 resources:
 - ../../base
