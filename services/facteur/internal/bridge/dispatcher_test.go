@@ -21,13 +21,13 @@ func TestWorkflowDispatcherDispatch(t *testing.T) {
 		Namespace:        "argo",
 		WorkflowTemplate: "facteur-dispatch",
 		ServiceAccount:   "facteur",
-		Parameters:       map[string]string{"environment": "staging"},
+		Parameters:       map[string]string{"payload": "{}"},
 	})
 	require.NoError(t, err)
 
 	result, err := dispatcher.Dispatch(ctx, bridge.DispatchRequest{
-		Command: "dispatch",
-		Options: map[string]string{"target": "cluster-a"},
+		Command: "plan",
+		Options: map[string]string{"payload": `{"prompt":"Generate plan"}`},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "dispatch-123", result.WorkflowName)
@@ -39,8 +39,8 @@ func TestWorkflowDispatcherDispatch(t *testing.T) {
 		Namespace:          "argo",
 		WorkflowTemplate:   "facteur-dispatch",
 		ServiceAccount:     "facteur",
-		Parameters:         map[string]string{"environment": "staging", "target": "cluster-a"},
-		GenerateNamePrefix: "dispatch",
+		Parameters:         map[string]string{"payload": `{"prompt":"Generate plan"}`},
+		GenerateNamePrefix: "plan",
 	}, runner.lastRunInput)
 }
 
@@ -57,7 +57,7 @@ func TestWorkflowDispatcherDispatchUsesRequestCorrelation(t *testing.T) {
 	require.NoError(t, err)
 
 	result, err := dispatcher.Dispatch(ctx, bridge.DispatchRequest{
-		Command:       "dispatch",
+		Command:       "plan",
 		CorrelationID: "corr-abc",
 		TraceID:       "trace-123",
 	})

@@ -17,9 +17,9 @@ func TestProcessEventPersistsSession(t *testing.T) {
 	store := &stubStore{}
 
 	result, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{
-		Command:       "dispatch",
+		Command:       "plan",
 		UserID:        "user-1",
-		Options:       map[string]string{"env": "staging"},
+		Options:       map[string]string{"payload": `{"prompt":"Test"}`},
 		CorrelationID: "corr-1",
 	}, dispatcher, store, time.Minute)
 	require.NoError(t, err)
@@ -35,7 +35,7 @@ func TestProcessEventDefaultsCorrelation(t *testing.T) {
 	store := &stubStore{}
 
 	result, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{
-		Command: "dispatch",
+		Command: "plan",
 		UserID:  "user-1",
 	}, dispatcher, store, 0)
 	require.NoError(t, err)

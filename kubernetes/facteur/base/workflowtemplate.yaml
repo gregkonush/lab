@@ -5,30 +5,119 @@ metadata:
   namespace: argo-workflows
 spec:
   serviceAccountName: facteur-workflow
-  entrypoint: run-dispatch
+  entrypoint: plan
   arguments:
     parameters:
-      - name: target
-        value: cluster-a
-      - name: environment
-        value: staging
+      - name: payload
+        value: '{}'
   templates:
-    - name: run-dispatch
-      steps:
-        - - name: log-target
-            template: echo
-            arguments:
-              parameters:
-                - name: message
-                  value: "Dispatching workflow for {{workflow.parameters.target}} in {{workflow.parameters.environment}}"
-    - name: echo
+    - name: plan
       inputs:
         parameters:
-          - name: message
+          - name: payload
       container:
-        image: alpine:3.20
-        command:
-          - sh
-          - -c
+        image: registry.ide-newton.ts.net/lab/codex-universal:latest
+        imagePullPolicy: Always
+        env:
+          - name: DISCORD_BOT_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: bot-token
+                optional: true
+          - name: DISCORD_GUILD_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: guild-id
+                optional: true
+          - name: DISCORD_CATEGORY_ID
+            valueFrom:
+              secretKeyRef:
+                name: discord-codex-bot
+                key: category-id
+                optional: true
+          - name: LGTM_LOKI_ENDPOINT
+            value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
+        command: ["/usr/local/bin/codex-bootstrap.sh"]
         args:
-          - echo "{{inputs.parameters.message}}"
+          - "/bin/bash"
+          - "-lc"
+          - |
+            set -euo pipefail
+
+            PAYLOAD_FILE=$(mktemp)
+            cat <<'JSON' > "$PAYLOAD_FILE"
+            {{inputs.parameters.payload}}
+            JSON
+
+            PROMPT=$(jq -r '.prompt // empty' "$PAYLOAD_FILE")
+            if [[ -z "$PROMPT" || "$PROMPT" == "null" ]]; then
+              echo "Missing Codex prompt in payload" >&2
+              exit 1
+            fi
+            export CODEX_PROMPT="$PROMPT"
+
+            ISSUE_REPO=$(jq -r '.repository // empty' "$PAYLOAD_FILE")
+            if [[ "$ISSUE_REPO" == "null" ]]; then
+              ISSUE_REPO=""
+            fi
+            export ISSUE_REPO
+
+            ISSUE_NUMBER=$(jq -r '.issueNumber // empty' "$PAYLOAD_FILE")
+            if [[ "$ISSUE_NUMBER" == "null" ]]; then
+              ISSUE_NUMBER=""
+            fi
+            export ISSUE_NUMBER
+
+            ISSUE_TITLE=$(jq -r '.title // empty' "$PAYLOAD_FILE")
+            if [[ "$ISSUE_TITLE" == "null" ]]; then
+              ISSUE_TITLE=""
+            fi
+            export ISSUE_TITLE
+
+            RUN_ID=$(jq -r '.runId // empty' "$PAYLOAD_FILE")
+            if [[ "$RUN_ID" == "null" ]]; then
+              RUN_ID=""
+            fi
+            export CODEX_RELAY_RUN_ID="$RUN_ID"
+
+            STAGE=$(jq -r '.stage // "planning"' "$PAYLOAD_FILE")
+            if [[ "$STAGE" == "null" || -z "$STAGE" ]]; then
+              STAGE="planning"
+            fi
+            export CODEX_STAGE="$STAGE"
+
+            RELAY_DRY_RUN=$(jq -r '.discordRelayDryRun // "0"' "$PAYLOAD_FILE")
+            if [[ "$RELAY_DRY_RUN" == "null" ]]; then
+              RELAY_DRY_RUN="0"
+            fi
+            export DISCORD_RELAY_DRY_RUN="$RELAY_DRY_RUN"
+
+            POST_TO_GITHUB=$(jq -r '.postToGithub // "false"' "$PAYLOAD_FILE" | tr '[:upper:]' '[:lower:]')
+            if [[ "$POST_TO_GITHUB" == "true" || "$POST_TO_GITHUB" == "1" || "$POST_TO_GITHUB" == "yes" ]]; then
+              export POST_TO_GITHUB=true
+            else
+              export POST_TO_GITHUB=false
+            fi
+
+            export OUTPUT_PATH="${PLAN_OUTPUT_PATH:-/workspace/lab/.codex-plan-output.md}"
+            export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/lab/.codex-plan-events.jsonl}"
+            export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-plan-agent.log}"
+
+            codex-plan.sh
+
+            if [[ -s "$OUTPUT_PATH" ]]; then
+              echo "Codex plan output:" >&2
+              cat "$OUTPUT_PATH" >&2
+            fi
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "6"
+            memory: 12Gi
+      retryStrategy:
+        limit: 3
+        retryPolicy: OnFailure

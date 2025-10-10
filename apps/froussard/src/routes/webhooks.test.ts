@@ -2,9 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 
-const { mockVerifyDiscordRequest, mockToCommandEvent } = vi.hoisted(() => ({
+const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent } = vi.hoisted(() => ({
   mockVerifyDiscordRequest: vi.fn(async () => true),
-  mockToCommandEvent: vi.fn(() => ({
+  mockBuildPlanModalResponse: vi.fn(() => ({
+    type: 9,
+    data: {
+      custom_id: 'plan:cmd-1',
+      title: 'Request Planning Run',
+      components: [],
+    },
+  })),
+  mockToPlanModalEvent: vi.fn(() => ({
     provider: 'discord' as const,
     interactionId: 'interaction-123',
     applicationId: 'app-123',
@@ -12,20 +20,21 @@ const { mockVerifyDiscordRequest, mockToCommandEvent } = vi.hoisted(() => ({
     commandId: 'command-1',
     version: 1,
     token: 'token-123',
-    options: { project: 'alpha' },
+    options: { content: 'Ship the release with QA gating' },
     guildId: 'guild-1',
     channelId: 'channel-1',
-    user: { id: 'user-1' },
+    user: { id: 'user-1', username: 'tester', globalName: 'Tester' },
     locale: 'en-US',
-    response: { type: 5, flags: 64 },
+    response: { type: 4, flags: 64 },
     timestamp: '2025-10-09T00:00:00.000Z',
   })),
 }))
 
 vi.mock('@/discord-commands', () => ({
   verifyDiscordRequest: mockVerifyDiscordRequest,
-  toCommandEvent: mockToCommandEvent,
-  INTERACTION_TYPE: { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3 },
+  buildPlanModalResponse: mockBuildPlanModalResponse,
+  toPlanModalEvent: mockToPlanModalEvent,
+  INTERACTION_TYPE: { PING: 1, APPLICATION_COMMAND: 2, MESSAGE_COMPONENT: 3, MODAL_SUBMIT: 5 },
 }))
 
 vi.mock('@/codex', () => ({
@@ -226,7 +235,7 @@ describe('createWebhookHandler', () => {
     expect(kafka.publish).not.toHaveBeenCalled()
   })
 
-  it('publishes Discord command events and returns deferred ack', async () => {
+  it('returns plan modal response for slash command', async () => {
     const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
@@ -235,6 +244,11 @@ describe('createWebhookHandler', () => {
           type: 2,
           id: 'interaction-123',
           token: 'token',
+          data: {
+            id: 'command-1',
+            name: 'plan',
+            type: 1,
+          },
         },
         {
           'x-signature-ed25519': 'sig',
@@ -245,7 +259,44 @@ describe('createWebhookHandler', () => {
     )
 
     expect(mockVerifyDiscordRequest).toHaveBeenCalled()
-    expect(mockToCommandEvent).toHaveBeenCalled()
+    expect(mockBuildPlanModalResponse).toHaveBeenCalled()
+    expect(mockToPlanModalEvent).not.toHaveBeenCalled()
+    expect(kafka.publish).not.toHaveBeenCalled()
+
+    const payload = await response.json()
+    expect(response.status).toBe(200)
+    expect(payload).toEqual({
+      type: 9,
+      data: {
+        custom_id: 'plan:cmd-1',
+        title: 'Request Planning Run',
+        components: [],
+      },
+    })
+  })
+
+  it('publishes plan modal submissions and returns acknowledgement', async () => {
+    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+
+    const response = await handler(
+      buildDiscordRequest(
+        {
+          type: 5,
+          id: 'interaction-123',
+          token: 'modal-token',
+          data: { custom_id: 'plan:command-1', components: [] },
+        },
+        {
+          'x-signature-ed25519': 'sig',
+          'x-signature-timestamp': 'timestamp',
+        },
+      ),
+      'discord',
+    )
+
+    expect(mockVerifyDiscordRequest).toHaveBeenCalled()
+    expect(mockToPlanModalEvent).toHaveBeenCalled()
+    expect(mockBuildPlanModalResponse).not.toHaveBeenCalled()
     expect(kafka.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         topic: 'discord-topic',
@@ -253,12 +304,29 @@ describe('createWebhookHandler', () => {
       }),
     )
 
+    const publishArgs = kafka.publish.mock.calls[0]?.[0]
+    expect(publishArgs).toBeTruthy()
+    const eventValue = JSON.parse(publishArgs.value)
+    expect(eventValue.options).toEqual(
+      expect.objectContaining({
+        content: 'Ship the release with QA gating',
+        payload: expect.any(String),
+      }),
+    )
+
+    const parsedPayload = JSON.parse(eventValue.options.payload as string)
+    expect(parsedPayload.prompt).toBe('Ship the release with QA gating')
+    expect(parsedPayload.postToGithub).toBe(false)
+    expect(parsedPayload.stage).toBe('planning')
+    expect(parsedPayload.runId).toBe('interaction-123')
+    expect(parsedPayload.user?.id).toBe('user-1')
+
     const payload = await response.json()
     expect(response.status).toBe(200)
     expect(payload).toEqual({
       type: 4,
       data: {
-        content: 'Command `/plan` received. Workflow hand-off in progress…',
+        content: 'Planning request received. Facteur will execute the workflow shortly.',
         flags: 64,
       },
     })
@@ -280,7 +348,8 @@ describe('createWebhookHandler', () => {
       'discord',
     )
 
-    expect(mockToCommandEvent).not.toHaveBeenCalled()
+    expect(mockBuildPlanModalResponse).not.toHaveBeenCalled()
+    expect(mockToPlanModalEvent).not.toHaveBeenCalled()
     expect(kafka.publish).not.toHaveBeenCalled()
     const payload = await response.json()
     expect(payload).toEqual({ type: 1 })

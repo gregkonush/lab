@@ -26,11 +26,11 @@ argo:
   workflow_template: facteur-dispatch
   service_account: facteur-workflow
   parameters:
-    environment: staging
+    payload: '{}'
 server:
   listen_address: ":9000"
 role_map:
-  dispatch:
+  plan:
     - admin
     - operator
   status:
@@ -49,11 +49,11 @@ role_map:
 		require.Equal(t, "argo-workflows", cfg.Argo.Namespace)
 		require.Equal(t, "facteur-dispatch", cfg.Argo.WorkflowTemplate)
 		require.Equal(t, "facteur-workflow", cfg.Argo.ServiceAccount)
-		require.Equal(t, map[string]string{"environment": "staging"}, cfg.Argo.Parameters)
+		require.Equal(t, map[string]string{"payload": "{}"}, cfg.Argo.Parameters)
 		require.Equal(t, ":9000", cfg.Server.ListenAddress)
 		require.Equal(t, map[string][]string{
-			"dispatch": []string{"admin", "operator"},
-			"status":   []string{"moderator"},
+			"plan":   []string{"admin", "operator"},
+			"status": []string{"moderator"},
 		}, cfg.RoleMap)
 	})
 

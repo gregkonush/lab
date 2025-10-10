@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	CommandDispatch = "dispatch"
-	CommandStatus   = "status"
+	CommandPlan   = "plan"
+	CommandStatus = "status"
 )
 
 var (
@@ -66,8 +66,8 @@ func (h *Handler) Handle(ctx context.Context, interaction Interaction) (Response
 	}
 
 	switch strings.ToLower(interaction.Name) {
-	case CommandDispatch:
-		return h.handleDispatch(ctx, interaction)
+	case CommandPlan:
+		return h.handlePlan(ctx, interaction)
 	case CommandStatus:
 		return h.handleStatus(ctx, interaction)
 	default:
@@ -90,7 +90,7 @@ func (h *Handler) authorise(interaction Interaction) error {
 	return ErrForbidden
 }
 
-func (h *Handler) handleDispatch(ctx context.Context, interaction Interaction) (Response, error) {
+func (h *Handler) handlePlan(ctx context.Context, interaction Interaction) (Response, error) {
 	result, err := h.dispatcher.Dispatch(ctx, bridge.DispatchRequest{
 		Command: interaction.Name,
 		UserID:  interaction.UserID,
