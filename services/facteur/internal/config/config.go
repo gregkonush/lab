@@ -4,19 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/spf13/viper"
 )
 
 // Config captures runtime configuration for the facteur service.
 type Config struct {
-	Discord  DiscordConfig       `mapstructure:"discord"`
-	Redis    RedisConfig         `mapstructure:"redis"`
-	Argo     ArgoConfig          `mapstructure:"argo"`
-	RoleMap  map[string][]string `mapstructure:"role_map"`
-	Server   ServerConfig        `mapstructure:"server"`
-	Consumer ConsumerConfig      `mapstructure:"consumer"`
+	Discord DiscordConfig       `mapstructure:"discord"`
+	Redis   RedisConfig         `mapstructure:"redis"`
+	Argo    ArgoConfig          `mapstructure:"argo"`
+	RoleMap map[string][]string `mapstructure:"role_map"`
+	Server  ServerConfig        `mapstructure:"server"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -43,40 +41,6 @@ type ArgoConfig struct {
 // ServerConfig contains HTTP server runtime options.
 type ServerConfig struct {
 	ListenAddress string `mapstructure:"listen_address"`
-}
-
-// ConsumerConfig describes the Kafka-backed Discord command consumer.
-type ConsumerConfig struct {
-	Enabled  bool          `mapstructure:"enabled"`
-	Brokers  []string      `mapstructure:"brokers"`
-	Topic    string        `mapstructure:"topic"`
-	GroupID  string        `mapstructure:"group_id"`
-	DLQ      DLQConfig     `mapstructure:"dlq"`
-	TLS      TLSConfig     `mapstructure:"tls"`
-	SASL     SASLConfig    `mapstructure:"sasl"`
-	MinBytes int           `mapstructure:"min_bytes"`
-	MaxBytes int           `mapstructure:"max_bytes"`
-	MaxWait  time.Duration `mapstructure:"max_wait"`
-}
-
-// DLQConfig controls optional dead-letter publishing.
-type DLQConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Topic   string `mapstructure:"topic"`
-}
-
-// TLSConfig toggles TLS for Kafka connections.
-type TLSConfig struct {
-	Enabled            bool `mapstructure:"enabled"`
-	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"`
-}
-
-// SASLConfig captures SASL authentication knobs for Kafka.
-type SASLConfig struct {
-	Enabled   bool   `mapstructure:"enabled"`
-	Mechanism string `mapstructure:"mechanism"`
-	Username  string `mapstructure:"username"`
-	Password  string `mapstructure:"password"`
 }
 
 // Options customises how configuration should be loaded.
@@ -112,21 +76,6 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		"argo.parameters",
 		"role_map",
 		"server.listen_address",
-		"consumer.enabled",
-		"consumer.brokers",
-		"consumer.topic",
-		"consumer.group_id",
-		"consumer.dlq.enabled",
-		"consumer.dlq.topic",
-		"consumer.tls.enabled",
-		"consumer.tls.insecure_skip_verify",
-		"consumer.sasl.enabled",
-		"consumer.sasl.mechanism",
-		"consumer.sasl.username",
-		"consumer.sasl.password",
-		"consumer.min_bytes",
-		"consumer.max_bytes",
-		"consumer.max_wait",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("bind env %s: %w", key, err)
@@ -164,30 +113,6 @@ func normaliseConfig(cfg *Config) {
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"
 	}
-	if len(cfg.Consumer.Brokers) == 0 {
-		cfg.Consumer.Brokers = []string{"localhost:9092"}
-	}
-	if cfg.Consumer.Topic == "" {
-		cfg.Consumer.Topic = "discord.commands.incoming"
-	}
-	if cfg.Consumer.GroupID == "" {
-		cfg.Consumer.GroupID = "facteur"
-	}
-	if cfg.Consumer.MinBytes <= 0 {
-		cfg.Consumer.MinBytes = 1
-	}
-	if cfg.Consumer.MaxBytes <= 0 {
-		cfg.Consumer.MaxBytes = 10 << 20 // ~10 MiB
-	}
-	if cfg.Consumer.MaxWait <= 0 {
-		cfg.Consumer.MaxWait = time.Second
-	}
-	if cfg.Consumer.DLQ.Enabled && cfg.Consumer.DLQ.Topic == "" {
-		cfg.Consumer.DLQ.Topic = cfg.Consumer.Topic + ".dlq"
-	}
-	if cfg.Consumer.SASL.Mechanism == "" {
-		cfg.Consumer.SASL.Mechanism = "plain"
-	}
 }
 
 func validate(cfg Config) error {
@@ -208,28 +133,6 @@ func validate(cfg Config) error {
 	}
 	if cfg.Argo.WorkflowTemplate == "" {
 		errs = append(errs, "argo.workflow_template is required")
-	}
-	if cfg.Consumer.Enabled {
-		if len(cfg.Consumer.Brokers) == 0 {
-			errs = append(errs, "consumer.brokers is required when consumer.enabled is true")
-		}
-		if cfg.Consumer.Topic == "" {
-			errs = append(errs, "consumer.topic is required when consumer.enabled is true")
-		}
-		if cfg.Consumer.GroupID == "" {
-			errs = append(errs, "consumer.group_id is required when consumer.enabled is true")
-		}
-		if cfg.Consumer.DLQ.Enabled && cfg.Consumer.DLQ.Topic == "" {
-			errs = append(errs, "consumer.dlq.topic is required when consumer.dlq.enabled is true")
-		}
-		if cfg.Consumer.SASL.Enabled {
-			if cfg.Consumer.SASL.Username == "" {
-				errs = append(errs, "consumer.sasl.username is required when consumer.sasl.enabled is true")
-			}
-			if cfg.Consumer.SASL.Password == "" {
-				errs = append(errs, "consumer.sasl.password is required when consumer.sasl.enabled is true")
-			}
-		}
 	}
 
 	if len(errs) > 0 {

@@ -4,20 +4,6 @@ argo:
     environment: staging
   service_account: facteur-workflow
   workflow_template: facteur-dispatch
-consumer:
-  brokers:
-  - localhost:9092
-  dlq:
-    enabled: false
-    topic: discord.commands.incoming.dlq
-  enabled: true
-  group_id: facteur
-  sasl:
-    enabled: false
-  tls:
-    enabled: false
-    insecure_skip_verify: false
-  topic: discord.commands.incoming
 discord:
   guild_id: ''
   public_key: ''
