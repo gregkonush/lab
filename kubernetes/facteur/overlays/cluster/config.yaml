@@ -2,7 +2,7 @@ argo:
   namespace: argo-workflows
   parameters:
     environment: production
-  service_account: facteur
+  service_account: facteur-workflow
   workflow_template: facteur-dispatch
 consumer:
   brokers:
