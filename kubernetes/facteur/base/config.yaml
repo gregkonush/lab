@@ -1,7 +1,7 @@
 argo:
   namespace: argo-workflows
   parameters:
-    environment: staging
+    payload: '{}'
   service_account: facteur-workflow
   workflow_template: facteur-dispatch
 discord:
@@ -10,7 +10,7 @@ discord:
 redis:
   url: redis://facteur-redis:6379/0
 role_map:
-  dispatch:
+  plan:
   - '123456789012345678'
   status:
   - '123456789012345678'

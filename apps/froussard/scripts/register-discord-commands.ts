@@ -22,31 +22,7 @@ interface SlashCommand {
 const commands: SlashCommand[] = [
   {
     name: 'plan',
-    description: 'Shape upcoming work and capture acceptance checkpoints.',
-    options: [
-      { name: 'objective', description: 'Short description of the desired outcome', type: 3, required: true },
-      { name: 'project', description: 'Project or repository slug (optional)', type: 3 },
-    ],
-  },
-  {
-    name: 'implement',
-    description: 'Kick off execution for an approved plan.',
-    options: [
-      { name: 'project', description: 'Project or repository slug', type: 3, required: true },
-      { name: 'branch', description: 'Git branch name to use', type: 3, required: true },
-      { name: 'ticket', description: 'Tracking ticket identifier', type: 3 },
-      { name: 'notes', description: 'Additional implementation notes', type: 3 },
-    ],
-  },
-  {
-    name: 'review',
-    description: 'Collect artefacts for async review and notify approvers.',
-    options: [
-      { name: 'project', description: 'Project or repository slug', type: 3, required: true },
-      { name: 'artifact', description: 'Link or handle to the artefact under review', type: 3, required: true },
-      { name: 'notes', description: 'Context or focus areas for reviewers', type: 3 },
-      { name: 'deadline', description: 'Review due date (ISO YYYY-MM-DD)', type: 3 },
-    ],
+    description: 'Collect context for a Facteur planning run via modal input.',
   },
 ]
 

@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   buildDeferredResponsePayload,
+  buildPlanModalResponse,
   INTERACTION_TYPE,
   toCommandEvent,
+  toPlanModalEvent,
   verifyDiscordRequest,
-  type DiscordInteraction,
+  type DiscordApplicationCommandInteraction,
+  type DiscordModalSubmitInteraction,
 } from '@/discord-commands'
 
 const { verifyKeyMock } = vi.hoisted(() => ({
@@ -36,7 +39,7 @@ describe('verifyDiscordRequest', () => {
 })
 
 describe('toCommandEvent', () => {
-  const baseInteraction: DiscordInteraction = {
+  const baseInteraction: DiscordApplicationCommandInteraction = {
     type: INTERACTION_TYPE.APPLICATION_COMMAND,
     id: '1',
     token: 'token',
@@ -95,6 +98,84 @@ describe('toCommandEvent', () => {
         { deferType: 'channel-message', ephemeral: false },
       ),
     ).toThrow(/Unsupported interaction type/)
+  })
+})
+
+describe('plan modal helpers', () => {
+  const baseCommandInteraction: DiscordApplicationCommandInteraction = {
+    type: INTERACTION_TYPE.APPLICATION_COMMAND,
+    id: 'interaction-1',
+    token: 'token',
+    version: 1,
+    application_id: 'app',
+    data: {
+      id: 'cmd-123',
+      name: 'plan',
+      type: 1,
+    },
+  }
+
+  it('builds plan modal response with encoded command id', () => {
+    const modal = buildPlanModalResponse(baseCommandInteraction)
+    expect(modal.type).toBe(9)
+    expect(modal.data.custom_id).toBe('plan:cmd-123')
+    expect(modal.data.components[0].components[0].custom_id).toBe('content')
+  })
+
+  it('normalises modal submission content', () => {
+    const modalSubmission: DiscordModalSubmitInteraction = {
+      type: INTERACTION_TYPE.MODAL_SUBMIT,
+      id: 'interaction-2',
+      token: 'modal-token',
+      version: 1,
+      application_id: 'app',
+      data: {
+        custom_id: 'plan:cmd-123',
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 4,
+                custom_id: 'content',
+                value: '  Ship the release  ',
+              },
+            ],
+          },
+        ],
+      },
+      member: {
+        user: {
+          id: 'user-123',
+          username: 'tester',
+        },
+        roles: ['role-1'],
+      },
+      guild_id: 'guild-1',
+      channel_id: 'channel-1',
+    }
+
+    const event = toPlanModalEvent(modalSubmission, { deferType: 'channel-message', ephemeral: true })
+    expect(event.command).toBe('plan')
+    expect(event.commandId).toBe('cmd-123')
+    expect(event.options).toEqual({ content: 'Ship the release' })
+    expect(event.user.id).toBe('user-123')
+    expect(event.response).toEqual({ type: 4, flags: 64 })
+  })
+
+  it('throws when custom id cannot be parsed', () => {
+    const modalSubmission: DiscordModalSubmitInteraction = {
+      ...baseCommandInteraction,
+      type: INTERACTION_TYPE.MODAL_SUBMIT,
+      data: {
+        custom_id: 'unknown',
+        components: [],
+      },
+    } as DiscordModalSubmitInteraction
+
+    expect(() => toPlanModalEvent(modalSubmission, { deferType: 'channel-message', ephemeral: false })).toThrow(
+      /Unsupported plan modal identifier/,
+    )
   })
 })
 

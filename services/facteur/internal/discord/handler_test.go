@@ -19,15 +19,15 @@ func TestHandler_Dispatch(t *testing.T) {
 	}
 
 	handler, err := discord.NewHandler(map[string][]string{
-		discord.CommandDispatch: {"role-ops"},
+		discord.CommandPlan: {"role-ops"},
 	}, fake, nil)
 	require.NoError(t, err)
 
 	resp, err := handler.Handle(ctx, discord.Interaction{
-		Name:    discord.CommandDispatch,
+		Name:    discord.CommandPlan,
 		UserID:  "user-123",
 		Roles:   []string{"role-ops"},
-		Options: map[string]string{"target": "cluster-a"},
+		Options: map[string]string{"payload": `{"prompt":"Generate"}`},
 	})
 
 	require.NoError(t, err)
@@ -35,9 +35,9 @@ func TestHandler_Dispatch(t *testing.T) {
 	require.Contains(t, resp.Content, "facteur-dispatch queued")
 	require.True(t, fake.dispatchCalled)
 	require.Equal(t, bridge.DispatchRequest{
-		Command: discord.CommandDispatch,
+		Command: discord.CommandPlan,
 		UserID:  "user-123",
-		Options: map[string]string{"target": "cluster-a"},
+		Options: map[string]string{"payload": `{"prompt":"Generate"}`},
 	}, fake.lastDispatchRequest)
 }
 
@@ -46,12 +46,12 @@ func TestHandler_DispatchForbidden(t *testing.T) {
 	fake := &fakeDispatcher{}
 
 	handler, err := discord.NewHandler(map[string][]string{
-		discord.CommandDispatch: {"role-ops"},
+		discord.CommandPlan: {"role-ops"},
 	}, fake, nil)
 	require.NoError(t, err)
 
 	resp, err := handler.Handle(ctx, discord.Interaction{
-		Name:   discord.CommandDispatch,
+		Name:   discord.CommandPlan,
 		UserID: "user-456",
 		Roles:  []string{"role-guest"},
 	})
@@ -99,7 +99,7 @@ func TestHandler_DispatchErrorBubbles(t *testing.T) {
 	handler, err := discord.NewHandler(map[string][]string{}, fake, nil)
 	require.NoError(t, err)
 
-	_, err = handler.Handle(ctx, discord.Interaction{Name: discord.CommandDispatch})
+	_, err = handler.Handle(ctx, discord.Interaction{Name: discord.CommandPlan})
 	require.ErrorIs(t, err, dispatchErr)
 }
 
@@ -117,7 +117,7 @@ func TestHandler_DispatchPersistsSession(t *testing.T) {
 	handler, err := discord.NewHandler(nil, fake, store)
 	require.NoError(t, err)
 
-	interaction := discord.Interaction{Name: discord.CommandDispatch, UserID: "user-1"}
+	interaction := discord.Interaction{Name: discord.CommandPlan, UserID: "user-1"}
 	resp, err := handler.Handle(ctx, interaction)
 	require.NoError(t, err)
 	require.True(t, resp.Ephemeral)

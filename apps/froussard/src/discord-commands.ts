@@ -8,17 +8,18 @@ export const INTERACTION_TYPE = {
   PING: 1,
   APPLICATION_COMMAND: 2,
   MESSAGE_COMPONENT: 3,
+  MODAL_SUBMIT: 5,
 } as const
 
 export type InteractionType = (typeof INTERACTION_TYPE)[keyof typeof INTERACTION_TYPE]
 
-export interface DiscordInteraction {
+export interface DiscordInteraction<TData = unknown> {
   type: InteractionType
   id: string
   token: string
   version: number
   application_id: string
-  data?: DiscordApplicationCommandData
+  data?: TData
   guild_id?: string
   channel_id?: string
   member?: DiscordGuildMember
@@ -26,6 +27,8 @@ export interface DiscordInteraction {
   locale?: string
   guild_locale?: string
 }
+
+export type DiscordApplicationCommandInteraction = DiscordInteraction<DiscordApplicationCommandData>
 
 export interface DiscordApplicationCommandData {
   id: string
@@ -40,6 +43,24 @@ export interface DiscordApplicationCommandOption {
   value?: unknown
   options?: DiscordApplicationCommandOption[]
 }
+
+export interface DiscordModalSubmitData {
+  custom_id: string
+  components: DiscordModalActionRow[]
+}
+
+export interface DiscordModalActionRow {
+  type: number
+  components: DiscordModalComponent[]
+}
+
+export interface DiscordModalComponent {
+  type: number
+  custom_id: string
+  value?: unknown
+}
+
+export type DiscordModalSubmitInteraction = DiscordInteraction<DiscordModalSubmitData>
 
 export interface DiscordGuildMember {
   user?: DiscordUser
@@ -117,8 +138,129 @@ export const buildDeferredResponsePayload = (config: DiscordResponseConfig) => {
   }
 }
 
+const PLAN_MODAL_PREFIX = 'plan'
+const PLAN_MODAL_CONTENT_FIELD = 'content'
+const ACTION_ROW_TYPE = 1
+const TEXT_INPUT_TYPE = 4
+
+export interface DiscordModalResponse {
+  type: 9
+  data: {
+    custom_id: string
+    title: string
+    components: Array<{
+      type: number
+      components: Array<{
+        type: number
+        custom_id: string
+        label: string
+        style: number
+        placeholder?: string
+        min_length?: number
+        max_length?: number
+        required?: boolean
+      }>
+    }>
+  }
+}
+
+export const buildPlanModalResponse = (interaction: DiscordApplicationCommandInteraction): DiscordModalResponse => {
+  const commandId = interaction.data?.id
+  if (!commandId) {
+    throw new Error('Cannot build plan modal without command identifier')
+  }
+
+  return {
+    type: 9,
+    data: {
+      custom_id: `${PLAN_MODAL_PREFIX}:${commandId}`,
+      title: 'Request Planning Run',
+      components: [
+        {
+          type: ACTION_ROW_TYPE,
+          components: [
+            {
+              type: TEXT_INPUT_TYPE,
+              custom_id: PLAN_MODAL_CONTENT_FIELD,
+              label: 'Content',
+              style: 2,
+              placeholder: 'Describe the work Codex should plan...',
+              min_length: 10,
+              max_length: 4000,
+              required: true,
+            },
+          ],
+        },
+      ],
+    },
+  }
+}
+
+export const toPlanModalEvent = (
+  interaction: DiscordModalSubmitInteraction,
+  responseConfig: DiscordResponseConfig,
+): DiscordCommandEvent => {
+  if (interaction.type !== INTERACTION_TYPE.MODAL_SUBMIT) {
+    throw new Error(`Unsupported interaction type for plan modal: ${interaction.type}`)
+  }
+
+  const data = interaction.data
+  if (!data) {
+    throw new Error('Missing modal submission payload')
+  }
+
+  const { custom_id: customId } = data
+  if (!customId) {
+    throw new Error('Modal submission missing custom identifier')
+  }
+
+  const commandId = parsePlanModalCommandId(customId)
+  const optionValues = extractModalValues(data.components)
+  const content = optionValues[PLAN_MODAL_CONTENT_FIELD]?.trim()
+
+  if (!content) {
+    throw new Error('Modal submission missing required content field')
+  }
+
+  const user = resolveUser(interaction)
+
+  return {
+    provider: 'discord',
+    interactionId: interaction.id,
+    applicationId: interaction.application_id,
+    command: PLAN_MODAL_PREFIX,
+    commandId,
+    version: interaction.version,
+    token: interaction.token,
+    options: {
+      [PLAN_MODAL_CONTENT_FIELD]: content,
+    },
+    guildId: interaction.guild_id,
+    channelId: interaction.channel_id,
+    user: {
+      id: user?.id ?? '',
+      username: user?.username,
+      globalName: user?.global_name ?? null,
+      discriminator: user?.discriminator,
+    },
+    member: interaction.member
+      ? {
+          id: interaction.member.user?.id,
+          roles: interaction.member.roles ?? [],
+        }
+      : undefined,
+    locale: interaction.locale,
+    guildLocale: interaction.guild_locale,
+    response: {
+      type: 4,
+      ...(responseConfig.ephemeral ? { flags: 1 << 6 } : {}),
+    },
+    timestamp: new Date().toISOString(),
+  }
+}
+
 export const toCommandEvent = (
-  interaction: DiscordInteraction,
+  interaction: DiscordApplicationCommandInteraction,
   responseConfig: DiscordResponseConfig,
 ): DiscordCommandEvent => {
   if (interaction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) {
@@ -202,6 +344,36 @@ const flattenOptions = (options?: DiscordApplicationCommandOption[]): Record<str
   return result
 }
 
+const parsePlanModalCommandId = (customId: string): string => {
+  const [prefix, commandId] = customId.split(':', 2)
+  if (prefix !== PLAN_MODAL_PREFIX || !commandId) {
+    throw new Error(`Unsupported plan modal identifier: ${customId}`)
+  }
+  return commandId
+}
+
+const extractModalValues = (rows: DiscordModalActionRow[] = []): Record<string, string> => {
+  const values: Record<string, string> = {}
+
+  for (const row of rows) {
+    if (!row?.components) {
+      continue
+    }
+    for (const component of row.components) {
+      if (!component?.custom_id) {
+        continue
+      }
+      if (component.value === undefined || component.value === null) {
+        values[component.custom_id] = ''
+      } else {
+        values[component.custom_id] = toStringValue(component.value)
+      }
+    }
+  }
+
+  return values
+}
+
 const toStringValue = (value: unknown): string => {
   if (value === null || value === undefined) {
     return ''
@@ -221,4 +393,3 @@ const toStringValue = (value: unknown): string => {
 const resolveUser = (interaction: DiscordInteraction): DiscordUser | undefined => {
   return interaction.member?.user ?? interaction.user
 }
-import { logger } from '@/logger'

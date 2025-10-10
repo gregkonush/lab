@@ -1,11 +1,24 @@
 import { logger } from '@/logger'
-import { INTERACTION_TYPE, toCommandEvent, verifyDiscordRequest } from '@/discord-commands'
+import {
+  INTERACTION_TYPE,
+  buildPlanModalResponse,
+  toPlanModalEvent,
+  verifyDiscordRequest,
+  type DiscordApplicationCommandInteraction,
+  type DiscordModalSubmitInteraction,
+} from '@/discord-commands'
 import type { KafkaManager } from '@/services/kafka'
 
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
 
 const decoder = new TextDecoder()
+const jsonResponse = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+const EPHEMERAL_FLAG = 1 << 6
 
 export interface DiscordWebhookDependencies {
   kafka: KafkaManager
@@ -33,72 +46,111 @@ export const createDiscordWebhookHandler =
     const typedInteraction = interaction as { type?: number }
 
     if (typedInteraction.type === INTERACTION_TYPE.PING) {
-      return new Response(JSON.stringify({ type: INTERACTION_TYPE.PING }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
+      return jsonResponse({ type: INTERACTION_TYPE.PING })
+    }
+
+    if (typedInteraction.type === INTERACTION_TYPE.APPLICATION_COMMAND) {
+      const commandInteraction = interaction as DiscordApplicationCommandInteraction
+      const commandName = commandInteraction.data?.name?.toLowerCase()
+
+      if (commandName !== 'plan') {
+        logger.warn({ commandName }, 'unsupported discord command')
+        return jsonResponse({
+          type: 4,
+          data: { content: 'Unsupported command. Try `/plan`.', flags: EPHEMERAL_FLAG },
+        })
+      }
+
+      try {
+        const modal = buildPlanModalResponse(commandInteraction)
+        return jsonResponse(modal)
+      } catch (error) {
+        logger.error({ err: error }, 'failed to build plan modal')
+        return jsonResponse({
+          type: 4,
+          data: { content: 'Command payload invalid', flags: EPHEMERAL_FLAG },
+        })
+      }
+    }
+
+    if (typedInteraction.type === INTERACTION_TYPE.MODAL_SUBMIT) {
+      let event
+      try {
+        event = toPlanModalEvent(interaction as DiscordModalSubmitInteraction, config.discord.response)
+      } catch (error) {
+        logger.error({ err: error }, 'failed to normalise plan modal submission')
+        return jsonResponse({
+          type: 4,
+          data: { content: 'Modal payload invalid', flags: EPHEMERAL_FLAG },
+        })
+      }
+
+      const rawContent = (event.options.content ?? '').toString().trim()
+      const promptContent = rawContent.length > 0 ? rawContent : 'Provide a planning summary.'
+      const firstLine = promptContent.split('\n')[0]?.trim() ?? ''
+      const derivedTitle = firstLine.length > 0 ? firstLine : 'Discord planning request'
+      const planTitle = derivedTitle.length > 120 ? `${derivedTitle.slice(0, 119)}…` : derivedTitle
+
+      const planPayload: Record<string, unknown> = {
+        stage: 'planning',
+        prompt: promptContent,
+        title: planTitle,
+        repository: '',
+        issueNumber: '',
+        postToGithub: false,
+        runId: event.interactionId,
+        issuedAt: event.timestamp,
+        guildId: event.guildId,
+        channelId: event.channelId,
+        user: {
+          id: event.user.id,
+          username: event.user.username,
+          globalName: event.user.globalName,
+        },
+      }
+
+      event.options = {
+        content: promptContent,
+        payload: JSON.stringify(planPayload),
+      }
+
+      const kafkaHeaders: Record<string, string> = {
+        'content-type': 'application/json',
+        'x-discord-interaction-type': String(typedInteraction.type),
+        'x-discord-command-name': event.command,
+        'x-discord-command-id': event.commandId,
+        'x-discord-application-id': event.applicationId,
+      }
+
+      if (event.guildId) {
+        kafkaHeaders['x-discord-guild-id'] = event.guildId
+      }
+      if (event.channelId) {
+        kafkaHeaders['x-discord-channel-id'] = event.channelId
+      }
+      if (event.user.id) {
+        kafkaHeaders['x-discord-user-id'] = event.user.id
+      }
+
+      await publishKafkaMessage(kafka, {
+        topic: config.topics.discordCommands,
+        key: event.interactionId,
+        value: JSON.stringify(event),
+        headers: kafkaHeaders,
+      })
+
+      return jsonResponse({
+        type: 4,
+        data: {
+          content: 'Planning request received. Facteur will execute the workflow shortly.',
+          ...(config.discord.response.ephemeral ? { flags: EPHEMERAL_FLAG } : {}),
+        },
       })
     }
 
-    if (typedInteraction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) {
-      logger.warn({ interactionType: typedInteraction.type }, 'unsupported discord interaction type')
-      return new Response(
-        JSON.stringify({
-          type: 4,
-          data: { content: 'Unsupported interaction type', flags: 1 << 6 },
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      )
-    }
-
-    let event
-    try {
-      event = toCommandEvent(interaction as any, config.discord.response)
-    } catch (error) {
-      logger.error({ err: error }, 'failed to normalise discord interaction')
-      return new Response(
-        JSON.stringify({
-          type: 4,
-          data: { content: 'Command payload invalid', flags: 1 << 6 },
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      )
-    }
-
-    const kafkaHeaders: Record<string, string> = {
-      'content-type': 'application/json',
-      'x-discord-interaction-type': String(typedInteraction.type),
-      'x-discord-command-name': event.command,
-      'x-discord-command-id': event.commandId,
-      'x-discord-application-id': event.applicationId,
-    }
-
-    if (event.guildId) {
-      kafkaHeaders['x-discord-guild-id'] = event.guildId
-    }
-    if (event.channelId) {
-      kafkaHeaders['x-discord-channel-id'] = event.channelId
-    }
-    if (event.user.id) {
-      kafkaHeaders['x-discord-user-id'] = event.user.id
-    }
-
-    await publishKafkaMessage(kafka, {
-      topic: config.topics.discordCommands,
-      key: event.interactionId,
-      value: JSON.stringify(event),
-      headers: kafkaHeaders,
-    })
-
-    const responsePayload = {
+    logger.warn({ interactionType: typedInteraction.type }, 'unsupported discord interaction type')
+    return jsonResponse({
       type: 4,
-      data: {
-        content: `Command \`/${event.command}\` received. Workflow hand-off in progress…`,
-        ...(config.discord.response.ephemeral ? { flags: 1 << 6 } : {}),
-      },
-    }
-
-    return new Response(JSON.stringify(responsePayload), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      data: { content: 'Unsupported interaction type', flags: EPHEMERAL_FLAG },
     })
   }

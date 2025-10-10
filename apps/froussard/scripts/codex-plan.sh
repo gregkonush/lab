@@ -2,8 +2,19 @@
 set -euo pipefail
 
 : "${CODEX_PROMPT:?CODEX_PROMPT environment variable is required}"
-: "${ISSUE_REPO:?ISSUE_REPO environment variable is required}"
-: "${ISSUE_NUMBER:?ISSUE_NUMBER environment variable is required}"
+
+ISSUE_REPO=${ISSUE_REPO:-}
+ISSUE_NUMBER=${ISSUE_NUMBER:-}
+ISSUE_TITLE=${ISSUE_TITLE:-}
+export ISSUE_REPO ISSUE_NUMBER ISSUE_TITLE
+
+POST_TO_GITHUB=${POST_TO_GITHUB:-true}
+POST_TO_GITHUB=$(printf '%s' "$POST_TO_GITHUB" | tr '[:upper:]' '[:lower:]')
+case "$POST_TO_GITHUB" in
+  1|true|yes) POST_TO_GITHUB=true ;;
+  *) POST_TO_GITHUB=false ;;
+esac
+export POST_TO_GITHUB
 
 WORKTREE=${WORKTREE:-/workspace/lab}
 BASE_BRANCH=${BASE_BRANCH:-main}
@@ -98,29 +109,55 @@ fi
 relay_cmd=(bun run "$RELAY_SCRIPT")
 
 PROMPT=$(python3 - <<'PY'
-import os, textwrap
+import os
+import textwrap
 
 base_prompt = textwrap.dedent(os.environ['CODEX_PROMPT']).strip()
-issue_repo = os.environ['ISSUE_REPO']
-issue_number = os.environ['ISSUE_NUMBER']
+issue_repo = os.environ.get('ISSUE_REPO', '').strip()
+issue_number = os.environ.get('ISSUE_NUMBER', '').strip()
 worktree = os.environ.get('WORKTREE', '/workspace/lab')
 base_branch = os.environ.get('BASE_BRANCH', 'main')
+post_to_github = os.environ.get('POST_TO_GITHUB', 'false').strip().lower() in ('1', 'true', 'yes')
 
-addon = textwrap.dedent(f"""
-Execution notes (do not restate plan requirements above):
-- Work from the existing checkout at {worktree}, already aligned with origin/{base_branch}.
-- After generating the plan, write it to PLAN.md.
-- Post it with `gh issue comment --repo {issue_repo} {issue_number} --body-file PLAN.md`.
-- Echo the final plan (PLAN.md contents) and the GH CLI output to stdout.
-- If posting fails, surface the GH error and exit non-zero; otherwise exit 0.
-""").strip()
+if post_to_github and issue_repo and issue_number:
+    addon = textwrap.dedent(f"""
+    Execution notes (do not restate plan requirements above):
+    - Work from the existing checkout at {worktree}, already aligned with origin/{base_branch}.
+    - After generating the plan, write it to PLAN.md.
+    - Post it with `gh issue comment --repo {issue_repo} {issue_number} --body-file PLAN.md`.
+    - Echo the final plan (PLAN.md contents) and the GH CLI output to stdout.
+    - If posting fails, surface the GH error and exit non-zero; otherwise exit 0.
+    """).strip()
+else:
+    addon = textwrap.dedent("""
+    Execution notes:
+    - Produce a concise Markdown plan using the template below.
+    - Sections must appear in this order: Summary, Steps, Validation, Risks, Handoff Notes.
+    - Keep each section brief and action-focused so humans can follow quickly.
+    - Echo the final plan to stdout when finished and exit 0.
+    - Use Markdown headings and bullet points where appropriate.
+
+    Plan template (copy verbatim):
+    ### Summary
+    ### Steps
+    ### Validation
+    ### Risks
+    ### Handoff Notes
+    """).strip()
 
 print(f"{base_prompt}\n\n{addon}")
 PY
 )
 
 if [[ "$DISCORD_READY" -eq 1 ]]; then
-  relay_args=(--stage plan --repo "$ISSUE_REPO" --issue "$ISSUE_NUMBER" --timestamp "$RELAY_TIMESTAMP")
+  relay_args=(--stage plan)
+  if [[ -n "$ISSUE_REPO" ]]; then
+    relay_args+=(--repo "$ISSUE_REPO")
+  fi
+  if [[ -n "$ISSUE_NUMBER" ]]; then
+    relay_args+=(--issue "$ISSUE_NUMBER")
+  fi
+  relay_args+=(--timestamp "$RELAY_TIMESTAMP")
   if [[ -n "$RELAY_RUN_ID" ]]; then
     relay_args+=(--run-id "$RELAY_RUN_ID")
   fi
