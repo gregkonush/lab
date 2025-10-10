@@ -4,15 +4,14 @@
 IMAGE_NAME="registry.ide-newton.ts.net/lab/vecteur"
 DOCKERFILE="services/vecteur/Dockerfile"
 CONTEXT_PATH="services/vecteur"
-
+DEFAULT_TAG="pg18-trixie"
 TARGETARCH="arm64"
 
 # Check if a tag is provided as an argument
 if [ $# -eq 1 ]; then
     TAG=$1
 else
-    # If no tag is provided, use the current date and time
-    TAG=$(date +"%Y%m%d_%H%M%S")
+    TAG="${DEFAULT_TAG}"
 fi
 
 # Full image name with tag
