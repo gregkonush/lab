@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { logger } from '@/logger'
+
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent, isRecord } from './github-payload'
 
 describe('isRecord', () => {
@@ -46,7 +48,7 @@ describe('deriveRepositoryFullName', () => {
   })
 
   it('returns null and warns when the repository_url is malformed', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {
       // no-op for tests
     })
 

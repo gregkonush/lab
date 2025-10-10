@@ -1,7 +1,10 @@
+import '@/telemetry'
+
 import { Webhooks } from '@octokit/webhooks'
 import { Elysia } from 'elysia'
 
 import { loadConfig } from '@/config'
+import { logger } from '@/logger'
 import { KafkaManager } from '@/services/kafka'
 import { createHealthHandlers } from '@/routes/health'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
@@ -44,10 +47,11 @@ export const createApp = () => {
     .get('/health/liveness', health.liveness)
     .get('/health/readiness', health.readiness)
     .on('request', ({ request }) => {
-      console.log(`Request: ${request.method} ${new URL(request.url).pathname}`)
+      const url = new URL(request.url)
+      logger.info({ method: request.method, path: url.pathname }, 'request received')
     })
     .onError(({ error }) => {
-      console.error('Server error:', error)
+      logger.error({ err: error }, 'server error')
       return new Response('Internal Server Error', { status: 500 })
     })
     .post('/webhooks/:provider', ({ request, params }) => webhookHandler(request, params.provider))
@@ -58,7 +62,7 @@ export const app = createApp()
 export const startServer = () => {
   if (!app.server) {
     if (!kafka.isReady()) {
-      void kafka.connect().then(() => console.log('Kafka producer connected'))
+      void kafka.connect().then(() => logger.info('Kafka producer connected'))
     }
 
     const port = Number(process.env.PORT ?? 8080)
@@ -66,7 +70,7 @@ export const startServer = () => {
     const serverInfo = (app as any).server as { hostname?: string; port?: number } | undefined
     const hostname = serverInfo?.hostname ?? '0.0.0.0'
     const resolvedPort = serverInfo?.port ?? port
-    console.log(`🦊 Elysia is running at ${hostname}:${resolvedPort}`)
+    logger.info({ hostname, port: resolvedPort }, 'froussard server listening')
   }
 
   return app
@@ -79,9 +83,9 @@ if (import.meta.main) {
 const shutdown = async () => {
   try {
     await kafka.disconnect()
-    console.log('Kafka producer disconnected')
+    logger.info('Kafka producer disconnected')
   } catch (error) {
-    console.error('Error disconnecting Kafka producer:', error)
+    logger.error({ err: error }, 'failed to disconnect Kafka producer')
   }
 }
 

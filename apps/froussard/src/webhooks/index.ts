@@ -1,5 +1,6 @@
 import { Webhooks } from '@octokit/webhooks'
 
+import { logger } from '@/logger'
 import type { KafkaManager } from '@/services/kafka'
 
 import { createDiscordWebhookHandler } from './discord'
@@ -19,7 +20,7 @@ export const createWebhookHandler = ({ kafka, webhooks, config }: WebhookDepende
   const githubHandler = createGithubWebhookHandler({ kafka, webhooks, config })
 
   return async (request: Request, provider: string): Promise<Response> => {
-    console.log(`Received webhook for provider: ${provider}`)
+    logger.info({ provider }, 'webhook request received')
 
     if (provider === 'discord') {
       const bodyBuffer = new Uint8Array(await request.arrayBuffer())
@@ -28,7 +29,7 @@ export const createWebhookHandler = ({ kafka, webhooks, config }: WebhookDepende
 
     if (provider !== 'github') {
       const preview = await request.text()
-      console.log(`Webhook event received for unsupported provider '${provider}':`, preview)
+      logger.warn({ provider, preview }, 'unsupported webhook provider')
       return new Response(`Provider '${provider}' not supported`, { status: 400 })
     }
 

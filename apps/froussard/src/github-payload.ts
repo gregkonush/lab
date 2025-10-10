@@ -1,3 +1,5 @@
+import { logger } from '@/logger'
+
 import type { Nullable } from './codex'
 
 export interface GithubUser {
@@ -81,7 +83,7 @@ export const deriveRepositoryFullName = (
         }
       }
     } catch (error: unknown) {
-      console.warn(`Failed to parse repository URL '${repositoryUrl}':`, error)
+      logger.warn({ err: error, repositoryUrl }, 'failed to parse repository url')
     }
   }
 

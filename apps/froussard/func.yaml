@@ -33,9 +33,21 @@ run:
     value: '{{ secret:github-token:token }}'
   - name: DISCORD_PUBLIC_KEY
     value: '{{ secret:discord-bot:public-key }}'
+  - name: OTEL_SERVICE_NAME
+    value: froussard
+  - name: OTEL_SERVICE_NAMESPACE
+    value: froussard
+  - name: LGTM_TEMPO_TRACES_ENDPOINT
+    value: http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces
+  - name: LGTM_MIMIR_METRICS_ENDPOINT
+    value: http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics
+  - name: LGTM_LOKI_ENDPOINT
+    value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
+  - name: OTEL_EXPORTER_OTLP_PROTOCOL
+    value: http/protobuf
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:05cd86fa59a7d7555b5a1fcb98afa7ab069d2a4463468e8cd37f06d77fa9549a
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:be92538152cac609d6664b63076fa8236e76d082aa2c9e86cf7fdd5bb203f89f
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:

@@ -1,3 +1,4 @@
+import { logger } from '@/logger'
 import { verifyKey } from 'discord-interactions'
 
 const SIGNATURE_HEADER = 'x-signature-ed25519'
@@ -103,7 +104,7 @@ export const verifyDiscordRequest = async (
   try {
     return await verifyKey(rawBody, signature, timestamp, publicKey)
   } catch (error) {
-    console.error('Discord signature verification error:', error)
+    logger.error({ err: error }, 'discord signature verification error')
     return false
   }
 }
@@ -220,3 +221,4 @@ const toStringValue = (value: unknown): string => {
 const resolveUser = (interaction: DiscordInteraction): DiscordUser | undefined => {
   return interaction.member?.user ?? interaction.user
 }
+import { logger } from '@/logger'
