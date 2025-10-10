@@ -5,3 +5,5 @@ resources:
   - knative-eventing.yaml
   - https://github.com/knative-extensions/eventing-kafka-broker/releases/download/knative-v1.19.7/eventing-kafka-controller.yaml
   - https://github.com/knative-extensions/eventing-kafka-broker/releases/download/knative-v1.19.7/eventing-kafka-source.yaml
+patchesStrategicMerge:
+  - mutating-webhook-namespace-selector-patch.yaml
