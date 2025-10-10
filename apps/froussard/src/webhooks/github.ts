@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage } from '@/codex'
 import { selectReactionRepository } from '@/codex-workflow'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
+import { logger } from '@/logger'
 import type { KafkaManager } from '@/services/kafka'
 import { findLatestPlanComment, postIssueReaction } from '@/services/github'
 
@@ -21,16 +22,14 @@ export const createGithubWebhookHandler =
   async (rawBody: string, request: Request): Promise<Response> => {
     const signatureHeader = request.headers.get('x-hub-signature-256')
     if (!signatureHeader) {
-      console.error('Missing x-hub-signature-256 header. Available headers:', Array.from(request.headers.keys()))
+      logger.error({ headers: Array.from(request.headers.keys()) }, 'missing x-hub-signature-256 header')
       return new Response('Unauthorized', { status: 401 })
     }
 
     const deliveryId = request.headers.get('x-github-delivery') || randomUUID()
 
     if (!(await webhooks.verify(rawBody, signatureHeader))) {
-      console.error(
-        `Webhook signature verification failed for delivery ${deliveryId}. Signature header: ${signatureHeader}`,
-      )
+      logger.error({ deliveryId, signatureHeader }, 'github webhook signature verification failed')
       return new Response('Unauthorized', { status: 401 })
     }
 
@@ -38,7 +37,7 @@ export const createGithubWebhookHandler =
     try {
       parsedPayload = JSON.parse(rawBody) as unknown
     } catch (parseError) {
-      console.error('Error parsing GitHub webhook body:', parseError)
+      logger.error({ err: parseError }, 'failed to parse github webhook payload')
       return new Response('Invalid JSON body', { status: 400 })
     }
 
@@ -125,8 +124,14 @@ export const createGithubWebhookHandler =
               })
 
               if (reactionResult.ok) {
-                console.log(
-                  `Added :${config.github.ackReaction}: reaction to issue ${issueNumber} in ${repositoryFullName} (delivery ${deliveryId}).`,
+                logger.info(
+                  {
+                    repository: repositoryFullName,
+                    issueNumber,
+                    deliveryId,
+                    reaction: config.github.ackReaction,
+                  },
+                  'acknowledged github issue',
                 )
               }
             }
@@ -235,7 +240,7 @@ export const createGithubWebhookHandler =
         },
       )
     } catch (error) {
-      console.error('Failed to enqueue webhook event:', error)
+      logger.error({ err: error, deliveryId, eventName }, 'failed to enqueue github webhook event')
       return new Response('Failed to enqueue webhook event', { status: 500 })
     }
   }

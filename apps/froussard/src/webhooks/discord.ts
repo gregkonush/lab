@@ -1,3 +1,4 @@
+import { logger } from '@/logger'
 import { INTERACTION_TYPE, toCommandEvent, verifyDiscordRequest } from '@/discord-commands'
 import type { KafkaManager } from '@/services/kafka'
 
@@ -15,7 +16,7 @@ export const createDiscordWebhookHandler =
   ({ kafka, config }: DiscordWebhookDependencies) =>
   async (body: Uint8Array, headers: Headers): Promise<Response> => {
     if (!(await verifyDiscordRequest(body, headers, config.discord.publicKey))) {
-      console.error('Discord signature verification failed. Headers:', Array.from(headers.keys()))
+      logger.error({ headers: Array.from(headers.keys()) }, 'discord signature verification failed')
       return new Response('Unauthorized', { status: 401 })
     }
 
@@ -25,7 +26,7 @@ export const createDiscordWebhookHandler =
     try {
       interaction = JSON.parse(rawBodyText) as unknown
     } catch (error) {
-      console.error('Failed to parse Discord interaction payload:', error)
+      logger.error({ err: error }, 'failed to parse discord interaction payload')
       return new Response('Invalid JSON body', { status: 400 })
     }
 
@@ -39,7 +40,7 @@ export const createDiscordWebhookHandler =
     }
 
     if (typedInteraction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) {
-      console.warn('Received unsupported Discord interaction type:', typedInteraction.type)
+      logger.warn({ interactionType: typedInteraction.type }, 'unsupported discord interaction type')
       return new Response(
         JSON.stringify({
           type: 4,
@@ -53,7 +54,7 @@ export const createDiscordWebhookHandler =
     try {
       event = toCommandEvent(interaction as any, config.discord.response)
     } catch (error) {
-      console.error('Error normalising Discord interaction:', error)
+      logger.error({ err: error }, 'failed to normalise discord interaction')
       return new Response(
         JSON.stringify({
           type: 4,
