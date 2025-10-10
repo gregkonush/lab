@@ -180,7 +180,7 @@ if [[ "$DISCORD_READY" -eq 1 ]]; then
   fi
   set +e
   set +o pipefail
-  printf '%s' "$CODEX_PROMPT" | codex exec --full-auto --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
+  printf '%s' "$CODEX_PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
     | tee >(cat >"$JSON_OUTPUT_PATH") \
     | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
     | tee >("${relay_cmd[@]}" "${relay_args[@]}") >(cat >"$AGENT_OUTPUT_PATH")
@@ -210,7 +210,7 @@ if [[ "$DISCORD_READY" -eq 1 ]]; then
 else
   set +e
   set +o pipefail
-  printf '%s' "$CODEX_PROMPT" | codex exec --full-auto --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
+  printf '%s' "$CODEX_PROMPT" | codex exec --dangerously-bypass-approvals-and-sandbox --json --output-last-message "$OUTPUT_PATH" - \
     | tee >(cat >"$JSON_OUTPUT_PATH") \
     | jq -r 'select(.type == "item.completed" and .item.type == "agent_message") | .item.text // empty' \
     | tee >(cat >"$AGENT_OUTPUT_PATH")
