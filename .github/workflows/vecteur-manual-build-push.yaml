@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Tag to publish (e.g., pg18-trixie)'
+        description: 'Tag to publish (e.g., 18-trixie)'
         required: true
-        default: 'pg18-trixie'
+        default: '18-trixie'
       platforms:
         description: 'Comma-separated platforms to build (default: linux/arm64)'
         required: false
