@@ -14,6 +14,18 @@ const bunMocks = vi.hoisted(() => {
     async (strings: TemplateStringsArray, ...exprs: unknown[]) => {
       const command = strings.reduce((acc, part, index) => acc + part + (exprs[index] ?? ''), '').trim()
       execMock({ command, cwd })
+      if (command.includes('gh repo clone')) {
+        const targetDir = process.env.TARGET_DIR
+        if (targetDir) {
+          await mkdir(targetDir, { recursive: true })
+        }
+      }
+      if (command.startsWith('rm -rf')) {
+        const targetDir = process.env.TARGET_DIR
+        if (targetDir) {
+          await rm(targetDir, { recursive: true, force: true }).catch(() => undefined)
+        }
+      }
       return { text: async () => '' }
     }
 
@@ -84,6 +96,15 @@ describe('runCodexBootstrap', () => {
     const commands = execMock.mock.calls.map((call) => call[0]?.command)
     expect(commands).toContain('git fetch --all --prune')
     expect(commands).toContain('git reset --hard origin/main')
+  })
+
+  it('clones the repository when the worktree is missing', async () => {
+    const exitCode = await runCodexBootstrap()
+
+    expect(exitCode).toBe(0)
+    const commands = execMock.mock.calls.map((call) => call[0]?.command)
+    expect(commands.some((command) => command?.includes('gh repo clone'))).toBe(true)
+    expect(commands).toContain('git checkout main')
   })
 
   it('runs the requested command and returns its exit code', async () => {

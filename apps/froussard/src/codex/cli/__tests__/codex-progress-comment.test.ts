@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { runCodexProgressComment } from '../codex-progress-comment'
 
 const bunMocks = vi.hoisted(() => {
@@ -126,5 +129,34 @@ describe('runCodexProgressComment', () => {
     await expect(runCodexProgressComment({ body: 'no marker' })).rejects.toThrow(
       "Comment body must include the marker '<!-- codex:progress -->'",
     )
+  })
+
+  it('supports dry-run mode and writes logs when configured', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [],
+      text: async () => '[]',
+      status: 200,
+      statusText: 'OK',
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    const logDir = await mkdtemp(join(tmpdir(), 'codex-progress-log-'))
+    const logPath = join(logDir, 'progress.log')
+    process.env.CODEX_PROGRESS_COMMENT_LOG_PATH = logPath
+
+    const result = await runCodexProgressComment({ args: ['--dry-run'], body: '<!-- codex:progress --> log' })
+
+    const logContents = await readFile(logPath, 'utf8')
+    expect(logContents).toContain('dry_run=true')
+    expect(result.action).toBe('create')
+
+    await rm(logDir, { recursive: true, force: true })
+  })
+
+  it('returns help metadata when invoked with --help', async () => {
+    const result = await runCodexProgressComment({ args: ['--help'] })
+    expect(result.action).toBe('help')
+    expect(result.commentId).toBe('')
   })
 })
