@@ -163,9 +163,18 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dispatcher unavailable"})
 		}
 
+		body := c.Body()
+		if len(body) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
+		}
+
 		var event facteurpb.CommandEvent
-		if err := proto.Unmarshal(c.Body(), &event); err != nil {
+		if err := proto.Unmarshal(body, &event); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
+		}
+
+		if event.GetCommand() == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing command"})
 		}
 
 		userID := ""
