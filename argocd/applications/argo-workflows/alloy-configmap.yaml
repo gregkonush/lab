@@ -26,6 +26,8 @@ data:
     loki.source.kubernetes "argo_workflows" {
       targets              = discovery.kubernetes.argo_workflows.targets
       forward_to           = [loki.process.argo_workflows.receiver]
+      drop_deleted_pods    = true
+      allow_out_of_order   = true
     }
 
     loki.process "argo_workflows" {
