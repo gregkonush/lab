@@ -13,6 +13,10 @@ data:
     discovery.kubernetes "argo_workflows" {
       role = "pod"
 
+      namespaces {
+        names = ["argo-workflows"]
+      }
+
       selectors {
         role  = "pod"
         field = "metadata.namespace=argo-workflows"
@@ -24,7 +28,6 @@ data:
       forward_to           = [loki.process.argo_workflows.receiver]
       drop_deleted_pods    = true
       allow_out_of_order   = true
-      namespaces           = ["argo-workflows"]
     }
 
     loki.process "argo_workflows" {
