@@ -112,7 +112,7 @@ const buildImplementationPrompt = ({
     '',
     'Execution requirements:',
     '- Follow the plan in order; if you must adjust, note what changed and why.',
-    `- Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/scripts/codex-progress-comment.sh (kickoff checklist, milestone updates, final summary).`,
+    `- Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/src/codex/cli/codex-progress-comment.ts (kickoff checklist, milestone updates, final summary).`,
     `- Work on \`${headBranch}\` (branched from \`${baseBranch}\`); keep commits focused and reference #${issueNumber}.`,
     '- Run formatters, lint, and tests; record their outputs or failures in the progress comment.',
     `- Open a draft pull request targeting \`${baseBranch}\` with a summary, validation results, and "Closes #${issueNumber}".`,

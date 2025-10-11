@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest'
-import { buildChannelName, chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } from './discord'
+import { Readable } from 'node:stream'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const delayMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+
+vi.mock('node:timers/promises', () => ({
+  setTimeout: delayMock,
+}))
+
+import * as discord from './discord'
+
+const { buildChannelName, chunkContent, consumeChunks, DISCORD_MESSAGE_LIMIT } = discord
+
+const originalFetch = global.fetch
 
 describe('buildChannelName', () => {
   it('creates a stable channel name using repo slug, issue, stage, timestamp, and run id', () => {
@@ -46,5 +58,189 @@ describe('chunkContent', () => {
     const content = 'ok'.repeat(100)
     const chunks = chunkContent(content, DISCORD_MESSAGE_LIMIT)
     expect(chunks).toEqual([content])
+  })
+})
+
+describe('bootstrapRelay', () => {
+  beforeEach(() => {
+    delayMock.mockClear()
+  })
+
+  afterEach(() => {
+    if (originalFetch) {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('returns metadata in dry-run mode and echoes setup', async () => {
+    const logs: string[] = []
+    const config = { botToken: 'token', guildId: 'guild' }
+    const metadata = {
+      repository: 'owner/repo',
+      issueNumber: 17,
+      stage: 'planning',
+      runId: 'sample',
+      createdAt: new Date('2025-10-11T00:00:00Z'),
+      title: 'Sprint Planning',
+    }
+
+    const result = await discord.bootstrapRelay(config, metadata, {
+      dryRun: true,
+      echo: (line) => logs.push(line),
+    })
+
+    expect(result.channelId).toBe('dry-run')
+    expect(logs[0]).toContain('[dry-run] Would create channel')
+    expect(logs[1]).toContain('**Codex Relay Started**')
+  })
+
+  it('creates a channel and posts the initial message', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof global.fetch
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: 'channel-123' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    const config = { botToken: 'token', guildId: 'guild' }
+    const metadata = {
+      repository: 'owner/repo',
+      issueNumber: 7,
+      stage: 'planning',
+      createdAt: new Date('2025-10-01T00:00:00Z'),
+    }
+
+    const result = await discord.bootstrapRelay(config, metadata)
+
+    expect(result.channelId).toBe('channel-123')
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://discord.com/api/v10/guilds/guild/channels',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://discord.com/api/v10/channels/channel-123/messages',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+})
+
+describe('relayStream', () => {
+  beforeEach(() => {
+    delayMock.mockClear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    if (originalFetch) {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('posts chunked messages for streamed content', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    const config = { botToken: 'token', guildId: 'guild' }
+    const relay = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
+
+    const longMessage = 'x'.repeat(DISCORD_MESSAGE_LIMIT + 50)
+    async function* generator() {
+      yield longMessage
+    }
+
+    await discord.relayStream(config, relay, generator())
+
+    const payloads = fetchMock.mock.calls.map(([, init]) => JSON.parse((init as RequestInit).body as string))
+    expect(payloads).toHaveLength(2)
+    expect(payloads[0]?.content.length).toBeLessThanOrEqual(DISCORD_MESSAGE_LIMIT)
+    expect(payloads[1]?.content).toContain('x')
+  })
+
+  it('echoes output in dry-run mode without posting', async () => {
+    const config = { botToken: 'token', guildId: 'guild' }
+    const relay = { channelId: 'channel-xyz', channelName: 'name', guildId: 'guild' }
+    const echoes: string[] = []
+
+    async function* generator() {
+      yield 'line-one'
+      yield 'line-two'
+    }
+
+    await discord.relayStream(config, relay, generator(), {
+      dryRun: true,
+      echo: (line) => echoes.push(line),
+    })
+
+    expect(echoes).toEqual(['[dry-run] line-one', '[dry-run] line-two'])
+  })
+})
+
+describe('postMessage', () => {
+  afterEach(() => {
+    delayMock.mockClear()
+    if (originalFetch) {
+      global.fetch = originalFetch
+    }
+  })
+
+  it('retries when Discord responds with rate limiting', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof global.fetch
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ retry_after: 0 }), {
+          status: 429,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      )
+
+    await discord.postMessage({ botToken: 'token', guildId: 'guild' }, 'channel', 'content')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(delayMock).toHaveBeenCalled()
+  })
+
+  it('does nothing when content is empty', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    await discord.postMessage({ botToken: 'token', guildId: 'guild' }, 'channel', '')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('iterableFromStream', () => {
+  it('yields utf8 data from a readable stream', async () => {
+    const stream = Readable.from(['chunk-a', Buffer.from('chunk-b')])
+    const chunks: string[] = []
+
+    for await (const chunk of discord.iterableFromStream(stream)) {
+      chunks.push(chunk)
+    }
+
+    expect(chunks).toEqual(['chunk-a', 'chunk-b'])
   })
 })

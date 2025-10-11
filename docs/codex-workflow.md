@@ -9,8 +9,8 @@ This guide explains how the two-stage Codex automation pipeline works and how to
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
 3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
-   - `stage=planning`: `codex-plan.sh` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
-   - `stage=implementation`: `codex-implement.sh` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.sh`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
+   - `stage=planning`: `codex-plan.ts` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
+   - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - Both templates carry a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
 
 ## Prerequisites
@@ -48,7 +48,7 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
 
 ### Implementation Progress Comment Lifecycle
 
-- Codex owns a single issue comment anchored by `<!-- codex:progress -->`; the helper at `apps/froussard/scripts/codex-progress-comment.sh` keeps it consistent.
+- Codex owns a single issue comment anchored by `<!-- codex:progress -->`; the helper at `apps/froussard/src/codex/cli/codex-progress-comment.ts` keeps it consistent.
 - On implementation kickoff the helper seeds a checklist from the approved plan, marks the active step, and appends a short status section (tests run, blockers, next action).
 - After every meaningful milestone the comment is updated in-place so reviewers can follow along without reading the Argo logs.
 - When work finishes, the checklist is fully checked, the transient status block is replaced with the final summary/validation notes, and the same comment becomes the permanent implementation recap.

@@ -67,7 +67,7 @@ export const startServer = () => {
 
     const port = Number(process.env.PORT ?? 8080)
     app.listen(port)
-    const serverInfo = (app as any).server as { hostname?: string; port?: number } | undefined
+    const serverInfo = (app as { server?: { hostname?: string; port?: number } }).server
     const hostname = serverInfo?.hostname ?? '0.0.0.0'
     const resolvedPort = serverInfo?.port ?? port
     logger.info({ hostname, port: resolvedPort }, 'froussard server listening')

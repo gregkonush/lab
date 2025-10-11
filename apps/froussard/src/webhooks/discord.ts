@@ -6,6 +6,7 @@ import {
   verifyDiscordRequest,
   type DiscordApplicationCommandInteraction,
   type DiscordModalSubmitInteraction,
+  type DiscordCommandEvent,
 } from '@/discord-commands'
 import type { KafkaManager } from '@/services/kafka'
 
@@ -74,7 +75,7 @@ export const createDiscordWebhookHandler =
     }
 
     if (typedInteraction.type === INTERACTION_TYPE.MODAL_SUBMIT) {
-      let event
+      let event: DiscordCommandEvent
       try {
         event = toPlanModalEvent(interaction as DiscordModalSubmitInteraction, config.discord.response)
       } catch (error) {

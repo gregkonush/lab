@@ -19,7 +19,7 @@ export const selectReactionRepository = (
   issue?: Nullable<GithubIssue>,
   fallback?: Nullable<GithubRepository>,
 ): Nullable<GithubRepository> => {
-  if (issue && issue.repository) {
+  if (issue?.repository) {
     return issue.repository
   }
   return fallback ?? null

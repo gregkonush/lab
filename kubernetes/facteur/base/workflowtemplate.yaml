@@ -39,7 +39,7 @@ spec:
                 optional: true
           - name: LGTM_LOKI_ENDPOINT
             value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
-        command: ["/usr/local/bin/codex-bootstrap.sh"]
+        command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
           - "-lc"
@@ -105,7 +105,7 @@ spec:
             export JSON_OUTPUT_PATH="${JSON_OUTPUT_PATH:-/workspace/lab/.codex-plan-events.jsonl}"
             export AGENT_OUTPUT_PATH="${AGENT_OUTPUT_PATH:-/workspace/lab/.codex-plan-agent.log}"
 
-            codex-plan.sh
+            codex-plan
 
             if [[ -s "$OUTPUT_PATH" ]]; then
               echo "Codex plan output:" >&2

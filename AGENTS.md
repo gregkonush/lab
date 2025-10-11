@@ -81,7 +81,7 @@
 ## Codex Progress Comment Flow
 
 - Maintain exactly one implementation progress comment per issue, anchored by `<!-- codex:progress -->`.
-- Use `apps/froussard/scripts/codex-progress-comment.sh` to create or update that comment; provide the markdown via stdin or `--body-file`.
+- Use `apps/froussard/src/codex/cli/codex-progress-comment.ts` to create or update that comment; provide the markdown via stdin or `--body-file`.
 - Required env vars: `ISSUE_REPO` and `ISSUE_NUMBER`. Optional overrides: `CODEX_PROGRESS_COMMENT_MARKER` and `CODEX_PROGRESS_COMMENT_LOG_PATH` (falls back to `.codex-implementation.log`).
 - Kickoff body should restate the approved plan as a checklist, flag the active step, and capture risks/tests so reviewers can track work in flight.
 - Update the comment after each milestone—reuse the same comment rather than adding new ones—and include links to validation where helpful.
