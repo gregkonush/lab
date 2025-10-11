@@ -62,11 +62,11 @@ RUN --mount=type=secret,id=github_token,target=/tmp/gh_token \
 RUN git config --global user.name "codex-automation" \
     && git config --global user.email "codex-automation@users.noreply.github.com"
 
-COPY apps/froussard/scripts/codex-bootstrap.sh /usr/local/bin/codex-bootstrap.sh
-COPY apps/froussard/scripts/codex-plan.sh /usr/local/bin/codex-plan.sh
-COPY apps/froussard/scripts/codex-implement.sh /usr/local/bin/codex-implement.sh
-RUN chmod +x /usr/local/bin/codex-bootstrap.sh /usr/local/bin/codex-plan.sh /usr/local/bin/codex-implement.sh
+COPY apps/froussard/scripts/codex-bootstrap.ts /usr/local/bin/codex-bootstrap
+COPY apps/froussard/scripts/codex-plan.ts /usr/local/bin/codex-plan
+COPY apps/froussard/scripts/codex-implement.ts /usr/local/bin/codex-implement
+RUN chmod +x /usr/local/bin/codex-bootstrap /usr/local/bin/codex-plan /usr/local/bin/codex-implement
 
 WORKDIR /workspace
-ENTRYPOINT ["/usr/local/bin/codex-bootstrap.sh"]
+ENTRYPOINT ["/usr/local/bin/codex-bootstrap"]
 CMD ["bash"]

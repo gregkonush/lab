@@ -75,7 +75,7 @@ and your GitHub CLI token into the image before pushing it to the shared
 registry.
 
 ```bash
-apps/froussard/scripts/build-codex-image.sh
+apps/froussard/scripts/build-codex-image.ts
 ```
 
 - Override `IMAGE_TAG` to publish a different tag or registry.

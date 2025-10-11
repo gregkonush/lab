@@ -54,7 +54,7 @@ spec:
                 key: token
           - name: LGTM_LOKI_ENDPOINT
             value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
-        command: ["/usr/local/bin/codex-bootstrap.sh"]
+        command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
           - "-lc"
@@ -78,7 +78,7 @@ spec:
             WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
 
             echo "Executing implementation workflow" >&2
-            "${WORKTREE_DIR}/apps/froussard/scripts/codex-implement.sh" "$EVENT_FILE"
+            "${WORKTREE_DIR}/apps/froussard/scripts/codex-implement.ts" "$EVENT_FILE"
         resources:
           requests:
             cpu: "4"

@@ -54,7 +54,7 @@ spec:
                 key: token
           - name: LGTM_LOKI_ENDPOINT
             value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
-        command: ["/usr/local/bin/codex-bootstrap.sh"]
+        command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"
           - "-lc"
@@ -98,7 +98,7 @@ spec:
             fi
 
             echo "Generating plan for $ISSUE_REPO#$ISSUE_NUMBER"
-            codex-plan.sh
+            codex-plan
 
             echo "Codex plan output:" >&2
             cat "$OUTPUT_PATH" >&2
