@@ -1,4 +1,4 @@
-import { parseBrokerList } from '@/services/kafka'
+import { parseBrokerList } from '@/utils/kafka'
 
 const requireEnv = (env: NodeJS.ProcessEnv, name: string): string => {
   const value = env[name]
