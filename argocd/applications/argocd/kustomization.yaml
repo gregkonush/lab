@@ -17,6 +17,9 @@ resources:
   - base/argo-workflows-sso-sealedsecret.yaml
   - base/argo-workflows-sso-password-sealedsecret.yaml
   - base/image-updater-git-ssh.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
 patches:
   - path: overlays/argocd-cm.yaml
   - path: overlays/argocd-cmd-params-cm.yaml
