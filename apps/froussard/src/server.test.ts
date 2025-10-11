@@ -170,4 +170,30 @@ describe('server bootstrap', () => {
     expect(mockCreateHealthHandlers).toHaveBeenCalled()
     expect(mockCreateWebhookHandler).toHaveBeenCalled()
   })
+
+  it('exposes build metadata on the root route', async () => {
+    process.env.FROUSSARD_VERSION = '1.2.3'
+    process.env.FROUSSARD_COMMIT = 'deadbeef'
+
+    const { createApp } = await import('@/index')
+    createApp()
+
+    const rootCall = mockApp.get.mock.calls.find(([path]) => path === '/')
+    expect(rootCall).toBeDefined()
+
+    const handler = rootCall?.[1]
+    expect(handler).toBeTypeOf('function')
+    const response = await handler?.()
+    expect(response).toBeInstanceOf(Response)
+    if (!response) {
+      throw new Error('expected root handler to return a response')
+    }
+    const payload = await response.json()
+    expect(payload).toEqual({
+      service: 'froussard',
+      status: 'ok',
+      version: '1.2.3',
+      commit: 'deadbeef',
+    })
+  })
 })

@@ -11,6 +11,9 @@ import { createHealthHandlers } from '@/routes/health'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { KafkaProducer } from '@/services/kafka'
 
+const buildVersion = process.env.FROUSSARD_VERSION ?? 'dev'
+const buildCommit = process.env.FROUSSARD_COMMIT ?? 'unknown'
+
 const runtime = makeAppRuntime()
 const config = runtime.runSync(
   Effect.gen(function* (_) {
@@ -45,7 +48,14 @@ export const createApp = () => {
   })
 
   return new Elysia()
-    .get('/', () => new Response('OK', { status: 200 }))
+    .get('/', () =>
+      Response.json({
+        service: 'froussard',
+        status: 'ok',
+        version: buildVersion,
+        commit: buildCommit,
+      }),
+    )
     .get('/health/liveness', health.liveness)
     .get('/health/readiness', health.readiness)
     .on('request', ({ request }) => {

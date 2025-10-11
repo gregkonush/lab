@@ -37,6 +37,10 @@ run:
     value: froussard
   - name: OTEL_SERVICE_NAMESPACE
     value: froussard
+  - name: FROUSSARD_VERSION
+    value: '{{ env:FROUSSARD_VERSION }}'
+  - name: FROUSSARD_COMMIT
+    value: '{{ env:FROUSSARD_COMMIT }}'
   - name: LGTM_TEMPO_TRACES_ENDPOINT
     value: http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces
   - name: LGTM_MIMIR_METRICS_ENDPOINT
@@ -47,7 +51,7 @@ run:
     value: http/protobuf
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:a547345ac2ec85f480e6d33130e3ba7c9312354b59ba2fd12dfb7d20ca90576a
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:3340b1740920dfec937f57ba889d54d78b7230a70f69b9041917c0709ce8dbef
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:
