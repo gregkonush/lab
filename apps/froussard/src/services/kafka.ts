@@ -130,9 +130,7 @@ const normalizeValue = (value: KafkaMessage['value']): Buffer => {
   return Buffer.from(value)
 }
 
-const normalizeHeaders = (
-  headers: KafkaMessage['headers'],
-): Record<string, Buffer> | undefined => {
+const normalizeHeaders = (headers: KafkaMessage['headers']): Record<string, Buffer> | undefined => {
   if (!headers) {
     return undefined
   }

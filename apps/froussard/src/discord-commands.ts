@@ -1,8 +1,8 @@
-import { verifyKey } from 'discord-interactions'
-import { logger } from '@/logger'
 import type { PlainMessage } from '@bufbuild/protobuf'
+import { verifyKey } from 'discord-interactions'
 
-import {
+import { logger } from '@/logger'
+import type {
   CommandEvent as FacteurCommandEventMessage,
   DiscordMember as FacteurDiscordMemberMessage,
   DiscordUser as FacteurDiscordUserMessage,

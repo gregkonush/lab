@@ -1,9 +1,9 @@
-import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
 import { Effect, Layer } from 'effect'
 import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppLogger } from '@/logger'
+import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
@@ -355,7 +355,7 @@ describe('createWebhookHandler', () => {
       }),
     )
 
-    const parsedPayload = JSON.parse(protoEvent.options['payload'] ?? '')
+    const parsedPayload = JSON.parse(protoEvent.options.payload ?? '')
     expect(parsedPayload.prompt).toBe('Ship the release with QA gating')
     expect(parsedPayload.postToGithub).toBe(false)
     expect(parsedPayload.stage).toBe('planning')

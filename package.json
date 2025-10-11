@@ -27,7 +27,8 @@
     "seed:models": "pnpm --filter @proompteng/backend seed:models",
     "dev:docs": "pnpm --filter docs dev",
     "build:docs": "pnpm --filter docs build",
-    "start:docs": "pnpm --filter docs start"
+    "start:docs": "pnpm --filter docs start",
+    "build:facteur": "bun run scripts/build-facteur.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
@@ -38,7 +39,7 @@
     "typescript": "5.9.3"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,css}": "biome format --write --staged",
+    "*.{ts,tsx,js,jsx,css}": "biome format --write",
     "*.go": "gofmt -w"
   },
   "workspaces": [
