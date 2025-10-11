@@ -1,5 +1,5 @@
-import { which } from 'bun'
 import { copyFile, stat } from 'node:fs/promises'
+import { which } from 'bun'
 
 export const pathExists = async (path: string): Promise<boolean> => {
   try {

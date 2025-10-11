@@ -1,7 +1,8 @@
 import { createWriteStream, type WriteStream } from 'node:fs'
-import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { stat } from 'node:fs/promises'
 import process from 'node:process'
+import { ensureFileDirectory } from './fs'
+import { type CodexLogger, consoleLogger } from './logger'
 
 export interface DiscordRelayOptions {
   command: string[]
@@ -15,10 +16,23 @@ export interface RunCodexSessionOptions {
   jsonOutputPath: string
   agentOutputPath: string
   discordRelay?: DiscordRelayOptions
+  logger?: CodexLogger
 }
 
 export interface RunCodexSessionResult {
   agentMessages: string[]
+}
+
+export interface PushCodexEventsToLokiOptions {
+  stage: string
+  endpoint?: string
+  jsonPath?: string
+  agentLogPath?: string
+  runtimeLogPath?: string
+  labels?: Record<string, string | undefined>
+  tenant?: string
+  basicAuth?: string
+  logger?: CodexLogger
 }
 
 const decoder = new TextDecoder()
@@ -102,10 +116,6 @@ const closeStream = (stream: WriteStream) => {
   })
 }
 
-export const ensureFileDirectory = async (filePath: string) => {
-  await mkdir(dirname(filePath), { recursive: true })
-}
-
 export const runCodexSession = async ({
   stage,
   prompt,
@@ -113,7 +123,10 @@ export const runCodexSession = async ({
   jsonOutputPath,
   agentOutputPath,
   discordRelay,
+  logger,
 }: RunCodexSessionOptions): Promise<RunCodexSessionResult> => {
+  const log = logger ?? consoleLogger
+
   await Promise.all([
     ensureFileDirectory(outputPath),
     ensureFileDirectory(jsonOutputPath),
@@ -139,7 +152,7 @@ export const runCodexSession = async ({
       if (handle) {
         discordWriter = handle
       } else {
-        console.error('Discord relay process did not expose stdin; disabling relay')
+        log.warn('Discord relay process did not expose stdin; disabling relay')
         discordProcess.kill()
         discordProcess = undefined
         discordWriter = undefined
@@ -148,7 +161,7 @@ export const runCodexSession = async ({
       if (discordRelay.onError && error instanceof Error) {
         discordRelay.onError(error)
       } else {
-        console.error('Failed to start Discord relay:', error)
+        log.error('Failed to start Discord relay:', error)
       }
     }
   }
@@ -211,13 +224,13 @@ export const runCodexSession = async ({
             if (discordRelay?.onError && error instanceof Error) {
               discordRelay.onError(error)
             } else {
-              console.error('Failed to write to Discord relay stream:', error)
+              log.error('Failed to write to Discord relay stream:', error)
             }
           }
         }
       }
     } catch (error) {
-      console.error('Failed to parse Codex event line as JSON:', error)
+      log.error('Failed to parse Codex event line as JSON:', error)
     }
   }
 
@@ -265,79 +278,193 @@ export const runCodexSession = async ({
   return { agentMessages }
 }
 
-export const pushCodexEventsToLoki = async (stage: string, jsonPath: string, endpoint?: string) => {
+export const pushCodexEventsToLoki = async ({
+  stage,
+  endpoint,
+  jsonPath,
+  agentLogPath,
+  runtimeLogPath,
+  labels,
+  tenant,
+  basicAuth,
+  logger,
+}: PushCodexEventsToLokiOptions) => {
   if (!endpoint) {
     return
   }
 
-  try {
-    const stats = await stat(jsonPath)
-    if (stats.size === 0) {
-      console.error('Codex JSON event log is empty; skipping log export')
-      return
+  const log = logger ?? consoleLogger
+  const baseLabels = buildLokiLabels(stage, labels)
+  const nextTimestamp = createTimestampGenerator()
+  const streams: LokiStreamPayload[] = []
+
+  if (jsonPath) {
+    const jsonLines = await loadLogLines(jsonPath, 'Codex JSON event log', log)
+    if (jsonLines && jsonLines.length > 0) {
+      const values: Array<[string, string]> = []
+      jsonLines.forEach((line) => {
+        try {
+          const payload = JSON.stringify(JSON.parse(line))
+          values.push([nextTimestamp(), payload])
+        } catch (error) {
+          log.error('Skipping Codex event line that failed to parse for Loki export:', error)
+        }
+      })
+      if (values.length > 0) {
+        streams.push({
+          stream: { ...baseLabels, stream_type: 'json', source: 'codex-events' },
+          values,
+        })
+      } else {
+        log.warn('Codex JSON event payload empty after parsing; skipping Loki export')
+      }
     }
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
-      console.error(`Codex JSON event log not found at ${jsonPath}; skipping log export`)
-      return
-    }
-    throw error
   }
 
-  const raw = await Bun.file(jsonPath).text()
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+  if (agentLogPath) {
+    const agentLines = await loadLogLines(agentLogPath, 'Codex agent log', log)
+    if (agentLines && agentLines.length > 0) {
+      streams.push({
+        stream: { ...baseLabels, stream_type: 'agent', source: 'codex-agent' },
+        values: agentLines.map<[string, string]>((line) => [nextTimestamp(), line]),
+      })
+    }
+  }
 
-  if (lines.length === 0) {
-    console.error('Codex JSON event payload empty; skipping log export')
+  if (runtimeLogPath) {
+    const runtimeLines = await loadLogLines(runtimeLogPath, 'Codex runtime log', log)
+    if (runtimeLines && runtimeLines.length > 0) {
+      streams.push({
+        stream: { ...baseLabels, stream_type: 'runtime', source: 'codex-runtime' },
+        values: runtimeLines.map<[string, string]>((line) => [nextTimestamp(), line]),
+      })
+    }
+  }
+
+  if (streams.length === 0) {
+    log.warn('No Codex log payloads available; skipping Loki export')
     return
   }
 
-  const baseTimestampNs = BigInt(Date.now()) * 1_000_000n
-  const values: Array<[string, string]> = []
-
-  lines.forEach((line, index) => {
-    try {
-      const parsed = JSON.parse(line)
-      const payload = JSON.stringify(parsed)
-      const timestamp = (baseTimestampNs + BigInt(index)).toString()
-      values.push([timestamp, payload])
-    } catch (error) {
-      console.error('Skipping Codex event line that failed to parse for Loki export:', error)
-    }
-  })
-
-  if (values.length === 0) {
-    console.error('Codex JSON event payload empty after parsing; skipping log export')
-    return
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
   }
 
-  const body = JSON.stringify({
-    streams: [
-      {
-        stream: { job: 'codex-exec', stage },
-        values,
-      },
-    ],
-  })
+  if (tenant) {
+    headers['X-Scope-OrgID'] = tenant
+  }
+
+  if (basicAuth) {
+    headers.Authorization = basicAuth.startsWith('Basic ') ? basicAuth : `Basic ${basicAuth}`
+  }
 
   try {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body,
+      headers,
+      body: JSON.stringify({ streams }),
     })
 
     if (!response.ok) {
-      console.error(`Failed to push Codex events to Loki at ${endpoint}: ${response.status} ${response.statusText}`)
+      log.error(`Failed to push Codex events to Loki at ${endpoint}: ${response.status} ${response.statusText}`)
     } else {
-      console.error(`Pushed Codex events to Loki at ${endpoint}`)
+      log.info(`Pushed Codex events to Loki at ${endpoint}`)
     }
   } catch (error) {
-    console.error('Failed to push Codex events to Loki:', error)
+    log.error('Failed to push Codex events to Loki:', error)
   }
+}
+
+const loadLogLines = async (path: string, description: string, log: CodexLogger) => {
+  try {
+    const stats = await stat(path)
+    if (stats.size === 0) {
+      log.warn(`${description} is empty; skipping log export`)
+      return undefined
+    }
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      log.warn(`${description} not found at ${path}; skipping log export`)
+      return undefined
+    }
+    throw error
+  }
+
+  const raw = await Bun.file(path).text()
+  const lines: string[] = []
+
+  raw.split(/\r?\n/).forEach((line) => {
+    if (line.trim().length > 0) {
+      lines.push(line)
+    }
+  })
+
+  if (lines.length === 0) {
+    log.warn(`${description} payload empty after parsing; skipping log export`)
+    return undefined
+  }
+
+  return lines
+}
+
+const createTimestampGenerator = () => {
+  const base = BigInt(Date.now()) * 1_000_000n
+  let offset = 0n
+  return () => {
+    const timestamp = base + offset
+    offset += 1n
+    return timestamp.toString()
+  }
+}
+
+const buildLokiLabels = (stage: string, labels?: Record<string, string | undefined>): Record<string, string> => {
+  const result: Record<string, string> = {
+    job: 'codex-exec',
+  }
+
+  const stageValue = sanitizeLabelValue(stage)
+  if (stageValue) {
+    result.stage = stageValue
+  }
+
+  if (labels) {
+    for (const [key, value] of Object.entries(labels)) {
+      if (!key || value === undefined || value === null) {
+        continue
+      }
+      const sanitizedKey = sanitizeLabelKey(key)
+      if (!sanitizedKey || sanitizedKey === 'stage' || sanitizedKey === 'job') {
+        continue
+      }
+      const sanitizedValue = sanitizeLabelValue(value)
+      if (!sanitizedValue) {
+        continue
+      }
+      result[sanitizedKey] = sanitizedValue
+    }
+  }
+
+  return result
+}
+
+const sanitizeLabelKey = (key: string) => key.trim().replace(/[^A-Za-z0-9_]/g, '_')
+
+const sanitizeLabelValue = (value: unknown) => {
+  if (value === undefined || value === null) {
+    return ''
+  }
+  const normalized = `${value}`.trim()
+  return normalized === 'null' ? '' : normalized
+}
+
+const isNotFoundError = (error: unknown): error is NodeJS.ErrnoException => {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  return 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT'
+}
+
+interface LokiStreamPayload {
+  stream: Record<string, string>
+  values: Array<[string, string]>
 }

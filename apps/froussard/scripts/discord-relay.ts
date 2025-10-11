@@ -1,12 +1,12 @@
 import process from 'node:process'
-import {
-  DISCORD_MESSAGE_LIMIT,
-  bootstrapRelay,
-  iterableFromStream,
-  relayStream,
-  type RelayMetadata,
-} from '../src/discord'
 import type { DiscordConfig } from '../src/discord'
+import {
+  bootstrapRelay,
+  DISCORD_MESSAGE_LIMIT,
+  iterableFromStream,
+  type RelayMetadata,
+  relayStream,
+} from '../src/discord'
 
 interface ParsedArgs {
   stage?: string

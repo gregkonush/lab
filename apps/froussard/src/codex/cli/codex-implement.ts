@@ -1,15 +1,16 @@
 #!/usr/bin/env bun
-import process from 'node:process'
 import { readFile, stat } from 'node:fs/promises'
-import { runCodexSession, pushCodexEventsToLoki } from './lib/codex-runner'
+import process from 'node:process'
+import { runCli } from './lib/cli'
+import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
+  buildDiscordRelayCommand,
+  copyAgentLogIfNeeded,
   pathExists,
   randomRunId,
   timestampUtc,
-  copyAgentLogIfNeeded,
-  buildDiscordRelayCommand,
 } from './lib/codex-utils'
-import { runCli } from './lib/cli'
+import { createCodexLogger } from './lib/logger'
 
 interface ImplementationEventPayload {
   prompt?: string
@@ -69,8 +70,11 @@ export const runCodexImplementation = async (eventPath: string) => {
   const outputPath = process.env.OUTPUT_PATH ?? defaultOutputPath
   const jsonOutputPath = process.env.JSON_OUTPUT_PATH ?? `${worktree}/.codex-implementation-events.jsonl`
   const agentOutputPath = process.env.AGENT_OUTPUT_PATH ?? `${worktree}/.codex-implementation-agent.log`
+  const runtimeLogPath = process.env.CODEX_RUNTIME_LOG_PATH ?? `${worktree}/.codex-implementation-runtime.log`
   const lokiEndpoint =
     process.env.LGTM_LOKI_ENDPOINT ?? 'http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push'
+  const lokiTenant = process.env.LGTM_LOKI_TENANT
+  const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 
   const baseBranch = sanitizeNullableString(event.base) || process.env.BASE_BRANCH || 'main'
   const headBranch = sanitizeNullableString(event.head) || process.env.HEAD_BRANCH || ''
@@ -94,7 +98,7 @@ export const runCodexImplementation = async (eventPath: string) => {
   process.env.ISSUE_TITLE = issueTitle
 
   process.env.CODEX_STAGE = process.env.CODEX_STAGE ?? 'implementation'
-  process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=debug'
+  process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
   const relayScript = process.env.RELAY_SCRIPT ?? 'apps/froussard/scripts/discord-relay.ts'
@@ -103,76 +107,109 @@ export const runCodexImplementation = async (eventPath: string) => {
     process.env.CODEX_RELAY_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()
   const relayRunId = relayRunIdSource.slice(0, 24).toLowerCase()
 
-  let discordRelayCommand: string[] | undefined
-  const discordToken = process.env.DISCORD_BOT_TOKEN ?? ''
-  const discordGuild = process.env.DISCORD_GUILD_ID ?? ''
-  const discordScriptExists = await pathExists(relayScript)
-
-  if (discordToken && discordGuild && discordScriptExists) {
-    const args = [
-      '--stage',
-      'implementation',
-      '--repo',
+  const logger = await createCodexLogger({
+    logPath: runtimeLogPath,
+    context: {
+      stage: 'implementation',
       repository,
-      '--issue',
-      issueNumber,
-      '--timestamp',
-      relayTimestamp,
-    ]
-    if (relayRunId) {
-      args.push('--run-id', relayRunId)
-    }
-    if (issueTitle) {
-      args.push('--title', issueTitle)
-    }
-    if (process.env.DISCORD_RELAY_DRY_RUN === '1') {
-      args.push('--dry-run')
-    }
-    try {
-      discordRelayCommand = await buildDiscordRelayCommand(relayScript, args)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`Discord relay disabled: ${message}`)
-    }
-  } else {
-    console.error('Discord relay disabled: missing credentials or relay script')
-  }
-
-  console.error(`Running Codex implementation for ${repository}#${issueNumber}`)
-
-  await runCodexSession({
-    stage: 'implementation',
-    prompt,
-    outputPath,
-    jsonOutputPath,
-    agentOutputPath,
-    discordRelay: discordRelayCommand
-      ? {
-          command: discordRelayCommand,
-          onError: (error) => console.error(`Discord relay failed: ${error.message}`),
-        }
-      : undefined,
+      issue: issueNumber,
+      workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
+      namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? undefined,
+      run_id: relayRunId || undefined,
+    },
   })
 
-  await copyAgentLogIfNeeded(outputPath, agentOutputPath)
-  await pushCodexEventsToLoki('implementation', jsonOutputPath, lokiEndpoint)
-
-  console.log(`Codex execution logged to ${outputPath}`)
   try {
-    const jsonStats = await stat(jsonOutputPath)
-    if (jsonStats.size > 0) {
-      console.log(`Codex JSON events stored at ${jsonOutputPath}`)
-    }
-  } catch {
-    // ignore missing json log
-  }
+    let discordRelayCommand: string[] | undefined
+    const discordToken = process.env.DISCORD_BOT_TOKEN ?? ''
+    const discordGuild = process.env.DISCORD_GUILD_ID ?? ''
+    const discordScriptExists = await pathExists(relayScript)
 
-  return {
-    repository,
-    issueNumber,
-    outputPath,
-    jsonOutputPath,
-    agentOutputPath,
+    if (discordToken && discordGuild && discordScriptExists) {
+      const args = [
+        '--stage',
+        'implementation',
+        '--repo',
+        repository,
+        '--issue',
+        issueNumber,
+        '--timestamp',
+        relayTimestamp,
+      ]
+      if (relayRunId) {
+        args.push('--run-id', relayRunId)
+      }
+      if (issueTitle) {
+        args.push('--title', issueTitle)
+      }
+      if (process.env.DISCORD_RELAY_DRY_RUN === '1') {
+        args.push('--dry-run')
+      }
+      try {
+        discordRelayCommand = await buildDiscordRelayCommand(relayScript, args)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn(`Discord relay disabled: ${message}`)
+      }
+    } else {
+      logger.warn('Discord relay disabled: missing credentials or relay script')
+    }
+
+    logger.info(`Running Codex implementation for ${repository}#${issueNumber}`)
+
+    await runCodexSession({
+      stage: 'implementation',
+      prompt,
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+      logger,
+      discordRelay: discordRelayCommand
+        ? {
+            command: discordRelayCommand,
+            onError: (error) => logger.error(`Discord relay failed: ${error.message}`),
+          }
+        : undefined,
+    })
+
+    await copyAgentLogIfNeeded(outputPath, agentOutputPath)
+    await pushCodexEventsToLoki({
+      stage: 'implementation',
+      endpoint: lokiEndpoint,
+      jsonPath: jsonOutputPath,
+      agentLogPath: agentOutputPath,
+      runtimeLogPath,
+      labels: {
+        repository,
+        issue: issueNumber,
+        workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
+        namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? undefined,
+        run_id: relayRunId || undefined,
+      },
+      tenant: lokiTenant,
+      basicAuth: lokiBasicAuth,
+      logger,
+    })
+
+    console.log(`Codex execution logged to ${outputPath}`)
+    try {
+      const jsonStats = await stat(jsonOutputPath)
+      if (jsonStats.size > 0) {
+        console.log(`Codex JSON events stored at ${jsonOutputPath}`)
+      }
+    } catch {
+      // ignore missing json log
+    }
+
+    return {
+      repository,
+      issueNumber,
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+    }
+  } finally {
+    await logger.flush()
   }
 }
 

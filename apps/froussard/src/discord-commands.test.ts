@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildDeferredResponsePayload,
   buildPlanModalResponse,
+  type DiscordApplicationCommandInteraction,
+  type DiscordModalSubmitInteraction,
   INTERACTION_TYPE,
   toCommandEvent,
   toPlanModalEvent,
   verifyDiscordRequest,
-  type DiscordApplicationCommandInteraction,
-  type DiscordModalSubmitInteraction,
 } from '@/discord-commands'
 
 const { verifyKeyMock } = vi.hoisted(() => ({

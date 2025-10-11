@@ -1,14 +1,8 @@
-import { Kafka, type Producer } from 'kafkajs'
+import { Effect, Layer, Ref } from 'effect'
+import { Kafka } from 'kafkajs'
 
-export interface KafkaConfig {
-  brokers: string[]
-  clientId: string
-  sasl: {
-    mechanism: 'scram-sha-512'
-    username: string
-    password: string
-  }
-}
+import { AppConfigService } from '@/effect/config'
+import { AppLogger } from '@/logger'
 
 export interface KafkaMessage {
   topic: string
@@ -17,77 +11,110 @@ export interface KafkaMessage {
   headers: Record<string, string>
 }
 
-export class KafkaManager {
-  private readonly kafka: Kafka
-  private producer: Producer
-  private connectPromise: Promise<void> | null = null
-  private ready = false
+export interface KafkaProducerService {
+  readonly publish: (message: KafkaMessage) => Effect.Effect<void>
+  readonly ensureConnected: Effect.Effect<void>
+  readonly isReady: Effect.Effect<boolean>
+}
 
-  constructor(config: KafkaConfig, allowAutoTopicCreation = false) {
-    this.kafka = new Kafka({
-      clientId: config.clientId,
-      brokers: config.brokers,
+export class KafkaProducer extends Effect.Tag('@froussard/KafkaProducer')<KafkaProducer, KafkaProducerService>() {}
+
+export const KafkaProducerLayer = Layer.scoped(
+  KafkaProducer,
+  Effect.gen(function* (_) {
+    const config = yield* AppConfigService
+    const logger = yield* AppLogger
+
+    const kafka = new Kafka({
+      clientId: config.kafka.clientId,
+      brokers: config.kafka.brokers,
       ssl: false,
-      sasl: config.sasl,
+      sasl: {
+        mechanism: 'scram-sha-512',
+        username: config.kafka.username,
+        password: config.kafka.password,
+      },
     })
 
-    this.producer = this.kafka.producer({ allowAutoTopicCreation })
-  }
+    const createProducer = () => kafka.producer({ allowAutoTopicCreation: false })
+    let producer = createProducer()
+    const readyRef = yield* Ref.make(false)
 
-  async connect(): Promise<void> {
-    if (this.connectPromise) {
-      return this.connectPromise
-    }
+    const connect = Effect.tryPromise(() => producer.connect()).pipe(
+      Effect.tap(() => Ref.set(readyRef, true)),
+      Effect.tap(() =>
+        logger.info('Kafka producer connected', {
+          clientId: config.kafka.clientId,
+          brokers: config.kafka.brokers.join(','),
+        }),
+      ),
+    )
 
-    this.connectPromise = this.producer
-      .connect()
-      .then(() => {
-        this.ready = true
-      })
-      .catch((error) => {
-        this.ready = false
-        this.connectPromise = null
-        throw error
-      })
+    const disconnect = Effect.tryPromise(() => producer.disconnect()).pipe(
+      Effect.tap(() => Ref.set(readyRef, false)),
+      Effect.tap(() => logger.info('Kafka producer disconnected', { clientId: config.kafka.clientId })),
+    )
 
-    return this.connectPromise
-  }
+    const ensureConnected = Ref.get(readyRef).pipe(Effect.flatMap((ready) => (ready ? Effect.void : connect)))
 
-  isReady(): boolean {
-    return this.ready
-  }
+    const resetProducer = Effect.sync(() => {
+      producer = createProducer()
+    })
 
-  async publish(message: KafkaMessage): Promise<void> {
-    await this.connect()
+    const publish = (message: KafkaMessage) =>
+      ensureConnected.pipe(
+        Effect.flatMap(() =>
+          Effect.tryPromise({
+            try: () =>
+              producer.send({
+                topic: message.topic,
+                messages: [
+                  {
+                    key: message.key,
+                    value: message.value,
+                    headers: message.headers,
+                  },
+                ],
+              }),
+            catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          }).pipe(
+            Effect.tap(() =>
+              logger.info('published kafka message', {
+                topic: message.topic,
+                key: message.key,
+              }),
+            ),
+            Effect.tapError((error) =>
+              Ref.set(readyRef, false).pipe(
+                Effect.zipRight(
+                  Effect.tryPromise(() => producer.disconnect()).pipe(Effect.catchAll(() => Effect.succeed(undefined))),
+                ),
+                Effect.zipRight(resetProducer),
+                Effect.zipRight(
+                  logger.error('failed to publish kafka message', {
+                    err: error instanceof Error ? error.message : String(error),
+                    topic: message.topic,
+                    key: message.key,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      )
 
-    try {
-      await this.producer.send({
-        topic: message.topic,
-        messages: [
-          {
-            key: message.key,
-            value: message.value,
-            headers: message.headers,
-          },
-        ],
-      })
-    } catch (error) {
-      this.ready = false
-      this.connectPromise = null
-      this.producer = this.kafka.producer({ allowAutoTopicCreation: false })
-      throw error
-    }
-  }
+    const isReady = Ref.get(readyRef)
 
-  async disconnect(): Promise<void> {
-    try {
-      await this.producer.disconnect()
-    } finally {
-      this.ready = false
-      this.connectPromise = null
-    }
-  }
-}
+    return yield* Effect.acquireRelease(
+      Effect.succeed<KafkaProducerService>({
+        publish,
+        ensureConnected,
+        isReady,
+      }),
+      () => disconnect.pipe(Effect.zipRight(resetProducer)),
+    )
+  }),
+)
 
 export const parseBrokerList = (raw: string): string[] => {
   return raw

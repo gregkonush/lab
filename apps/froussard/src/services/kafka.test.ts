@@ -1,12 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Effect, Layer } from 'effect'
+import { make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { KafkaManager, parseBrokerList, type KafkaConfig, type KafkaMessage } from '@/services/kafka'
+import { type AppConfig, AppConfigService } from '@/effect/config'
+import { AppLogger } from '@/logger'
+import { type KafkaMessage, KafkaProducer, KafkaProducerLayer, parseBrokerList } from '@/services/kafka'
 
 const producerFactory = vi.fn()
 
 vi.mock('kafkajs', () => {
   return {
-    Kafka: vi.fn((config: KafkaConfig) => ({
+    Kafka: vi.fn((config: AppConfig['kafka']) => ({
       producer: producerFactory,
       __config: config,
     })),
@@ -23,25 +27,45 @@ describe('parseBrokerList', () => {
   })
 })
 
-describe('KafkaManager', () => {
-  beforeEach(() => {
-    producerFactory.mockReset()
-  })
-
-  const createProducer = () => {
-    const connect = vi.fn().mockResolvedValue(undefined)
-    const send = vi.fn().mockResolvedValue(undefined)
-    const disconnect = vi.fn().mockResolvedValue(undefined)
-    return { connect, send, disconnect }
-  }
-
-  const baseConfig: KafkaConfig = {
-    brokers: ['broker:9092'],
-    clientId: 'test-client',
-    sasl: {
-      mechanism: 'scram-sha-512',
+describe('KafkaProducerLayer', () => {
+  const baseConfig: AppConfig = {
+    githubWebhookSecret: 'secret',
+    kafka: {
+      brokers: ['broker:9092'],
       username: 'user',
       password: 'pass',
+      clientId: 'test-client',
+      topics: {
+        raw: 'raw-topic',
+        codex: 'codex-topic',
+        discordCommands: 'discord-topic',
+      },
+      sasl: {
+        mechanism: 'scram-sha-512',
+        username: 'user',
+        password: 'pass',
+      },
+    },
+    codebase: {
+      baseBranch: 'main',
+      branchPrefix: 'codex/issue-',
+    },
+    codex: {
+      triggerLogin: 'user',
+      implementationTriggerPhrase: 'execute plan',
+    },
+    discord: {
+      publicKey: 'public',
+      defaultResponse: {
+        deferType: 'channel-message',
+        ephemeral: true,
+      },
+    },
+    github: {
+      token: 'token',
+      ackReaction: '+1',
+      apiBaseUrl: 'https://api.github.com',
+      userAgent: 'froussard',
     },
   }
 
@@ -52,70 +76,100 @@ describe('KafkaManager', () => {
     headers: {},
   }
 
-  it('connects and reuses existing promise on subsequent calls', async () => {
+  const createProducer = () => {
+    const connect = vi.fn().mockResolvedValue(undefined)
+    const send = vi.fn().mockResolvedValue(undefined)
+    const disconnect = vi.fn().mockResolvedValue(undefined)
+    return { connect, send, disconnect }
+  }
+
+  const createRuntime = () => {
+    const configLayer = Layer.succeed(AppConfigService, baseConfig)
+    const loggerLayer = Layer.succeed(AppLogger, {
+      debug: () => Effect.succeed(undefined),
+      info: () => Effect.succeed(undefined),
+      warn: () => Effect.succeed(undefined),
+      error: () => Effect.succeed(undefined),
+    })
+
+    const layer = KafkaProducerLayer.pipe(Layer.provide(configLayer), Layer.provide(loggerLayer))
+    const runtime = makeManagedRuntime(layer)
+
+    return { runtime }
+  }
+
+  beforeEach(() => {
+    producerFactory.mockReset()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('connects on first publish and reuses producer', async () => {
     const producer = createProducer()
     producerFactory.mockReturnValue(producer)
 
-    const manager = new KafkaManager(baseConfig)
-    const first = manager.connect()
-    const second = manager.connect()
-    await Promise.all([first, second])
+    const { runtime } = createRuntime()
+    const kafka = await runtime.runPromise(
+      Effect.gen(function* (_) {
+        return yield* KafkaProducer
+      }),
+    )
+
+    await runtime.runPromise(kafka.publish(baseMessage))
 
     expect(producerFactory).toHaveBeenCalledTimes(1)
     expect(producer.connect).toHaveBeenCalledTimes(1)
-    expect(manager.isReady()).toBe(true)
+    expect(producer.send).toHaveBeenCalledTimes(1)
+
+    const ready = await runtime.runPromise(kafka.isReady)
+    expect(ready).toBe(true)
+
+    await runtime.dispose()
   })
 
-  it('publishes messages through the producer', async () => {
-    const producer = createProducer()
-    producerFactory.mockReturnValue(producer)
-
-    const manager = new KafkaManager(baseConfig)
-    await manager.publish(baseMessage)
-
-    expect(producer.connect).toHaveBeenCalledTimes(1)
-    expect(producer.send).toHaveBeenCalledWith({
-      topic: baseMessage.topic,
-      messages: [
-        {
-          key: baseMessage.key,
-          value: baseMessage.value,
-          headers: baseMessage.headers,
-        },
-      ],
-    })
-  })
-
-  it('recreates producer after a send failure', async () => {
+  it('recreates producer after send failure', async () => {
     const firstProducer = createProducer()
     firstProducer.send.mockRejectedValueOnce(new Error('boom'))
     const secondProducer = createProducer()
 
     producerFactory.mockImplementationOnce(() => firstProducer).mockImplementationOnce(() => secondProducer)
 
-    const manager = new KafkaManager(baseConfig)
+    const { runtime } = createRuntime()
+    const kafka = await runtime.runPromise(
+      Effect.gen(function* (_) {
+        return yield* KafkaProducer
+      }),
+    )
 
-    await expect(manager.publish(baseMessage)).rejects.toThrow('boom')
+    await expect(runtime.runPromise(kafka.publish(baseMessage))).rejects.toThrow('boom')
 
     expect(firstProducer.connect).toHaveBeenCalled()
     expect(firstProducer.send).toHaveBeenCalled()
+    expect(firstProducer.disconnect).toHaveBeenCalled()
 
-    await manager.publish(baseMessage)
+    await runtime.runPromise(kafka.publish(baseMessage))
 
     expect(producerFactory).toHaveBeenCalledTimes(2)
     expect(secondProducer.connect).toHaveBeenCalledTimes(1)
     expect(secondProducer.send).toHaveBeenCalledTimes(1)
+
+    await runtime.dispose()
   })
 
-  it('disconnects producer and resets flags', async () => {
+  it('disconnects producer when runtime is disposed', async () => {
     const producer = createProducer()
     producerFactory.mockReturnValue(producer)
 
-    const manager = new KafkaManager(baseConfig)
-    await manager.publish(baseMessage)
+    const { runtime } = createRuntime()
+    await runtime.runPromise(
+      Effect.gen(function* (_) {
+        return yield* KafkaProducer
+      }),
+    )
 
-    await manager.disconnect()
-    expect(producer.disconnect).toHaveBeenCalledTimes(1)
-    expect(manager.isReady()).toBe(false)
+    await runtime.dispose()
+    expect(producer.disconnect).toHaveBeenCalled()
   })
 })

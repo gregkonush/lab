@@ -1,7 +1,6 @@
 import type { Webhooks } from '@octokit/webhooks'
-
+import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
-import type { KafkaManager } from '@/services/kafka'
 
 import { createDiscordWebhookHandler } from './discord'
 import { createGithubWebhookHandler } from './github'
@@ -10,14 +9,14 @@ import type { WebhookConfig } from './types'
 export type { WebhookConfig } from './types'
 
 interface WebhookDependencies {
-  kafka: KafkaManager
+  runtime: AppRuntime
   webhooks: Webhooks
   config: WebhookConfig
 }
 
-export const createWebhookHandler = ({ kafka, webhooks, config }: WebhookDependencies) => {
-  const discordHandler = createDiscordWebhookHandler({ kafka, config })
-  const githubHandler = createGithubWebhookHandler({ kafka, webhooks, config })
+export const createWebhookHandler = ({ runtime, webhooks, config }: WebhookDependencies) => {
+  const discordHandler = createDiscordWebhookHandler({ runtime, config })
+  const githubHandler = createGithubWebhookHandler({ runtime, webhooks, config })
 
   return async (request: Request, provider: string): Promise<Response> => {
     logger.info({ provider }, 'webhook request received')

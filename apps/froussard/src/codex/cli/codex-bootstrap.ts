@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { $, spawn, which } from 'bun'
-import { rm, mkdir, stat } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
+import { $, spawn, which } from 'bun'
 import { runCli } from './lib/cli'
 
 const pathExists = async (path: string) => {

@@ -4,6 +4,9 @@ resources:
   - rbac.yaml
   - ingressroute.yaml
   - argo-workflows-sso-sealedsecret.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm

@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runCodexImplementation } from '../codex-implement'
 
 const utilMocks = vi.hoisted(() => ({
@@ -92,10 +92,15 @@ describe('runCodexImplementation', () => {
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
     expect(invocation?.stage).toBe('implementation')
     expect(invocation?.outputPath).toBe(join(workdir, '.codex-implementation.log'))
+    expect(invocation?.logger).toBeDefined()
     expect(pushCodexEventsToLokiMock).toHaveBeenCalledWith(
-      'implementation',
-      join(workdir, '.codex-implementation-events.jsonl'),
-      'http://localhost/loki',
+      expect.objectContaining({
+        stage: 'implementation',
+        endpoint: 'http://localhost/loki',
+        jsonPath: join(workdir, '.codex-implementation-events.jsonl'),
+        agentLogPath: join(workdir, '.codex-implementation-agent.log'),
+        runtimeLogPath: join(workdir, '.codex-implementation-runtime.log'),
+      }),
     )
   })
 

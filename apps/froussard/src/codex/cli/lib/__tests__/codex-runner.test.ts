@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { runCodexSession, pushCodexEventsToLoki } from '../codex-runner'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pushCodexEventsToLoki, runCodexSession } from '../codex-runner'
 
 const bunGlobals = vi.hoisted(() => {
   const spawn = vi.fn()
@@ -134,12 +134,67 @@ describe('codex-runner', () => {
     const fetchMock = vi.fn(async () => ({ ok: true }))
     global.fetch = fetchMock as unknown as typeof fetch
 
-    await pushCodexEventsToLoki('planning', jsonPath, 'https://loki.example.com/api/v1/push')
+    await pushCodexEventsToLoki({
+      stage: 'planning',
+      endpoint: 'https://loki.example.com/api/v1/push',
+      jsonPath,
+    })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const body = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body
     expect(typeof body).toBe('string')
-    expect(body as string).toContain('codex-exec')
+    const payload = JSON.parse(body as string)
+    expect(Array.isArray(payload.streams)).toBe(true)
+    expect(payload.streams[0]?.stream).toMatchObject({ stage: 'planning', stream_type: 'json' })
+  })
+
+  it('pushes agent and runtime logs and applies tenant headers when provided', async () => {
+    const jsonPath = join(workspace, 'events.jsonl')
+    const agentPath = join(workspace, 'agent.log')
+    const runtimePath = join(workspace, 'runtime.log')
+
+    await writeFile(jsonPath, JSON.stringify({ type: 'info', detail: 'queued' }), 'utf8')
+    await writeFile(agentPath, 'Agent says hello\nAnother line', 'utf8')
+    await writeFile(runtimePath, 'runtime started\nruntime finished', 'utf8')
+
+    const fetchMock = vi.fn(async () => ({ ok: true }))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    await pushCodexEventsToLoki({
+      stage: 'implementation',
+      endpoint: 'https://loki.example.com/api/v1/push',
+      jsonPath,
+      agentLogPath: agentPath,
+      runtimeLogPath: runtimePath,
+      tenant: 'lab',
+      basicAuth: 'token-123',
+      labels: {
+        repository: 'owner/repo',
+        issue: '42',
+      },
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, options] = fetchMock.mock.calls[0] ?? []
+    const headers = options?.headers as Record<string, string>
+    expect(headers).toMatchObject({
+      'Content-Type': 'application/json',
+      'X-Scope-OrgID': 'lab',
+      Authorization: 'Basic token-123',
+    })
+
+    const bodyRaw = options?.body as string
+    const payload = JSON.parse(bodyRaw)
+    expect(payload.streams).toHaveLength(3)
+    const sources = payload.streams.map((item: { stream: { source: string } }) => item.stream.source).sort()
+    expect(sources).toEqual(['codex-agent', 'codex-events', 'codex-runtime'])
+    const runtimeStream = payload.streams.find(
+      (item: { stream: { stream_type: string } }) => item.stream.stream_type === 'runtime',
+    )
+    expect(runtimeStream).toBeDefined()
+    expect(runtimeStream.stream.repository).toBe('owner/repo')
+    expect(runtimeStream.stream.issue).toBe('42')
+    expect(runtimeStream.values[0][1]).toBe('runtime started')
   })
 
   it('throws when Codex exits with a non-zero status', async () => {
@@ -201,7 +256,11 @@ describe('codex-runner', () => {
     const fetchMock = vi.fn()
     global.fetch = fetchMock as unknown as typeof fetch
 
-    await pushCodexEventsToLoki('planning', join(workspace, 'missing.jsonl'), 'https://loki.example.com/api/v1/push')
+    await pushCodexEventsToLoki({
+      stage: 'planning',
+      endpoint: 'https://loki.example.com/api/v1/push',
+      jsonPath: join(workspace, 'missing.jsonl'),
+    })
 
     expect(fetchMock).not.toHaveBeenCalled()
   })

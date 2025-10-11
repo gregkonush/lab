@@ -1,19 +1,26 @@
+import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
-import type { KafkaManager } from '@/services/kafka'
+import type { KafkaProducerService } from '@/services/kafka'
 
 export interface HealthHandlers {
   liveness: () => Response
   readiness: () => Response
 }
 
-export const createHealthHandlers = (kafka: KafkaManager): HealthHandlers => {
+interface HealthDependencies {
+  runtime: AppRuntime
+  kafka: KafkaProducerService
+}
+
+export const createHealthHandlers = ({ runtime, kafka }: HealthDependencies): HealthHandlers => {
   return {
     liveness: () => {
       logger.debug('Liveness check request received')
       return new Response('OK', { status: 200 })
     },
     readiness: () => {
-      if (!kafka.isReady()) {
+      const ready = runtime.runSync(kafka.isReady)
+      if (!ready) {
         logger.warn('Readiness check failed: Kafka producer not connected')
         return new Response('Kafka producer not connected', { status: 503 })
       }

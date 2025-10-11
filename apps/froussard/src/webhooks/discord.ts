@@ -1,14 +1,14 @@
-import { logger } from '@/logger'
 import {
-  INTERACTION_TYPE,
   buildPlanModalResponse,
+  type DiscordApplicationCommandInteraction,
+  type DiscordCommandEvent,
+  type DiscordModalSubmitInteraction,
+  INTERACTION_TYPE,
   toPlanModalEvent,
   verifyDiscordRequest,
-  type DiscordApplicationCommandInteraction,
-  type DiscordModalSubmitInteraction,
-  type DiscordCommandEvent,
 } from '@/discord-commands'
-import type { KafkaManager } from '@/services/kafka'
+import type { AppRuntime } from '@/effect/runtime'
+import { logger } from '@/logger'
 
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
@@ -22,12 +22,12 @@ const jsonResponse = (payload: unknown, status = 200) =>
 const EPHEMERAL_FLAG = 1 << 6
 
 export interface DiscordWebhookDependencies {
-  kafka: KafkaManager
+  runtime: AppRuntime
   config: WebhookConfig
 }
 
 export const createDiscordWebhookHandler =
-  ({ kafka, config }: DiscordWebhookDependencies) =>
+  ({ runtime, config }: DiscordWebhookDependencies) =>
   async (body: Uint8Array, headers: Headers): Promise<Response> => {
     if (!(await verifyDiscordRequest(body, headers, config.discord.publicKey))) {
       logger.error({ headers: Array.from(headers.keys()) }, 'discord signature verification failed')
@@ -133,12 +133,14 @@ export const createDiscordWebhookHandler =
         kafkaHeaders['x-discord-user-id'] = event.user.id
       }
 
-      await publishKafkaMessage(kafka, {
-        topic: config.topics.discordCommands,
-        key: event.interactionId,
-        value: JSON.stringify(event),
-        headers: kafkaHeaders,
-      })
+      await runtime.runPromise(
+        publishKafkaMessage({
+          topic: config.topics.discordCommands,
+          key: event.interactionId,
+          value: JSON.stringify(event),
+          headers: kafkaHeaders,
+        }),
+      )
 
       return jsonResponse({
         type: 4,

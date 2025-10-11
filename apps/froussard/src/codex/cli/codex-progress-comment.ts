@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-import { $, which } from 'bun'
 import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import process from 'node:process'
-import { ensureFileDirectory } from './lib/codex-runner'
+import { $, which } from 'bun'
 import { runCli } from './lib/cli'
+import { ensureFileDirectory } from './lib/fs'
 
 interface Options {
   bodyFile?: string

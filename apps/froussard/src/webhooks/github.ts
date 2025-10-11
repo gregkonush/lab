@@ -1,24 +1,26 @@
-import type { Webhooks } from '@octokit/webhooks'
 import { randomUUID } from 'node:crypto'
+import type { Webhooks } from '@octokit/webhooks'
 
-import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage } from '@/codex'
+import { Effect } from 'effect'
+
+import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
 import { selectReactionRepository } from '@/codex-workflow'
+import type { AppRuntime } from '@/effect/runtime'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
 import { logger } from '@/logger'
-import type { KafkaManager } from '@/services/kafka'
-import { findLatestPlanComment, postIssueReaction } from '@/services/github'
+import { GithubService } from '@/services/github'
 
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
 
 export interface GithubWebhookDependencies {
-  kafka: KafkaManager
+  runtime: AppRuntime
   webhooks: Webhooks
   config: WebhookConfig
 }
 
 export const createGithubWebhookHandler =
-  ({ kafka, webhooks, config }: GithubWebhookDependencies) =>
+  ({ runtime, webhooks, config }: GithubWebhookDependencies) =>
   async (rawBody: string, request: Request): Promise<Response> => {
     const signatureHeader = request.headers.get('x-hub-signature-256')
     if (!signatureHeader) {
@@ -32,6 +34,12 @@ export const createGithubWebhookHandler =
       logger.error({ deliveryId, signatureHeader }, 'github webhook signature verification failed')
       return new Response('Unauthorized', { status: 401 })
     }
+
+    const githubService = runtime.runSync(
+      Effect.gen(function* (_) {
+        return yield* GithubService
+      }),
+    )
 
     let parsedPayload: unknown
     try {
@@ -105,23 +113,27 @@ export const createGithubWebhookHandler =
                 issuedAt: new Date().toISOString(),
               }
 
-              await publishKafkaMessage(kafka, {
-                topic: config.topics.codex,
-                key: `issue-${issueNumber}-planning`,
-                value: JSON.stringify(codexMessage),
-                headers: { ...headers, 'x-codex-task-stage': 'planning' },
-              })
+              await runtime.runPromise(
+                publishKafkaMessage({
+                  topic: config.topics.codex,
+                  key: `issue-${issueNumber}-planning`,
+                  value: JSON.stringify(codexMessage),
+                  headers: { ...headers, 'x-codex-task-stage': 'planning' },
+                }),
+              )
 
               codexStageTriggered = 'planning'
 
-              const reactionResult = await postIssueReaction({
-                repositoryFullName,
-                issueNumber,
-                token: config.github.token,
-                reactionContent: config.github.ackReaction,
-                apiBaseUrl: config.github.apiBaseUrl,
-                userAgent: config.github.userAgent,
-              })
+              const reactionResult = await runtime.runPromise(
+                githubService.postIssueReaction({
+                  repositoryFullName,
+                  issueNumber,
+                  token: config.github.token,
+                  reactionContent: config.github.ackReaction,
+                  apiBaseUrl: config.github.apiBaseUrl,
+                  userAgent: config.github.userAgent,
+                }),
+              )
 
               if (reactionResult.ok) {
                 logger.info(
@@ -164,13 +176,15 @@ export const createGithubWebhookHandler =
             let planCommentId: number | undefined
             let planCommentUrl: string | undefined
 
-            const planLookup = await findLatestPlanComment({
-              repositoryFullName,
-              issueNumber,
-              token: config.github.token,
-              apiBaseUrl: config.github.apiBaseUrl,
-              userAgent: config.github.userAgent,
-            })
+            const planLookup = await runtime.runPromise(
+              githubService.findLatestPlanComment({
+                repositoryFullName,
+                issueNumber,
+                token: config.github.token,
+                apiBaseUrl: config.github.apiBaseUrl,
+                userAgent: config.github.userAgent,
+              }),
+            )
 
             if (planLookup.ok) {
               planCommentBody = planLookup.comment.body
@@ -207,24 +221,28 @@ export const createGithubWebhookHandler =
               planCommentUrl,
             }
 
-            await publishKafkaMessage(kafka, {
-              topic: config.topics.codex,
-              key: `issue-${issueNumber}-implementation`,
-              value: JSON.stringify(codexMessage),
-              headers: { ...headers, 'x-codex-task-stage': 'implementation' },
-            })
+            await runtime.runPromise(
+              publishKafkaMessage({
+                topic: config.topics.codex,
+                key: `issue-${issueNumber}-implementation`,
+                value: JSON.stringify(codexMessage),
+                headers: { ...headers, 'x-codex-task-stage': 'implementation' },
+              }),
+            )
 
             codexStageTriggered = 'implementation'
           }
         }
       }
 
-      await publishKafkaMessage(kafka, {
-        topic: config.topics.raw,
-        key: deliveryId,
-        value: rawBody,
-        headers,
-      })
+      await runtime.runPromise(
+        publishKafkaMessage({
+          topic: config.topics.raw,
+          key: deliveryId,
+          value: rawBody,
+          headers,
+        }),
+      )
 
       return new Response(
         JSON.stringify({

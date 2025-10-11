@@ -31,5 +31,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run Biome check
+        run: pnpm exec biome check apps/froussard
+
       - name: Run froussard tests
         run: pnpm --filter froussard run test

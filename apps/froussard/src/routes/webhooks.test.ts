@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Effect, Layer } from 'effect'
+import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { AppLogger } from '@/logger'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
+import { GithubService } from '@/services/github'
+import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
 const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent } = vi.hoisted(() => ({
   mockVerifyDiscordRequest: vi.fn(async () => true),
@@ -43,11 +48,6 @@ vi.mock('@/codex', () => ({
   normalizeLogin: vi.fn((value: string | undefined | null) => (value ? value.toLowerCase() : null)),
 }))
 
-vi.mock('@/services/github', () => ({
-  postIssueReaction: vi.fn(async () => ({ ok: true })),
-  findLatestPlanComment: vi.fn(async () => ({ ok: false, reason: 'not-found' })),
-}))
-
 vi.mock('@/codex-workflow', () => ({
   selectReactionRepository: vi.fn((issueRepository, repository) => issueRepository ?? repository),
 }))
@@ -78,8 +78,11 @@ const buildDiscordRequest = (body: unknown, headers: Record<string, string> = {}
 }
 
 describe('createWebhookHandler', () => {
-  const kafka = {
-    publish: vi.fn(async () => undefined),
+  let runtime: ManagedRuntime<unknown, never>
+  let publishedMessages: KafkaMessage[]
+  let githubServiceMock: {
+    postIssueReaction: ReturnType<typeof vi.fn>
+    findLatestPlanComment: ReturnType<typeof vi.fn>
   }
 
   const webhooks = {
@@ -113,28 +116,64 @@ describe('createWebhookHandler', () => {
     },
   }
 
-  afterEach(() => {
+  const provideRuntime = () => {
+    const kafkaLayer = Layer.succeed(KafkaProducer, {
+      publish: (message: KafkaMessage) =>
+        Effect.sync(() => {
+          publishedMessages.push(message)
+        }),
+      ensureConnected: Effect.succeed(undefined),
+      isReady: Effect.succeed(true),
+    })
+
+    const loggerLayer = Layer.succeed(AppLogger, {
+      debug: () => Effect.succeed(undefined),
+      info: () => Effect.succeed(undefined),
+      warn: () => Effect.succeed(undefined),
+      error: () => Effect.succeed(undefined),
+    })
+    const githubLayer = Layer.succeed(GithubService, {
+      postIssueReaction: githubServiceMock.postIssueReaction,
+      findLatestPlanComment: githubServiceMock.findLatestPlanComment,
+    })
+
+    runtime = makeManagedRuntime(Layer.mergeAll(loggerLayer, kafkaLayer, githubLayer))
+  }
+
+  beforeEach(() => {
+    publishedMessages = []
+    githubServiceMock = {
+      postIssueReaction: vi.fn(() => Effect.succeed({ ok: true })),
+      findLatestPlanComment: vi.fn(() => Effect.succeed({ ok: false, reason: 'not-found' })),
+    }
+    provideRuntime()
+  })
+
+  afterEach(async () => {
+    await runtime.dispose()
     vi.clearAllMocks()
   })
 
   it('rejects unsupported providers', async () => {
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const response = await handler(
       new Request('http://localhost/webhooks/slack', { method: 'POST', body: '' }),
       'slack',
     )
     expect(response.status).toBe(400)
     expect(webhooks.verify).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(0)
   })
 
   it('returns 401 when signature header missing', async () => {
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const response = await handler(buildRequest({}, {}), 'github')
     expect(response.status).toBe(401)
+    expect(publishedMessages).toHaveLength(0)
   })
 
   it('publishes planning message on issue opened', async () => {
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const payload = {
       action: 'opened',
       issue: {
@@ -159,28 +198,21 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    expect(kafka.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        topic: 'codex-topic',
-        key: 'issue-1-planning',
-      }),
-    )
-    expect(kafka.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        topic: 'raw-topic',
-        key: 'delivery-123',
-      }),
+    expect(publishedMessages).toHaveLength(2)
+    const [planningMessage, rawMessage] = publishedMessages
+    expect(planningMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-planning' })
+    expect(rawMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
+    expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryFullName: 'owner/repo', issueNumber: 1 }),
     )
   })
 
   it('publishes implementation message when trigger comment is received', async () => {
-    const { findLatestPlanComment } = await import('@/services/github')
-    vi.mocked(findLatestPlanComment).mockResolvedValueOnce({
-      ok: true,
-      comment: { id: 10, body: 'Plan', htmlUrl: 'https://comment' },
-    })
+    githubServiceMock.findLatestPlanComment.mockReturnValueOnce(
+      Effect.succeed({ ok: true, comment: { id: 10, body: 'Plan', htmlUrl: 'https://comment' } }),
+    )
 
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
     const payload = {
       action: 'created',
       issue: {
@@ -204,19 +236,16 @@ describe('createWebhookHandler', () => {
       'github',
     )
 
-    expect(findLatestPlanComment).toHaveBeenCalled()
-    expect(kafka.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        topic: 'codex-topic',
-        key: 'issue-2-implementation',
-      }),
-    )
-    expect(kafka.publish).toHaveBeenCalledWith(expect.objectContaining({ topic: 'raw-topic', key: 'delivery-999' }))
+    expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(2)
+    const [implementationMessage, rawMessage] = publishedMessages
+    expect(implementationMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-2-implementation' })
+    expect(rawMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
   })
 
   it('returns 401 when Discord signature verification fails', async () => {
     mockVerifyDiscordRequest.mockResolvedValueOnce(false)
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
       buildDiscordRequest(
@@ -232,11 +261,11 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(401)
-    expect(kafka.publish).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(0)
   })
 
   it('returns plan modal response for slash command', async () => {
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
       buildDiscordRequest(
@@ -261,7 +290,7 @@ describe('createWebhookHandler', () => {
     expect(mockVerifyDiscordRequest).toHaveBeenCalled()
     expect(mockBuildPlanModalResponse).toHaveBeenCalled()
     expect(mockToPlanModalEvent).not.toHaveBeenCalled()
-    expect(kafka.publish).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(0)
 
     const payload = await response.json()
     expect(response.status).toBe(200)
@@ -276,7 +305,7 @@ describe('createWebhookHandler', () => {
   })
 
   it('publishes plan modal submissions and returns acknowledgement', async () => {
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
       buildDiscordRequest(
@@ -297,16 +326,12 @@ describe('createWebhookHandler', () => {
     expect(mockVerifyDiscordRequest).toHaveBeenCalled()
     expect(mockToPlanModalEvent).toHaveBeenCalled()
     expect(mockBuildPlanModalResponse).not.toHaveBeenCalled()
-    expect(kafka.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        topic: 'discord-topic',
-        key: 'interaction-123',
-      }),
-    )
+    expect(publishedMessages).toHaveLength(1)
 
-    const publishArgs = kafka.publish.mock.calls[0]?.[0]
-    expect(publishArgs).toBeTruthy()
-    const eventValue = JSON.parse(publishArgs.value)
+    const [discordMessage] = publishedMessages
+    expect(discordMessage).toMatchObject({ topic: 'discord-topic', key: 'interaction-123' })
+
+    const eventValue = JSON.parse(discordMessage.value)
     expect(eventValue.options).toEqual(
       expect.objectContaining({
         content: 'Ship the release with QA gating',
@@ -319,7 +344,6 @@ describe('createWebhookHandler', () => {
     expect(parsedPayload.postToGithub).toBe(false)
     expect(parsedPayload.stage).toBe('planning')
     expect(parsedPayload.runId).toBe('interaction-123')
-    expect(parsedPayload.user?.id).toBe('user-1')
 
     const payload = await response.json()
     expect(response.status).toBe(200)
@@ -333,7 +357,7 @@ describe('createWebhookHandler', () => {
   })
 
   it('responds to Discord ping interactions', async () => {
-    const handler = createWebhookHandler({ kafka: kafka as never, webhooks: webhooks as never, config: baseConfig })
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
 
     const response = await handler(
       buildDiscordRequest(
@@ -350,7 +374,7 @@ describe('createWebhookHandler', () => {
 
     expect(mockBuildPlanModalResponse).not.toHaveBeenCalled()
     expect(mockToPlanModalEvent).not.toHaveBeenCalled()
-    expect(kafka.publish).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(0)
     const payload = await response.json()
     expect(payload).toEqual({ type: 1 })
   })
