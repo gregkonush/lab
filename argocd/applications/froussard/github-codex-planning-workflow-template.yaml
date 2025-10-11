@@ -109,6 +109,3 @@ spec:
           limits:
             cpu: "6"
             memory: 12Gi
-      retryStrategy:
-        limit: 3
-        retryPolicy: OnFailure

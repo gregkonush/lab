@@ -84,8 +84,8 @@ describe('runCodexBootstrap', () => {
 
     expect(exitCode).toBe(0)
     const commands = execMock.mock.calls.map((call) => call[0]?.command)
-    expect(commands).toContain('git fetch --all --prune')
-    expect(commands).toContain('git reset --hard origin/main')
+    expect(commands).toContain(`git -C ${workdir} fetch --all --prune`)
+    expect(commands).toContain(`git -C ${workdir} reset --hard origin/main`)
   })
 
   it('clones the repository when the worktree is missing', async () => {
@@ -98,7 +98,7 @@ describe('runCodexBootstrap', () => {
     expect(exitCode).toBe(0)
     const commands = execMock.mock.calls.map((call) => call[0]?.command)
     expect(commands.some((command) => command?.includes('gh repo clone'))).toBe(true)
-    expect(commands).toContain('git checkout main')
+    expect(commands).toContain(`git -C ${repoDir} checkout main`)
     expect(chdirSpy).toHaveBeenCalledWith(repoDir)
   })
 

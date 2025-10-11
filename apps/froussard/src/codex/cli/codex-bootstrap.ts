@@ -36,15 +36,14 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
   await ensureParentDir(targetDir)
 
   const gitDir = join(targetDir, '.git')
-  const git = $({ cwd: targetDir })
 
   if (await pathExists(gitDir)) {
-    await git`git fetch --all --prune`
-    await git`git reset --hard origin/${baseBranch}`
+    await $`git -C ${targetDir} fetch --all --prune`
+    await $`git -C ${targetDir} reset --hard origin/${baseBranch}`
   } else {
     await rm(targetDir, { recursive: true, force: true })
     await $`gh repo clone ${repoUrl} ${targetDir}`
-    await $({ cwd: targetDir })`git checkout ${baseBranch}`
+    await $`git -C ${targetDir} checkout ${baseBranch}`
   }
 
   process.chdir(targetDir)

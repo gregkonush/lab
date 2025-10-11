@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { runCodexPlan } from '../codex-plan'
@@ -22,6 +22,12 @@ vi.mock('../lib/codex-utils', () => utilMocks)
 
 const bunUtils = vi.hoisted(() => ({
   which: vi.fn(async () => 'bun') as (command: string) => Promise<string>,
+  spawn: vi.fn(() => ({
+    exited: Promise.resolve(0),
+    stdin: null,
+    stdout: null,
+    stderr: null,
+  })),
 }))
 
 vi.mock('bun', () => bunUtils)
@@ -59,15 +65,22 @@ describe('runCodexPlan', () => {
     process.env.CODEX_PROMPT = '# Plan\n- do things'
     process.env.POST_TO_GITHUB = 'false'
     process.env.LGTM_LOKI_ENDPOINT = 'http://localhost/loki'
+    ;(globalThis as unknown as { Bun?: unknown }).Bun = { spawn: bunUtils.spawn }
+    bunUtils.spawn.mockReset()
     runCodexSessionMock.mockClear()
     pushCodexEventsToLokiMock.mockClear()
     buildDiscordRelayCommandMock.mockClear()
     utilMocks.pathExists.mockResolvedValue(false)
+    runCodexSessionMock.mockImplementation(async (options) => {
+      await writeFile(options.outputPath, '# Plan\n\n- step', 'utf8')
+      return { agentMessages: [] }
+    })
   })
 
   afterEach(async () => {
     await rm(workdir, { recursive: true, force: true })
     resetEnv()
+    delete (globalThis as { Bun?: unknown }).Bun
   })
 
   it('invokes the Codex planning session with derived paths', async () => {
@@ -99,7 +112,22 @@ describe('runCodexPlan', () => {
     await runCodexPlan()
 
     const invocation = runCodexSessionMock.mock.calls[0]?.[0]
-    expect(invocation?.prompt).toContain('After generating the plan, write it to PLAN.md')
+    expect(invocation?.prompt).toContain('write it to PLAN.md')
+    expect(invocation?.prompt).toContain('Do not post to GitHub manually')
+  })
+
+  it('posts the generated plan to GitHub when configured', async () => {
+    process.env.POST_TO_GITHUB = 'true'
+    process.env.ISSUE_REPO = 'owner/repo'
+    process.env.ISSUE_NUMBER = '123'
+
+    await runCodexPlan()
+
+    expect(bunUtils.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cmd: ['gh', 'issue', 'comment', '--repo', 'owner/repo', '123', '--body-file', expect.any(String)],
+      }),
+    )
   })
 
   it('configures discord relay when a script and credentials are present', async () => {

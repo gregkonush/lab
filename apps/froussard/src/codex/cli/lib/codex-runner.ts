@@ -23,6 +23,61 @@ export interface RunCodexSessionResult {
 
 const decoder = new TextDecoder()
 
+interface WritableHandle {
+  write: (chunk: string) => Promise<void>
+  close: () => Promise<void>
+}
+
+const createWritableHandle = (stream: unknown): WritableHandle | undefined => {
+  if (!stream) {
+    return undefined
+  }
+
+  const candidate = stream as {
+    getWriter?: () => WritableStreamDefaultWriter<string>
+    write?: (chunk: string) => unknown
+    flush?: () => Promise<unknown> | unknown
+    end?: () => unknown
+    close?: () => Promise<unknown> | unknown
+  }
+
+  if (typeof candidate.getWriter === 'function') {
+    const writer = candidate.getWriter()
+    return {
+      write: async (chunk: string) => {
+        await writer.write(chunk)
+      },
+      close: async () => {
+        await writer.close()
+      },
+    }
+  }
+
+  if (typeof candidate.write === 'function') {
+    return {
+      write: async (chunk: string) => {
+        candidate.write(chunk)
+        if (typeof candidate.flush === 'function') {
+          try {
+            await candidate.flush()
+          } catch {
+            // ignore flush errors; fallback to best effort
+          }
+        }
+      },
+      close: async () => {
+        if (typeof candidate.end === 'function') {
+          candidate.end()
+        } else if (typeof candidate.close === 'function') {
+          await candidate.close()
+        }
+      },
+    }
+  }
+
+  return undefined
+}
+
 const writeLine = (stream: WriteStream, content: string) => {
   return new Promise<void>((resolve, reject) => {
     stream.write(`${content}\n`, (error) => {
@@ -69,7 +124,7 @@ export const runCodexSession = async ({
   const agentStream = createWriteStream(agentOutputPath, { flags: 'w' })
 
   let discordProcess: ReturnType<typeof Bun.spawn> | undefined
-  let discordWriter: WritableStreamDefaultWriter<string> | undefined
+  let discordWriter: WritableHandle | undefined
   let discordClosed = false
 
   if (discordRelay) {
@@ -80,8 +135,9 @@ export const runCodexSession = async ({
         stdout: 'inherit',
         stderr: 'inherit',
       })
-      if (discordProcess.stdin) {
-        discordWriter = discordProcess.stdin.getWriter()
+      const handle = createWritableHandle(discordProcess.stdin)
+      if (handle) {
+        discordWriter = handle
       } else {
         console.error('Discord relay process did not expose stdin; disabling relay')
         discordProcess.kill()
@@ -116,13 +172,13 @@ export const runCodexSession = async ({
     },
   })
 
-  if (!codexProcess.stdin) {
+  const codexStdin = createWritableHandle(codexProcess.stdin)
+  if (!codexStdin) {
     throw new Error('Codex subprocess is missing stdin')
   }
 
-  const promptWriter = codexProcess.stdin.getWriter()
-  await promptWriter.write(prompt)
-  await promptWriter.close()
+  await codexStdin.write(prompt)
+  await codexStdin.close()
 
   const agentMessages: string[] = []
   const reader = codexProcess.stdout?.getReader()

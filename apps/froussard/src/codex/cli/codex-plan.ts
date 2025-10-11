@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import process from 'node:process'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { runCodexSession, pushCodexEventsToLoki } from './lib/codex-runner'
 import {
   pathExists,
@@ -55,10 +57,10 @@ const buildPrompt = ({
     const addon = [
       'Execution notes (do not restate plan requirements above):',
       `- Work from the existing checkout at ${worktree}, already aligned with origin/${baseBranch}.`,
-      '- After generating the plan, write it to PLAN.md.',
-      `- Post it with \`gh issue comment --repo ${issueRepo} ${issueNumber} --body-file PLAN.md\`.`,
-      '- Echo the final plan (PLAN.md contents) and the GH CLI output to stdout.',
-      '- If posting fails, surface the GH error and exit non-zero; otherwise exit 0.',
+      '- After generating the plan, write it to PLAN.md and keep the file in place for automation.',
+      '- Echo PLAN.md to stdout when finished.',
+      '- Do not post to GitHub manually; automation handles comment publication.',
+      '- If PLAN.md is missing or empty, exit non-zero.',
     ].join('\n')
     return `${trimmedBase}\n\n${addon}`
   }
@@ -82,6 +84,39 @@ const buildPrompt = ({
   return `${trimmedBase}\n\n${addon}`
 }
 
+const postPlanToGitHub = async ({
+  planContent,
+  issueRepo,
+  issueNumber,
+}: {
+  planContent: string
+  issueRepo: string
+  issueNumber: string
+}) => {
+  if (!planContent.trim()) {
+    throw new Error('Plan output is empty; cannot post to GitHub')
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'codex-plan-comment-'))
+  const planFilePath = join(tempDir, 'PLAN.md')
+
+  try {
+    await writeFile(planFilePath, planContent, 'utf8')
+    const ghProcess = Bun.spawn({
+      cmd: ['gh', 'issue', 'comment', '--repo', issueRepo, issueNumber, '--body-file', planFilePath],
+      stdin: 'inherit',
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    const exitCode = await ghProcess.exited
+    if (exitCode !== 0) {
+      throw new Error(`gh issue comment exited with status ${exitCode}`)
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
 export const runCodexPlan = async () => {
   const basePrompt = process.env.CODEX_PROMPT
   if (!basePrompt) {
@@ -96,6 +131,7 @@ export const runCodexPlan = async () => {
   const issueNumber = sanitizeEnv(process.env.ISSUE_NUMBER)
   const issueTitle = sanitizeEnv(process.env.ISSUE_TITLE)
   const postToGitHub = parseBoolean(process.env.POST_TO_GITHUB, true)
+  const shouldPost = postToGitHub && !!issueRepo && !!issueNumber
 
   const defaultOutputPath = process.env.PLAN_OUTPUT_PATH ?? `${worktree}/.codex-plan-output.md`
   const outputPath = process.env.OUTPUT_PATH ?? defaultOutputPath
@@ -176,11 +212,14 @@ export const runCodexPlan = async () => {
   await copyAgentLogIfNeeded(outputPath, agentOutputPath)
   await pushCodexEventsToLoki('planning', jsonOutputPath, lokiEndpoint)
 
+  let planContent = ''
+
   try {
     const outputStats = await stat(outputPath)
     if (outputStats.size > 0) {
+      planContent = await readFile(outputPath, 'utf8')
       console.error('Codex plan output:')
-      console.error(await readFile(outputPath, 'utf8'))
+      console.error(planContent)
     }
   } catch {
     // ignore missing output
@@ -194,6 +233,16 @@ export const runCodexPlan = async () => {
     }
   } catch {
     // ignore missing json log
+  }
+
+  if (shouldPost && planContent.trim()) {
+    await postPlanToGitHub({
+      planContent,
+      issueRepo,
+      issueNumber,
+    })
+  } else if (shouldPost) {
+    throw new Error('Plan output missing; skipping GitHub comment')
   }
 
   return {
