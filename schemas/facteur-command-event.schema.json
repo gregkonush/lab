@@ -1,8 +1,0 @@
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/gregkonush/lab/schemas/facteur-command-event.schema.json",
-  "title": "Facteur Discord Command Event (protobuf authoritative)",
-  "type": "object",
-  "description": "This JSON schema is retained for legacy references only. The canonical contract now lives in proto/facteur/v1/contract.proto as facteur.v1.CommandEvent.",
-  "$comment": "Regenerate stubs via scripts/generate-proto.sh to update services/facteur/internal/facteurpb and apps/froussard/src/proto."
-}

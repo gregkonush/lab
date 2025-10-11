@@ -152,12 +152,19 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
 		}
 
+		userID := ""
+		if user := event.GetUser(); user != nil {
+			userID = user.GetId()
+		} else if member := event.GetMember(); member != nil {
+			userID = member.GetId()
+		}
+
 		log.Printf(
 			"event received: command=%s user=%s correlation=%s trace=%s",
-			event.Command,
-			event.UserID,
-			emptyIfNone(event.CorrelationID),
-			emptyIfNone(event.TraceID),
+			event.GetCommand(),
+			emptyIfNone(userID),
+			emptyIfNone(event.GetCorrelationId()),
+			emptyIfNone(event.GetTraceId()),
 		)
 
 		ctx := c.UserContext()
@@ -165,7 +172,7 @@ func registerRoutes(app *fiber.App, opts Options) {
 			ctx = context.Background()
 		}
 
-		result, err := consumer.ProcessEvent(ctx, event, opts.Dispatcher, opts.Store, opts.SessionTTL)
+		result, err := consumer.ProcessEvent(ctx, &event, opts.Dispatcher, opts.Store, opts.SessionTTL)
 		if err != nil {
 			log.Printf("event dispatch failed: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "dispatch failed"})

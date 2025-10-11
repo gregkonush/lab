@@ -11,7 +11,7 @@
     "build:reviseur": "pnpm --filter reviseur build",
     "start:proompteng": "pnpm --filter proompteng start",
     "lint:proompteng": "pnpm --filter proompteng lint",
-    "proto:generate": "./scripts/generate-proto.sh",
+    "proto:generate": "buf generate",
     "clean": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
     "format": "biome format --write",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
@@ -38,7 +38,7 @@
     "typescript": "5.9.3"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,css}": "biome format --write",
+    "*.{ts,tsx,js,jsx,css}": "biome format --write --staged",
     "*.go": "gofmt -w"
   },
   "workspaces": [
