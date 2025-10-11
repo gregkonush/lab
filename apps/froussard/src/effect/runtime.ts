@@ -6,7 +6,12 @@ import { AppLoggerLayer } from '@/logger'
 import { GithubServiceLayer } from '@/services/github'
 import { KafkaProducerLayer } from '@/services/kafka'
 
-const BaseAppLayer = Layer.mergeAll(AppConfigLayer, AppLoggerLayer, KafkaProducerLayer, GithubServiceLayer)
+const CoreAppLayer = Layer.mergeAll(AppConfigLayer, AppLoggerLayer)
+const BaseAppLayer = Layer.mergeAll(
+  CoreAppLayer,
+  GithubServiceLayer,
+  KafkaProducerLayer.pipe(Layer.provide(CoreAppLayer)),
+)
 
 export type AppRuntimeLayer = typeof BaseAppLayer
 

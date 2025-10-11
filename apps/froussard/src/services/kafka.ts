@@ -4,6 +4,8 @@ import { Kafka } from 'kafkajs'
 import { AppConfigService } from '@/effect/config'
 import { AppLogger } from '@/logger'
 
+export { parseBrokerList } from '@/utils/kafka'
+
 export interface KafkaMessage {
   topic: string
   key: string
@@ -115,10 +117,3 @@ export const KafkaProducerLayer = Layer.scoped(
     )
   }),
 )
-
-export const parseBrokerList = (raw: string): string[] => {
-  return raw
-    .split(',')
-    .map((broker) => broker.trim())
-    .filter((broker) => broker.length > 0)
-}
