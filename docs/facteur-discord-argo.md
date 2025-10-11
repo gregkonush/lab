@@ -147,6 +147,8 @@ Facteur initialises OpenTelemetry during startup, enabling spans and metrics acr
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics` | Mimir ingestion endpoint. |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push` | Loki ingestion endpoint (reserved for future log exporting). |
 
+Knative does not inject the LGTM wiring automatically; the Argo CD overlay now provisions a dedicated Grafana Alloy deployment (`facteur-alloy`) that tails all pods in the `facteur` namespace and pushes the output to the in-cluster Loki gateway. The manifests live in `argocd/applications/facteur/overlays/cluster/alloy-*.yaml`, keeping the observability routing alongside the rest of the service configuration.
+
 Locally, point the same variables at your LGTM environment to capture traces and metrics. Instrumentation surfaces counters such as `facteur_command_events_processed_total`, `facteur_command_events_failed_total`, and `facteur_command_events_dlq_total`, plus spans scoped to Kafka message handling and workflow submissions.
 
 ## Next steps
