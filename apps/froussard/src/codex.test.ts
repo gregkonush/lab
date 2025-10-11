@@ -89,9 +89,9 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('Execution requirements:')
     expect(prompt).toContain('Closes #77')
     expect(prompt).toContain(
-      `Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/scripts/codex-progress-comment.ts`,
+      `Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/src/codex/cli/codex-progress-comment.ts`,
     )
-    expect(prompt).toContain('apps/froussard/scripts/codex-progress-comment.ts')
+    expect(prompt).toContain('apps/froussard/src/codex/cli/codex-progress-comment.ts')
   })
 
   it('falls back to a default plan body when the approved plan is empty', () => {

@@ -22,7 +22,7 @@ const dedent = (value: string) => {
       continue
     }
     const match = line.match(/^(\s+)/)
-    const indent = match ? match[1]!.length : 0
+    const indent = match?.[1]?.length ?? 0
     if (minIndent === undefined || indent < minIndent) {
       minIndent = indent
     }

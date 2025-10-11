@@ -78,7 +78,7 @@ spec:
             WORKTREE_DIR="${WORKTREE:-/workspace/lab}"
 
             echo "Executing implementation workflow" >&2
-            "${WORKTREE_DIR}/apps/froussard/scripts/codex-implement.ts" "$EVENT_FILE"
+            "${WORKTREE_DIR}/apps/froussard/src/codex/cli/codex-implement.ts" "$EVENT_FILE"
         resources:
           requests:
             cpu: "4"
