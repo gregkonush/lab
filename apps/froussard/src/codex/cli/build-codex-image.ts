@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-import { $, which } from 'bun'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
-import { runCli } from './lib/cli'
 import { fileURLToPath } from 'node:url'
+import { $, which } from 'bun'
+import { runCli } from './lib/cli'
 
 const pathExists = async (path: string) => {
   try {

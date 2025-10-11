@@ -1,15 +1,15 @@
 import '@/telemetry'
 
 import { Webhooks } from '@octokit/webhooks'
-import { Elysia } from 'elysia'
 import { Effect } from 'effect'
+import { Elysia } from 'elysia'
 
 import { AppConfigService } from '@/effect/config'
 import { makeAppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
-import { KafkaProducer } from '@/services/kafka'
 import { createHealthHandlers } from '@/routes/health'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
+import { KafkaProducer } from '@/services/kafka'
 
 const runtime = makeAppRuntime()
 const config = runtime.runSync(

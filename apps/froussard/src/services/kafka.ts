@@ -29,7 +29,11 @@ export const KafkaProducerLayer = Layer.scoped(
       clientId: config.kafka.clientId,
       brokers: config.kafka.brokers,
       ssl: false,
-      sasl: config.kafka.sasl,
+      sasl: {
+        mechanism: 'scram-sha-512',
+        username: config.kafka.username,
+        password: config.kafka.password,
+      },
     })
 
     const createProducer = () => kafka.producer({ allowAutoTopicCreation: false })
@@ -100,8 +104,6 @@ export const KafkaProducerLayer = Layer.scoped(
       )
 
     const isReady = Ref.get(readyRef)
-
-    yield* connect
 
     return yield* Effect.acquireRelease(
       Effect.succeed<KafkaProducerService>({

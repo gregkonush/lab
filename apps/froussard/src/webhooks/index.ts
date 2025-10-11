@@ -1,7 +1,6 @@
 import type { Webhooks } from '@octokit/webhooks'
-
-import { logger } from '@/logger'
 import type { AppRuntime } from '@/effect/runtime'
+import { logger } from '@/logger'
 
 import { createDiscordWebhookHandler } from './discord'
 import { createGithubWebhookHandler } from './github'

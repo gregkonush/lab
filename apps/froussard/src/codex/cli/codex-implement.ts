@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
-import process from 'node:process'
 import { readFile, stat } from 'node:fs/promises'
-import { runCodexSession, pushCodexEventsToLoki } from './lib/codex-runner'
+import process from 'node:process'
+import { runCli } from './lib/cli'
+import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
+  buildDiscordRelayCommand,
+  copyAgentLogIfNeeded,
   pathExists,
   randomRunId,
   timestampUtc,
-  copyAgentLogIfNeeded,
-  buildDiscordRelayCommand,
 } from './lib/codex-utils'
-import { runCli } from './lib/cli'
 import { createCodexLogger } from './lib/logger'
 
 interface ImplementationEventPayload {

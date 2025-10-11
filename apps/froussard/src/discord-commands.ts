@@ -1,5 +1,5 @@
-import { logger } from '@/logger'
 import { verifyKey } from 'discord-interactions'
+import { logger } from '@/logger'
 
 const SIGNATURE_HEADER = 'x-signature-ed25519'
 const TIMESTAMP_HEADER = 'x-signature-timestamp'

@@ -1,5 +1,5 @@
-import { logger } from '@/logger'
 import type { AppRuntime } from '@/effect/runtime'
+import { logger } from '@/logger'
 import type { KafkaProducerService } from '@/services/kafka'
 
 export interface HealthHandlers {

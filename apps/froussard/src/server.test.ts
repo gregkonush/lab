@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Effect, Layer } from 'effect'
 
 import type { AppConfig } from '@/effect/config'
 

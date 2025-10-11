@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { runCodexSession, pushCodexEventsToLoki } from '../codex-runner'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { pushCodexEventsToLoki, runCodexSession } from '../codex-runner'
 
 const bunGlobals = vi.hoisted(() => {
   const spawn = vi.fn()

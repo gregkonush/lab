@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import process from 'node:process'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { isMainModule, runCli } from '../cli'
 
 describe('isMainModule', () => {

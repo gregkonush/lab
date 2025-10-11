@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
 import { Effect } from 'effect'
+import { describe, expect, it, vi } from 'vitest'
 
 import { PLAN_COMMENT_MARKER } from '@/codex'
 import { findLatestPlanComment, postIssueReaction } from '@/services/github'

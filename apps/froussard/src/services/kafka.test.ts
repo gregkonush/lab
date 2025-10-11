@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Effect, Layer } from 'effect'
 import { make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { AppConfigService, type AppConfig } from '@/effect/config'
+import { type AppConfig, AppConfigService } from '@/effect/config'
 import { AppLogger } from '@/logger'
-import { KafkaProducer, KafkaProducerLayer, parseBrokerList, type KafkaMessage } from '@/services/kafka'
+import { type KafkaMessage, KafkaProducer, KafkaProducerLayer, parseBrokerList } from '@/services/kafka'
 
 const producerFactory = vi.fn()
 

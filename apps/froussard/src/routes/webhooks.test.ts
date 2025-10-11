@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Effect, Layer } from 'effect'
-import { make as makeManagedRuntime, type ManagedRuntime } from 'effect/ManagedRuntime'
+import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedRuntime'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppLogger } from '@/logger'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
-import { KafkaProducer, type KafkaMessage } from '@/services/kafka'
 import { GithubService } from '@/services/github'
+import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
 
 const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEvent } = vi.hoisted(() => ({
   mockVerifyDiscordRequest: vi.fn(async () => true),

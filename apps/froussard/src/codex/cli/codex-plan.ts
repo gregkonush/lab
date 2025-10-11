@@ -1,18 +1,18 @@
 #!/usr/bin/env bun
-import process from 'node:process'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { runCodexSession, pushCodexEventsToLoki } from './lib/codex-runner'
+import { join } from 'node:path'
+import process from 'node:process'
+import { runCli } from './lib/cli'
+import { pushCodexEventsToLoki, runCodexSession } from './lib/codex-runner'
 import {
-  pathExists,
+  buildDiscordRelayCommand,
+  copyAgentLogIfNeeded,
   parseBoolean,
+  pathExists,
   randomRunId,
   timestampUtc,
-  copyAgentLogIfNeeded,
-  buildDiscordRelayCommand,
 } from './lib/codex-utils'
-import { runCli } from './lib/cli'
 import { createCodexLogger } from './lib/logger'
 
 const dedent = (value: string) => {

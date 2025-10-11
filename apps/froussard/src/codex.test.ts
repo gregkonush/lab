@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  PLAN_COMMENT_MARKER,
-  PROGRESS_COMMENT_MARKER,
   buildCodexBranchName,
   buildCodexPrompt,
   normalizeLogin,
+  PLAN_COMMENT_MARKER,
+  PROGRESS_COMMENT_MARKER,
   sanitizeBranchComponent,
 } from './codex'
 

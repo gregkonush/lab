@@ -2,7 +2,7 @@ import { createWriteStream, type WriteStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import process from 'node:process'
 import { ensureFileDirectory } from './fs'
-import { consoleLogger, type CodexLogger } from './logger'
+import { type CodexLogger, consoleLogger } from './logger'
 
 export interface DiscordRelayOptions {
   command: string[]

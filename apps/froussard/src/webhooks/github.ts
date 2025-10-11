@@ -1,13 +1,13 @@
-import type { Webhooks } from '@octokit/webhooks'
 import { randomUUID } from 'node:crypto'
+import type { Webhooks } from '@octokit/webhooks'
 
 import { Effect } from 'effect'
 
-import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage } from '@/codex'
+import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
 import { selectReactionRepository } from '@/codex-workflow'
+import type { AppRuntime } from '@/effect/runtime'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
 import { logger } from '@/logger'
-import type { AppRuntime } from '@/effect/runtime'
 import { GithubService } from '@/services/github'
 
 import type { WebhookConfig } from './types'

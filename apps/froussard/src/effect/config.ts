@@ -1,6 +1,6 @@
 import { Effect, Layer } from 'effect'
 
-import { loadConfig, type AppConfig } from '@/config'
+import { type AppConfig, loadConfig } from '@/config'
 
 export class AppConfigService extends Effect.Tag('@froussard/AppConfig')<AppConfigService, AppConfig>() {}
 

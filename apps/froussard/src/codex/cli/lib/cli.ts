@@ -1,5 +1,5 @@
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 export const isMainModule = (meta: ImportMeta): boolean => {
   if (typeof meta.main === 'boolean') {
