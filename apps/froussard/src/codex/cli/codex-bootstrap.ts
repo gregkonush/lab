@@ -49,14 +49,14 @@ export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) 
 
   process.chdir(targetDir)
 
-  if (argv.length === 0) {
+  const [command, ...commandArgs] = argv
+  if (!command) {
     return 0
   }
 
-  const command = argv[0]!
   const commandPath = (await which(command)) ?? command
   const child = spawn({
-    cmd: [commandPath, ...argv.slice(1)],
+    cmd: [commandPath, ...commandArgs],
     stdin: 'inherit',
     stdout: 'inherit',
     stderr: 'inherit',

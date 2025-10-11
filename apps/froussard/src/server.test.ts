@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockApp: any = {
+interface MockApp {
+  get: (...args: unknown[]) => MockApp
+  on: (...args: unknown[]) => MockApp
+  onError: (...args: unknown[]) => MockApp
+  post: (...args: unknown[]) => MockApp
+  listen: (port: number) => MockApp
+  server?: { hostname?: string; port?: number }
+}
+
+const mockApp: MockApp = {
   get: vi.fn(() => mockApp),
   on: vi.fn(() => mockApp),
   onError: vi.fn(() => mockApp),
   post: vi.fn(() => mockApp),
-  listen: vi.fn(function () {
+  listen: vi.fn((_port: number) => {
     mockApp.server = { hostname: '127.0.0.1', port: 8080 }
     return mockApp
   }),

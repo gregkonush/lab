@@ -1,4 +1,4 @@
-import { Webhooks } from '@octokit/webhooks'
+import type { Webhooks } from '@octokit/webhooks'
 
 import { logger } from '@/logger'
 import type { KafkaManager } from '@/services/kafka'

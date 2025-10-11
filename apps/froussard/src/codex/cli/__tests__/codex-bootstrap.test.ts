@@ -19,7 +19,7 @@ const bunMocks = vi.hoisted(() => {
 
   const dollar = (...args: unknown[]) => {
     const first = args[0]
-    if (Array.isArray(first) && Object.prototype.hasOwnProperty.call(first, 'raw')) {
+    if (Array.isArray(first) && Object.hasOwn(first, 'raw')) {
       return makeTagged()(first as TemplateStringsArray, ...(args.slice(1) as unknown[]))
     }
     if (typeof first === 'object' && first !== null) {

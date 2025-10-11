@@ -168,8 +168,7 @@ const parseError = async (response: Response): Promise<DiscordErrorPayload | und
   }
 }
 
-const nextBackoff = (attempt: number) =>
-  Math.min(MAX_BACKOFF_MS, DEFAULT_BACKOFF_MS * Math.pow(2, Math.max(0, attempt - 1)))
+const nextBackoff = (attempt: number) => Math.min(MAX_BACKOFF_MS, DEFAULT_BACKOFF_MS * 2 ** Math.max(0, attempt - 1))
 
 const discordFetch = async (config: DiscordConfig, path: string, init: RequestInit, attempt = 1): Promise<Response> => {
   const url = `${DISCORD_API_BASE}${path}`

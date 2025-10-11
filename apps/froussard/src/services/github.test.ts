@@ -32,7 +32,7 @@ describe('postIssueReaction', () => {
   })
 
   it('posts reaction payload to the GitHub API', async () => {
-    const fetchSpy = vi.fn(async (_input: string, init) => {
+    const fetchSpy = vi.fn(async (_input: string, _init) => {
       return {
         ok: true,
         status: 201,

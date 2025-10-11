@@ -1,4 +1,4 @@
-import { Webhooks } from '@octokit/webhooks'
+import type { Webhooks } from '@octokit/webhooks'
 import { randomUUID } from 'node:crypto'
 
 import { buildCodexBranchName, buildCodexPrompt, normalizeLogin, type CodexTaskMessage } from '@/codex'
