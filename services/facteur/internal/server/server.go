@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -19,6 +20,20 @@ import (
 	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
+
+var (
+	buildVersion = "dev"
+	buildCommit  = "unknown"
+)
+
+func init() {
+	if v := os.Getenv("FACTEUR_VERSION"); v != "" {
+		buildVersion = v
+	}
+	if c := os.Getenv("FACTEUR_COMMIT"); c != "" {
+		buildCommit = c
+	}
+}
 
 const (
 	defaultListenAddress = ":8080"
@@ -137,8 +152,9 @@ func registerRoutes(app *fiber.App, opts Options) {
 	app.All("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"service": "facteur",
-			"version": "0.1.0",
 			"status":  "ok",
+			"version": buildVersion,
+			"commit":  buildCommit,
 		})
 	})
 

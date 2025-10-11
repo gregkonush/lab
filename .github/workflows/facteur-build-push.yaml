@@ -44,5 +44,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            FACTEUR_VERSION=${{ steps.meta.outputs.version != '' && steps.meta.outputs.version || github.sha }}
+            FACTEUR_COMMIT=${{ github.sha }}
           cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/facteur:latest
           cache-to: type=inline
