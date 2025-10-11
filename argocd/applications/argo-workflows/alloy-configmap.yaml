@@ -30,15 +30,15 @@ data:
     loki.process "argo_workflows" {
       stage.labels {
         values = {
-          namespace = "{{ .Labels.namespace }}"
-          pod       = "{{ .Labels.pod }}"
-          container = "{{ .Labels.container }}"
+          namespace = "{{ .Labels.namespace }}",
+          pod       = "{{ .Labels.pod }}",
+          container = "{{ .Labels.container }}",
         }
       }
 
       stage.static_labels {
         values = {
-          job = "argo-workflows"
+          job = "argo-workflows",
         }
       }
 

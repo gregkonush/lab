@@ -20,7 +20,7 @@ spec:
       serviceAccountName: argo-workflows-alloy
       containers:
         - name: alloy
-          image: grafana/alloy:v1.1.0
+          image: grafana/alloy:v1.11.2
           imagePullPolicy: IfNotPresent
           args:
             - run
