@@ -1,3 +1,4 @@
+import { Effect, Layer } from 'effect'
 import pino, { multistream } from 'pino'
 
 const level = process.env.LOG_LEVEL ?? 'info'
@@ -57,3 +58,30 @@ export function normaliseLokiEndpoint(value: string): { host: string; endpoint?:
     return { host: value }
   }
 }
+
+export interface AppLoggerService {
+  readonly debug: (message: string, fields?: Record<string, unknown>) => Effect.Effect<void>
+  readonly info: (message: string, fields?: Record<string, unknown>) => Effect.Effect<void>
+  readonly warn: (message: string, fields?: Record<string, unknown>) => Effect.Effect<void>
+  readonly error: (message: string, fields?: Record<string, unknown>) => Effect.Effect<void>
+}
+
+const logWith = (level: 'debug' | 'info' | 'warn' | 'error') => {
+  return (message: string, fields?: Record<string, unknown>) =>
+    Effect.sync(() => {
+      if (fields && Object.keys(fields).length > 0) {
+        logger[level](fields, message)
+      } else {
+        logger[level](message)
+      }
+    })
+}
+
+export class AppLogger extends Effect.Tag('@froussard/AppLogger')<AppLogger, AppLoggerService>() {}
+
+export const AppLoggerLayer = Layer.sync(AppLogger, () => ({
+  debug: logWith('debug'),
+  info: logWith('info'),
+  warn: logWith('warn'),
+  error: logWith('error'),
+}))

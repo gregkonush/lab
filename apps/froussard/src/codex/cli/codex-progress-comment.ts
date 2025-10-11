@@ -4,7 +4,7 @@ import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
-import { ensureFileDirectory } from './lib/codex-runner'
+import { ensureFileDirectory } from './lib/fs'
 import { runCli } from './lib/cli'
 
 interface Options {

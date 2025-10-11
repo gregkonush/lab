@@ -1,7 +1,12 @@
-import { logger } from '@/logger'
-import type { KafkaMessage, KafkaManager } from '@/services/kafka'
+import { Effect } from 'effect'
 
-export const publishKafkaMessage = async (kafka: KafkaManager, message: KafkaMessage): Promise<void> => {
-  await kafka.publish(message)
-  logger.info({ topic: message.topic, key: message.key }, 'published kafka message')
-}
+import { AppLogger } from '@/logger'
+import { KafkaProducer, type KafkaMessage } from '@/services/kafka'
+
+export const publishKafkaMessage = (message: KafkaMessage): Effect.Effect<void> =>
+  Effect.gen(function* (_) {
+    const kafka = yield* KafkaProducer
+    const logger = yield* AppLogger
+    yield* kafka.publish(message)
+    yield* logger.info('published kafka message', { topic: message.topic, key: message.key })
+  })

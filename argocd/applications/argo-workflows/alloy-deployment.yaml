@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argo-workflows-alloy
+  namespace: argo-workflows
+  labels:
+    app.kubernetes.io/name: argo-workflows-alloy
+    app.kubernetes.io/component: logging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argo-workflows-alloy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argo-workflows-alloy
+        app.kubernetes.io/component: logging
+    spec:
+      serviceAccountName: argo-workflows-alloy
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.1.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - /etc/alloy/config.river
+          ports:
+            - name: http-metrics
+              containerPort: 12345
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+      volumes:
+        - name: config
+          configMap:
+            name: argo-workflows-alloy
+            items:
+              - key: config.river
+                path: config.river

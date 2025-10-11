@@ -2,27 +2,29 @@ import '@/telemetry'
 
 import { Webhooks } from '@octokit/webhooks'
 import { Elysia } from 'elysia'
+import { Effect } from 'effect'
 
-import { loadConfig } from '@/config'
+import { AppConfigService } from '@/effect/config'
+import { makeAppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
-import { KafkaManager } from '@/services/kafka'
+import { KafkaProducer } from '@/services/kafka'
 import { createHealthHandlers } from '@/routes/health'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 
-const config = loadConfig()
-
-const kafka = new KafkaManager({
-  brokers: config.kafka.brokers,
-  clientId: config.kafka.clientId,
-  sasl: {
-    mechanism: 'scram-sha-512',
-    username: config.kafka.username,
-    password: config.kafka.password,
-  },
-})
+const runtime = makeAppRuntime()
+const config = runtime.runSync(
+  Effect.gen(function* (_) {
+    return yield* AppConfigService
+  }),
+)
+const kafka = runtime.runSync(
+  Effect.gen(function* (_) {
+    return yield* KafkaProducer
+  }),
+)
 
 export const createApp = () => {
-  const health = createHealthHandlers(kafka)
+  const health = createHealthHandlers({ runtime, kafka })
 
   const webhookConfig: WebhookConfig = {
     codebase: config.codebase,
@@ -37,7 +39,7 @@ export const createApp = () => {
   }
 
   const webhookHandler = createWebhookHandler({
-    kafka,
+    runtime,
     webhooks: new Webhooks({ secret: config.githubWebhookSecret }),
     config: webhookConfig,
   })
@@ -61,9 +63,9 @@ export const app = createApp()
 
 export const startServer = () => {
   if (!app.server) {
-    if (!kafka.isReady()) {
-      void kafka.connect().then(() => logger.info('Kafka producer connected'))
-    }
+    void runtime
+      .runPromise(kafka.ensureConnected)
+      .catch((error) => logger.error({ err: error }, 'failed to connect Kafka producer'))
 
     const port = Number(process.env.PORT ?? 8080)
     app.listen(port)
@@ -82,10 +84,9 @@ if (import.meta.main) {
 
 const shutdown = async () => {
   try {
-    await kafka.disconnect()
-    logger.info('Kafka producer disconnected')
+    await runtime.dispose()
   } catch (error) {
-    logger.error({ err: error }, 'failed to disconnect Kafka producer')
+    logger.error({ err: error }, 'failed to dispose runtime')
   }
 }
 

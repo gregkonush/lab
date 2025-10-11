@@ -13,6 +13,7 @@ import {
   buildDiscordRelayCommand,
 } from './lib/codex-utils'
 import { runCli } from './lib/cli'
+import { createCodexLogger } from './lib/logger'
 
 const dedent = (value: string) => {
   const normalized = value.replace(/\r\n/g, '\n')
@@ -137,11 +138,14 @@ export const runCodexPlan = async () => {
   const outputPath = process.env.OUTPUT_PATH ?? defaultOutputPath
   const jsonOutputPath = process.env.JSON_OUTPUT_PATH ?? `${worktree}/.codex-plan-events.jsonl`
   const agentOutputPath = process.env.AGENT_OUTPUT_PATH ?? `${worktree}/.codex-plan-agent.log`
+  const runtimeLogPath = process.env.CODEX_RUNTIME_LOG_PATH ?? `${worktree}/.codex-plan-runtime.log`
   const lokiEndpoint =
     process.env.LGTM_LOKI_ENDPOINT ?? 'http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push'
+  const lokiTenant = process.env.LGTM_LOKI_TENANT
+  const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 
   process.env.CODEX_STAGE = process.env.CODEX_STAGE ?? 'planning'
-  process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=debug'
+  process.env.RUST_LOG = process.env.RUST_LOG ?? 'codex_core=info,codex_exec=info'
   process.env.RUST_BACKTRACE = process.env.RUST_BACKTRACE ?? '1'
 
   const relayScript = process.env.RELAY_SCRIPT ?? 'apps/froussard/scripts/discord-relay.ts'
@@ -150,105 +154,138 @@ export const runCodexPlan = async () => {
     process.env.CODEX_RELAY_RUN_ID ?? process.env.ARGO_WORKFLOW_NAME ?? process.env.ARGO_WORKFLOW_UID ?? randomRunId()
   const relayRunId = relayRunIdSource.slice(0, 24).toLowerCase()
 
-  let discordRelayCommand: string[] | undefined
-
-  const discordToken = process.env.DISCORD_BOT_TOKEN ?? ''
-  const discordGuild = process.env.DISCORD_GUILD_ID ?? ''
-  const discordScriptExists = relayScript ? await pathExists(relayScript) : false
-
-  if (discordToken && discordGuild && discordScriptExists) {
-    try {
-      const args = ['--stage', 'plan']
-      if (issueRepo) {
-        args.push('--repo', issueRepo)
-      }
-      if (issueNumber) {
-        args.push('--issue', issueNumber)
-      }
-      args.push('--timestamp', relayTimestamp)
-      if (relayRunId) {
-        args.push('--run-id', relayRunId)
-      }
-      if (issueTitle) {
-        args.push('--title', issueTitle)
-      }
-      if (process.env.DISCORD_RELAY_DRY_RUN === '1') {
-        args.push('--dry-run')
-      }
-      discordRelayCommand = await buildDiscordRelayCommand(relayScript, args)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`Discord relay disabled: ${message}`)
-    }
-  } else {
-    console.error('Discord relay disabled: missing credentials or relay script')
-  }
-
-  const prompt = buildPrompt({
-    basePrompt,
-    issueRepo,
-    issueNumber,
-    worktree,
-    baseBranch,
-    postToGitHub,
+  const logger = await createCodexLogger({
+    logPath: runtimeLogPath,
+    context: {
+      stage: 'planning',
+      repository: issueRepo || undefined,
+      issue: issueNumber || undefined,
+      workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
+      namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? undefined,
+      run_id: relayRunId || undefined,
+    },
   })
 
-  console.error('Starting Codex planning run')
+  try {
+    let discordRelayCommand: string[] | undefined
 
-  await runCodexSession({
-    stage: 'planning',
-    prompt,
-    outputPath,
-    jsonOutputPath,
-    agentOutputPath,
-    discordRelay: discordRelayCommand
-      ? {
-          command: discordRelayCommand,
-          onError: (error) => console.error(`Discord relay failed: ${error.message}`),
+    const discordToken = process.env.DISCORD_BOT_TOKEN ?? ''
+    const discordGuild = process.env.DISCORD_GUILD_ID ?? ''
+    const discordScriptExists = relayScript ? await pathExists(relayScript) : false
+
+    if (discordToken && discordGuild && discordScriptExists) {
+      try {
+        const args = ['--stage', 'plan']
+        if (issueRepo) {
+          args.push('--repo', issueRepo)
         }
-      : undefined,
-  })
-
-  await copyAgentLogIfNeeded(outputPath, agentOutputPath)
-  await pushCodexEventsToLoki('planning', jsonOutputPath, lokiEndpoint)
-
-  let planContent = ''
-
-  try {
-    const outputStats = await stat(outputPath)
-    if (outputStats.size > 0) {
-      planContent = await readFile(outputPath, 'utf8')
-      console.error('Codex plan output:')
-      console.error(planContent)
+        if (issueNumber) {
+          args.push('--issue', issueNumber)
+        }
+        args.push('--timestamp', relayTimestamp)
+        if (relayRunId) {
+          args.push('--run-id', relayRunId)
+        }
+        if (issueTitle) {
+          args.push('--title', issueTitle)
+        }
+        if (process.env.DISCORD_RELAY_DRY_RUN === '1') {
+          args.push('--dry-run')
+        }
+        discordRelayCommand = await buildDiscordRelayCommand(relayScript, args)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn(`Discord relay disabled: ${message}`)
+      }
+    } else {
+      logger.warn('Discord relay disabled: missing credentials or relay script')
     }
-  } catch {
-    // ignore missing output
-  }
 
-  console.log(`Codex interaction logged to ${outputPath}`)
-  try {
-    const jsonStats = await stat(jsonOutputPath)
-    if (jsonStats.size > 0) {
-      console.log(`Codex JSON events stored at ${jsonOutputPath}`)
-    }
-  } catch {
-    // ignore missing json log
-  }
-
-  if (shouldPost && planContent.trim()) {
-    await postPlanToGitHub({
-      planContent,
+    const prompt = buildPrompt({
+      basePrompt,
       issueRepo,
       issueNumber,
+      worktree,
+      baseBranch,
+      postToGitHub,
     })
-  } else if (shouldPost) {
-    throw new Error('Plan output missing; skipping GitHub comment')
-  }
 
-  return {
-    outputPath,
-    jsonOutputPath,
-    agentOutputPath,
+    logger.info('Starting Codex planning run')
+
+    await runCodexSession({
+      stage: 'planning',
+      prompt,
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+      logger,
+      discordRelay: discordRelayCommand
+        ? {
+            command: discordRelayCommand,
+            onError: (error) => logger.error(`Discord relay failed: ${error.message}`),
+          }
+        : undefined,
+    })
+
+    await copyAgentLogIfNeeded(outputPath, agentOutputPath)
+    await pushCodexEventsToLoki({
+      stage: 'planning',
+      endpoint: lokiEndpoint,
+      jsonPath: jsonOutputPath,
+      agentLogPath: agentOutputPath,
+      runtimeLogPath,
+      labels: {
+        repository: issueRepo || undefined,
+        issue: issueNumber || undefined,
+        workflow: process.env.ARGO_WORKFLOW_NAME ?? undefined,
+        namespace: process.env.ARGO_WORKFLOW_NAMESPACE ?? undefined,
+        run_id: relayRunId || undefined,
+      },
+      tenant: lokiTenant,
+      basicAuth: lokiBasicAuth,
+      logger,
+    })
+
+    let planContent = ''
+
+    try {
+      const outputStats = await stat(outputPath)
+      if (outputStats.size > 0) {
+        planContent = await readFile(outputPath, 'utf8')
+        logger.info('Codex plan output:')
+        logger.info(planContent)
+      }
+    } catch {
+      // ignore missing output
+    }
+
+    console.log(`Codex interaction logged to ${outputPath}`)
+    try {
+      const jsonStats = await stat(jsonOutputPath)
+      if (jsonStats.size > 0) {
+        console.log(`Codex JSON events stored at ${jsonOutputPath}`)
+      }
+    } catch {
+      // ignore missing json log
+    }
+
+    if (shouldPost && planContent.trim()) {
+      await postPlanToGitHub({
+        planContent,
+        issueRepo,
+        issueNumber,
+      })
+    } else if (shouldPost) {
+      throw new Error('Plan output missing; skipping GitHub comment')
+    }
+
+    return {
+      outputPath,
+      jsonOutputPath,
+      agentOutputPath,
+    }
+  } finally {
+    await logger.flush()
   }
 }
 

@@ -1,18 +1,20 @@
+import { Effect, Layer } from 'effect'
+
 import { PLAN_COMMENT_MARKER } from '@/codex'
 
-type FetchInit = {
+export interface FetchInit {
   method?: string
   headers?: Record<string, string>
   body?: string
 }
 
-interface FetchResponse {
+export interface FetchResponse {
   ok: boolean
   status: number
   text(): Promise<string>
 }
 
-type FetchLike = (input: string, init?: FetchInit) => Promise<FetchResponse>
+export type FetchLike = (input: string, init?: FetchInit) => Promise<FetchResponse>
 
 export interface PostIssueReactionOptions {
   repositoryFullName: string
@@ -34,71 +36,6 @@ export type PostIssueReactionFailureReason =
 export type PostIssueReactionResult =
   | { ok: true }
   | { ok: false; reason: PostIssueReactionFailureReason; status?: number; detail?: string }
-
-const DEFAULT_API_BASE_URL = 'https://api.github.com'
-const DEFAULT_USER_AGENT = 'froussard-webhook'
-
-const trimTrailingSlash = (value: string): string => {
-  return value.endsWith('/') ? value.slice(0, -1) : value
-}
-
-export const postIssueReaction = async (options: PostIssueReactionOptions): Promise<PostIssueReactionResult> => {
-  const {
-    repositoryFullName,
-    issueNumber,
-    token,
-    reactionContent,
-    apiBaseUrl = DEFAULT_API_BASE_URL,
-    userAgent = DEFAULT_USER_AGENT,
-    fetchImplementation = typeof globalThis.fetch === 'function' ? (globalThis.fetch as FetchLike) : null,
-  } = options
-
-  if (!token || token.trim().length === 0) {
-    return { ok: false, reason: 'missing-token' }
-  }
-
-  const [owner, repo] = repositoryFullName.split('/')
-  if (!owner || !repo) {
-    return { ok: false, reason: 'invalid-repository', detail: repositoryFullName }
-  }
-
-  const fetchFn = fetchImplementation
-  if (!fetchFn) {
-    return { ok: false, reason: 'no-fetch' }
-  }
-
-  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${issueNumber}/reactions`
-
-  try {
-    const response = await fetchFn(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': userAgent,
-      },
-      body: JSON.stringify({ content: reactionContent }),
-    })
-
-    if (!response.ok) {
-      let detail: string | undefined
-      try {
-        detail = await response.text()
-      } catch (error: unknown) {
-        detail = error instanceof Error ? error.message : undefined
-      }
-
-      return { ok: false, reason: 'http-error', status: response.status, detail }
-    }
-
-    return { ok: true }
-  } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : 'Unknown error'
-    return { ok: false, reason: 'network-error', detail }
-  }
-}
 
 export interface PlanComment {
   id: number
@@ -129,6 +66,19 @@ export type FindPlanCommentResult =
   | { ok: true; comment: PlanComment }
   | { ok: false; reason: FindPlanCommentFailureReason; status?: number; detail?: string }
 
+const DEFAULT_API_BASE_URL = 'https://api.github.com'
+const DEFAULT_USER_AGENT = 'froussard-webhook'
+
+const trimTrailingSlash = (value: string): string => (value.endsWith('/') ? value.slice(0, -1) : value)
+
+const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
+
+const readResponseText = (response: FetchResponse) =>
+  Effect.tryPromise({
+    try: () => response.text(),
+    catch: toError,
+  })
+
 const coerceNumericId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value
@@ -144,19 +94,79 @@ const coerceNumericId = (value: unknown): number | null => {
   return null
 }
 
-const parseJsonSafely = (text: string): unknown => {
-  if (text.length === 0) {
-    return null
+export const postIssueReaction = (options: PostIssueReactionOptions): Effect.Effect<PostIssueReactionResult> => {
+  const {
+    repositoryFullName,
+    issueNumber,
+    token,
+    reactionContent,
+    apiBaseUrl = DEFAULT_API_BASE_URL,
+    userAgent = DEFAULT_USER_AGENT,
+    fetchImplementation = typeof globalThis.fetch === 'function' ? (globalThis.fetch as FetchLike) : null,
+  } = options
+
+  if (!token || token.trim().length === 0) {
+    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
   }
 
-  try {
-    return JSON.parse(text) as unknown
-  } catch (error: unknown) {
-    throw new Error(error instanceof Error ? error.message : 'Failed to parse JSON response')
+  const [owner, repo] = repositoryFullName.split('/')
+  if (!owner || !repo) {
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
   }
+
+  const fetchFn = fetchImplementation
+  if (!fetchFn) {
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
+  }
+
+  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${issueNumber}/reactions`
+
+  return Effect.tryPromise({
+    try: () =>
+      fetchFn(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          Authorization: `Bearer ${token}`,
+          'User-Agent': userAgent,
+        },
+        body: JSON.stringify({ content: reactionContent }),
+      }),
+    catch: toError,
+  }).pipe(
+    Effect.flatMap((response) => {
+      if (response.ok) {
+        return Effect.succeed<PostIssueReactionResult>({ ok: true })
+      }
+
+      return readResponseText(response)
+        .pipe(Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)))
+        .pipe(
+          Effect.map((detail) => ({
+            ok: false as const,
+            reason: 'http-error' as const,
+            status: response.status,
+            detail,
+          })),
+        )
+    }),
+    Effect.catchAll((error) =>
+      Effect.succeed<PostIssueReactionResult>({
+        ok: false,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  )
 }
 
-export const findLatestPlanComment = async (options: FindPlanCommentOptions): Promise<FindPlanCommentResult> => {
+export const findLatestPlanComment = (options: FindPlanCommentOptions): Effect.Effect<FindPlanCommentResult> => {
   const {
     repositoryFullName,
     issueNumber,
@@ -169,82 +179,129 @@ export const findLatestPlanComment = async (options: FindPlanCommentOptions): Pr
 
   const [owner, repo] = repositoryFullName.split('/')
   if (!owner || !repo) {
-    return { ok: false, reason: 'invalid-repository', detail: repositoryFullName }
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
   }
 
   const fetchFn = fetchImplementation
   if (!fetchFn) {
-    return { ok: false, reason: 'no-fetch' }
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
   }
 
   const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100&sort=created&direction=desc`
 
-  try {
-    const response = await fetchFn(url, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': userAgent,
-        ...(token && token.trim().length > 0 ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    })
+  return Effect.matchEffect(
+    Effect.tryPromise({
+      try: () =>
+        fetchFn(url, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': userAgent,
+            ...(token && token.trim().length > 0 ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }),
+      catch: toError,
+    }),
+    {
+      onFailure: (error) =>
+        Effect.succeed<FindPlanCommentResult>({
+          ok: false,
+          reason: 'network-error',
+          detail: error instanceof Error ? error.message : String(error),
+        }),
+      onSuccess: (response) =>
+        Effect.gen(function* (_) {
+          if (!response.ok) {
+            const detail = yield* readResponseText(response).pipe(
+              Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+            )
+            return {
+              ok: false as const,
+              reason: 'http-error',
+              status: response.status,
+              detail,
+            }
+          }
 
-    if (!response.ok) {
-      let detail: string | undefined
-      try {
-        detail = await response.text()
-      } catch (error: unknown) {
-        detail = error instanceof Error ? error.message : undefined
-      }
+          const bodyResult = yield* readResponseText(response).pipe(Effect.either)
+          if (bodyResult._tag === 'Left') {
+            return {
+              ok: false as const,
+              reason: 'network-error',
+              detail: bodyResult.left.message,
+            }
+          }
 
-      return { ok: false, reason: 'http-error', status: response.status, detail }
-    }
+          let parsed: unknown
+          try {
+            parsed = bodyResult.right.length === 0 ? [] : JSON.parse(bodyResult.right)
+          } catch (error) {
+            return {
+              ok: false as const,
+              reason: 'invalid-json',
+              detail: error instanceof Error ? error.message : String(error),
+            }
+          }
 
-    let parsed: unknown
-    try {
-      parsed = parseJsonSafely(await response.text())
-    } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : undefined
-      return { ok: false, reason: 'invalid-json', detail }
-    }
+          if (!Array.isArray(parsed)) {
+            return {
+              ok: false as const,
+              reason: 'invalid-json',
+              detail: 'Expected array response from GitHub API',
+            }
+          }
 
-    if (!Array.isArray(parsed)) {
-      return { ok: false, reason: 'invalid-json', detail: 'Expected array of issue comments' }
-    }
+          for (const comment of parsed) {
+            if (!comment || typeof comment !== 'object') {
+              continue
+            }
 
-    const planComment = parsed.find((comment) => {
-      if (!comment || typeof comment !== 'object') {
-        return false
-      }
+            const body = (comment as { body?: unknown }).body
+            if (typeof body !== 'string' || !body.includes(marker)) {
+              continue
+            }
 
-      const body = (comment as { body?: unknown }).body
-      return typeof body === 'string' && body.includes(marker)
-    }) as { id?: unknown; body?: unknown; html_url?: unknown } | undefined
+            const id = coerceNumericId((comment as { id?: unknown }).id)
+            if (id === null) {
+              return {
+                ok: false as const,
+                reason: 'invalid-comment',
+                detail: 'Comment missing numeric id',
+              }
+            }
 
-    if (!planComment || typeof planComment.body !== 'string') {
-      return { ok: false, reason: 'not-found' }
-    }
+            const htmlUrlValue = (comment as { html_url?: unknown }).html_url
+            const htmlUrl = typeof htmlUrlValue === 'string' ? htmlUrlValue : null
 
-    const commentId = coerceNumericId(planComment.id)
-    if (commentId === null) {
-      return { ok: false, reason: 'invalid-comment', detail: 'Missing numeric comment id' }
-    }
+            return {
+              ok: true as const,
+              comment: {
+                id,
+                body,
+                htmlUrl,
+              },
+            }
+          }
 
-    const commentBody = planComment.body
-    const commentUrl =
-      typeof planComment.html_url === 'string' && planComment.html_url.length > 0 ? planComment.html_url : null
-
-    return {
-      ok: true,
-      comment: {
-        id: commentId,
-        body: commentBody,
-        htmlUrl: commentUrl,
-      },
-    }
-  } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : 'Unknown error'
-    return { ok: false, reason: 'network-error', detail }
-  }
+          return { ok: false as const, reason: 'not-found' }
+        }),
+    },
+  )
 }
+
+export interface GithubServiceDefinition {
+  readonly postIssueReaction: (options: PostIssueReactionOptions) => Effect.Effect<PostIssueReactionResult>
+  readonly findLatestPlanComment: (options: FindPlanCommentOptions) => Effect.Effect<FindPlanCommentResult>
+}
+
+export class GithubService extends Effect.Tag('@froussard/GithubService')<GithubService, GithubServiceDefinition>() {}
+
+export const GithubServiceLayer = Layer.sync(GithubService, () => ({
+  postIssueReaction,
+  findLatestPlanComment,
+}))
