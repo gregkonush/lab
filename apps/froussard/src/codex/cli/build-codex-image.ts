@@ -58,10 +58,11 @@ const computeChecksum = async (path: string) => {
 
 export const runBuildCodexImage = async () => {
   const scriptDir = dirname(fileURLToPath(import.meta.url))
-  const rootDir = resolve(scriptDir, '../../..')
-  const dockerfile = process.env.DOCKERFILE ?? resolve(rootDir, 'apps/froussard/Dockerfile.codex')
+  const appDir = resolve(scriptDir, '../../..')
+  const repoDir = resolve(appDir, '..', '..')
+  const dockerfile = process.env.DOCKERFILE ?? resolve(appDir, 'Dockerfile.codex')
   const imageTag = process.env.IMAGE_TAG ?? 'registry.ide-newton.ts.net/lab/codex-universal:latest'
-  const contextDir = process.env.CONTEXT_DIR ?? rootDir
+  const contextDir = process.env.CONTEXT_DIR ?? '.'
   const codexAuthPath = process.env.CODEX_AUTH ?? `${process.env.HOME ?? ''}/.codex/auth.json`
   const codexConfigPath = process.env.CODEX_CONFIG ?? `${process.env.HOME ?? ''}/.codex/config.toml`
 
@@ -78,13 +79,17 @@ export const runBuildCodexImage = async () => {
 
   process.env.DOCKER_BUILDKIT = process.env.DOCKER_BUILDKIT ?? '1'
 
+  const dockerfilePath = join('apps/froussard', 'Dockerfile.codex')
+  const previousCwd = process.cwd()
   try {
     console.log(`Building ${imageTag} from ${dockerfile}`)
-    await $`docker build -f ${dockerfile} --build-arg CODEX_AUTH_CHECKSUM=${checksum} --secret id=codex_auth,src=${codexAuthPath} --secret id=codex_config,src=${codexConfigPath} --secret id=github_token,src=${ghTokenFile} -t ${imageTag} ${contextDir}`
+    process.chdir(repoDir)
+    await $`docker build -f ${dockerfilePath} --build-arg CODEX_AUTH_CHECKSUM=${checksum} --secret id=codex_auth,src=${codexAuthPath} --secret id=codex_config,src=${codexConfigPath} --secret id=github_token,src=${ghTokenFile} -t ${imageTag} ${contextDir}`
 
     console.log(`Pushing ${imageTag}`)
     await $`docker push ${imageTag}`
   } finally {
+    process.chdir(previousCwd)
     await rm(tempDir, { recursive: true, force: true })
   }
 

@@ -131,6 +131,22 @@ describe('runCodexProgressComment', () => {
     )
   })
 
+  it('throws when ISSUE_REPO is unavailable', async () => {
+    delete process.env.ISSUE_REPO
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [],
+      text: async () => '[]',
+      status: 200,
+      statusText: 'OK',
+    }))
+    global.fetch = fetchMock as unknown as typeof global.fetch
+
+    await expect(runCodexProgressComment({ body: '<!-- codex:progress --> hi' })).rejects.toThrow(
+      'ISSUE_REPO and ISSUE_NUMBER must be provided via flags or environment variables',
+    )
+  })
+
   it('supports dry-run mode and writes logs when configured', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

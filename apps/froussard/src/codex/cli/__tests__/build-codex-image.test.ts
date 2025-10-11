@@ -7,13 +7,15 @@ import { runBuildCodexImage } from '../build-codex-image'
 const bunMocks = vi.hoisted(() => {
   const execMock = vi.fn(async () => ({ text: async () => '' }))
   const whichMock = vi.fn(async () => 'gh')
+
   const makeTagged =
     () =>
-    async (strings: TemplateStringsArray, ...exprs: unknown[]) => {
+    (strings: TemplateStringsArray, ...exprs: unknown[]) => {
       const command = strings.reduce((acc, part, index) => acc + part + (exprs[index] ?? ''), '').trim()
       execMock(command)
       return { text: async () => '' }
     }
+
   const dollar = (...args: unknown[]) => {
     const first = args[0]
     if (Array.isArray(first) && Object.hasOwn(first, 'raw')) {

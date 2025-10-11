@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import process from 'node:process'
 import { runCodexBootstrap } from '../codex-bootstrap'
 
 const bunMocks = vi.hoisted(() => {
@@ -11,21 +12,9 @@ const bunMocks = vi.hoisted(() => {
 
   const makeTagged =
     (cwd?: string) =>
-    async (strings: TemplateStringsArray, ...exprs: unknown[]) => {
+    (strings: TemplateStringsArray, ...exprs: unknown[]) => {
       const command = strings.reduce((acc, part, index) => acc + part + (exprs[index] ?? ''), '').trim()
       execMock({ command, cwd })
-      if (command.includes('gh repo clone')) {
-        const targetDir = process.env.TARGET_DIR
-        if (targetDir) {
-          await mkdir(targetDir, { recursive: true })
-        }
-      }
-      if (command.startsWith('rm -rf')) {
-        const targetDir = process.env.TARGET_DIR
-        if (targetDir) {
-          await rm(targetDir, { recursive: true, force: true }).catch(() => undefined)
-        }
-      }
       return { text: async () => '' }
     }
 
@@ -55,7 +44,6 @@ const spawnMock = bunMocks.spawnMock
 const whichMock = bunMocks.whichMock
 
 const ORIGINAL_ENV = { ...process.env }
-const ORIGINAL_CWD = process.cwd()
 
 const resetEnv = () => {
   for (const key of Object.keys(process.env)) {
@@ -70,6 +58,7 @@ const resetEnv = () => {
 
 describe('runCodexBootstrap', () => {
   let workdir: string
+  let chdirSpy: ReturnType<typeof vi.spyOn<typeof process, 'chdir'>>
 
   beforeEach(async () => {
     workdir = await mkdtemp(join(tmpdir(), 'codex-bootstrap-test-'))
@@ -79,11 +68,12 @@ describe('runCodexBootstrap', () => {
     execMock.mockClear()
     spawnMock.mockClear()
     whichMock.mockClear()
+    chdirSpy = vi.spyOn(process, 'chdir').mockImplementation(() => undefined)
   })
 
   afterEach(async () => {
     await rm(workdir, { recursive: true, force: true })
-    process.chdir(ORIGINAL_CWD)
+    chdirSpy.mockRestore()
     resetEnv()
   })
 
@@ -99,12 +89,17 @@ describe('runCodexBootstrap', () => {
   })
 
   it('clones the repository when the worktree is missing', async () => {
+    const repoDir = join(workdir, 'repo')
+    process.env.WORKTREE = repoDir
+    process.env.TARGET_DIR = repoDir
+
     const exitCode = await runCodexBootstrap()
 
     expect(exitCode).toBe(0)
     const commands = execMock.mock.calls.map((call) => call[0]?.command)
     expect(commands.some((command) => command?.includes('gh repo clone'))).toBe(true)
     expect(commands).toContain('git checkout main')
+    expect(chdirSpy).toHaveBeenCalledWith(repoDir)
   })
 
   it('runs the requested command and returns its exit code', async () => {

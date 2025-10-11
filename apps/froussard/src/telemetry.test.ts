@@ -158,4 +158,22 @@ describe('telemetry', () => {
       headers: undefined,
     })
   })
+
+  it('parses exporter headers from environment variables', async () => {
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = 'global=alpha,shared=bravo'
+    process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS = 'trace=charlie'
+    process.env.OTEL_EXPORTER_OTLP_METRICS_HEADERS = 'metric=delta'
+
+    await import('./telemetry')
+
+    expect(traceExporterMock).toHaveBeenCalledWith({
+      url: 'http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces',
+      headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', trace: 'charlie' }),
+    })
+
+    expect(metricExporterMock).toHaveBeenCalledWith({
+      url: 'http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics',
+      headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', metric: 'delta' }),
+    })
+  })
 })

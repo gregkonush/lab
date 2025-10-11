@@ -141,4 +141,68 @@ describe('codex-runner', () => {
     expect(typeof body).toBe('string')
     expect(body as string).toContain('codex-exec')
   })
+
+  it('throws when Codex exits with a non-zero status', async () => {
+    const promptSink: string[] = []
+    spawnMock.mockImplementation(() => ({
+      stdin: createWritable(promptSink),
+      stdout: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+      stderr: null,
+      exited: Promise.resolve(2),
+    }))
+
+    await expect(
+      runCodexSession({
+        stage: 'planning',
+        prompt: 'fail',
+        outputPath: join(workspace, 'output.log'),
+        jsonOutputPath: join(workspace, 'events.jsonl'),
+        agentOutputPath: join(workspace, 'agent.log'),
+      }),
+    ).rejects.toThrow('Codex exited with status 2')
+  })
+
+  it('invokes the relay error handler when the Discord relay fails to start', async () => {
+    const relaySink: string[] = []
+    const promptSink: string[] = []
+    const discordProcess = {
+      stdin: createWritable(relaySink),
+      stdout: null,
+      stderr: null,
+      exited: Promise.resolve(1),
+      kill: vi.fn(),
+    }
+    const codexProcess = createCodexProcess([], promptSink)
+
+    spawnMock.mockImplementationOnce(() => discordProcess).mockImplementationOnce(() => codexProcess)
+
+    const errorSpy = vi.fn()
+
+    await runCodexSession({
+      stage: 'planning',
+      prompt: 'relay',
+      outputPath: join(workspace, 'output.log'),
+      jsonOutputPath: join(workspace, 'events.jsonl'),
+      agentOutputPath: join(workspace, 'agent.log'),
+      discordRelay: {
+        command: ['bun', 'run', 'relay.ts'],
+        onError: errorSpy,
+      },
+    })
+
+    expect(errorSpy).toHaveBeenCalled()
+  })
+
+  it('skips Loki export when the events file is missing', async () => {
+    bunFileMock.mockImplementation(() => ({
+      text: () => Promise.reject(Object.assign(new Error('not found'), { code: 'ENOENT' })),
+    }))
+
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    await pushCodexEventsToLoki('planning', join(workspace, 'missing.jsonl'), 'https://loki.example.com/api/v1/push')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 })
