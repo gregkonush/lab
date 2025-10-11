@@ -77,10 +77,22 @@ The first public cut will ship three Discord slash commands that map to the exis
 
 Discord slash commands terminate at the shared webhook bridge (`apps/froussard`). The service verifies the Ed25519
 signature (`x-signature-ed25519` and `x-signature-timestamp`), normalises the interaction into a stable payload, and
-publishes it to Kafka topic `discord.commands.incoming`. Facteur subscribes to that topic, deserialises the message
-(schema defined in `schemas/facteur-command-event.schema.json`), and drives the workflow dispatcher. Facteur is also
-responsible for using the interaction token carried in the event to post follow-up updates back to Discord once the
-workflow completes.
+publishes it to Kafka topic `discord.commands.incoming` as an `application/x-protobuf` payload. The canonical contract
+is `facteur.v1.CommandEvent` defined in `proto/facteur/v1/contract.proto`; generated stubs live under
+`services/facteur/internal/facteurpb` (Go) and `apps/froussard/src/proto` (TypeScript). Facteur subscribes to that
+topic, deserialises the message via the protobuf stubs, and drives the workflow dispatcher. Facteur is also responsible
+for using the interaction token carried in the event to post follow-up updates back to Discord once the workflow
+completes.
+
+### Protobuf workflow
+
+- The repository is wired to a Buf workspace (`buf.work.yaml`). Run `buf generate` (or `pnpm proto:generate`) to
+  refresh the Go and TypeScript stubs directly with the locally installed Buf CLI.
+- Go stubs continue to land in `services/facteur/internal/facteurpb` and TypeScript stubs are generated with
+  [`protobuf-es`](https://github.com/bufbuild/protobuf-es) for use in `apps/froussard`. Keep dependant services pinned
+  to the generated classes instead of hand-rolled JSON structures.
+- Continuous integration runs `buf format --diff` and `buf lint` through `.github/workflows/buf-ci.yml`, with
+  breaking-change detection enabled once the base branch carries matching Buf configs.
 
 ### `/plan`
 

@@ -1,0 +1,9 @@
+version: v1
+name: buf.build/gregkonush/lab-proto
+deps: []
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

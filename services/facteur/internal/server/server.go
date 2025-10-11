@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -13,9 +12,11 @@ import (
 
 	"github.com/gofiber/contrib/otelfiber"
 	"github.com/gofiber/fiber/v2"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
 	"github.com/gregkonush/lab/services/facteur/internal/consumer"
+	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
 
@@ -146,17 +147,24 @@ func registerRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dispatcher unavailable"})
 		}
 
-		var event consumer.CommandEvent
-		if err := json.Unmarshal(c.Body(), &event); err != nil {
+		var event facteurpb.CommandEvent
+		if err := proto.Unmarshal(c.Body(), &event); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
+		}
+
+		userID := ""
+		if user := event.GetUser(); user != nil {
+			userID = user.GetId()
+		} else if member := event.GetMember(); member != nil {
+			userID = member.GetId()
 		}
 
 		log.Printf(
 			"event received: command=%s user=%s correlation=%s trace=%s",
-			event.Command,
-			event.UserID,
-			emptyIfNone(event.CorrelationID),
-			emptyIfNone(event.TraceID),
+			event.GetCommand(),
+			emptyIfNone(userID),
+			emptyIfNone(event.GetCorrelationId()),
+			emptyIfNone(event.GetTraceId()),
 		)
 
 		ctx := c.UserContext()
@@ -164,13 +172,13 @@ func registerRoutes(app *fiber.App, opts Options) {
 			ctx = context.Background()
 		}
 
-		result, err := consumer.ProcessEvent(ctx, event, opts.Dispatcher, opts.Store, opts.SessionTTL)
+		result, err := consumer.ProcessEvent(ctx, &event, opts.Dispatcher, opts.Store, opts.SessionTTL)
 		if err != nil {
 			log.Printf("event dispatch failed: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "dispatch failed"})
 		}
 
-		log.Printf("event dispatch succeeded: command=%s workflow=%s namespace=%s correlation=%s trace=%s", event.Command, result.WorkflowName, result.Namespace, result.CorrelationID, event.TraceID)
+		log.Printf("event dispatch succeeded: command=%s workflow=%s namespace=%s correlation=%s trace=%s", event.GetCommand(), result.WorkflowName, result.Namespace, result.CorrelationID, event.GetTraceId())
 
 		return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 			"workflowName":  result.WorkflowName,

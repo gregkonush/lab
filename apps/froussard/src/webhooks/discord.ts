@@ -9,6 +9,7 @@ import {
 } from '@/discord-commands'
 import type { AppRuntime } from '@/effect/runtime'
 import { logger } from '@/logger'
+import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
 
 import type { WebhookConfig } from './types'
 import { publishKafkaMessage } from './utils'
@@ -104,9 +105,9 @@ export const createDiscordWebhookHandler =
         guildId: event.guildId,
         channelId: event.channelId,
         user: {
-          id: event.user.id,
-          username: event.user.username,
-          globalName: event.user.globalName,
+          id: event.user?.id ?? '',
+          username: event.user?.username ?? '',
+          globalName: event.user?.globalName ?? '',
         },
       }
 
@@ -115,29 +116,32 @@ export const createDiscordWebhookHandler =
         payload: JSON.stringify(planPayload),
       }
 
+      const protoEvent = new FacteurCommandEventMessage(event)
+      const encodedEvent = protoEvent.toBinary()
+
       const kafkaHeaders: Record<string, string> = {
-        'content-type': 'application/json',
+        'content-type': 'application/x-protobuf',
         'x-discord-interaction-type': String(typedInteraction.type),
-        'x-discord-command-name': event.command,
-        'x-discord-command-id': event.commandId,
-        'x-discord-application-id': event.applicationId,
+        'x-discord-command-name': protoEvent.command,
+        'x-discord-command-id': protoEvent.commandId,
+        'x-discord-application-id': protoEvent.applicationId,
       }
 
-      if (event.guildId) {
-        kafkaHeaders['x-discord-guild-id'] = event.guildId
+      if (protoEvent.guildId) {
+        kafkaHeaders['x-discord-guild-id'] = protoEvent.guildId
       }
-      if (event.channelId) {
-        kafkaHeaders['x-discord-channel-id'] = event.channelId
+      if (protoEvent.channelId) {
+        kafkaHeaders['x-discord-channel-id'] = protoEvent.channelId
       }
-      if (event.user.id) {
-        kafkaHeaders['x-discord-user-id'] = event.user.id
+      if (protoEvent.user?.id) {
+        kafkaHeaders['x-discord-user-id'] = protoEvent.user.id
       }
 
       await runtime.runPromise(
         publishKafkaMessage({
           topic: config.topics.discordCommands,
-          key: event.interactionId,
-          value: JSON.stringify(event),
+          key: protoEvent.interactionId,
+          value: encodedEvent,
           headers: kafkaHeaders,
         }),
       )

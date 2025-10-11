@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
+	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 	"github.com/gregkonush/lab/services/facteur/internal/telemetry"
 )
@@ -20,72 +21,69 @@ const (
 	DefaultSessionTTL = 15 * time.Minute
 )
 
-// CommandEvent matches the JSON schema published by Froussard.
-type CommandEvent struct {
-	Command       string            `json:"command"`
-	Options       map[string]string `json:"options"`
-	UserID        string            `json:"userId"`
-	CorrelationID string            `json:"correlationId"`
-	TraceID       string            `json:"traceId"`
-}
-
 // ProcessEvent dispatches a command event and persists session metadata when a store is provided.
-func ProcessEvent(ctx context.Context, event CommandEvent, dispatcher bridge.Dispatcher, store session.Store, ttl time.Duration) (bridge.DispatchResult, error) {
+func ProcessEvent(ctx context.Context, event *facteurpb.CommandEvent, dispatcher bridge.Dispatcher, store session.Store, ttl time.Duration) (bridge.DispatchResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "facteur.consumer.process_event", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 
+	command := event.GetCommand()
+	userID := userID(event)
+	correlationID := event.GetCorrelationId()
+	traceID := event.GetTraceId()
+
 	span.SetAttributes(
-		attribute.String("facteur.command", event.Command),
-		attribute.String("facteur.user_id", event.UserID),
+		attribute.String("facteur.command", command),
+		attribute.String("facteur.user_id", userID),
 	)
-	if event.TraceID != "" {
-		span.SetAttributes(attribute.String("facteur.trace_id", event.TraceID))
+	if traceID != "" {
+		span.SetAttributes(attribute.String("facteur.trace_id", traceID))
 	}
 
 	if dispatcher == nil {
 		err := fmt.Errorf("consumer: dispatcher is required")
-		telemetry.RecordCommandFailed(ctx, event.Command)
+		telemetry.RecordCommandFailed(ctx, command)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return bridge.DispatchResult{}, err
 	}
-	if event.Command == "" {
+	if command == "" {
 		err := fmt.Errorf("missing command field")
-		telemetry.RecordCommandFailed(ctx, event.Command)
+		telemetry.RecordCommandFailed(ctx, command)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		return bridge.DispatchResult{}, err
 	}
-	if event.Options == nil {
-		event.Options = map[string]string{}
+	options := event.GetOptions()
+	if options == nil {
+		options = map[string]string{}
 	}
 
 	start := time.Now()
 	result, err := dispatcher.Dispatch(ctx, bridge.DispatchRequest{
-		Command:       event.Command,
-		UserID:        event.UserID,
-		Options:       event.Options,
-		CorrelationID: event.CorrelationID,
-		TraceID:       event.TraceID,
+		Command:       command,
+		UserID:        userID,
+		Options:       options,
+		CorrelationID: correlationID,
+		TraceID:       traceID,
 	})
 	if err != nil {
-		telemetry.RecordCommandFailed(ctx, event.Command)
+		telemetry.RecordCommandFailed(ctx, command)
 		wrapped := fmt.Errorf("dispatch command: %w", err)
 		span.RecordError(wrapped)
 		span.SetStatus(codes.Error, err.Error())
 		return bridge.DispatchResult{}, wrapped
 	}
 	duration := time.Since(start)
-	telemetry.RecordCommandProcessed(ctx, event.Command, duration)
+	telemetry.RecordCommandProcessed(ctx, command, duration)
 
-	if event.CorrelationID != "" && result.CorrelationID == "" {
-		result.CorrelationID = event.CorrelationID
+	if correlationID != "" && result.CorrelationID == "" {
+		result.CorrelationID = correlationID
 	}
 
-	if store != nil && event.UserID != "" {
+	if store != nil && userID != "" {
 		payload, marshalErr := json.Marshal(result)
 		if marshalErr != nil {
-			telemetry.RecordCommandFailed(ctx, event.Command)
+			telemetry.RecordCommandFailed(ctx, command)
 			wrapped := fmt.Errorf("persist dispatch result: %w", marshalErr)
 			span.RecordError(wrapped)
 			span.SetStatus(codes.Error, marshalErr.Error())
@@ -95,8 +93,8 @@ func ProcessEvent(ctx context.Context, event CommandEvent, dispatcher bridge.Dis
 		if sessionTTL <= 0 {
 			sessionTTL = DefaultSessionTTL
 		}
-		if err := store.Set(ctx, session.DispatchKey(event.UserID), payload, sessionTTL); err != nil {
-			telemetry.RecordCommandFailed(ctx, event.Command)
+		if err := store.Set(ctx, session.DispatchKey(userID), payload, sessionTTL); err != nil {
+			telemetry.RecordCommandFailed(ctx, command)
 			wrapped := fmt.Errorf("persist dispatch result: %w", err)
 			span.RecordError(wrapped)
 			span.SetStatus(codes.Error, err.Error())
@@ -114,4 +112,17 @@ func ProcessEvent(ctx context.Context, event CommandEvent, dispatcher bridge.Dis
 	span.SetStatus(codes.Ok, "event processed")
 
 	return result, nil
+}
+
+func userID(event *facteurpb.CommandEvent) string {
+	if event == nil {
+		return ""
+	}
+	if user := event.GetUser(); user != nil {
+		return user.GetId()
+	}
+	if member := event.GetMember(); member != nil {
+		return member.GetId()
+	}
+	return ""
 }

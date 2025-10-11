@@ -3,6 +3,7 @@ import { type ManagedRuntime, make as makeManagedRuntime } from 'effect/ManagedR
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppLogger } from '@/logger'
+import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
@@ -28,10 +29,14 @@ const { mockVerifyDiscordRequest, mockBuildPlanModalResponse, mockToPlanModalEve
     options: { content: 'Ship the release with QA gating' },
     guildId: 'guild-1',
     channelId: 'channel-1',
-    user: { id: 'user-1', username: 'tester', globalName: 'Tester' },
+    user: { id: 'user-1', username: 'tester', globalName: 'Tester', discriminator: '1234' },
+    member: undefined,
     locale: 'en-US',
+    guildLocale: 'en-US',
     response: { type: 4, flags: 64 },
     timestamp: '2025-10-09T00:00:00.000Z',
+    correlationId: '',
+    traceId: '',
   })),
 }))
 
@@ -75,6 +80,16 @@ const buildDiscordRequest = (body: unknown, headers: Record<string, string> = {}
     },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   })
+}
+
+const toBuffer = (value: KafkaMessage['value']): Buffer => {
+  if (Buffer.isBuffer(value)) {
+    return value
+  }
+  if (typeof value === 'string') {
+    return Buffer.from(value)
+  }
+  return Buffer.from(value)
 }
 
 describe('createWebhookHandler', () => {
@@ -330,16 +345,17 @@ describe('createWebhookHandler', () => {
 
     const [discordMessage] = publishedMessages
     expect(discordMessage).toMatchObject({ topic: 'discord-topic', key: 'interaction-123' })
+    expect(discordMessage.headers['content-type']).toBe('application/x-protobuf')
 
-    const eventValue = JSON.parse(discordMessage.value)
-    expect(eventValue.options).toEqual(
+    const protoEvent = FacteurCommandEventMessage.fromBinary(toBuffer(discordMessage.value))
+    expect(protoEvent.options).toEqual(
       expect.objectContaining({
         content: 'Ship the release with QA gating',
         payload: expect.any(String),
       }),
     )
 
-    const parsedPayload = JSON.parse(eventValue.options.payload as string)
+    const parsedPayload = JSON.parse(protoEvent.options.payload ?? '')
     expect(parsedPayload.prompt).toBe('Ship the release with QA gating')
     expect(parsedPayload.postToGithub).toBe(false)
     expect(parsedPayload.stage).toBe('planning')
