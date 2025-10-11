@@ -3,16 +3,16 @@ package server_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/consumer"
+	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
 	"github.com/gregkonush/lab/services/facteur/internal/server"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
@@ -24,11 +24,16 @@ func TestEventsEndpointDispatches(t *testing.T) {
 	srv, err := server.New(server.Options{Dispatcher: dispatcher, Store: store, SessionTTL: time.Minute})
 	require.NoError(t, err)
 
-	payload, err := json.Marshal(consumer.CommandEvent{Command: "dispatch", UserID: "user-1", Options: map[string]string{"env": "staging"}, CorrelationID: "corr-1"})
+	payload, err := proto.Marshal(&facteurpb.CommandEvent{
+		Command:       "dispatch",
+		User:          &facteurpb.DiscordUser{Id: "user-1"},
+		Options:       map[string]string{"env": "staging"},
+		CorrelationId: "corr-1",
+	})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/events", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
@@ -49,11 +54,11 @@ func TestEventsEndpointLogsMetadata(t *testing.T) {
 	log.SetOutput(buf)
 	defer log.SetOutput(orig)
 
-	payload, err := json.Marshal(consumer.CommandEvent{Command: "dispatch", UserID: "user-1", CorrelationID: "corr-1", TraceID: "trace-1"})
+	payload, err := proto.Marshal(&facteurpb.CommandEvent{Command: "dispatch", User: &facteurpb.DiscordUser{Id: "user-1"}, CorrelationId: "corr-1", TraceId: "trace-1"})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest("POST", "/events", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
@@ -67,12 +72,27 @@ func TestEventsEndpointWithoutDispatcher(t *testing.T) {
 	srv, err := server.New(server.Options{})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("POST", "/events", bytes.NewReader([]byte(`{"command":"dispatch"}`)))
-	req.Header.Set("Content-Type", "application/json")
+	payload, err := proto.Marshal(&facteurpb.CommandEvent{Command: "dispatch"})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/events", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
 
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
 	require.Equal(t, 503, resp.StatusCode)
+}
+
+func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
+	srv, err := server.New(server.Options{Dispatcher: &stubDispatcher{}, Store: &stubStore{}})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/events", bytes.NewReader(nil))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 400, resp.StatusCode)
 }
 
 type stubDispatcher struct {

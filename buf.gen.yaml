@@ -1,0 +1,12 @@
+version: v1
+plugins:
+  - plugin: buf.build/protocolbuffers/go:v1.33.0
+    out: .
+    opt:
+      - module=github.com/gregkonush/lab
+      - Mfacteur/v1/contract.proto=github.com/gregkonush/lab/services/facteur/internal/facteurpb
+  - plugin: buf.build/bufbuild/es:v1.10.0
+    out: apps/froussard/src/proto
+    opt:
+      - target=ts
+      - import_extension=ts

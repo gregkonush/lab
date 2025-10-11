@@ -45,24 +45,33 @@ const parseArgs = (argv: string[]): ParsedArgs => {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
+    const requireValue = (flag: string): string => {
+      if (i + 1 >= argv.length) {
+        console.error(`Missing value for ${flag}`)
+        usage()
+        process.exit(1)
+      }
+      i += 1
+      return argv[i] ?? ''
+    }
     switch (arg) {
       case '--stage':
-        options.stage = argv[++i]
+        options.stage = requireValue('--stage')
         break
       case '--repo':
-        options.repository = argv[++i]
+        options.repository = requireValue('--repo')
         break
       case '--issue':
-        options.issue = argv[++i]
+        options.issue = requireValue('--issue')
         break
       case '--title':
-        options.title = argv[++i]
+        options.title = requireValue('--title')
         break
       case '--run-id':
-        options.runId = argv[++i]
+        options.runId = requireValue('--run-id')
         break
       case '--timestamp':
-        options.timestamp = argv[++i]
+        options.timestamp = requireValue('--timestamp')
         break
       case '--dry-run':
         options.dryRun = true
@@ -73,6 +82,11 @@ const parseArgs = (argv: string[]): ParsedArgs => {
         process.exit(0)
         break
       default:
+        if (!arg) {
+          console.error('Unexpected missing argument')
+          usage()
+          process.exit(1)
+        }
         if (arg.startsWith('-')) {
           console.error(`Unknown option: ${arg}`)
           usage()

@@ -1,5 +1,19 @@
+import type { PlainMessage } from '@bufbuild/protobuf'
 import { verifyKey } from 'discord-interactions'
+
 import { logger } from '@/logger'
+import type {
+  CommandEvent as FacteurCommandEventMessage,
+  DiscordMember as FacteurDiscordMemberMessage,
+  DiscordUser as FacteurDiscordUserMessage,
+  Response as FacteurResponseMessage,
+} from '@/proto/facteur/v1/contract_pb'
+
+export type FacteurCommandEvent = PlainMessage<FacteurCommandEventMessage>
+export type FacteurDiscordMember = PlainMessage<FacteurDiscordMemberMessage>
+export type FacteurDiscordUser = PlainMessage<FacteurDiscordUserMessage>
+export type FacteurResponse = PlainMessage<FacteurResponseMessage>
+export type DiscordCommandEvent = FacteurCommandEvent
 
 const SIGNATURE_HEADER = 'x-signature-ed25519'
 const TIMESTAMP_HEADER = 'x-signature-timestamp'
@@ -78,36 +92,6 @@ export interface DiscordUser {
 export interface DiscordResponseConfig {
   deferType: 'channel-message'
   ephemeral: boolean
-}
-
-export interface DiscordCommandEvent {
-  provider: 'discord'
-  interactionId: string
-  applicationId: string
-  command: string
-  commandId: string
-  version: number
-  token: string
-  options: Record<string, string>
-  guildId?: string
-  channelId?: string
-  user: {
-    id: string
-    username?: string
-    globalName?: string | null
-    discriminator?: string
-  }
-  member?: {
-    id?: string
-    roles?: string[]
-  }
-  locale?: string
-  guildLocale?: string
-  response: {
-    type: number
-    flags?: number
-  }
-  timestamp: string
 }
 
 export const verifyDiscordRequest = async (
@@ -235,22 +219,22 @@ export const toPlanModalEvent = (
     options: {
       [PLAN_MODAL_CONTENT_FIELD]: content,
     },
-    guildId: interaction.guild_id,
-    channelId: interaction.channel_id,
+    guildId: interaction.guild_id ?? '',
+    channelId: interaction.channel_id ?? '',
     user: {
       id: user?.id ?? '',
-      username: user?.username,
-      globalName: user?.global_name ?? null,
-      discriminator: user?.discriminator,
+      username: user?.username ?? '',
+      globalName: user?.global_name ?? '',
+      discriminator: user?.discriminator ?? '',
     },
     member: interaction.member
       ? {
-          id: interaction.member.user?.id,
+          id: interaction.member.user?.id ?? '',
           roles: interaction.member.roles ?? [],
         }
       : undefined,
-    locale: interaction.locale,
-    guildLocale: interaction.guild_locale,
+    locale: interaction.locale ?? '',
+    guildLocale: interaction.guild_locale ?? '',
     response: {
       type: 4,
       ...(responseConfig.ephemeral ? { flags: 1 << 6 } : {}),
@@ -262,7 +246,7 @@ export const toPlanModalEvent = (
 export const toCommandEvent = (
   interaction: DiscordApplicationCommandInteraction,
   responseConfig: DiscordResponseConfig,
-): DiscordCommandEvent => {
+): FacteurCommandEvent => {
   if (interaction.type !== INTERACTION_TYPE.APPLICATION_COMMAND) {
     throw new Error(`Unsupported interaction type: ${interaction.type}`)
   }
@@ -284,6 +268,26 @@ export const toCommandEvent = (
 
   const options = flattenOptions(interaction.data.options)
   const user = resolveUser(interaction)
+  const protoUser: FacteurDiscordUser | undefined = user
+    ? {
+        id: user.id ?? '',
+        username: user.username ?? '',
+        globalName: user.global_name ?? '',
+        discriminator: user.discriminator ?? '',
+      }
+    : undefined
+
+  const protoMember: FacteurDiscordMember | undefined = interaction.member
+    ? {
+        id: interaction.member.user?.id ?? '',
+        roles: interaction.member.roles ?? [],
+      }
+    : undefined
+
+  const response: FacteurResponse = {
+    type: 4,
+    ...(responseConfig.ephemeral ? { flags: 1 << 6 } : {}),
+  }
 
   return {
     provider: 'discord',
@@ -294,27 +298,16 @@ export const toCommandEvent = (
     version: interaction.version,
     token: interaction.token,
     options,
-    guildId: interaction.guild_id,
-    channelId: interaction.channel_id,
-    user: {
-      id: user?.id ?? '',
-      username: user?.username,
-      globalName: user?.global_name ?? null,
-      discriminator: user?.discriminator,
-    },
-    member: interaction.member
-      ? {
-          id: interaction.member.user?.id,
-          roles: interaction.member.roles ?? [],
-        }
-      : undefined,
-    locale: interaction.locale,
-    guildLocale: interaction.guild_locale,
-    response: {
-      type: 4,
-      ...(responseConfig.ephemeral ? { flags: 1 << 6 } : {}),
-    },
+    guildId: interaction.guild_id ?? '',
+    channelId: interaction.channel_id ?? '',
+    user: protoUser,
+    member: protoMember,
+    locale: interaction.locale ?? '',
+    guildLocale: interaction.guild_locale ?? '',
+    response,
     timestamp: new Date().toISOString(),
+    correlationId: '',
+    traceId: '',
   }
 }
 

@@ -11,6 +11,7 @@
     "build:reviseur": "pnpm --filter reviseur build",
     "start:proompteng": "pnpm --filter proompteng start",
     "lint:proompteng": "pnpm --filter proompteng lint",
+    "proto:generate": "buf generate",
     "clean": "pnpm -r exec rm -rf node_modules && rm -rf node_modules",
     "format": "biome format --write",
     "tf:plan": "tofu -chdir='./tofu/harvester' plan",
@@ -26,7 +27,8 @@
     "seed:models": "pnpm --filter @proompteng/backend seed:models",
     "dev:docs": "pnpm --filter docs dev",
     "build:docs": "pnpm --filter docs build",
-    "start:docs": "pnpm --filter docs start"
+    "start:docs": "pnpm --filter docs start",
+    "build:facteur": "bun run scripts/build-facteur.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

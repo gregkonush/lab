@@ -9,6 +9,7 @@ import (
 
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
 	"github.com/gregkonush/lab/services/facteur/internal/consumer"
+	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
 
@@ -16,11 +17,11 @@ func TestProcessEventPersistsSession(t *testing.T) {
 	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123"}}
 	store := &stubStore{}
 
-	result, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{
+	result, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{
 		Command:       "plan",
-		UserID:        "user-1",
+		User:          &facteurpb.DiscordUser{Id: "user-1"},
 		Options:       map[string]string{"payload": `{"prompt":"Test"}`},
-		CorrelationID: "corr-1",
+		CorrelationId: "corr-1",
 	}, dispatcher, store, time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, "wf-123", result.WorkflowName)
@@ -34,9 +35,9 @@ func TestProcessEventDefaultsCorrelation(t *testing.T) {
 	dispatcher := &stubDispatcher{result: bridge.DispatchResult{Namespace: "argo", WorkflowName: "wf-123"}}
 	store := &stubStore{}
 
-	result, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{
+	result, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{
 		Command: "plan",
-		UserID:  "user-1",
+		User:    &facteurpb.DiscordUser{Id: "user-1"},
 	}, dispatcher, store, 0)
 	require.NoError(t, err)
 	require.Equal(t, dispatcher.lastReq.CorrelationID, "")
@@ -45,7 +46,7 @@ func TestProcessEventDefaultsCorrelation(t *testing.T) {
 }
 
 func TestProcessEventValidatesCommand(t *testing.T) {
-	_, err := consumer.ProcessEvent(context.Background(), consumer.CommandEvent{}, &stubDispatcher{}, nil, 0)
+	_, err := consumer.ProcessEvent(context.Background(), &facteurpb.CommandEvent{}, &stubDispatcher{}, nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing command")
 }
