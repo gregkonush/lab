@@ -18,8 +18,6 @@ spec:
               value: production
             - name: RAILS_LOG_TO_STDOUT
               value: "1"
-            - name: PORT
-              value: "3000"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -40,18 +38,18 @@ spec:
             - name: PGSSLROOTCERT
               value: /etc/postgres-ca/ca.crt
           ports:
-            - containerPort: 3000
+            - containerPort: 8080
               name: http1
           livenessProbe:
             httpGet:
               path: /health
-              port: 3000
+              port: 8080
             initialDelaySeconds: 10
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /health
-              port: 3000
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
