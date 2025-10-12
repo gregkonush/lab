@@ -128,7 +128,7 @@ mimir:
         cpu: 100m
         memory: 256Mi
   ingester:
-    replicas: 1
+    replicas: 2
     persistentVolume:
       enabled: true
       size: 20Gi
