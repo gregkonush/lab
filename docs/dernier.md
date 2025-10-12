@@ -45,6 +45,12 @@ Additional runtime configuration:
 - `REDIS_URL` resolves to `redis://dernier-redis-leader:6379/1`
 - `PGSSLROOTCERT` points to `/etc/postgres-ca/ca.crt` from the `dernier-db-ca` secret.
 
+### Frontend Tooling
+
+- Tailwind CSS v4 powers the UI layer. Source tokens live in `app/assets/tailwind/application.css` and compile to `app/assets/builds/tailwind.css`.
+- Run `bin/dev` (Procfile-backed) to boot Rails alongside the Tailwind watcher. Production builds run through `rails tailwindcss:build`.
+- Propshaft is enabled so `config.assets` is available even though controllers remain API-first.
+
 ### Scaling & Availability
 
 - Horizontal pod autoscaler tracks CPU utilization between 2–5 replicas (`argocd/applications/dernier/overlays/cluster/hpa.yaml`).

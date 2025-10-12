@@ -25,6 +25,16 @@ Run the server locally:
 bundle exec rails server
 ```
 
+### Tailwind CSS workflow
+
+Tailwind v4 is wired in via [`tailwindcss-rails`](https://github.com/rails/tailwindcss-rails). For a live-reloading loop, use the Foreman-backed dev script:
+
+```bash
+bin/dev
+```
+
+This runs both `rails server` and `rails tailwindcss:watch`. The compiled stylesheet lives at `app/assets/builds/tailwind.css` and is generated from `app/assets/tailwind/application.css`.
+
 ## Tests
 
 The test suite requires a reachable PostgreSQL database. Provide a test database URL before running:
