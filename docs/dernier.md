@@ -1,4 +1,4 @@
-# dernier Service
+# dernier service
 
 The `dernier` API is a production Rails 8.0.3 deployment that runs on Knative Serving. It relies on CloudNativePG for PostgreSQL and the Redis Operator for caching, sessions, and background jobs. Argo CD manages the full stack and Knative handles autoscaling between three and five concurrent revisions.
 
