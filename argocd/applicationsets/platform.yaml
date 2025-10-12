@@ -112,8 +112,8 @@ spec:
             namespace: minio
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: auto
-            enabled: "false"
+            automation: manual
+            enabled: "true"
           - name: milvus
             path: argocd/applications/milvus
             namespace: milvus

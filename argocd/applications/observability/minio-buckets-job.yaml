@@ -5,6 +5,8 @@ metadata:
   namespace: observability
   labels:
     app.kubernetes.io/name: observability-minio-buckets
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   template:
     metadata:
@@ -14,10 +16,10 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: create-buckets
-          image: minio/mc:RELEASE.2025-06-28T18-58-08Z
+          image: quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z
           env:
             - name: MINIO_ENDPOINT
-              value: http://observability-minio.observability.svc.cluster.local:9000
+              value: http://observability-minio.minio.svc.cluster.local:9000
             - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
