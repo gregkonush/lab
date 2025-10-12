@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: minio
 
 resources:
-  - github.com/minio/operator?ref=v7.1.1
-  - milvus-minio-creds.yaml
-  - tenant.yaml
-  - minio-service.yaml
+  - github.com/minio/operator?ref=v5.0.18
+  - observability-minio-secret.yaml
+  - observability-tenant.yaml
+  - observability-minio-service.yaml

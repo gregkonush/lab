@@ -3,9 +3,7 @@ kind: Kustomization
 namespace: observability
 
 resources:
-  - namespace.yaml
   - minio-secret.yaml
-  - minio-deployment.yaml
   - minio-buckets-job.yaml
 
 helmCharts:

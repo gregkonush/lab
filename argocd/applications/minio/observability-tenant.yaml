@@ -1,7 +1,7 @@
 apiVersion: minio.min.io/v2
 kind: Tenant
 metadata:
-  name: milvus-minio
+  name: observability
   namespace: minio
 spec:
   image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -11,7 +11,7 @@ spec:
     minio: true
     console: false
   configuration:
-    name: milvus-minio-creds
+    name: observability-minio-creds
   pools:
     - name: pool-0
       servers: 1
@@ -40,5 +40,5 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: 20Gi
+              storage: 100Gi
           storageClassName: longhorn
