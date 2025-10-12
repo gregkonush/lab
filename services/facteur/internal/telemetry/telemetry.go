@@ -32,6 +32,11 @@ var (
 	shutdownFn func(context.Context) error
 )
 
+var dropTargetInfoView = sdkmetric.NewView(
+	sdkmetric.Instrument{Name: "target_info"},
+	sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}},
+)
+
 // Setup configures OpenTelemetry exporters for traces and metrics. It returns a
 // shutdown function that should be invoked during service teardown.
 func Setup(ctx context.Context, serviceName string, protocol string) (func(context.Context) error, error) {
@@ -85,6 +90,7 @@ func Setup(ctx context.Context, serviceName string, protocol string) (func(conte
 		meterProvider := sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
 			sdkmetric.WithReader(metricReader),
+			sdkmetric.WithView(dropTargetInfoView),
 		)
 
 		otel.SetTracerProvider(tracerProvider)
