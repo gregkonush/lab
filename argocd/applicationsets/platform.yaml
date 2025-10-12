@@ -281,18 +281,19 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
+
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $autoSync := eq .automation "auto" -}}
     {{- $haveKustomizeOpts := hasKey . "kustomizeBuildOptions" -}}
     {{- if or $useLovely $autoSync $haveKustomizeOpts }}
     spec:
-      {{- $needSource := or $useLovely $haveKustomizeOpts -}}
-      {{- if $needSource }}
+      {{- if or $useLovely $haveKustomizeOpts }}
       source:
         {{- if $useLovely }}
         plugin:
           name: lovely
-        {{- else if $haveKustomizeOpts }}
+        {{- end }}
+        {{- if $haveKustomizeOpts }}
         kustomize:
           buildOptions: {{ .kustomizeBuildOptions | quote }}
         {{- end }}
