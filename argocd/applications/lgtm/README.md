@@ -25,6 +25,7 @@ All in-cluster observability shippers (e.g., `argocd/alloy-*.yaml`, `argo-workfl
 - Scope Kubernetes discovery with the nested block syntax: `namespaces { names = ["<namespace>"] }`. Inline attributes like `namespaces = [...]` are rejected by Alloy v1.11+ and cause the controller to crash before shipping telemetry (see the Grafana Alloy `discovery.kubernetes` reference). 
 - Chain discovery relabelers into Prometheus scrapes via the `output` receiver. Example: `targets = discovery.relabel.argocd_metrics.output`. This matches the exported target list from the relabel component (documented in Grafana Alloy `discovery.relabel`). 
 - `loki.source.kubernetes` inherits namespace selection from the discovery targets—it does **not** expose its own `namespaces` field. If you need to scope logs, do it on the discovery component feeding the source (per the Grafana Alloy `loki.source.kubernetes` reference). 
+- Stick to the attributes called out in the component reference docs. In particular, `loki.source.kubernetes` does **not** support `allow_out_of_order` or `drop_deleted_pods` in Alloy v1.11+, so leaving them in a River file will prevent the process from starting. 
 - Keep OTLP writers pointed at the shared LGTM gateways (`lgtm-mimir-nginx`, `lgtm-tempo-gateway`, `lgtm-loki-gateway`) so every Alloy instance stays aligned with the central stack.
 
 When adding another Alloy deployment, copy one of the existing configs and validate with `kubectl kustomize` (or `alloy check`) before syncing Argo CD.
