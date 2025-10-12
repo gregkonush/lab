@@ -31,11 +31,6 @@ module Dernier
 
     config.x.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/1")
 
-    config.session_store :cache_store,
-                         key: "_dernier_session",
-                         same_site: :lax,
-                         secure: Rails.env.production?
-    config.middleware.use ActionDispatch::Cookies
-    config.middleware.use ActionDispatch::Session::CacheStore, config.session_options
+    config.session_store :disabled
   end
 end
