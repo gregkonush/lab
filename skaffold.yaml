@@ -1,14 +1,22 @@
 apiVersion: skaffold/v4beta11
 kind: Config
 metadata:
-  name: prt
+  name: product
 build:
   tagPolicy:
     gitCommit:
       variant: AbbrevCommitSha
   artifacts:
-    - image: prt
-      context: services/prt
+    - image: registry.ide-newton.ts.net/lab/proompteng
+      context: apps/proompteng
+      docker:
+        dockerfile: Dockerfile
+    - image: registry.ide-newton.ts.net/lab/docs
+      context: apps/docs
+      docker:
+        dockerfile: Dockerfile
+    - image: registry.ide-newton.ts.net/lab/facteur
+      context: services/facteur
       docker:
         dockerfile: Dockerfile
   local:
@@ -16,22 +24,22 @@ build:
 manifests:
   kustomize:
     paths:
-      - argocd/applications/prt/base
+      - argocd/applications/proompteng
+      - argocd/applications/docs
+      - argocd/applications/facteur/base
+      - argocd/applications/froussard
 deploy:
   kubectl: {}
 profiles:
   - name: remote
     patches:
       - op: replace
-        path: /build/artifacts/0/image
-        value: registry.ide-newton.ts.net/lab/prt
-      - op: replace
         path: /build/local/push
         value: true
-      - op: replace
-        path: /manifests/kustomize/paths/0
-        value: argocd/applications/prt/overlays/cluster
       - op: add
         path: /build/platforms
         value:
           - linux/arm64
+      - op: replace
+        path: /manifests/kustomize/paths/2
+        value: argocd/applications/facteur/overlays/cluster
