@@ -4,7 +4,7 @@ namespace: kafka
 configMapGenerator:
   - name: kafka-ui-protobufs
     files:
-      - discord-commands.proto=protos/discord-commands.proto
+      - discord-commands.proto=../../../proto/facteur/v1/contract.proto
     options:
       disableNameSuffixHash: true
 resources:
