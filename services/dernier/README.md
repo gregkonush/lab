@@ -4,7 +4,7 @@ Rails 8.0.3 API application backed by PostgreSQL (CloudNativePG) and Redis. The 
 
 ## Requirements
 
-- Ruby 3.4.6 (local development installs via [`ruby-build`](https://github.com/rbenv/ruby-build) or similar)
+- Ruby 3.3.4 (local development installs via [`ruby-build`](https://github.com/rbenv/ruby-build) or similar)
 - Bundler 2.7+
 - PostgreSQL 14+ reachable by `DATABASE_URL`
 - Redis 7+ reachable by `REDIS_URL`
