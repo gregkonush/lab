@@ -61,14 +61,14 @@ admin_api:
   replicas: 1
 
 distributor:
-  replicas: 1
+  replicas: 2
   resources:
     requests:
       cpu: 200m
       memory: 512Mi
 
 ingester:
-  replicas: 2
+  replicas: 3
   zoneAwareReplication:
     enabled: false
   persistentVolume:
