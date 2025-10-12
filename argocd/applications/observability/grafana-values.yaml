@@ -1,0 +1,44 @@
+adminUser: admin
+adminPassword: changeme
+service:
+  type: LoadBalancer
+  annotations:
+    tailscale.com/hostname: grafana
+  loadBalancerClass: tailscale
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  size: 10Gi
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://observability-loki-gateway.observability.svc.cluster.local
+        isDefault: false
+      - name: Mimir
+        uid: prom
+        type: prometheus
+        access: proxy
+        url: http://observability-mimir-nginx.observability.svc.cluster.local/prometheus
+        isDefault: true
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://observability-tempo-query-frontend.observability.svc.cluster.local:3100
+        isDefault: false
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+          lokiSearch:
+            datasourceUid: loki
+          tracesToMetrics:
+            datasourceUid: prom
+          serviceMap:
+            datasourceUid: prom
+testFramework:
+  enabled: false

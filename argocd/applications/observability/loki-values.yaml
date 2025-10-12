@@ -1,0 +1,48 @@
+loki:
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: boltdb-shipper
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storageConfig:
+    aws:
+      s3: http://observability-minio.observability.svc.cluster.local:9000
+      s3forcepathstyle: true
+      bucketnames: loki-data
+      access_key_id: grafana-loki
+      secret_access_key: loki-supersecret
+      insecure: true
+    boltdb_shipper:
+      cache_location: /var/loki/index
+      shared_store: s3
+  compactor:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  ingester:
+    replicas: 2
+    persistence:
+      enabled: true
+      claims:
+        - name: data
+          size: 20Gi
+          storageClass: longhorn
+  querier:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: longhorn
+  ruler:
+    enabled: true
+    kind: StatefulSet
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: longhorn

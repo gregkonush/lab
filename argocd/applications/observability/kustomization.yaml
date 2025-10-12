@@ -1,0 +1,110 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+
+resources:
+  - namespace.yaml
+  - minio-secret.yaml
+  - minio-deployment.yaml
+  - minio-buckets-job.yaml
+
+helmCharts:
+  - name: mimir-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 5.8.0
+    releaseName: observability-mimir
+    namespace: observability
+    includeCRDs: true
+    valuesFile: mimir-values.yaml
+  - name: loki-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 0.80.5
+    releaseName: observability-loki
+    namespace: observability
+    includeCRDs: true
+    valuesFile: loki-values.yaml
+  - name: tempo-distributed
+    repo: https://grafana.github.io/helm-charts
+    version: 1.48.0
+    releaseName: observability-tempo
+    namespace: observability
+    includeCRDs: true
+    valuesFile: tempo-values.yaml
+  - name: grafana
+    repo: https://grafana.github.io/helm-charts
+    version: 10.1.0
+    releaseName: observability-grafana
+    namespace: observability
+    valuesFile: grafana-values.yaml
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-compactor
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-compactor
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-store-gateway
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-store-gateway
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-tempo-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-tempo-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-tempo-memcached
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-tempo-memcached
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-loki-loki-distributed-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-loki-loki-distributed-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-loki-loki-distributed-querier
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-loki-loki-distributed-querier
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
