@@ -1,12 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kafka
-configMapGenerator:
-  - name: kafka-ui-protobufs
-    files:
-      - discord-commands.proto=../../../proto/facteur/v1/contract.proto
-    options:
-      disableNameSuffixHash: true
 resources:
   # Strimzi operator install (pinned to 0.47.0) – remote raw files
   - https://raw.githubusercontent.com/strimzi/strimzi-kafka-operator/0.47.0/install/cluster-operator/010-ServiceAccount-strimzi-cluster-operator.yaml
@@ -151,22 +145,12 @@ helmCharts:
     version: 1.5.1
     releaseName: kafka-ui
     namespace: kafka
-    # Replace default chart values so list-typed overrides merge correctly.
-    valuesMerge: replace
     valuesInline:
       envs:
         secretMappings:
           KAFKA_PASSWORD:
             name: user1
             keyName: password
-      volumeMounts:
-        - name: kafka-ui-protobufs
-          mountPath: /opt/kafbat/protos
-          readOnly: true
-      volumes:
-        - name: kafka-ui-protobufs
-          configMap:
-            name: kafka-ui-protobufs
       yamlApplicationConfig:
         kafka:
           clusters:
@@ -176,20 +160,6 @@ helmCharts:
                 security.protocol: SASL_PLAINTEXT
                 sasl.mechanism: SCRAM-SHA-512
                 sasl.jaas.config: 'org.apache.kafka.common.security.scram.ScramLoginModule required username="user1" password="${KAFKA_PASSWORD}";'
-              serde:
-                - name: Utf8String
-                  className: io.kafbat.ui.serdes.builtin.StringSerde
-                  properties:
-                    encoding: UTF-8
-                - name: DiscordCommandsProto
-                  className: io.kafbat.ui.serdes.builtin.ProtobufFileSerde
-                  topicValuesPattern: '^discord\.commands\.incoming(\.dlq)?$'
-                  properties:
-                    protobufFilesDir: /opt/kafbat/protos
-                    protobufMessageName: facteur.v1.CommandEvent
-                    protobufMessageNameByTopic:
-                      discord.commands.incoming: facteur.v1.CommandEvent
-                      discord.commands.incoming.dlq: facteur.v1.CommandEvent
         auth:
           type: disabled
         management:
