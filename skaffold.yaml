@@ -43,3 +43,42 @@ profiles:
       - op: replace
         path: /manifests/kustomize/paths/2
         value: argocd/applications/facteur/overlays/cluster
+  - name: dernier
+    patches:
+      - op: replace
+        path: /metadata/name
+        value: dernier
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: dernier
+            context: services/dernier
+            docker:
+              dockerfile: Dockerfile
+      - op: replace
+        path: /manifests/kustomize/paths
+        value:
+          - argocd/applications/dernier/base
+  - name: dernier-remote
+    patches:
+      - op: replace
+        path: /metadata/name
+        value: dernier
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: registry.ide-newton.ts.net/lab/dernier
+            context: services/dernier
+            docker:
+              dockerfile: Dockerfile
+      - op: replace
+        path: /build/local/push
+        value: true
+      - op: add
+        path: /build/platforms
+        value:
+          - linux/arm64
+      - op: replace
+        path: /manifests/kustomize/paths
+        value:
+          - argocd/applications/dernier/overlays/cluster

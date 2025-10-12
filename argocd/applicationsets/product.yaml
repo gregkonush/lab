@@ -108,6 +108,20 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: auto
             enabled: false
+          - name: dernier
+            path: argocd/applications/dernier
+            namespace: dernier
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+              argocd-image-updater.argoproj.io/image-list: dernier=registry.ide-newton.ts.net/lab/dernier
+              argocd-image-updater.argoproj.io/dernier: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/dernier
+            automation: auto
+            enabled: true
           - name: froussard
             path: argocd/applications/froussard
             namespace: froussard
