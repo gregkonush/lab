@@ -165,6 +165,15 @@ mimir:
       enabled: true
       size: 50Gi
       storageClass: longhorn
+  structuredConfig:
+    limits:
+      ingestion_burst_size: 400000
+      ingestion_rate: 20000
+  runtimeConfig:
+    overrides:
+      anonymous:
+        ingestion_burst_size: 400000
+        ingestion_rate: 20000
 
 tempo:
   enabled: true
