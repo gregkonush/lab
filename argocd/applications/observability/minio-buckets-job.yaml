@@ -8,6 +8,10 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-options: Replace=true
 spec:
+  manualSelector: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: observability-minio-buckets
   template:
     metadata:
       labels:
