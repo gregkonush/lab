@@ -48,6 +48,16 @@ spec:
                 secretKeyRef:
                   name: observability-minio-credentials
                   key: tempoSecretKey
+            - name: MIMIR_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-credentials
+                  key: mimirAccessKey
+            - name: MIMIR_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: observability-minio-credentials
+                  key: mimirSecretKey
           command:
             - /bin/sh
             - -c
@@ -59,7 +69,12 @@ spec:
               done
               mc admin user add minio "$LOKI_ACCESS_KEY" "$LOKI_SECRET_KEY" || true
               mc admin user add minio "$TEMPO_ACCESS_KEY" "$TEMPO_SECRET_KEY" || true
+              mc admin user add minio "$MIMIR_ACCESS_KEY" "$MIMIR_SECRET_KEY" || true
               mc mb -p minio/loki-data || true
               mc mb -p minio/tempo-traces || true
-              mc admin policy attach minio readwrite --user "$LOKI_ACCESS_KEY"
-              mc admin policy attach minio readwrite --user "$TEMPO_ACCESS_KEY"
+              mc mb -p minio/mimir-blocks || true
+              mc mb -p minio/mimir-ruler || true
+              mc mb -p minio/mimir-alertmanager || true
+              mc admin policy attach minio readwrite --user "$LOKI_ACCESS_KEY" || true
+              mc admin policy attach minio readwrite --user "$TEMPO_ACCESS_KEY" || true
+              mc admin policy attach minio readwrite --user "$MIMIR_ACCESS_KEY" || true

@@ -3,7 +3,7 @@ loki:
     configs:
       - from: "2024-01-01"
         store: boltdb-shipper
-        object_store: filesystem
+        object_store: s3
         schema: v13
         index:
           prefix: loki_index_
@@ -14,7 +14,7 @@ loki:
       s3forcepathstyle: true
       bucketnames: loki-data
       access_key_id: grafana-loki
-      secret_access_key: supersecret
+      secret_access_key: loki-supersecret
       insecure: true
     boltdb_shipper:
       cache_location: /var/loki/index

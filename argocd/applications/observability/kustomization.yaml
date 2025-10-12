@@ -36,3 +36,75 @@ helmCharts:
     releaseName: observability-grafana
     namespace: observability
     valuesFile: grafana-values.yaml
+
+patches:
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-compactor
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-compactor
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-store-gateway
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-mimir-store-gateway
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-tempo-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-tempo-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-tempo-memcached
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-tempo-memcached
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-loki-loki-distributed-ingester
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-loki-loki-distributed-ingester
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-loki-loki-distributed-querier
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: observability-loki-loki-distributed-querier
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
