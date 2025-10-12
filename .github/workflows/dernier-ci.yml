@@ -37,7 +37,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install --no-install-recommends -y libpq-dev
+          sudo apt-get install --no-install-recommends -y libpq-dev postgresql-client
 
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
