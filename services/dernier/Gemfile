@@ -30,6 +30,11 @@ gem "redis", ">= 5.2"
 # Reduces boot times through caching; required in config/boot.rb
 gem "bootsnap", require: false
 
+# Hotwire (Turbo + Stimulus) and Importmap-based JavaScript delivery
+gem "importmap-rails"
+gem "turbo-rails"
+gem "stimulus-rails"
+
 # Deploy this application anywhere as a Docker container [https://kamal-deploy.org]
 gem "kamal", require: false
 
