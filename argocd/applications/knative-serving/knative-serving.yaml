@@ -11,6 +11,7 @@ spec:
     domain:
       "proompteng.ai": ""
     gc:
+      min-non-active-revisions: "2"
       max-non-active-revisions: "5"
     certmanager:
       issuerRef: |
