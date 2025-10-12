@@ -84,6 +84,7 @@ spec:
             namespace: kafka
             annotations:
               argocd.argoproj.io/sync-wave: "2"
+            kustomizeBuildOptions: "--load-restrictor LoadRestrictionsNone"
             automation: auto
             enabled: "true"
           - name: argo-workflows
@@ -278,6 +279,12 @@ spec:
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
     {{- end }}
+    {{- end }}
+    {{- if hasKey . "kustomizeBuildOptions" }}
+    spec:
+      source:
+        kustomize:
+          buildOptions: {{ .kustomizeBuildOptions | quote }}
     {{- end }}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- if or $useLovely (eq .automation "auto") }}
