@@ -43,7 +43,7 @@ Additional runtime configuration:
 
 - `DATABASE_URL` sourced from the CNPG generated secret `dernier-db-app` (`key: uri`)
 - `REDIS_URL` resolves to `redis://dernier-redis-leader:6379/1`
-- `PGSSLROOTCERT` points to `/etc/postgres-ca/tls.crt` from the `dernier-db-ca` secret.
+- `PGSSLROOTCERT` points to `/etc/postgres-ca/ca.crt` from the `dernier-db-ca` secret.
 
 ### Scaling & Availability
 

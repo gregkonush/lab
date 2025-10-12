@@ -38,7 +38,7 @@ spec:
                   name: dernier-secrets
                   key: SECRET_KEY_BASE
             - name: PGSSLROOTCERT
-              value: /etc/postgres-ca/tls.crt
+              value: /etc/postgres-ca/ca.crt
           ports:
             - containerPort: 3000
               name: http1
