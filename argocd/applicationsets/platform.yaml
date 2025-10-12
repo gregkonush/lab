@@ -84,9 +84,7 @@ spec:
             namespace: kafka
             annotations:
               argocd.argoproj.io/sync-wave: "2"
-            kustomizeBuildOptions: "--load-restrictor LoadRestrictionsNone"
             automation: auto
-            renderWithLovely: false
             enabled: "true"
           - name: argo-workflows
             path: argocd/applications/argo-workflows
@@ -281,34 +279,18 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{ end }}
-
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-    {{- $autoSync := eq .automation "auto" -}}
-    {{- $haveKustomizeOpts := hasKey . "kustomizeBuildOptions" -}}
+    {{- if or $useLovely (eq .automation "auto") }}
     spec:
-      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
+      {{- if $useLovely }}
       source:
-        repoURL: https://github.com/gregkonush/lab.git
-        targetRevision: main
-        path: "{{ .path }}"
-        {{- if $useLovely }}
         plugin:
           name: lovely
-        {{- end }}
-        {{- if $haveKustomizeOpts }}
-        kustomize:
-          buildOptions: {{ .kustomizeBuildOptions | quote }}
-        {{- end }}
+      {{- end }}
+      {{- if eq .automation "auto" }}
       syncPolicy:
-        syncOptions:
-          - CreateNamespace=true
-          - ServerSideApply=true
-          - RespectIgnoreDifferences=true
-        {{- if $autoSync }}
         automated:
           prune: true
           selfHeal: true
-        {{- end }}
+      {{- end }}
+    {{- end }}
