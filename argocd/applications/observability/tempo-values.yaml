@@ -1,0 +1,38 @@
+gateway:
+  enabled: true
+
+tempo:
+  traces:
+    otlp:
+      http:
+        enabled: true
+      grpc:
+        enabled: true
+  distributor:
+    replicas: 1
+  ingester:
+    replicas: 2
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  compactor:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  querier:
+    replicas: 1
+  queryFrontend:
+    replicas: 1
+  storage:
+    trace:
+      backend: s3
+      s3:
+        endpoint: http://observability-minio.observability.svc.cluster.local:9000
+        bucket: tempo-traces
+        access_key: grafana-tempo
+        secret_key: supersecret
+        insecure: true
+        s3forcepathstyle: true

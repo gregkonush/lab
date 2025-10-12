@@ -1,0 +1,76 @@
+mimir:
+  structuredConfig:
+    limits:
+      ingestion_rate: 20000
+      ingestion_burst_size: 400000
+  runtimeConfig:
+    overrides:
+      anonymous:
+        ingestion_rate: 20000
+        ingestion_burst_size: 400000
+
+rollout_operator:
+  enabled: false
+
+admin_api:
+  replicas: 1
+
+distributor:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+ingester:
+  replicas: 2
+  zoneAwareReplication:
+    enabled: false
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: longhorn
+
+querier:
+  replicas: 1
+
+query_frontend:
+  replicas: 1
+
+query_scheduler:
+  replicas: 1
+
+ruler:
+  replicas: 1
+
+store_gateway:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: longhorn
+
+compactor:
+  replicas: 1
+  persistentVolume:
+    enabled: true
+    size: 20Gi
+    storageClass: longhorn
+
+alertmanager:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+  persistence:
+    enabled: true
+    storageClass: longhorn
+    size: 5Gi
+
+minio:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: longhorn
