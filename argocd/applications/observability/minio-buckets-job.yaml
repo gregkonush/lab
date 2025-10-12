@@ -6,6 +6,8 @@ metadata:
   labels:
     app.kubernetes.io/name: observability-minio-buckets
   annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
     argocd.argoproj.io/sync-options: Replace=true
 spec:
   manualSelector: true
