@@ -86,6 +86,7 @@ spec:
               argocd.argoproj.io/sync-wave: "2"
             kustomizeBuildOptions: "--load-restrictor LoadRestrictionsNone"
             automation: auto
+            renderWithLovely: false
             enabled: "true"
           - name: argo-workflows
             path: argocd/applications/argo-workflows
@@ -280,21 +281,23 @@ spec:
         {{ $key }}: {{ $value | quote }}
     {{- end }}
     {{- end }}
-    {{- if hasKey . "kustomizeBuildOptions" }}
-    spec:
-      source:
-        kustomize:
-          buildOptions: {{ .kustomizeBuildOptions | quote }}
-    {{- end }}
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-    {{- if or $useLovely (eq .automation "auto") }}
+    {{- $autoSync := eq .automation "auto" -}}
+    {{- $haveKustomizeOpts := hasKey . "kustomizeBuildOptions" -}}
+    {{- if or $useLovely $autoSync $haveKustomizeOpts }}
     spec:
-      {{- if $useLovely }}
+      {{- $needSource := or $useLovely $haveKustomizeOpts -}}
+      {{- if $needSource }}
       source:
+        {{- if $useLovely }}
         plugin:
           name: lovely
+        {{- else if $haveKustomizeOpts }}
+        kustomize:
+          buildOptions: {{ .kustomizeBuildOptions | quote }}
+        {{- end }}
       {{- end }}
-      {{- if eq .automation "auto" }}
+      {{- if $autoSync }}
       syncPolicy:
         automated:
           prune: true
