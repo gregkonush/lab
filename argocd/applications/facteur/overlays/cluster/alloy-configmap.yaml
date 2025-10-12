@@ -13,15 +13,13 @@ data:
     discovery.kubernetes "facteur" {
       role = "pod"
 
-      selectors {
-        role  = "pod"
-        field = "metadata.namespace=facteur"
+      namespaces {
+        names = ["facteur"]
       }
     }
 
     loki.source.kubernetes "facteur" {
       targets            = discovery.kubernetes.facteur.targets
-      namespaces         = ["facteur"]
       forward_to         = [loki.process.facteur.receiver]
       allow_out_of_order = true
       drop_deleted_pods  = true
