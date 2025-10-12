@@ -6,7 +6,7 @@ require "rails/all"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
-module RailsLatest
+module Dernier
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 8.0
@@ -32,7 +32,7 @@ module RailsLatest
     config.x.redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/1")
 
     config.session_store :cache_store,
-                         key: "_rails_latest_session",
+                         key: "_dernier_session",
                          same_site: :lax,
                          secure: Rails.env.production?
     config.middleware.use ActionDispatch::Cookies

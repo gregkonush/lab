@@ -1,7 +1,7 @@
 apiVersion: redis.redis.opstreelabs.in/v1beta2
 kind: Redis
 metadata:
-  name: rails-latest-redis
+  name: dernier-redis
 spec:
   kubernetesConfig:
     image: quay.io/opstree/redis:v7.2.5

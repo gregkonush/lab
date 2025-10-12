@@ -1,26 +1,18 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: serving.knative.dev/v1
+kind: Service
 metadata:
-  name: rails-latest
-  labels:
-    app.kubernetes.io/name: rails-latest
-    app.kubernetes.io/component: api
+  name: dernier
 spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: rails-latest
-      app.kubernetes.io/component: api
   template:
     metadata:
-      labels:
-        app.kubernetes.io/name: rails-latest
-        app.kubernetes.io/component: api
+      annotations:
+        autoscaling.knative.dev/minScale: "3"
+        autoscaling.knative.dev/maxScale: "5"
+        autoscaling.knative.dev/targetBurstCapacity: "0"
     spec:
       containers:
-        - name: rails-latest
-          image: registry.ide-newton.ts.net/lab/rails-latest:latest
-          imagePullPolicy: IfNotPresent
+        - name: api
+          image: registry.ide-newton.ts.net/lab/dernier:latest
           env:
             - name: RAILS_ENV
               value: production
@@ -31,35 +23,35 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: rails-latest-db-app
+                  name: dernier-db-app
                   key: uri
             - name: REDIS_URL
-              value: redis://rails-latest-redis-leader:6379/1
+              value: redis://dernier-redis-leader:6379/1
             - name: RAILS_MASTER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: rails-latest-secrets
+                  name: dernier-secrets
                   key: RAILS_MASTER_KEY
             - name: SECRET_KEY_BASE
               valueFrom:
                 secretKeyRef:
-                  name: rails-latest-secrets
+                  name: dernier-secrets
                   key: SECRET_KEY_BASE
             - name: PGSSLROOTCERT
               value: /etc/postgres-ca/tls.crt
           ports:
             - containerPort: 3000
-              name: http
+              name: http1
           livenessProbe:
             httpGet:
               path: /health
-              port: http
+              port: 3000
             initialDelaySeconds: 10
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /health
-              port: http
+              port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -76,4 +68,4 @@ spec:
       volumes:
         - name: database-ca
           secret:
-            secretName: rails-latest-db-ca
+            secretName: dernier-db-ca

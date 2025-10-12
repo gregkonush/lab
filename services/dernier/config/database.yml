@@ -5,11 +5,11 @@ default: &default
 
 development:
   <<: *default
-  url: <%= ENV.fetch("DATABASE_URL", "postgres://localhost/rails_latest_development") %>
+  url: <%= ENV.fetch("DATABASE_URL", "postgres://localhost/dernier_development") %>
 
 test:
   <<: *default
-  url: <%= ENV.fetch("DATABASE_URL", "postgres://localhost/rails_latest_test") %>
+  url: <%= ENV.fetch("DATABASE_URL", "postgres://localhost/dernier_test") %>
 
 production:
   primary: &primary_production

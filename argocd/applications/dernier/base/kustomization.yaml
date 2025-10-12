@@ -3,6 +3,4 @@ kind: Kustomization
 resources:
   - postgres-cluster.yaml
   - redis.yaml
-  - deployment.yaml
-  - service.yaml
-  - ingressroute.yaml
+  - kservice.yaml

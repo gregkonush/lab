@@ -1,4 +1,4 @@
-# rails-latest
+# dernier
 
 Rails 8.0.3 API application backed by PostgreSQL (CloudNativePG) and Redis. The service exposes a `/health` endpoint for uptime checks and is designed to run in Kubernetes via Argo CD.
 
@@ -14,7 +14,7 @@ Rails 8.0.3 API application backed by PostgreSQL (CloudNativePG) and Redis. The 
 ```bash
 bundle install
 # optional: configure .env or export environment variables
-export DATABASE_URL=postgres://localhost/rails_latest_development
+export DATABASE_URL=postgres://localhost/dernier_development
 export REDIS_URL=redis://localhost:6379/1
 bundle exec rails db:prepare
 ```
@@ -30,7 +30,7 @@ bundle exec rails server
 The test suite requires a reachable PostgreSQL database. Provide a test database URL before running:
 
 ```bash
-export DATABASE_URL=postgres://localhost/rails_latest_test
+export DATABASE_URL=postgres://localhost/dernier_test
 bundle exec rails test
 ```
 
@@ -39,13 +39,13 @@ bundle exec rails test
 Build the container image and run it locally:
 
 ```bash
-docker build -t rails-latest:dev .
+docker build -t dernier:dev .
 docker run --rm \
   -p 3000:3000 \
-  -e DATABASE_URL=postgres://postgres:postgres@postgres.example/rails_latest \
+  -e DATABASE_URL=postgres://postgres:postgres@postgres.example/dernier \
   -e REDIS_URL=redis://redis.example:6379/1 \
   -e RAILS_MASTER_KEY=... \
-  rails-latest:dev
+  dernier:dev
 ```
 
 The container entrypoint runs `bundle exec rails db:prepare` on startup and serves Puma on `0.0.0.0:3000`.

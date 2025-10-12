@@ -50,6 +50,8 @@ kubeconfig
 *.class
 out/
 bin/
+!services/dernier/bin/
+!services/dernier/bin/entrypoint
 
 # Node.js
 npm-debug.log
