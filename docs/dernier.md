@@ -51,6 +51,28 @@ Additional runtime configuration:
 - Run `bin/dev` (Procfile-backed) to boot Rails alongside the Tailwind watcher. Production builds run through `rails tailwindcss:build`.
 - Propshaft is enabled so `config.assets` is available even though controllers remain API-first.
 
+### Local development
+
+To boot the application locally:
+
+```bash
+cd services/dernier
+bundle install
+bin/dev
+```
+
+`bin/dev` runs both `rails server` (bound to `http://localhost:3000`) and `rails tailwindcss:watch`. Provide `DATABASE_URL` and `REDIS_URL` that point at your local PostgreSQL/Redis instances, or spin them up via Docker:
+
+```bash
+docker compose up postgres redis
+# in another shell
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/dernier_development \
+REDIS_URL=redis://localhost:6379/1 \
+bin/dev
+```
+
+The service prepares the database on startup (see `bin/entrypoint`) and exposes a `/health` endpoint you can cURL while iterating.
+
 ### Scaling & Availability
 
 - Horizontal pod autoscaler tracks CPU utilization between 2–5 replicas (`argocd/applications/dernier/overlays/cluster/hpa.yaml`).
