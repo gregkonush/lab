@@ -22,6 +22,17 @@ consumer:
     insecure_skip_verify: false
   sasl:
     enabled: false
+codex_listener:
+  enabled: true
+  brokers:
+    - localhost:9092
+  topic: github.issues.codex.tasks
+  group_id: facteur-codex-listener
+  tls:
+    enabled: false
+    insecure_skip_verify: false
+  sasl:
+    enabled: false
 argo:
   namespace: argo
   workflow_template: facteur-dispatch

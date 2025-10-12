@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AppLogger } from '@/logger'
 import { CommandEvent as FacteurCommandEventMessage } from '@/proto/facteur/v1/contract_pb'
+import { CodexTask, CodexTaskStage } from '@/proto/github/v1/codex_task_pb'
 import { createWebhookHandler, type WebhookConfig } from '@/routes/webhooks'
 import { GithubService } from '@/services/github'
 import { type KafkaMessage, KafkaProducer } from '@/services/kafka'
@@ -120,6 +121,7 @@ describe('createWebhookHandler', () => {
     topics: {
       raw: 'raw-topic',
       codex: 'codex-topic',
+      codexStructured: 'github.issues.codex.tasks',
       discordCommands: 'discord-topic',
     },
     discord: {
@@ -213,10 +215,23 @@ describe('createWebhookHandler', () => {
     )
 
     expect(response.status).toBe(202)
-    expect(publishedMessages).toHaveLength(2)
-    const [planningMessage, rawMessage] = publishedMessages
-    expect(planningMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-planning' })
-    expect(rawMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
+    expect(publishedMessages).toHaveLength(3)
+    const [planningJsonMessage, planningStructuredMessage, rawJsonMessage] = publishedMessages
+
+    expect(planningJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-1-planning' })
+    expect(planningStructuredMessage).toMatchObject({
+      topic: 'github.issues.codex.tasks',
+      key: 'issue-1-planning',
+    })
+    expect(planningStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
+
+    const planningProto = CodexTask.fromBinary(toBuffer(planningStructuredMessage.value))
+    expect(planningProto.stage).toBe(CodexTaskStage.PLANNING)
+    expect(planningProto.repository).toBe('owner/repo')
+    expect(planningProto.issueNumber).toBe(BigInt(1))
+    expect(planningProto.deliveryId).toBe('delivery-123')
+
+    expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryFullName: 'owner/repo', issueNumber: 1 }),
     )
@@ -252,10 +267,24 @@ describe('createWebhookHandler', () => {
     )
 
     expect(githubServiceMock.findLatestPlanComment).toHaveBeenCalled()
-    expect(publishedMessages).toHaveLength(2)
-    const [implementationMessage, rawMessage] = publishedMessages
-    expect(implementationMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-2-implementation' })
-    expect(rawMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
+    expect(publishedMessages).toHaveLength(3)
+    const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+
+    expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-2-implementation' })
+    expect(implementationStructuredMessage).toMatchObject({
+      topic: 'github.issues.codex.tasks',
+      key: 'issue-2-implementation',
+    })
+    expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
+
+    const implementationProto = CodexTask.fromBinary(toBuffer(implementationStructuredMessage.value))
+    expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
+    expect(implementationProto.deliveryId).toBe('delivery-999')
+    expect(implementationProto.planCommentId).toBe(BigInt(10))
+    expect(implementationProto.planCommentBody).toBe('Plan')
+    expect(implementationProto.planCommentUrl).toBe('https://comment')
+
+    expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
   })
 
   it('returns 401 when Discord signature verification fails', async () => {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
 	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
+	"github.com/gregkonush/lab/services/facteur/internal/githubpb"
 	"github.com/gregkonush/lab/services/facteur/internal/server"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
@@ -93,6 +94,36 @@ func TestEventsEndpointRejectsEmptyPayload(t *testing.T) {
 	resp, err := srv.App().Test(req)
 	require.NoError(t, err)
 	require.Equal(t, 400, resp.StatusCode)
+}
+
+func TestCodexTasksEndpointLogs(t *testing.T) {
+	srv, err := server.New(server.Options{Dispatcher: &stubDispatcher{}, Store: &stubStore{}})
+	require.NoError(t, err)
+
+	buf := &bytes.Buffer{}
+	orig := log.Writer()
+	log.SetOutput(buf)
+	defer log.SetOutput(orig)
+
+	payload, err := proto.Marshal(&githubpb.CodexTask{
+		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
+		Repository:  "gregkonush/lab",
+		IssueNumber: 42,
+		Head:        "codex/issue-42-demo",
+		DeliveryId:  "delivery-1",
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/codex/tasks", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	req.Header.Set("ce-id", "delivery-1")
+
+	resp, err := srv.App().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 202, resp.StatusCode)
+
+	logs := buf.String()
+	require.Contains(t, logs, "codex task received: stage=CODEX_TASK_STAGE_IMPLEMENTATION repo=gregkonush/lab issue=42")
 }
 
 type stubDispatcher struct {

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package github.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/gregkonush/lab/services/facteur/internal/githubpb";
+
+enum CodexTaskStage {
+  CODEX_TASK_STAGE_UNSPECIFIED = 0;
+  CODEX_TASK_STAGE_PLANNING = 1;
+  CODEX_TASK_STAGE_IMPLEMENTATION = 2;
+}
+
+message CodexTask {
+  CodexTaskStage stage = 1;
+  string prompt = 2;
+  string repository = 3;
+  string base = 4;
+  string head = 5;
+  int64 issue_number = 6;
+  string issue_url = 7;
+  string issue_title = 8;
+  string issue_body = 9;
+  string sender = 10;
+  google.protobuf.Timestamp issued_at = 11;
+  optional int64 plan_comment_id = 12;
+  optional string plan_comment_url = 13;
+  optional string plan_comment_body = 14;
+  string delivery_id = 15;
+}

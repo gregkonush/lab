@@ -18,6 +18,7 @@ import (
 	"github.com/gregkonush/lab/services/facteur/internal/bridge"
 	"github.com/gregkonush/lab/services/facteur/internal/consumer"
 	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
+	"github.com/gregkonush/lab/services/facteur/internal/githubpb"
 	"github.com/gregkonush/lab/services/facteur/internal/session"
 )
 
@@ -210,6 +211,29 @@ func registerRoutes(app *fiber.App, opts Options) {
 			"namespace":     result.Namespace,
 			"correlationId": result.CorrelationID,
 		})
+	})
+
+	app.Post("/codex/tasks", func(c *fiber.Ctx) error {
+		body := c.Body()
+		if len(body) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "empty payload"})
+		}
+
+		var task githubpb.CodexTask
+		if err := proto.Unmarshal(body, &task); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload", "details": err.Error()})
+		}
+
+		log.Printf(
+			"codex task received: stage=%s repo=%s issue=%d head=%s delivery=%s",
+			task.GetStage().String(),
+			task.GetRepository(),
+			task.GetIssueNumber(),
+			task.GetHead(),
+			task.GetDeliveryId(),
+		)
+
+		return c.SendStatus(fiber.StatusAccepted)
 	})
 }
 

@@ -8,21 +8,21 @@ for downstream automation such as Argo Workflows and the Facteur service.
 
 ```mermaid
 flowchart LR
-  Issue[GitHub issue / reaction event] --> Webhook[GitHub webhook delivery]
-  Slash[Discord slash command] --> DiscordWebhook[Discord interactions webhook]
-  Webhook --> Froussard[Froussard webhook server]
-  DiscordWebhook --> Froussard
+  GH[GitHub webhook delivery] --> Froussard[Froussard webhook server]
+  Discord[Discord interaction] --> Froussard
   subgraph Kafka Topics
-    K1[github.webhook.events]
-    K2[github.codex.tasks]
-    K3[discord.commands.incoming]
+    Raw[github.webhook.events]
+    Tasks[github.codex.tasks]
+    Structured[github.issues.codex.tasks]
+    DiscordTopic[discord.commands.incoming]
   end
-  Froussard -->|raw body| K1
-  Froussard -->|codex task payload| K2
-  Froussard -->|slash command event| K3
-  Kafka --> Sensor[Argo Events sensor]
-  Sensor -->|templated parameters| Workflow[Argo WorkflowTemplate `github-codex-planning`]
-  Workflow --> Pod[Workflow pod logs payload]
+  Froussard -->|raw body| Raw
+  Froussard -->|codex task JSON| Tasks
+  Froussard -->|codex task structured| Structured
+  Froussard -->|slash command| DiscordTopic
+  Tasks --> Sensor[Argo Events sensor]
+  Sensor --> Planning[Workflow github-codex-planning]
+  Sensor --> Implementation[Workflow github-codex-implementation]
 ```
 
 The Argo CD application also provisions the `discord.commands.incoming` Kafka topic so Discord automation can publish into the shared cluster alongside GitHub event streams.
@@ -31,8 +31,7 @@ The Argo CD application also provisions the `discord.commands.incoming` Kafka to
 
 - Validate GitHub `x-hub-signature-256` headers using `@octokit/webhooks`.
 - Validate Discord `x-signature-ed25519`/`x-signature-timestamp` headers using `discord-interactions` before parsing the payload.
-- Emit the original JSON event (`github.webhook.events`) and Codex task messages
-  (`github.codex.tasks`) via Kafka.
+- Emit the original JSON event (`github.webhook.events`) and publish Codex task payloads in both JSON (`github.codex.tasks`) and structured (`github.issues.codex.tasks`) forms.
 - Normalize Discord slash command payloads (command name, options, interaction token, user metadata) and publish them into `discord.commands.incoming`.
 - Provision and maintain the `discord.commands.incoming` Kafka topic for Facteur ingestion.
 - Surface health checks on `/health/liveness` and `/health/readiness`.
@@ -58,6 +57,7 @@ The local runtime exposes:
   maps CloudEvent payloads into the `github-codex-planning` Workflow arguments.
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
+- The structured stream is configured via `KAFKA_CODEX_TOPIC_STRUCTURED` (defaulting to `github.issues.codex.tasks`).
 
 ## Verification Checklist
 

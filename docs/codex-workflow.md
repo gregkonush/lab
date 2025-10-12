@@ -4,20 +4,49 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks`. When the same user later comments `execute plan` on the issue it publishes an `implementation` message that carries the metadata Codex needs for the branch/PR handoff.
+1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks` (and mirrors a structured copy to `github.issues.codex.tasks`). When the same user later comments `execute plan` on the issue it publishes an `implementation` message with the metadata Codex needs for the branch/PR handoff. Every delivery also lands on `github.webhook.events` for downstream auditing.
 2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to two workflow templates:
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
+   Argo Events remains pointed at the JSON stream (`github.codex.tasks`) because the Kafka EventSource only offers raw/JSON
+   decoding today; the structured mirror exists for services that want to deserialize the protobuf payload directly.
 3. Each **WorkflowTemplate** runs the Codex container (`gpt-5-codex` with `--reasoning high --search --mode yolo`):
    - `stage=planning`: `codex-plan.ts` (via the `github-codex-planning` template) generates a `<!-- codex:plan -->` issue comment and logs its GH CLI output to `.codex-plan-output.md`.
    - `stage=implementation`: `codex-implement.ts` executes the approved plan, pushes the feature branch, opens a **draft** PR, maintains the `<!-- codex:progress -->` comment via `codex-progress-comment.ts`, and records the full interaction in `.codex-implementation.log` (uploaded as an Argo artifact).
    - Both templates carry a `codex.stage` label so downstream sensors can reference the stage without parsing the workflow name.
 
+```mermaid
+flowchart LR
+  GH[GitHub webhook delivery] --> Froussard[Froussard webhook server]
+  Discord[Discord interaction] --> Froussard
+  subgraph Kafka[Kafka Topics]
+    Raw[github.webhook.events]
+    Tasks[github.codex.tasks]
+    Structured[github.issues.codex.tasks]
+  end
+  Froussard -->|raw body| Raw
+  Froussard -->|codex task JSON| Tasks
+  Froussard -->|codex task structured| Structured
+  subgraph ArgoEvents[Argo Events]
+    Sensor[github-codex Sensor]
+  end
+  Tasks --> Sensor
+  Sensor --> Planning[Workflow github-codex-planning]
+  Sensor --> Implementation[Workflow github-codex-implementation]
+  Structured -. optional typed consumer .-> Facteur
+```
+
+Run `facteur codex-listen --config <path>` to stream the structured payloads while you build consumers; the command uses the
+`github.issues.codex.tasks` topic and simply echoes the decoded `github.v1.CodexTask` message.
+
+Prod deployments mirror that behaviour via Knative Eventing: `kubernetes/facteur/base/codex-kafkasource.yaml` feeds
+`github.issues.codex.tasks` into the Factor service (`POST /codex/tasks`), where the handler logs the stage, repository,
+issue number, and delivery identifier for observability.
 ## Prerequisites
 
 - Secrets `github-token` and `codex-openai` in `argo-workflows` namespace.
 - SealedSecret `discord-codex-bot` seeded with the Discord bot token, guild id, and optional category id.
-- Kafka topics `github.webhook.events` and `github.codex.tasks` deployed via Strimzi.
+- Kafka topics `github.webhook.events`, `github.codex.tasks`, and `github.issues.codex.tasks` deployed via Strimzi.
 - Argo Events resources under `argocd/applications/froussard/` synced.
 
 ## Manual End-to-End Test

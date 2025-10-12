@@ -5,6 +5,7 @@ plugins:
     opt:
       - module=github.com/gregkonush/lab
       - Mfacteur/v1/contract.proto=github.com/gregkonush/lab/services/facteur/internal/facteurpb
+      - Mgithub/v1/codex_task.proto=github.com/gregkonush/lab/services/facteur/internal/githubpb
   - plugin: buf.build/bufbuild/es:v1.10.0
     out: apps/froussard/src/proto
     opt:
