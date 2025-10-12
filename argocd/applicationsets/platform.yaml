@@ -284,11 +284,15 @@ spec:
     {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
     {{- $autoSync := eq .automation "auto" -}}
     {{- $haveKustomizeOpts := hasKey . "kustomizeBuildOptions" -}}
-    {{- if or $useLovely $autoSync $haveKustomizeOpts }}
     spec:
-      {{- $needSource := or $useLovely $haveKustomizeOpts -}}
-      {{- if $needSource }}
+      project: '{{ if hasKey . "project" }}{{ .project }}{{ else }}default{{ end }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
+        repoURL: https://github.com/gregkonush/lab.git
+        targetRevision: main
+        path: "{{ .path }}"
         {{- if $useLovely }}
         plugin:
           name: lovely
@@ -296,11 +300,13 @@ spec:
         kustomize:
           buildOptions: {{ .kustomizeBuildOptions | quote }}
         {{- end }}
-      {{- end }}
-      {{- if $autoSync }}
       syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - RespectIgnoreDifferences=true
+        {{- if $autoSync }}
         automated:
           prune: true
           selfHeal: true
-      {{- end }}
-    {{- end }}
+        {{- end }}
