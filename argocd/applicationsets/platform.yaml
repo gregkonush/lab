@@ -203,11 +203,25 @@ spec:
         repoURL: https://github.com/gregkonush/lab.git
         targetRevision: main
         path: "{{ .path }}"
+        {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
+        {{- if $useLovely }}
+        plugin:
+          name: lovely
+        {{- end }}
+        {{- if hasKey . "kustomizeBuildOptions" }}
+        kustomize:
+          buildOptions: {{ .kustomizeBuildOptions | quote }}
+        {{- end }}
       syncPolicy:
         syncOptions:
           - CreateNamespace=true
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
+        {{- if eq .automation "auto" }}
+        automated:
+          prune: true
+          selfHeal: true
+        {{- end }}
       ignoreDifferences:
         - kind: StatefulSet
           group: apps
@@ -280,27 +294,4 @@ spec:
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
     {{- end }}
-    {{- end }}
-    {{- $useLovely := or (not (hasKey . "renderWithLovely")) .renderWithLovely -}}
-    {{- $autoSync := eq .automation "auto" -}}
-    {{- $haveKustomizeOpts := hasKey . "kustomizeBuildOptions" -}}
-    {{- if or $useLovely $autoSync $haveKustomizeOpts }}
-    spec:
-      {{- $needSource := or $useLovely $haveKustomizeOpts -}}
-      {{- if $needSource }}
-      source:
-        {{- if $useLovely }}
-        plugin:
-          name: lovely
-        {{- else if $haveKustomizeOpts }}
-        kustomize:
-          buildOptions: {{ .kustomizeBuildOptions | quote }}
-        {{- end }}
-      {{- end }}
-      {{- if $autoSync }}
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-      {{- end }}
     {{- end }}
