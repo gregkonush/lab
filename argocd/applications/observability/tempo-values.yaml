@@ -33,6 +33,6 @@ tempo:
         endpoint: http://observability-minio.observability.svc.cluster.local:9000
         bucket: tempo-traces
         access_key: grafana-tempo
-        secret_key: supersecret
+        secret_key: tempo-supersecret
         insecure: true
         s3forcepathstyle: true

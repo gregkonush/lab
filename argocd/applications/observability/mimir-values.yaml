@@ -1,8 +1,50 @@
+global:
+  extraEnv:
+    - name: MIMIR_S3_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: mimirAccessKey
+    - name: MIMIR_S3_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: observability-minio-credentials
+          key: mimirSecretKey
+
 mimir:
   structuredConfig:
     limits:
       ingestion_rate: 20000
       ingestion_burst_size: 400000
+    blocks_storage:
+      backend: s3
+      bucket_store:
+        sync_dir: /data/tsdb-sync
+      s3:
+        endpoint: http://observability-minio.observability.svc.cluster.local:9000
+        bucket_name: mimir-blocks
+        access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
+        secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+        insecure: true
+        s3forcepathstyle: true
+    alertmanager_storage:
+      backend: s3
+      s3:
+        endpoint: http://observability-minio.observability.svc.cluster.local:9000
+        bucket_name: mimir-alertmanager
+        access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
+        secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+        insecure: true
+        s3forcepathstyle: true
+    ruler_storage:
+      backend: s3
+      s3:
+        endpoint: http://observability-minio.observability.svc.cluster.local:9000
+        bucket_name: mimir-ruler
+        access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
+        secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+        insecure: true
+        s3forcepathstyle: true
   runtimeConfig:
     overrides:
       anonymous:
@@ -69,8 +111,4 @@ alertmanager:
     size: 5Gi
 
 minio:
-  enabled: true
-  persistence:
-    enabled: true
-    size: 50Gi
-    storageClass: longhorn
+  enabled: false
