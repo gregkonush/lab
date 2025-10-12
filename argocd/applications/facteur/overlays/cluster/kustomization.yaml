@@ -4,3 +4,6 @@ resources:
   - ../../base
   - secrets.yaml
   - facteur-vector-cluster.yaml
+  - alloy-rbac.yaml
+  - alloy-configmap.yaml
+  - alloy-deployment.yaml
