@@ -240,4 +240,4 @@ tmp/
 .ipynb_checkpoints/
 
 # Rails credentials
-services/rails-latest/config/master.key
+services/dernier/config/master.key
