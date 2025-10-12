@@ -1,0 +1,33 @@
+gateway:
+  enabled: true
+
+tempo:
+  traces:
+    otlp:
+      http:
+        enabled: true
+      grpc:
+        enabled: true
+  distributor:
+    replicas: 1
+  ingester:
+    replicas: 2
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  compactor:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: longhorn
+  querier:
+    replicas: 1
+  queryFrontend:
+    replicas: 1
+  storage:
+    trace:
+      backend: local
+      block:
+        version: vParquet3
