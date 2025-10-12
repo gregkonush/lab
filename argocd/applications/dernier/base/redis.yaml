@@ -18,7 +18,7 @@ spec:
     fsGroupChangePolicy: Always
   redisExporter:
     enabled: true
-    image: quay.io/opstree/redis-exporter:v1.78.0
+    image: quay.io/opstree/redis-exporter:v1.78.0@sha256:8edf2c77220a6e8fc290d13a4ec78bedcbdf08b8bf03a64119f448131f733d3f
   storage:
     volumeClaimTemplate:
       spec:
