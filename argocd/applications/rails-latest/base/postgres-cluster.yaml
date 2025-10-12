@@ -1,0 +1,15 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: rails-latest-db
+spec:
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 30Gi
+  bootstrap:
+    initdb:
+      database: rails_latest
+      owner: rails_latest
+  monitoring:
+    enablePodMonitor: true

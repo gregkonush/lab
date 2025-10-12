@@ -108,6 +108,20 @@ spec:
               argocd.argoproj.io/sync-wave: "6"
             automation: auto
             enabled: false
+          - name: rails-latest
+            path: argocd/applications/rails-latest
+            namespace: rails-latest
+            renderWithLovely: false
+            annotations:
+              argocd.argoproj.io/sync-wave: "6"
+              argocd-image-updater.argoproj.io/image-list: rails-latest=registry.ide-newton.ts.net/lab/rails-latest
+              argocd-image-updater.argoproj.io/rails-latest: semver
+              argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
+              argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/rails-latest
+            automation: auto
+            enabled: true
           - name: froussard
             path: argocd/applications/froussard
             namespace: froussard

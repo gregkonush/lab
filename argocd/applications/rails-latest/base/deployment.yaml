@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rails-latest
+  labels:
+    app.kubernetes.io/name: rails-latest
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rails-latest
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rails-latest
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: rails-latest
+          image: registry.ide-newton.ts.net/lab/rails-latest:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RAILS_ENV
+              value: production
+            - name: RAILS_LOG_TO_STDOUT
+              value: "1"
+            - name: PORT
+              value: "3000"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: rails-latest-db-app
+                  key: uri
+            - name: REDIS_URL
+              value: redis://rails-latest-redis-leader:6379/1
+            - name: RAILS_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rails-latest-secrets
+                  key: RAILS_MASTER_KEY
+            - name: SECRET_KEY_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: rails-latest-secrets
+                  key: SECRET_KEY_BASE
+            - name: PGSSLROOTCERT
+              value: /etc/postgres-ca/tls.crt
+          ports:
+            - containerPort: 3000
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: database-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+      volumes:
+        - name: database-ca
+          secret:
+            secretName: rails-latest-db-ca

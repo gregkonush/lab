@@ -43,3 +43,42 @@ profiles:
       - op: replace
         path: /manifests/kustomize/paths/2
         value: argocd/applications/facteur/overlays/cluster
+  - name: rails-latest
+    patches:
+      - op: replace
+        path: /metadata/name
+        value: rails-latest
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: rails-latest
+            context: services/rails-latest
+            docker:
+              dockerfile: Dockerfile
+      - op: replace
+        path: /manifests/kustomize/paths
+        value:
+          - argocd/applications/rails-latest/base
+  - name: rails-latest-remote
+    patches:
+      - op: replace
+        path: /metadata/name
+        value: rails-latest
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: registry.ide-newton.ts.net/lab/rails-latest
+            context: services/rails-latest
+            docker:
+              dockerfile: Dockerfile
+      - op: replace
+        path: /build/local/push
+        value: true
+      - op: add
+        path: /build/platforms
+        value:
+          - linux/arm64
+      - op: replace
+        path: /manifests/kustomize/paths
+        value:
+          - argocd/applications/rails-latest/overlays/cluster
