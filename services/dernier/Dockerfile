@@ -28,6 +28,13 @@ RUN bundle install --jobs=4 --retry=3 \
 
 COPY . .
 RUN bundle exec bootsnap precompile app/ lib/
+RUN --mount=type=secret,id=rails_master_key,required=false \
+    if [ -f /run/secrets/rails_master_key ]; then \
+      echo "Precompiling assets with provided RAILS_MASTER_KEY" && \
+      RAILS_MASTER_KEY="$(cat /run/secrets/rails_master_key)" SECRET_KEY_BASE="${SECRET_KEY_BASE:-dummy}" bundle exec rails assets:precompile; \
+    else \
+      echo "Skipping assets:precompile (RAILS_MASTER_KEY not provided)"; \
+    fi
 
 FROM base AS app
 
