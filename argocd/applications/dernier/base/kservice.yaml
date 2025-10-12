@@ -13,6 +13,7 @@ spec:
       containers:
         - name: api
           image: registry.ide-newton.ts.net/lab/dernier:latest
+          imagePullPolicy: Always
           env:
             - name: RAILS_ENV
               value: production

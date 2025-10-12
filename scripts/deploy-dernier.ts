@@ -1,8 +1,12 @@
 #!/usr/bin/env bun
 
-import { $, type ShellExpression } from 'bun'
+import { $ } from 'bun'
 
 $.throws(true)
+
+if (!process.env.DOCKER_BUILDKIT) {
+  process.env.DOCKER_BUILDKIT = '1'
+}
 
 function splitArgs(value: string | undefined) {
   return value
@@ -13,9 +17,21 @@ function splitArgs(value: string | undefined) {
     : []
 }
 
+function shellEscape(part: string) {
+  return /[^A-Za-z0-9_@%+=:,./-]/.test(part) ? `'${part.replace(/'/g, `'\\''`)}'` : part
+}
+
+async function run(parts: string[]) {
+  console.log('$', parts.join(' '))
+  await $`${{ raw: parts.map(shellEscape).join(' ') }}`
+}
+
 const registry = process.env.DERNIER_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
 const repository = process.env.DERNIER_IMAGE_REPOSITORY ?? 'lab/dernier'
-const tag = process.env.DERNIER_IMAGE_TAG ?? (await $`git rev-parse --short HEAD`.text()).trim()
+const manifestTag = process.env.DERNIER_MANIFEST_TAG ?? 'latest'
+const branchName = (await $`git rev-parse --abbrev-ref HEAD`.text()).trim().replace(/\//g, '-')
+const shortSha = (await $`git rev-parse --short HEAD`.text()).trim()
+const tag = process.env.DERNIER_IMAGE_TAG ?? `${branchName}-${shortSha}`
 const image = `${registry}/${repository}:${tag}`
 
 const context = process.env.DERNIER_BUILD_CONTEXT ?? 'services/dernier'
@@ -27,26 +43,30 @@ const knBinary = process.env.DERNIER_KN_BIN ?? 'kn'
 const buildArgs = splitArgs(process.env.DERNIER_BUILD_ARGS)
 const knExtraArgs = splitArgs(process.env.DERNIER_KN_EXTRA_ARGS)
 
-const buildCommand: ShellExpression[] = ['docker', 'build', '-f', dockerfile, '-t', image, ...buildArgs, context]
+const buildParts = ['docker', 'build', '-f', dockerfile, '-t', image, ...buildArgs]
+if (process.env.RAILS_MASTER_KEY) {
+  buildParts.push('--secret', 'id=rails_master_key,env=RAILS_MASTER_KEY')
+}
+buildParts.push(context)
+await run(buildParts)
 
-console.log('$', ['docker', 'build', '-f', dockerfile, '-t', image, ...buildArgs, context].join(' '))
-await $`${buildCommand as any}`
+await run(['docker', 'push', image])
 
-await $`docker push ${image}`
-console.log(`Image pushed: ${image}`)
+if (manifestTag) {
+  const manifestRef = `${registry}/${repository}:${manifestTag}`
+  await run(['docker', 'tag', image, manifestRef])
+  await run(['docker', 'push', manifestRef])
+  console.log(`Updated manifest tag ${manifestRef}`)
+}
 
-const deployCommand: ShellExpression[] = [
-  knBinary,
-  'service',
-  'update',
-  service,
-  '-n',
-  namespace,
-  '--image',
-  image,
-  ...knExtraArgs,
-]
+const inspect = await $`docker image inspect --format '{{ index .RepoDigests 0 }}' ${image}`.text()
+const digest = inspect.trim()
+if (!digest || !digest.includes('@sha256:')) {
+  throw new Error(`Could not resolve digest for ${image}`)
+}
+console.log(`Resolved image digest: ${digest}`)
 
-console.log('$', [knBinary, 'service', 'update', service, '-n', namespace, '--image', image, ...knExtraArgs].join(' '))
-await $`${deployCommand as any}`
+const deployParts = [knBinary, 'service', 'update', service, '-n', namespace, '--image', digest, ...knExtraArgs]
+await run(deployParts)
+
 console.log(`Updated Knative service ${service} in namespace ${namespace}`)
