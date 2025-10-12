@@ -19,9 +19,8 @@ data:
     }
 
     loki.source.kubernetes "facteur" {
-      targets           = discovery.kubernetes.facteur.targets
-      forward_to        = [loki.process.facteur.receiver]
-      drop_deleted_pods = true
+      targets    = discovery.kubernetes.facteur.targets
+      forward_to = [loki.process.facteur.receiver]
     }
 
     loki.process "facteur" {
