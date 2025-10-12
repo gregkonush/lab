@@ -70,7 +70,7 @@ data:
     prometheus.scrape "argocd" {
       job_name        = "argocd"
       scrape_interval = "30s"
-      targets         = discovery.relabel.argocd_metrics.targets
+      targets         = discovery.relabel.argocd_metrics.output
       forward_to      = [prometheus.remote_write.mimir.receiver]
     }
 
@@ -82,8 +82,6 @@ data:
 
     loki.source.kubernetes "argocd_pod_logs" {
       targets            = discovery.kubernetes.argocd_pods.targets
-      drop_deleted_pods  = true
-      allow_out_of_order = true
       forward_to         = [loki.process.argocd_pod_logs.receiver]
     }
 
