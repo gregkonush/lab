@@ -16,3 +16,15 @@ tunes the chart for the lab cluster by:
 
 The application is discovered by the `platform` ApplicationSet and is
 synchronized into the `lgtm` namespace.
+
+
+## Alloy River Notes
+
+All in-cluster observability shippers (e.g., `argocd/alloy-*.yaml`, `argo-workflows/alloy-*.yaml`) share the same Grafana Alloy conventions. Keep River syntax consistent to avoid startup errors:
+
+- Scope Kubernetes discovery with the nested block syntax: `namespaces { names = ["<namespace>"] }`. Inline attributes like `namespaces = [...]` are rejected by Alloy v1.11+ and cause the controller to crash before shipping telemetry. citeturn0search0
+- Chain discovery relabelers into Prometheus scrapes via the `output` receiver. Example: `targets = discovery.relabel.argocd_metrics.targets`. This matches the exported label set from the relabel component. citeturn1search0turn4search1
+- `loki.source.kubernetes` inherits namespace selection from the discovery targets—it does **not** expose its own `namespaces` field. If you need to scope logs, do it on the discovery component feeding the source. citeturn2search5
+- Keep OTLP writers pointed at the shared LGTM gateways (`lgtm-mimir-nginx`, `lgtm-tempo-gateway`, `lgtm-loki-gateway`) so every Alloy instance stays aligned with the central stack.
+
+When adding another Alloy deployment, copy one of the existing configs and validate with `kubectl kustomize` (or `alloy check`) before syncing Argo CD.

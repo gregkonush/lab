@@ -11,8 +11,11 @@ data:
     }
 
     discovery.kubernetes "argocd_pods" {
-      role        = "pod"
-      namespaces  = ["argocd"]
+      role = "pod"
+
+      namespaces {
+        names = ["argocd"]
+      }
 
       selectors {
         role  = "pod"
@@ -21,8 +24,11 @@ data:
     }
 
     discovery.kubernetes "argocd_endpoints" {
-      role        = "endpoints"
-      namespaces  = ["argocd"]
+      role = "endpoints"
+
+      namespaces {
+        names = ["argocd"]
+      }
 
       selectors {
         role  = "endpoints"
@@ -76,7 +82,6 @@ data:
 
     loki.source.kubernetes "argocd_pod_logs" {
       targets            = discovery.kubernetes.argocd_pods.targets
-      namespaces         = ["argocd"]
       drop_deleted_pods  = true
       allow_out_of_order = true
       forward_to         = [loki.process.argocd_pod_logs.receiver]
