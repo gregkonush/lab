@@ -25,6 +25,11 @@ Configuration can be provided via a YAML file or environment variables (prefixed
 | `argo.service_account` | `FACTEUR_ARGO_SERVICE_ACCOUNT` | Service account name supplied to workflow submissions (defaults to controller value). |
 | `argo.parameters` | `FACTEUR_ARGO_PARAMETERS` | Key/value overrides applied to every workflow submission. Expect a JSON object when sourced from env vars. |
 | `role_map` | `FACTEUR_ROLE_MAP` | Mapping of command names to the Discord role IDs that can invoke them. See [role map schema](../schemas/facteur-discord-role-map.schema.json).
+| `codex_listener.enabled` | `FACTEUR_CODEX_LISTENER_ENABLED` | Set to `true` to stream the structured Codex task topic for debugging (
+`facteur codex-listen`). |
+| `codex_listener.brokers` | `FACTEUR_CODEX_LISTENER_BROKERS` | Comma-separated Kafka bootstrap brokers used by the listener. |
+| `codex_listener.topic` | `FACTEUR_CODEX_LISTENER_TOPIC` | Structured Codex task topic (default `github.issues.codex.tasks`). |
+| `codex_listener.group_id` | `FACTEUR_CODEX_LISTENER_GROUP_ID` | Kafka consumer group name for the listener (defaults to `facteur-codex-listener`). |
 
 An example configuration is provided in `services/facteur/config/example.yaml`.
 
@@ -84,6 +89,11 @@ topic, deserialises the message via the protobuf stubs, and drives the workflow 
 for using the interaction token carried in the event to post follow-up updates back to Discord once the workflow
 completes.
 
+Structured Codex tasks arrive through a dedicated KafkaSource (`kubernetes/facteur/base/codex-kafkasource.yaml`) that
+subscribes to `github.issues.codex.tasks` and forwards each protobuf payload to the Knative service at `/codex/tasks`.
+The handler simply logs the stage, repository, issue number, and delivery identifier today so operators can verify the
+feed before deeper integrations are wired up.
+
 ### Protobuf workflow
 
 - The repository is wired to a Buf workspace (`buf.work.yaml`). Run `buf generate` (or `pnpm proto:generate`) to
@@ -91,6 +101,11 @@ completes.
 - Go stubs continue to land in `services/facteur/internal/facteurpb` and TypeScript stubs are generated with
   [`protobuf-es`](https://github.com/bufbuild/protobuf-es) for use in `apps/froussard`. Keep dependant services pinned
   to the generated classes instead of hand-rolled JSON structures.
+- GitHub-facing payloads now share the same toolchain via `github/v1/webhook_event.proto` and
+  `github/v1/codex_task.proto`, landing in `services/facteur/internal/githubpb` (Go) and
+  `apps/froussard/src/proto/github/v1` (TypeScript). The structured Codex stream publishes to
+  `github.issues.codex.tasks`; run `facteur codex-listen` to tail those payloads locally before wiring them into the
+  workflow dispatcher.
 - Continuous integration runs `buf format --diff` and `buf lint` through `.github/workflows/buf-ci.yml`, with
   breaking-change detection enabled once the base branch carries matching Buf configs.
 

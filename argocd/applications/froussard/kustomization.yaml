@@ -14,6 +14,7 @@ resources:
   - discord-codex-secret.yaml
   - github-webhook-topic.yaml
   - github-codex-topic.yaml
+  - github-issues-codex-tasks-topic.yaml
   - github-codex-planning-workflow-template.yaml
   - github-codex-implementation-workflow-template.yaml
   - github-codex-sensor.yaml

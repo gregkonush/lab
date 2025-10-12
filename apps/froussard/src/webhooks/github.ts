@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { Timestamp } from '@bufbuild/protobuf'
 import type { Webhooks } from '@octokit/webhooks'
-
 import { Effect } from 'effect'
 
 import { buildCodexBranchName, buildCodexPrompt, type CodexTaskMessage, normalizeLogin } from '@/codex'
@@ -8,6 +8,7 @@ import { selectReactionRepository } from '@/codex-workflow'
 import type { AppRuntime } from '@/effect/runtime'
 import { deriveRepositoryFullName, isGithubIssueCommentEvent, isGithubIssueEvent } from '@/github-payload'
 import { logger } from '@/logger'
+import { CodexTaskStage, CodexTask as GithubCodexTaskMessage } from '@/proto/github/v1/codex_task_pb'
 import { GithubService } from '@/services/github'
 
 import type { WebhookConfig } from './types'
@@ -17,6 +18,38 @@ export interface GithubWebhookDependencies {
   runtime: AppRuntime
   webhooks: Webhooks
   config: WebhookConfig
+}
+
+const PROTO_CONTENT_TYPE = 'application/x-protobuf'
+const PROTO_CODEX_TASK_FULL_NAME = 'github.v1.CodexTask'
+const PROTO_CODEX_TASK_SCHEMA = 'github/v1/codex_task.proto'
+
+const toTimestamp = (value: string): Timestamp => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return Timestamp.fromDate(new Date())
+  }
+  return Timestamp.fromDate(date)
+}
+
+const toCodexTaskProto = (message: CodexTaskMessage, deliveryId: string): GithubCodexTaskMessage => {
+  return new GithubCodexTaskMessage({
+    stage: message.stage === 'planning' ? CodexTaskStage.PLANNING : CodexTaskStage.IMPLEMENTATION,
+    prompt: message.prompt,
+    repository: message.repository,
+    base: message.base,
+    head: message.head,
+    issueNumber: BigInt(message.issueNumber),
+    issueUrl: message.issueUrl,
+    issueTitle: message.issueTitle,
+    issueBody: message.issueBody,
+    sender: message.sender,
+    issuedAt: toTimestamp(message.issuedAt),
+    planCommentId: message.planCommentId !== undefined ? BigInt(message.planCommentId) : undefined,
+    planCommentUrl: message.planCommentUrl,
+    planCommentBody: message.planCommentBody,
+    deliveryId,
+  })
 }
 
 export const createGithubWebhookHandler =
@@ -66,6 +99,7 @@ export const createGithubWebhookHandler =
     if (actionValue) {
       headers['x-github-action'] = actionValue
     }
+    headers['x-hub-signature-256'] = signatureHeader
 
     let codexStageTriggered: string | null = null
 
@@ -119,6 +153,23 @@ export const createGithubWebhookHandler =
                   key: `issue-${issueNumber}-planning`,
                   value: JSON.stringify(codexMessage),
                   headers: { ...headers, 'x-codex-task-stage': 'planning' },
+                }),
+              )
+
+              const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
+
+              await runtime.runPromise(
+                publishKafkaMessage({
+                  topic: config.topics.codexStructured,
+                  key: `issue-${issueNumber}-planning`,
+                  value: codexStructuredMessage.toBinary(),
+                  headers: {
+                    ...headers,
+                    'content-type': PROTO_CONTENT_TYPE,
+                    'x-codex-task-stage': 'planning',
+                    'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
+                    'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
+                  },
                 }),
               )
 
@@ -227,6 +278,23 @@ export const createGithubWebhookHandler =
                 key: `issue-${issueNumber}-implementation`,
                 value: JSON.stringify(codexMessage),
                 headers: { ...headers, 'x-codex-task-stage': 'implementation' },
+              }),
+            )
+
+            const codexStructuredMessage = toCodexTaskProto(codexMessage, deliveryId)
+
+            await runtime.runPromise(
+              publishKafkaMessage({
+                topic: config.topics.codexStructured,
+                key: `issue-${issueNumber}-implementation`,
+                value: codexStructuredMessage.toBinary(),
+                headers: {
+                  ...headers,
+                  'content-type': PROTO_CONTENT_TYPE,
+                  'x-codex-task-stage': 'implementation',
+                  'x-protobuf-message': PROTO_CODEX_TASK_FULL_NAME,
+                  'x-protobuf-schema': PROTO_CODEX_TASK_SCHEMA,
+                },
               }),
             )
 

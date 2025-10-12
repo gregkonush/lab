@@ -15,6 +15,7 @@ type Config struct {
 	Argo    ArgoConfig          `mapstructure:"argo"`
 	RoleMap map[string][]string `mapstructure:"role_map"`
 	Server  ServerConfig        `mapstructure:"server"`
+	Codex   CodexListenerConfig `mapstructure:"codex_listener"`
 }
 
 // DiscordConfig aggregates Discord bot credentials and routing data.
@@ -41,6 +42,30 @@ type ArgoConfig struct {
 // ServerConfig contains HTTP server runtime options.
 type ServerConfig struct {
 	ListenAddress string `mapstructure:"listen_address"`
+}
+
+// CodexListenerConfig captures Kafka settings for the structured Codex task stream.
+type CodexListenerConfig struct {
+	Enabled bool            `mapstructure:"enabled"`
+	Brokers []string        `mapstructure:"brokers"`
+	Topic   string          `mapstructure:"topic"`
+	GroupID string          `mapstructure:"group_id"`
+	TLS     KafkaTLSConfig  `mapstructure:"tls"`
+	SASL    KafkaSASLConfig `mapstructure:"sasl"`
+}
+
+// KafkaTLSConfig toggles TLS behaviour for Kafka clients.
+type KafkaTLSConfig struct {
+	Enabled            bool `mapstructure:"enabled"`
+	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"`
+}
+
+// KafkaSASLConfig captures SASL auth for Kafka clients.
+type KafkaSASLConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Mechanism string `mapstructure:"mechanism"`
+	Username  string `mapstructure:"username"`
+	Password  string `mapstructure:"password"`
 }
 
 // Options customises how configuration should be loaded.
@@ -76,6 +101,16 @@ func LoadWithOptions(opts Options) (*Config, error) {
 		"argo.parameters",
 		"role_map",
 		"server.listen_address",
+		"codex_listener.enabled",
+		"codex_listener.brokers",
+		"codex_listener.topic",
+		"codex_listener.group_id",
+		"codex_listener.tls.enabled",
+		"codex_listener.tls.insecure_skip_verify",
+		"codex_listener.sasl.enabled",
+		"codex_listener.sasl.mechanism",
+		"codex_listener.sasl.username",
+		"codex_listener.sasl.password",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("bind env %s: %w", key, err)
@@ -113,6 +148,9 @@ func normaliseConfig(cfg *Config) {
 	if cfg.Server.ListenAddress == "" {
 		cfg.Server.ListenAddress = ":8080"
 	}
+	if cfg.Codex.GroupID == "" {
+		cfg.Codex.GroupID = "facteur-codex-listener"
+	}
 }
 
 func validate(cfg Config) error {
@@ -133,6 +171,17 @@ func validate(cfg Config) error {
 	}
 	if cfg.Argo.WorkflowTemplate == "" {
 		errs = append(errs, "argo.workflow_template is required")
+	}
+	if cfg.Codex.Enabled {
+		if len(cfg.Codex.Brokers) == 0 {
+			errs = append(errs, "codex_listener.brokers is required when enabled")
+		}
+		if cfg.Codex.Topic == "" {
+			errs = append(errs, "codex_listener.topic is required when enabled")
+		}
+		if cfg.Codex.GroupID == "" {
+			errs = append(errs, "codex_listener.group_id is required when enabled")
+		}
 	}
 
 	if len(errs) > 0 {

@@ -1,0 +1,30 @@
+apiVersion: sources.knative.dev/v1
+kind: KafkaSource
+metadata:
+  name: facteur-codex-tasks
+  namespace: facteur
+spec:
+  bootstrapServers:
+    - kafka-kafka-bootstrap.kafka:9092
+  topics:
+    - github.issues.codex.tasks
+  consumerGroup: facteur-codex-listener
+  initialOffset: earliest
+  net:
+    sasl:
+      enable: true
+      user:
+        secretKeyRef:
+          name: facteur-kafka
+          key: username
+      password:
+        secretKeyRef:
+          name: facteur-kafka
+          key: password
+  sink:
+    ref:
+      apiVersion: v1
+      kind: Service
+      name: facteur-internal
+      namespace: facteur
+    uri: /codex/tasks
