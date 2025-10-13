@@ -37,7 +37,8 @@
     "dev": "bun --watch src/bin/start-worker.ts",
     "build": "bunx tsc --project tsconfig.json --pretty false",
     "test": "bun test",
-    "start:worker": "bun run dist/bin/start-worker.js"
+    "start:worker": "bun run dist/bin/start-worker.js",
+    "build:native": "cargo build --release --manifest-path native/temporal-bun-bridge/Cargo.toml"
   },
   "engines": {
     "bun": ">=1.1.20"

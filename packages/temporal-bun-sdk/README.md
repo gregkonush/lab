@@ -12,7 +12,27 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 
 ```bash
 pnpm install
+
+# Clone upstream Temporal sources (one-time setup)
+git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git ~/github.com/temporalio/sdk-core
+git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git ~/github.com/temporalio/sdk-typescript
+
+# Symlink the checkouts into this workspace (kept out of git)
+mkdir -p packages/temporal-bun-sdk/vendor
+ln -s ~/github.com/temporalio/sdk-core packages/temporal-bun-sdk/vendor/sdk-core
+ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sdk-typescript
+
+# Compile the native Temporal bridge (requires protoc in PATH)
+pnpm --filter @proompteng/temporal-bun-sdk run build:native
 ```
+
+> **Tip:** For deterministic builds, pin the repositories to the versions we test against:
+> ```bash
+> git -C ~/github.com/temporalio/sdk-core checkout 9a54f72f  # example commit
+> git -C ~/github.com/temporalio/sdk-typescript checkout v1.13.1
+> ```
+
+Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
 
 Build and test the package:
 
@@ -80,4 +100,4 @@ docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --bu
 | `pnpm --filter @proompteng/temporal-bun-sdk build` | Type-check and emit to `dist/`. |
 | `pnpm --filter @proompteng/temporal-bun-sdk test` | Run Bun tests under `tests/`. |
 | `pnpm --filter @proompteng/temporal-bun-sdk run start:worker` | Launch the compiled worker. |
-
+| `pnpm --filter @proompteng/temporal-bun-sdk run build:native` | Build the Bun ↔ Temporal native bridge. |

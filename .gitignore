@@ -241,3 +241,5 @@ tmp/
 
 # Rails credentials
 services/dernier/config/master.key
+/packages/temporal-bun-sdk/native/temporal-bun-bridge/target/
+/packages/temporal-bun-sdk/vendor/
