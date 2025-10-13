@@ -40,30 +40,26 @@ const defaultServerExtraArgs = [
   '--etcd-snapshot-schedule-cron="0 */6 * * *"',
   '--etcd-snapshot-retention=20',
   '--kube-proxy-arg=proxy-mode=ipvs',
-  '--kube-proxy-arg=ipvs-scheduler=rr',
+  '--kube-proxy-arg=ipvs-scheduler=wrr',
   '--kubelet-arg=cpu-manager-policy=static',
-  '--kubelet-arg=cpu-manager-policy-options=full-pcpus-only',
   '--kubelet-arg=topology-manager-policy=single-numa-node',
   '--kubelet-arg=reserved-cpus=0-1',
   '--kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi',
   '--kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi',
-  '--kubelet-arg=max-parallel-image-pulls=8',
   '--kubelet-arg=container-log-max-size=10Mi',
-  '--kubelet-arg=container-log-max-files=5',
+  '--kubelet-arg=container-log-max-files=3',
   '--kubelet-arg=serialize-image-pulls=false',
   '--node-taint=node-role.kubernetes.io/control-plane=true:NoSchedule',
 ].join(' ')
 
 const defaultWorkerExtraArgs = [
   '--kubelet-arg=cpu-manager-policy=static',
-  '--kubelet-arg=cpu-manager-policy-options=full-pcpus-only',
   '--kubelet-arg=topology-manager-policy=single-numa-node',
   '--kubelet-arg=reserved-cpus=0-1',
   '--kubelet-arg=kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi',
   '--kubelet-arg=system-reserved=cpu=500m,memory=1Gi,ephemeral-storage=1Gi',
-  '--kubelet-arg=max-parallel-image-pulls=8',
   '--kubelet-arg=container-log-max-size=10Mi',
-  '--kubelet-arg=container-log-max-files=5',
+  '--kubelet-arg=container-log-max-files=3',
   '--kubelet-arg=serialize-image-pulls=false',
 ].join(' ')
 
