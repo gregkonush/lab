@@ -2,6 +2,8 @@ name: karapace schema sync
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'proto/**'
       - 'proto/schema-subjects.json'
@@ -24,6 +26,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
 
       - name: Set up Buf
         uses: bufbuild/buf-setup-action@v1
