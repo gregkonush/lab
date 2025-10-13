@@ -1,7 +1,8 @@
 {
   "schemas": [
     {
-      "file": "google/protobuf/timestamp.proto",
+      "module": "buf.build/protocolbuffers/wellknowntypes",
+      "path": "google/protobuf/timestamp.proto",
       "order": -10,
       "subjects": [
         { "name": "google.protobuf.Timestamp" }

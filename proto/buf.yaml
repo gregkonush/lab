@@ -4,9 +4,6 @@ deps: []
 lint:
   use:
     - STANDARD
-  ignore_only:
-    PACKAGE_VERSION_SUFFIX:
-      - google/protobuf/timestamp.proto
 breaking:
   use:
     - FILE

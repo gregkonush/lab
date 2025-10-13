@@ -9,8 +9,9 @@
  */
 
 import { parseArgs } from 'node:util'
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 type Reference = {
   name: string
@@ -24,7 +25,9 @@ type SubjectEntry = {
 }
 
 type ManifestEntry = {
-  file: string
+  file?: string
+  module?: string
+  path?: string
   subjects: SubjectEntry[]
   references?: Reference[]
   order?: number
@@ -88,11 +91,39 @@ const sortedEntries = [...manifest.schemas].sort((a, b) => {
   if (orderA !== orderB) {
     return orderA - orderB
   }
-  return a.file.localeCompare(b.file)
+  const fileA = a.file ?? `${a.module ?? ''}:${a.path ?? ''}`
+  const fileB = b.file ?? `${b.module ?? ''}:${b.path ?? ''}`
+  return fileA.localeCompare(fileB)
 })
 
 const authHeader =
   username && password ? `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` : undefined
+
+async function readModuleFile(moduleName: string, modulePath: string): Promise<string> {
+  const workDir = await mkdtemp(join(tmpdir(), 'karapace-'))
+  const result = Bun.spawnSync({
+    cmd: ['buf', 'export', moduleName, '--path', modulePath, '--output', workDir],
+  })
+  if (!result.success) {
+    await rm(workDir, { recursive: true, force: true })
+    const stderr = new TextDecoder().decode(result.stderr)
+    throw new Error(`Failed to export ${moduleName}/${modulePath}: ${stderr}`)
+  }
+  const absolutePath = join(workDir, modulePath)
+  const contents = await readFile(absolutePath, 'utf8')
+  await rm(workDir, { recursive: true, force: true })
+  return contents
+}
+
+async function loadSchemaSource(entry: ManifestEntry): Promise<string> {
+  if (entry.file) {
+    return readFile(join(protoRoot, entry.file), 'utf8')
+  }
+  if (entry.module && entry.path) {
+    return readModuleFile(entry.module, entry.path)
+  }
+  throw new Error('Manifest entry must include `file` or (`module` and `path`).')
+}
 
 async function register(subject: string, schemaSource: string, references: Reference[] | undefined): Promise<void> {
   if (dryRun || !baseUrl) {
@@ -128,12 +159,12 @@ async function register(subject: string, schemaSource: string, references: Refer
 }
 
 for (const entry of sortedEntries) {
-  if (!entry.file || !Array.isArray(entry.subjects) || entry.subjects.length === 0) {
+  if (!Array.isArray(entry.subjects) || entry.subjects.length === 0) {
     console.warn(`Skipping invalid manifest entry: ${JSON.stringify(entry)}`)
     continue
   }
 
-  const schemaText = await readFile(join(protoRoot, entry.file), 'utf8')
+  const schemaText = await loadSchemaSource(entry)
   const baseReferences = entry.references ?? []
 
   for (const subject of entry.subjects) {
