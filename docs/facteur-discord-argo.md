@@ -160,7 +160,7 @@ Facteur initialises OpenTelemetry during startup, enabling spans and metrics acr
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Aligns with the observability stack's OTLP HTTP gateways. |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces` | Tempo ingestion endpoint. |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics` | Mimir ingestion endpoint. |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://observability-loki-gateway.observability.svc.cluster.local/loki/api/v1/push` | Loki ingestion endpoint (reserved for future log exporting). |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push` | Loki ingestion endpoint (reserved for future log exporting). |
 
 Knative does not inject the observability wiring automatically; the Argo CD overlay now provisions a dedicated Grafana Alloy deployment (`facteur-alloy`) that tails all pods in the `facteur` namespace and pushes the output to the in-cluster Loki gateway. The manifests live in `argocd/applications/facteur/overlays/cluster/alloy-*.yaml`, keeping the observability routing alongside the rest of the service configuration.
 

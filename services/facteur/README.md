@@ -29,11 +29,11 @@ Facteur boots with OpenTelemetry telemetry enabled. Traces and metrics are expor
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces`
 - `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics`
-- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://observability-loki-gateway.observability.svc.cluster.local/loki/api/v1/push`
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push`
 
 When running locally, point these values at your observability environment to keep telemetry flowing. The service emits counters such as `facteur_command_events_processed_total`, `facteur_command_events_failed_total`, and `facteur_command_events_dlq_total`, and wraps the Fiber HTTP server with OTEL middleware so HTTP requests appear in traces.
 
-Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd/applications/facteur/overlays/cluster/alloy-*.yaml`) to forward Knative pod logs to the observability Loki gateway, since the Knative stack does not configure log shipping on its own.
+Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd/applications/facteur/overlays/cluster/alloy-*.yaml`) to forward Knative pod logs to the observability Loki gateway (`observability-loki-loki-distributed-gateway`), since the Knative stack does not configure log shipping on its own.
 
 ## Container image
 
