@@ -143,18 +143,31 @@ function shellEscape(part: string) {
   return /[^A-Za-z0-9_@%+=:,./-]/.test(part) ? `'${part.replace(/'/g, `'\\''`)}'` : part
 }
 
-async function exec(parts: ExecArgs, options: { capture?: boolean } = {}) {
+async function exec(parts: ExecArgs, options: { capture?: boolean; silent?: boolean } = {}) {
   const command = parts.map(shellEscape).join(' ')
-  console.log(dryRun ? `$ (dry-run) ${command}` : `$ ${command}`)
+  if (!options.silent) {
+    console.log(dryRun ? `$ (dry-run) ${command}` : `$ ${command}`)
+  }
   if (dryRun) {
     return options.capture ? '' : undefined
   }
-  const proc = $`${{ raw: command }}`
+  const procBuilder = $`${{ raw: command }}`
+  const proc = options.silent ? procBuilder.quiet() : procBuilder
   if (options.capture) {
     return (await proc.text()).trim()
   }
   await proc
   return undefined
+}
+
+async function execOptional(parts: ExecArgs, label: string) {
+  try {
+    await exec(parts)
+  } catch (error) {
+    if (!dryRun) {
+      console.warn(`Ignored error while ${label}:`, error instanceof Error ? error.message : error)
+    }
+  }
 }
 
 async function fetchNodeToken() {
@@ -172,6 +185,7 @@ async function fetchNodeToken() {
 }
 
 async function installPrimary() {
+  await cleanupServer(primaryHost)
   console.log(`Setting up primary server ${primaryHost}`)
   await exec([
     'k3sup',
@@ -194,6 +208,7 @@ async function installPrimary() {
 
 async function joinAdditionalServers(nodeToken: string) {
   await runParallel(additionalServers, serverParallelism, async (host, index) => {
+    await cleanupServer(host)
     console.log(`Setting up additional server ${index + 2} (${host})`)
     await exec([
       'k3sup',
@@ -217,6 +232,7 @@ async function joinAdditionalServers(nodeToken: string) {
 
 async function joinWorkers(nodeToken: string) {
   await runParallel(workerHosts, workerParallelism, async (host, index) => {
+    await cleanupAgent(host)
     console.log(`Setting up worker ${index + 1} (${host})`)
     await exec([
       'k3sup',
@@ -239,6 +255,7 @@ async function joinWorkers(nodeToken: string) {
 
 async function main() {
   await installPrimary()
+  await waitForServerReady()
   console.log('Fetching node token from primary')
   const nodeToken = await fetchNodeToken()
   await joinAdditionalServers(nodeToken)
@@ -270,4 +287,92 @@ async function runParallel<T>(items: T[], concurrency: number, task: (item: T, i
   }
 
   await Promise.all(Array.from({ length: limit }, worker))
+}
+
+async function cleanupServer(host: string) {
+  await cleanupNode(host, true)
+}
+
+async function cleanupAgent(host: string) {
+  await cleanupNode(host, false)
+}
+
+async function cleanupNode(host: string, isServer: boolean) {
+  if (dryRun) {
+    console.log(`$ (dry-run) ssh cleanup on ${host}`)
+    return
+  }
+  await runIfExists(host, '/usr/local/bin/k3s-killall.sh', `running k3s-killall on ${host}`)
+  if (isServer) {
+    await runIfExists(host, '/usr/local/bin/k3s-uninstall.sh', `running k3s-uninstall on ${host}`)
+  } else {
+    await runIfExists(host, '/usr/local/bin/k3s-agent-uninstall.sh', `running k3s-agent-uninstall on ${host}`)
+    await runIfExists(host, '/usr/local/bin/k3s-uninstall.sh', `running k3s-uninstall fallback on ${host}`)
+  }
+  const target = `${sshUser}@${host}`
+  const sshBase = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', target]
+  await execOptional(
+    [...sshBase, 'sudo', 'rm', '-f', '/var/lib/kubelet/cpu_manager_state'],
+    `clearing cpu_manager_state on ${host}`,
+  )
+}
+
+async function waitForServerReady() {
+  if (dryRun) {
+    console.log('$ (dry-run) waiting for primary server readiness')
+    return
+  }
+  const timeoutMs = Number.parseInt(process.env.K3S_READY_TIMEOUT_MS ?? '300000', 10)
+  const pollIntervalMs = Number.parseInt(process.env.K3S_READY_POLL_MS ?? '5000', 10)
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    try {
+      const json = await exec(['kubectl', '--kubeconfig', kubeConfigPath, 'get', 'nodes', '-o', 'json'], {
+        capture: true,
+        silent: true,
+      })
+      if (json) {
+        const data = JSON.parse(json) as {
+          items?: Array<{
+            metadata?: { name?: string }
+            status?: { conditions?: Array<{ type?: string; status?: string }> }
+          }>
+        }
+        const nodes = data.items ?? []
+        const readyNode = nodes.find((node) =>
+          (node.status?.conditions ?? []).some((cond) => cond.type === 'Ready' && cond.status === 'True'),
+        )
+        if (readyNode) {
+          console.log(`Primary control-plane reported Ready (node ${readyNode.metadata?.name ?? 'unknown'})`)
+          return
+        }
+      }
+    } catch (error) {
+      console.warn('Waiting for server readiness:', error instanceof Error ? error.message : error)
+    }
+    await sleep(pollIntervalMs)
+  }
+  throw new Error(`Timed out waiting for primary server ${primaryHost} to become Ready`)
+}
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function runIfExists(host: string, path: string, label: string) {
+  if (dryRun) {
+    console.log(`$ (dry-run) ssh check ${path} on ${host}`)
+    return
+  }
+  const target = `${sshUser}@${host}`
+  const sshBase = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', target]
+  try {
+    await exec([...sshBase, 'sudo', 'test', '-x', path], { silent: true })
+  } catch {
+    return
+  }
+  await execOptional([...sshBase, 'sudo', path], label)
 }
