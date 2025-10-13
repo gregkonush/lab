@@ -1,0 +1,17 @@
+{
+  "schemas": [
+    {
+      "file": "facteur/v1/contract.proto",
+      "subjects": [
+        { "name": "discord.commands.incoming-value" },
+        { "name": "discord.commands.incoming.dlq-value" }
+      ]
+    },
+    {
+      "file": "github/v1/codex_task.proto",
+      "subjects": [
+        { "name": "github.issues.codex.tasks-value" }
+      ]
+    }
+  ]
+}
