@@ -16,10 +16,10 @@ provider "harvester" {
 
 locals {
   kube_master_cpu       = 8
-  kube_worker_cpu       = 8
+  kube_worker_cpu       = 16
   docker_vm_cpu         = 8
   kube_master_memory    = "32Gi"
-  kube_worker_memory    = "24Gi"
+  kube_worker_memory    = "30Gi"
   docker_vm_memory      = "32Gi"
   kube_node_disk_size   = "150Gi"
   docker_node_disk_size = "100Gi"
