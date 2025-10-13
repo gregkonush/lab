@@ -1,9 +1,12 @@
+import os from 'node:os'
+
 import { Effect, Layer } from 'effect'
 import pino, { multistream } from 'pino'
 
 const level = process.env.LOG_LEVEL ?? 'info'
 const service = process.env.OTEL_SERVICE_NAME ?? process.env.LGTM_SERVICE_NAME ?? 'froussard'
 const namespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
+const hostname = process.env.POD_NAME ?? process.env.HOSTNAME ?? os.hostname()
 const lokiEndpoint = process.env.LGTM_LOKI_ENDPOINT
 const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 
@@ -25,6 +28,7 @@ if (lokiEndpoint) {
         labels: {
           service,
           namespace,
+          hostname,
         },
         basicAuth: lokiBasicAuth,
       },
