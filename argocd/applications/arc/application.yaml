@@ -26,7 +26,7 @@ spec:
           githubConfigSecret: github-token
           runnerScaleSetName: arc-arm64
           minRunners: 3
-          maxRunners: 9
+          maxRunners: 5
           containerMode:
             type: "kubernetes"
             kubernetesModeWorkVolumeClaim:
@@ -37,6 +37,13 @@ spec:
                   storage: 1Gi
           template:
             spec:
+              nodeSelector:
+                github.com/arc-runner: 'true'
+              tolerations:
+                - key: dedicated
+                  operator: Equal
+                  value: arc-runner
+                  effect: NoSchedule
               securityContext:
                 runAsNonRoot: false
               initContainers:
