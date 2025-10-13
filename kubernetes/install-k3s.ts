@@ -16,6 +16,21 @@ const kubeConfigPath = process.env.K3S_LOCAL_PATH ?? `${homeDir}/.kube/config`
 const kubeContext = process.env.K3S_CONTEXT ?? 'default'
 const primaryHost = process.env.K3S_PRIMARY_HOST ?? '192.168.1.150'
 
+function readParallelism(value: string | undefined, fallback: number) {
+  if (!value) {
+    return fallback
+  }
+  const parsed = Number.parseInt(value, 10)
+  if (Number.isNaN(parsed) || parsed < 1) {
+    throw new Error(`Invalid parallelism value "${value}"`)
+  }
+  return parsed
+}
+
+const baseParallelism = readParallelism(process.env.K3S_PARALLELISM, 5)
+const serverParallelism = readParallelism(process.env.K3S_SERVER_PARALLELISM, baseParallelism)
+const workerParallelism = readParallelism(process.env.K3S_WORKER_PARALLELISM, baseParallelism)
+
 const defaultServerExtraArgs = [
   '--disable servicelb',
   '--flannel-backend=host-gw',
@@ -182,7 +197,7 @@ async function installPrimary() {
 }
 
 async function joinAdditionalServers(nodeToken: string) {
-  for (const [index, host] of additionalServers.entries()) {
+  await runParallel(additionalServers, serverParallelism, async (host, index) => {
     console.log(`Setting up additional server ${index + 2} (${host})`)
     await exec([
       'k3sup',
@@ -201,11 +216,11 @@ async function joinAdditionalServers(nodeToken: string) {
       '--k3s-extra-args',
       serverExtraArgs,
     ])
-  }
+  })
 }
 
 async function joinWorkers(nodeToken: string) {
-  for (const [index, host] of workerHosts.entries()) {
+  await runParallel(workerHosts, workerParallelism, async (host, index) => {
     console.log(`Setting up worker ${index + 1} (${host})`)
     await exec([
       'k3sup',
@@ -223,7 +238,7 @@ async function joinWorkers(nodeToken: string) {
       '--k3s-extra-args',
       workerExtraArgs,
     ])
-  }
+  })
 }
 
 async function main() {
@@ -239,3 +254,24 @@ main().catch((error) => {
   console.error(error instanceof Error ? error.message : error)
   process.exitCode = 1
 })
+
+async function runParallel<T>(items: T[], concurrency: number, task: (item: T, index: number) => Promise<void>) {
+  if (items.length === 0) {
+    return
+  }
+  const limit = Math.min(concurrency, items.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (true) {
+      const currentIndex = nextIndex
+      if (currentIndex >= items.length) {
+        return
+      }
+      nextIndex += 1
+      await task(items[currentIndex]!, currentIndex)
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, worker))
+}
