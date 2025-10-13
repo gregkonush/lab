@@ -1,5 +1,6 @@
-import { Effect, Layer } from 'effect'
 import os from 'node:os'
+
+import { Effect, Layer } from 'effect'
 import pino, { multistream } from 'pino'
 
 const level = process.env.LOG_LEVEL ?? 'info'
