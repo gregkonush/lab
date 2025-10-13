@@ -1,6 +1,7 @@
 version: v1
 name: buf.build/gregkonush/lab-proto
-deps: []
+deps:
+  - buf.build/protocolbuffers/wellknowntypes
 lint:
   use:
     - STANDARD

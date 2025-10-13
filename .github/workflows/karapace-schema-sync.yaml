@@ -1,0 +1,51 @@
+name: karapace schema sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'proto/**'
+      - 'proto/schema-subjects.json'
+      - 'scripts/karapace/**'
+      - '.github/workflows/karapace-schema-sync.yaml'
+  pull_request:
+    paths:
+      - 'proto/**'
+      - 'proto/schema-subjects.json'
+      - 'scripts/karapace/**'
+      - '.github/workflows/karapace-schema-sync.yaml'
+
+jobs:
+  sync:
+    runs-on: arc-arm64
+    env:
+      KARAPACE_URL: ${{ secrets.KARAPACE_URL }}
+      KARAPACE_USER: ${{ secrets.KARAPACE_USER }}
+      KARAPACE_PASSWORD: ${{ secrets.KARAPACE_PASSWORD }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: 1.47.2
+          github_token: ${{ github.token }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate protos compile
+        run: buf build proto
+
+      - name: Dry run schema sync
+        if: ${{ github.event_name == 'pull_request' }}
+        run: bun run scripts/karapace/sync-protos.ts --dry-run
+
+      - name: Sync schemas to Karapace
+        if: ${{ github.event_name != 'pull_request' }}
+        run: bun run scripts/karapace/sync-protos.ts
