@@ -33,6 +33,7 @@ resources:
   - strimzi-operator-watched-crb.yaml
   - load-balancer.yaml
   - strimzi-kafka-cluster.yaml
+  - karapace.yaml
 patches:
   # Make the operator watch all namespaces
   - target:
@@ -156,6 +157,8 @@ helmCharts:
           clusters:
             - name: kafka
               bootstrapServers: kafka-kafka-bootstrap:9092
+              schemaRegistry: http://karapace:8081
+              defaultValueSerde: SchemaRegistry
               properties:
                 security.protocol: SASL_PLAINTEXT
                 sasl.mechanism: SCRAM-SHA-512

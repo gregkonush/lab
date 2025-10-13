@@ -59,3 +59,14 @@ metadata:
 spec:
   authentication:
     type: scram-sha-512
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: karapace
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  authentication:
+    type: scram-sha-512
