@@ -72,7 +72,8 @@ export const runCodexImplementation = async (eventPath: string) => {
   const agentOutputPath = process.env.AGENT_OUTPUT_PATH ?? `${worktree}/.codex-implementation-agent.log`
   const runtimeLogPath = process.env.CODEX_RUNTIME_LOG_PATH ?? `${worktree}/.codex-implementation-runtime.log`
   const lokiEndpoint =
-    process.env.LGTM_LOKI_ENDPOINT ?? 'http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push'
+    process.env.LGTM_LOKI_ENDPOINT ??
+    'http://observability-loki-gateway.observability.svc.cluster.local/loki/api/v1/push'
   const lokiTenant = process.env.LGTM_LOKI_TENANT
   const lokiBasicAuth = process.env.LGTM_LOKI_BASIC_AUTH
 

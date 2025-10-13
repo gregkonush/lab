@@ -43,6 +43,6 @@ data:
 
     loki.write "default" {
       endpoint {
-        url = "http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push"
+        url = "http://observability-loki-gateway.observability.svc.cluster.local/loki/api/v1/push"
       }
     }

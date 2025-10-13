@@ -29,13 +29,13 @@ TigerBeetle support is disabled by default (`TIGERBEETLE_ENABLED=false`). To emi
 
 Restart the deployment after updating the ConfigMap so the new environment variables are applied.
 
-## Observability (LGTM)
+## Observability (Observability Stack)
 
-`miel-config` now hydrates OpenTelemetry defaults that point at the in-cluster LGTM stack:
+`miel-config` now hydrates OpenTelemetry defaults that point at the in-cluster observability stack:
 
 - `OTEL_SERVICE_NAME=miel`
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
-- OTLP endpoints for traces (`lgtm-tempo-distributor`), metrics (`lgtm-mimir-nginx`), and logs (`lgtm-loki-gateway`).
+- OTLP endpoints for traces (`observability-tempo-distributor`), metrics (`observability-mimir-nginx`), and logs (`observability-loki-gateway`).
 
 Override these values as needed for other environments, then restart the deployment (or let Argo CD roll pods) to pick up the new telemetry configuration.
 

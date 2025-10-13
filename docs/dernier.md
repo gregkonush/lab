@@ -118,5 +118,5 @@ argocd app sync dernier
 ## Observability
 
 - Rails logs stream to stdout and are collected by the platform’s fluent agent.
-- CNPG and Redis exporters expose metrics consumed by LGTM via the shared Prometheus stack.
+- CNPG and Redis exporters expose metrics consumed by the observability stack via the shared Prometheus pipeline.
 - Enable verbose logging temporarily with `RAILS_LOG_LEVEL=debug` through a sealed secret rotation; remember to revert to `info`.
