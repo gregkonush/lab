@@ -1,0 +1,57 @@
+{
+  "name": "@proompteng/temporal-bun-sdk",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "bin": {
+    "temporal-bun-worker": "./dist/bin/start-worker.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "default": "./dist/worker.js"
+    },
+    "./bin/start-worker": "./dist/bin/start-worker.js"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "dev": "bun --watch src/bin/start-worker.ts",
+    "build": "bunx tsc --project tsconfig.json --pretty false",
+    "test": "bun test",
+    "start:worker": "bun run dist/bin/start-worker.js"
+  },
+  "engines": {
+    "bun": ">=1.1.20"
+  },
+  "dependencies": {
+    "@temporalio/activity": "^1.13.0",
+    "@temporalio/common": "^1.13.0",
+    "@temporalio/client": "^1.13.0",
+    "@temporalio/worker": "^1.13.0",
+    "@temporalio/workflow": "^1.13.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "bun-types": "^1.1.20"
+  }
+}
