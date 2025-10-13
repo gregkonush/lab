@@ -39,14 +39,6 @@ run:
     value: froussard
   - name: OTEL_SERVICE_NAMESPACE
     value: froussard
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: POD_NAMESPACE
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.namespace
   - name: FROUSSARD_VERSION
     value: '{{ env:FROUSSARD_VERSION }}'
   - name: FROUSSARD_COMMIT
@@ -61,7 +53,7 @@ run:
     value: http/protobuf
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:3340b1740920dfec937f57ba889d54d78b7230a70f69b9041917c0709ce8dbef
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:de7e6d32924179f06e9ebcb4fb042c92a2efba94f24b82780d6c12e6f146f5fd
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:
