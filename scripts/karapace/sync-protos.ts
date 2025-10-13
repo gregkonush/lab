@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 type Reference = {
   name: string
   subject: string
-  version: number
+  version?: number
 }
 
 type SubjectEntry = {
@@ -125,6 +125,47 @@ async function loadSchemaSource(entry: ManifestEntry): Promise<string> {
   throw new Error('Manifest entry must include `file` or (`module` and `path`).')
 }
 
+const referenceCache = new Map<string, number>()
+
+async function resolveReferences(refs: Reference[] | undefined): Promise<Reference[] | undefined> {
+  if (!refs || refs.length === 0) {
+    return refs
+  }
+
+  if (dryRun || !baseUrl) {
+    return refs.map((ref) => ({ ...ref }))
+  }
+
+  const resolved: Reference[] = []
+  for (const ref of refs) {
+    if (ref.version !== undefined) {
+      resolved.push(ref)
+      continue
+    }
+
+    if (referenceCache.has(ref.subject)) {
+      resolved.push({ ...ref, version: referenceCache.get(ref.subject)! })
+      continue
+    }
+
+    const response = await fetch(`${baseUrl}/subjects/${encodeURIComponent(ref.subject)}/versions/latest`, {
+      method: 'GET',
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+
+    if (!response.ok) {
+      const body = await response.text()
+      throw new Error(`Failed to resolve latest version for ${ref.subject}: ${response.status} ${body}`)
+    }
+
+    const json = (await response.json()) as { version: number }
+    referenceCache.set(ref.subject, json.version)
+    resolved.push({ ...ref, version: json.version })
+  }
+
+  return resolved
+}
+
 async function register(subject: string, schemaSource: string, references: Reference[] | undefined): Promise<void> {
   if (dryRun || !baseUrl) {
     console.log(`[dry-run] would register ${subject} (${schemaSource.length} bytes)`)
@@ -169,6 +210,7 @@ for (const entry of sortedEntries) {
 
   for (const subject of entry.subjects) {
     const refs = subject.references ?? baseReferences
-    await register(subject.name, schemaText, refs)
+    const resolvedRefs = await resolveReferences(refs)
+    await register(subject.name, schemaText, resolvedRefs)
   }
 }
