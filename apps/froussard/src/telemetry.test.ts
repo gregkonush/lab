@@ -145,16 +145,16 @@ describe('telemetry', () => {
     expect(processOnceSpy).toHaveBeenCalledWith('SIGTERM', expect.any(Function))
   })
 
-  it('falls back to default LGTM endpoints when environment variables are unset', async () => {
+  it('falls back to default observability endpoints when environment variables are unset', async () => {
     await import('./telemetry')
 
     expect(traceExporterMock).toHaveBeenCalledWith({
-      url: 'http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces',
+      url: 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces',
       headers: undefined,
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics',
+      url: 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics',
       headers: undefined,
     })
   })
@@ -167,12 +167,12 @@ describe('telemetry', () => {
     await import('./telemetry')
 
     expect(traceExporterMock).toHaveBeenCalledWith({
-      url: 'http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces',
+      url: 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces',
       headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', trace: 'charlie' }),
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics',
+      url: 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics',
       headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', metric: 'delta' }),
     })
   })

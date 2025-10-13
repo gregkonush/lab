@@ -16,12 +16,12 @@ const serviceInstanceId = process.env.POD_NAME ?? process.pid.toString()
 const tracesEndpoint =
   process.env.LGTM_TEMPO_TRACES_ENDPOINT ??
   process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-  'http://lgtm-tempo-gateway.lgtm.svc.cluster.local:4318/v1/traces'
+  'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
 
 const metricsEndpoint =
   process.env.LGTM_MIMIR_METRICS_ENDPOINT ??
   process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ??
-  'http://lgtm-mimir-nginx.lgtm.svc.cluster.local/otlp/v1/metrics'
+  'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
 
 const exportInterval = parseInt(process.env.OTEL_METRIC_EXPORT_INTERVAL ?? '15000', 10)
 

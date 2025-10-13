@@ -38,7 +38,7 @@ spec:
                 key: category-id
                 optional: true
           - name: LGTM_LOKI_ENDPOINT
-            value: http://lgtm-loki-gateway.lgtm.svc.cluster.local/loki/api/v1/push
+            value: http://observability-loki-gateway.observability.svc.cluster.local/loki/api/v1/push
         command: ["/usr/local/bin/codex-bootstrap"]
         args:
           - "/bin/bash"

@@ -98,14 +98,14 @@ spec:
             namespace: lgtm
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: auto
-            enabled: "true"
+            automation: manual
+            enabled: "false"
           - name: observability
             path: argocd/applications/observability
             namespace: observability
             annotations:
               argocd.argoproj.io/sync-wave: "3"
-            automation: manual
+            automation: auto
             enabled: "true"
           - name: minio
             path: argocd/applications/minio
