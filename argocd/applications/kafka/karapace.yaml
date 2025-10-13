@@ -19,6 +19,10 @@ spec:
         - name: karapace
           image: ghcr.io/aiven-open/karapace:latest
           imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -m
+            - karapace.__main__
           ports:
             - name: http
               containerPort: 8081
@@ -27,9 +31,9 @@ spec:
               value: kafka-kafka-bootstrap:9092
             - name: KARAPACE_ADVERTISED_HOSTNAME
               value: karapace
-            - name: KARAPACE_SCHEMA_REGISTRY_HOST
+            - name: KARAPACE_HOST
               value: 0.0.0.0
-            - name: KARAPACE_SCHEMA_REGISTRY_PORT
+            - name: KARAPACE_PORT
               value: "8081"
             - name: KARAPACE_REST
               value: "false"
