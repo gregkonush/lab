@@ -59,6 +59,11 @@ The local runtime exposes:
   `KAFKA_DISCORD_COMMAND_TOPIC` to control the output topic for normalized command events.
 - The structured stream is configured via `KAFKA_CODEX_TOPIC_STRUCTURED` (defaulting to `github.issues.codex.tasks`).
 
+### Local Deploy Script
+
+- Run `apps/froussard/scripts/deploy.ts` directly (the shebang invokes Bun) to build, push, and deploy with `pnpm --filter froussard run deploy`. The helper derives `FROUSSARD_VERSION` and `FROUSSARD_COMMIT` from `git describe --tags --always` and `git rev-parse HEAD`, but you can override them by exporting the environment variables first.
+- The script uses Bun Shell’s `$` tagged template literal to execute commands, which safely escapes interpolated values, and `$.env()` to scope the derived environment variables to the deploy invocation.
+
 ## Verification Checklist
 
 1. Create a GitHub issue in `gregkonush/lab` as the Codex trigger user.
