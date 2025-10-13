@@ -27,6 +27,7 @@ type ManifestEntry = {
   file: string
   subjects: SubjectEntry[]
   references?: Reference[]
+  order?: number
 }
 
 type Manifest = {
@@ -81,7 +82,14 @@ if (!Array.isArray(manifest.schemas)) {
   process.exit(1)
 }
 
-const sortedEntries = [...manifest.schemas].sort((a, b) => a.file.localeCompare(b.file))
+const sortedEntries = [...manifest.schemas].sort((a, b) => {
+  const orderA = (a as { order?: number }).order ?? 0
+  const orderB = (b as { order?: number }).order ?? 0
+  if (orderA !== orderB) {
+    return orderA - orderB
+  }
+  return a.file.localeCompare(b.file)
+})
 
 const authHeader =
   username && password ? `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` : undefined
