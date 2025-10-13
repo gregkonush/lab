@@ -17,7 +17,7 @@ datasources:
         uid: loki
         type: loki
         access: proxy
-        url: http://observability-loki-gateway.observability.svc.cluster.local
+        url: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local
         isDefault: false
       - name: Mimir
         uid: prom

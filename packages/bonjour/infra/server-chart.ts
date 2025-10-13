@@ -37,7 +37,8 @@ export class ServerChart extends Chart {
     const mimirMetricsEndpoint =
       props.mimirMetricsEndpoint ?? 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
     const lokiEndpoint =
-      props.lokiEndpoint ?? 'http://observability-loki-gateway.observability.svc.cluster.local/loki/api/v1/push'
+      props.lokiEndpoint ??
+      'http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push'
 
     const deployment = new Deployment(this, 'server', {
       metadata: {
