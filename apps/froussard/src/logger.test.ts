@@ -60,6 +60,7 @@ describe('logger', () => {
     process.env.LGTM_LOKI_ENDPOINT = 'http://loki.example:3100/loki/api/v1/push'
     process.env.OTEL_SERVICE_NAME = 'froussard'
     process.env.OTEL_SERVICE_NAMESPACE = 'froussard'
+    process.env.POD_NAME = 'froussard-pod-abc123'
 
     await import('./logger')
 
@@ -73,6 +74,7 @@ describe('logger', () => {
         labels: {
           service: 'froussard',
           namespace: 'froussard',
+          hostname: 'froussard-pod-abc123',
         },
       }),
     })
