@@ -66,7 +66,7 @@ The local runtime exposes:
 
 ## Verification Checklist
 
-1. Create a GitHub issue in `gregkonush/lab` as the Codex trigger user.
+1. Create a GitHub issue in `proompteng/lab` as the Codex trigger user.
 2. Ensure Argo Events produces a Workflow named `github-codex-planning-*` in
    `argo-workflows` namespace.
 3. Inspect pod logs to confirm the payload mirrors the Kafka message.
@@ -85,6 +85,6 @@ apps/froussard/src/codex/cli/build-codex-image.ts
 
 - Override `IMAGE_TAG` to publish a different tag or registry.
 - Provide `GH_TOKEN` explicitly if `gh auth token` is unavailable.
-- The resulting image defaults to cloning `gregkonush/lab` into
+- The resulting image defaults to cloning `proompteng/lab` into
   `/workspace/lab`; override `REPO_URL`, `BASE_BRANCH`, or `TARGET_DIR` at
   runtime as needed.

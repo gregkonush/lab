@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
-	"github.com/gregkonush/lab/services/facteur/internal/githubpb"
-	"github.com/gregkonush/lab/services/facteur/internal/server"
-	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
+	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/server"
+	"github.com/proompteng/lab/services/facteur/internal/session"
 )
 
 func TestEventsEndpointDispatches(t *testing.T) {
@@ -107,7 +107,7 @@ func TestCodexTasksEndpointLogs(t *testing.T) {
 
 	payload, err := proto.Marshal(&githubpb.CodexTask{
 		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_IMPLEMENTATION,
-		Repository:  "gregkonush/lab",
+		Repository:  "proompteng/lab",
 		IssueNumber: 42,
 		Head:        "codex/issue-42-demo",
 		DeliveryId:  "delivery-1",
@@ -123,7 +123,7 @@ func TestCodexTasksEndpointLogs(t *testing.T) {
 	require.Equal(t, 202, resp.StatusCode)
 
 	logs := buf.String()
-	require.Contains(t, logs, "codex task received: stage=CODEX_TASK_STAGE_IMPLEMENTATION repo=gregkonush/lab issue=42")
+	require.Contains(t, logs, "codex task received: stage=CODEX_TASK_STAGE_IMPLEMENTATION repo=proompteng/lab issue=42")
 }
 
 type stubDispatcher struct {

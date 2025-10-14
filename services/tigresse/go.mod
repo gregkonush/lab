@@ -1,4 +1,4 @@
-module github.com/gregkonush/lab/services/tigresse
+module github.com/proompteng/lab/services/tigresse
 
 go 1.24.1
 

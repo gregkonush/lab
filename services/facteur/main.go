@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/gregkonush/lab/services/facteur/cmd/facteur"
+	"github.com/proompteng/lab/services/facteur/cmd/facteur"
 )
 
 func main() {

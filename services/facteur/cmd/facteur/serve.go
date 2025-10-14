@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/gregkonush/lab/services/facteur/internal/config"
-	"github.com/gregkonush/lab/services/facteur/internal/server"
-	"github.com/gregkonush/lab/services/facteur/internal/session"
-	"github.com/gregkonush/lab/services/facteur/internal/telemetry"
+	"github.com/proompteng/lab/services/facteur/internal/config"
+	"github.com/proompteng/lab/services/facteur/internal/server"
+	"github.com/proompteng/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 // NewServeCommand scaffolds the "serve" CLI command.

@@ -174,7 +174,7 @@ describe('findLatestPlanComment', () => {
 
     const result = await Effect.runPromise(
       findLatestPlanComment({
-        repositoryFullName: 'gregkonush/lab',
+        repositoryFullName: 'proompteng/lab',
         issueNumber: 12,
         fetchImplementation: async () => ({
           ok: true,
@@ -198,7 +198,7 @@ describe('findLatestPlanComment', () => {
 
     const result = await Effect.runPromise(
       findLatestPlanComment({
-        repositoryFullName: 'gregkonush/lab',
+        repositoryFullName: 'proompteng/lab',
         issueNumber: 99,
         fetchImplementation: async () => ({
           ok: true,

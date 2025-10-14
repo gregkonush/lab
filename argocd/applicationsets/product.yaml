@@ -18,7 +18,7 @@ spec:
               argocd-image-updater.argoproj.io/image-list: proompteng=registry.ide-newton.ts.net/lab/proompteng
               argocd-image-updater.argoproj.io/proompteng: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/proompteng
             automation: auto
@@ -32,7 +32,7 @@ spec:
               argocd-image-updater.argoproj.io/image-list: docs=registry.ide-newton.ts.net/lab/docs
               argocd-image-updater.argoproj.io/docs: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/docs
             automation: auto
@@ -46,7 +46,7 @@ spec:
               argocd-image-updater.argoproj.io/image-list: kitty-krew=registry.ide-newton.ts.net/lab/kitty-krew
               argocd-image-updater.argoproj.io/kitty-krew: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/kitty-krew
             automation: auto
@@ -60,7 +60,7 @@ spec:
               argocd-image-updater.argoproj.io/image-list: reviseur=registry.ide-newton.ts.net/lab/reviseur
               argocd-image-updater.argoproj.io/reviseur: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/reviseur
             automation: auto
@@ -117,7 +117,7 @@ spec:
               argocd-image-updater.argoproj.io/image-list: dernier=registry.ide-newton.ts.net/lab/dernier
               argocd-image-updater.argoproj.io/dernier: semver
               argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/image-updater-git-ssh
-              argocd-image-updater.argoproj.io/git-repository: git@github.com:gregkonush/lab.git
+              argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/dernier
             automation: auto
@@ -143,7 +143,7 @@ spec:
         server: https://kubernetes.default.svc
         namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
-        repoURL: https://github.com/gregkonush/lab.git
+        repoURL: https://github.com/proompteng/lab.git
         targetRevision: main
         path: "{{ .path }}"
       syncPolicy:

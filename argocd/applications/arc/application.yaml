@@ -22,7 +22,7 @@ spec:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
             namespace: arc
-          githubConfigUrl: https://github.com/gregkonush/lab
+          githubConfigUrl: https://github.com/proompteng/lab
           githubConfigSecret: github-token
           runnerScaleSetName: arc-arm64
           minRunners: 3

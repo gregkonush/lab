@@ -12,10 +12,10 @@ import (
 	sdkalpaca "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
 	marketdata "github.com/alpacahq/alpaca-trade-api-go/v3/marketdata"
 	"github.com/gin-gonic/gin"
-	"github.com/gregkonush/lab/services/miel/internal/alpaca"
-	"github.com/gregkonush/lab/services/miel/internal/backtest"
-	"github.com/gregkonush/lab/services/miel/internal/config"
-	"github.com/gregkonush/lab/services/miel/internal/trading"
+	"github.com/proompteng/lab/services/miel/internal/alpaca"
+	"github.com/proompteng/lab/services/miel/internal/backtest"
+	"github.com/proompteng/lab/services/miel/internal/config"
+	"github.com/proompteng/lab/services/miel/internal/trading"
 )
 
 type ledgerStub struct {

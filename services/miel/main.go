@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gregkonush/lab/services/miel/internal/alpaca"
-	"github.com/gregkonush/lab/services/miel/internal/backtest"
-	"github.com/gregkonush/lab/services/miel/internal/config"
-	"github.com/gregkonush/lab/services/miel/internal/ledger"
-	"github.com/gregkonush/lab/services/miel/internal/server"
-	"github.com/gregkonush/lab/services/miel/internal/telemetry"
-	"github.com/gregkonush/lab/services/miel/internal/trading"
+	"github.com/proompteng/lab/services/miel/internal/alpaca"
+	"github.com/proompteng/lab/services/miel/internal/backtest"
+	"github.com/proompteng/lab/services/miel/internal/config"
+	"github.com/proompteng/lab/services/miel/internal/ledger"
+	"github.com/proompteng/lab/services/miel/internal/server"
+	"github.com/proompteng/lab/services/miel/internal/telemetry"
+	"github.com/proompteng/lab/services/miel/internal/trading"
 )
 
 func main() {

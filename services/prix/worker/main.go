@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	prix "github.com/gregkonush/lab/services/prix"
+	prix "github.com/proompteng/lab/services/prix"
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"

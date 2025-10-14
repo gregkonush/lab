@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/discord"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/discord"
 )
 
 func TestHandler_Dispatch(t *testing.T) {

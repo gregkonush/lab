@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	v1alpha1 "github.com/gregkonush/lab/services/tigresse/api/v1alpha1"
+	v1alpha1 "github.com/proompteng/lab/services/tigresse/api/v1alpha1"
 )
 
 func TestReconcileCreatesResources(t *testing.T) {

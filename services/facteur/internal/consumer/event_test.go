@@ -7,10 +7,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/consumer"
-	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
-	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/consumer"
+	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
+	"github.com/proompteng/lab/services/facteur/internal/session"
 )
 
 func TestProcessEventPersistsSession(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/session"
 )
 
 func TestRedisStoreRoundTrip(t *testing.T) {

@@ -16,7 +16,7 @@ parameters:
     default: 30
   - name: repository_url
     type: string
-    default: "https://github.com/gregkonush/lab"
+    default: "https://github.com/proompteng/lab"
     description: Git URL to clone into the workspace
   - name: repository_directory
     type: string

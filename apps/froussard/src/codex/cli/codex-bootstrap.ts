@@ -22,7 +22,7 @@ const ensureParentDir = async (path: string) => {
 }
 
 export const runCodexBootstrap = async (argv: string[] = process.argv.slice(2)) => {
-  const repoUrl = process.env.REPO_URL ?? 'https://github.com/gregkonush/lab'
+  const repoUrl = process.env.REPO_URL ?? 'https://github.com/proompteng/lab'
   const worktreeDefault = process.env.WORKTREE ?? '/workspace/lab'
   const targetDir = process.env.TARGET_DIR ?? worktreeDefault
   const baseBranch = process.env.BASE_BRANCH ?? 'main'

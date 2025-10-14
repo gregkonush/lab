@@ -93,7 +93,7 @@ spec:
         server: https://kubernetes.default.svc
         namespace: '{{ if hasKey . "namespace" }}{{ .namespace }}{{ else }}{{ .name }}{{ end }}'
       source:
-        repoURL: https://github.com/gregkonush/lab.git
+        repoURL: https://github.com/proompteng/lab.git
         targetRevision: main
         path: '{{ .path }}'
       syncPolicy:

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/gregkonush/lab/schemas/facteur-discord-role-map.schema.json",
+  "$id": "https://github.com/proompteng/lab/schemas/facteur-discord-role-map.schema.json",
   "title": "facteur Discord command role map",
   "type": "object",
   "description": "Maps Discord slash command names to the role IDs allowed to invoke them.",

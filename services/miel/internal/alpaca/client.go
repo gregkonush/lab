@@ -7,7 +7,7 @@ import (
 
 	"github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
 	marketdata "github.com/alpacahq/alpaca-trade-api-go/v3/marketdata"
-	"github.com/gregkonush/lab/services/miel/internal/config"
+	"github.com/proompteng/lab/services/miel/internal/config"
 	"github.com/shopspring/decimal"
 )
 

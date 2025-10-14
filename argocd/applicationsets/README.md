@@ -31,7 +31,7 @@ argocd account update-password --account admin --server argocd.proompteng.ai
 Add this repository to Argo CD:
 
 ```bash
-argocd repo add https://github.com/gregkonush/lab.git
+argocd repo add https://github.com/proompteng/lab.git
 ```
 
 ## Stage-based ApplicationSets

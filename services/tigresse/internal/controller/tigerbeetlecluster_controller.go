@@ -15,8 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1alpha1 "github.com/gregkonush/lab/services/tigresse/api/v1alpha1"
-	"github.com/gregkonush/lab/services/tigresse/internal/builder"
+	v1alpha1 "github.com/proompteng/lab/services/tigresse/api/v1alpha1"
+	"github.com/proompteng/lab/services/tigresse/internal/builder"
 )
 
 // TigerBeetleClusterReconciler reconciles TigerBeetleCluster custom resources.

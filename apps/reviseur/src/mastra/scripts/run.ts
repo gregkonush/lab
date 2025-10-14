@@ -4,7 +4,7 @@ const run = async () => {
   const result = await githubAgent.generate([
     {
       role: 'user',
-      content: 'Review the PR https://github.com/gregkonush/lab/pull/723',
+      content: 'Review the PR https://github.com/proompteng/lab/pull/723',
     },
   ])
   console.log(result)

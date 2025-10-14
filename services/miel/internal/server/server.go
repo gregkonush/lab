@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gregkonush/lab/services/miel/internal/alpaca"
-	"github.com/gregkonush/lab/services/miel/internal/backtest"
-	"github.com/gregkonush/lab/services/miel/internal/ledger"
-	"github.com/gregkonush/lab/services/miel/internal/trading"
+	"github.com/proompteng/lab/services/miel/internal/alpaca"
+	"github.com/proompteng/lab/services/miel/internal/backtest"
+	"github.com/proompteng/lab/services/miel/internal/ledger"
+	"github.com/proompteng/lab/services/miel/internal/trading"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 

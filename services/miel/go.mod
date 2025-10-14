@@ -1,4 +1,4 @@
-module github.com/gregkonush/lab/services/miel
+module github.com/proompteng/lab/services/miel
 
 go 1.24.1
 

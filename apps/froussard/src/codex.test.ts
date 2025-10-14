@@ -47,11 +47,11 @@ describe('buildCodexPrompt', () => {
       stage: 'planning',
       issueTitle: 'Improve webhook reliability',
       issueBody: '\nFocus on retry logic and logging.  \n',
-      repositoryFullName: 'gregkonush/lab',
+      repositoryFullName: 'proompteng/lab',
       issueNumber: 77,
       baseBranch: 'main',
       headBranch: 'codex/issue-77-abc123',
-      issueUrl: 'https://github.com/gregkonush/lab/issues/77',
+      issueUrl: 'https://github.com/proompteng/lab/issues/77',
     })
 
     expect(prompt).toContain('Draft the plan the next Codex run will execute.')
@@ -72,11 +72,11 @@ describe('buildCodexPrompt', () => {
       stage: 'implementation',
       issueTitle: 'Improve webhook reliability',
       issueBody: 'Focus on retry logic and logging.',
-      repositoryFullName: 'gregkonush/lab',
+      repositoryFullName: 'proompteng/lab',
       issueNumber: 77,
       baseBranch: 'main',
       headBranch: 'codex/issue-77-abc123',
-      issueUrl: 'https://github.com/gregkonush/lab/issues/77',
+      issueUrl: 'https://github.com/proompteng/lab/issues/77',
       planCommentBody: `${PLAN_COMMENT_MARKER}\n1. Step one`,
     })
 
@@ -99,11 +99,11 @@ describe('buildCodexPrompt', () => {
       stage: 'implementation',
       issueTitle: 'Stabilise deployment workflow',
       issueBody: 'Improve release cadence.',
-      repositoryFullName: 'gregkonush/lab',
+      repositoryFullName: 'proompteng/lab',
       issueNumber: 88,
       baseBranch: 'main',
       headBranch: 'codex/issue-88-xyz987',
-      issueUrl: 'https://github.com/gregkonush/lab/issues/88',
+      issueUrl: 'https://github.com/proompteng/lab/issues/88',
       planCommentBody: '   ',
     })
 
@@ -115,11 +115,11 @@ describe('buildCodexPrompt', () => {
       stage: 'planning',
       issueTitle: 'Refine metrics dashboards',
       issueBody: '   ',
-      repositoryFullName: 'gregkonush/lab',
+      repositoryFullName: 'proompteng/lab',
       issueNumber: 101,
       baseBranch: 'main',
       headBranch: 'codex/issue-101-abc123',
-      issueUrl: 'https://github.com/gregkonush/lab/issues/101',
+      issueUrl: 'https://github.com/proompteng/lab/issues/101',
     })
 
     expect(prompt).toContain('"""\nNo description provided.\n"""')

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/gregkonush/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/githubpb"
 )
 
 // MessageReader represents the subset of kafka.Reader methods used by Listener.

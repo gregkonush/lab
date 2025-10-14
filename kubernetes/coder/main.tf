@@ -92,7 +92,7 @@ data "coder_parameter" "repository_url" {
   name         = "repository_url"
   display_name = "Repository URL"
   description  = "Git URL to clone into the workspace"
-  default      = "https://github.com/gregkonush/lab"
+  default      = "https://github.com/proompteng/lab"
   icon         = "/icon/git-branch.svg"
   mutable      = true
 }

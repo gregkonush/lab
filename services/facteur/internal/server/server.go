@@ -15,11 +15,11 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/consumer"
-	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
-	"github.com/gregkonush/lab/services/facteur/internal/githubpb"
-	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/consumer"
+	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
+	"github.com/proompteng/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/session"
 )
 
 var (

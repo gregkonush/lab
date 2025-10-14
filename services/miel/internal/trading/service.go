@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	sdkalpaca "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
-	"github.com/gregkonush/lab/services/miel/internal/alpaca"
-	"github.com/gregkonush/lab/services/miel/internal/ledger"
+	"github.com/proompteng/lab/services/miel/internal/alpaca"
+	"github.com/proompteng/lab/services/miel/internal/ledger"
 )
 
 // Service exposes trading-centric operations powered by Alpaca.
