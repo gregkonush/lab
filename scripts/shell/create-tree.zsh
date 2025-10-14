@@ -1,3 +1,5 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
 # Helper to create a worktree from main with dependency installs and Codex boot.
 # The file is sourced from ~/.zshrc; keep the function idempotent.
 
@@ -50,7 +52,7 @@ create_tree() {
   fi
 
   if [ "$has_remote_branch" -eq 1 ]; then
-    if ! git -C "$target_path" branch --set-upstream-to=origin/$branch "$branch"; then
+    if ! git -C "$target_path" branch --set-upstream-to="origin/$branch" "$branch"; then
       echo "create_tree: failed to set upstream to origin/$branch" >&2
       return 1
     fi

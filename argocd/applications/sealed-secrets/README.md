@@ -33,7 +33,7 @@ kubeseal \
 
 Backing up the controller's private key lets you recreate the cluster without re‑sealing existing `SealedSecret` manifests.
 
-Backup the active key (recommended to store with SOPS or a secure vault):
+Backup the active key (recommended to store with SOPS or a secure vault such as 1Password—save the full YAML so you can reapply it verbatim):
 
 ```bash
 # Find the current key Secret name
@@ -45,9 +45,17 @@ kubectl -n sealed-secrets get secret <SECRET_NAME> -o yaml > sealed-secrets-key.
 # Optional: also export PEM files
 kubectl -n sealed-secrets get secret <SECRET_NAME> -o jsonpath='{.data.tls\.crt}' | base64 -d > sealed-secrets.crt
 kubectl -n sealed-secrets get secret <SECRET_NAME> -o jsonpath='{.data.tls\.key}' | base64 -d > sealed-secrets.key
+
+# Store the YAML in 1Password (CLI v1 example).
+# We keep a secure note titled "Sealed Secrets Controller Key" in the shared `infra` vault.
+op item create \
+  --category "Secure Note" \
+  --title "Sealed Secrets Controller Key" \
+  --vault "infra" \
+  "notesPlain=$(<sealed-secrets-key.backup.yaml)"
 ```
 
-Restore on a new/rebuilt cluster:
+Restore on a new/rebuilt cluster (apply the saved secret *before* the controller starts so existing SealedSecrets keep working):
 
 ```bash
 # Ensure the controller is installed in the sealed-secrets namespace first
@@ -56,6 +64,10 @@ Restore on a new/rebuilt cluster:
 kubectl -n sealed-secrets delete secret -l sealedsecrets.bitnami.com/sealed-secrets-key --ignore-not-found=true
 
 # Apply your backed-up Secret
+# (download the YAML from 1Password or restore via CLI)
+op item get "Sealed Secrets Controller Key" --vault "infra" --format json \
+  | jq -r '.details.notesPlain' > sealed-secrets-key.backup.yaml
+
 kubectl apply -f sealed-secrets-key.backup.yaml
 
 # Restart the controller to pick up the restored key

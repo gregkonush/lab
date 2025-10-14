@@ -1,3 +1,5 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
 # kubectl aliases and helpers for the oh-my-posh Zsh setup.
 # The file is sourced from .zshrc so keep definitions idempotent.
 
@@ -9,6 +11,7 @@ fi
 if [[ -z ${__KUBECTL_COMPLETION_SOURCED:-} ]]; then
   if command -v kubectl >/dev/null 2>&1; then
     autoload -U +X compinit && compinit
+    # shellcheck disable=SC1090
     source <(kubectl completion zsh 2>/dev/null)
     __KUBECTL_COMPLETION_SOURCED=1
   fi
@@ -26,6 +29,7 @@ alias kaf='kubectl apply -f'
 alias kdel='kubectl delete'
 alias ktop='kubectl top pod'
 
+# shellcheck disable=SC2154
 if (( $+functions[compdef] )); then
   compdef k=kubectl 2>/dev/null
 fi
@@ -33,7 +37,11 @@ fi
 __k_current_namespace() {
   local ns
   ns=$(kubectl config view --minify --output 'jsonpath={..namespace}' 2>/dev/null)
-  [[ -n $ns ]] && print -r -- "$ns" || print -r -- default
+  if [[ -n $ns ]]; then
+    print -r -- "$ns"
+  else
+    print -r -- default
+  fi
 }
 
 __k_require_fzf() {
@@ -100,6 +108,7 @@ kflog() {
   kubectl logs -f -n "$ns" ${container:+-c "$container"} "$pod"
 }
 
+# shellcheck disable=SC2154
 (( $+aliases[klogs] )) && unalias klogs
 
 klogs() {
