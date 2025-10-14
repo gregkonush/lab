@@ -12,13 +12,6 @@ Prepare the cluster resources required by Harvester:
 k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
 ```
 
-Install the Sealed Secrets controller so Argo CD (and Dex) can decrypt the bundled secrets:
-
-```bash
-kubectl create namespace sealed-secrets --dry-run=client -o yaml | kubectl apply -f -
-kubectl kustomize argocd/applications/sealed-secrets --enable-helm | kubectl apply -f -
-```
-
 Lay down MetalLB so LoadBalancer services (Traefik, registry, etc.) receive an address range:
 
 ```bash
@@ -47,6 +40,14 @@ Add this repository to Argo CD:
 ```bash
 argocd repo add https://github.com/proompteng/lab.git
 ```
+
+Then transfer control of Sealed Secrets to Argo CD:
+
+```bash
+argocd app sync sealed-secrets
+```
+
+> **Note:** Avoid manual `kubectl` installs of Sealed Secrets. Bootstrapping the controller outside Argo CD generates a new RSA keypair, and the next sync will break every existing `SealedSecret` (`no key could decrypt secret`). Let Argo CD create and manage the controller after this first sync.
 
 ## Stage-based ApplicationSets
 
@@ -78,6 +79,8 @@ argocd appset create --upsert argocd/applicationsets/platform.yaml
 argocd appset create --upsert argocd/applicationsets/product.yaml
 argocd appset create --upsert argocd/applicationsets/cdk8s.yaml
 ```
+
+Need only the core bootstrap stack? Stop after the first command—leave the other stages for later.
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
 

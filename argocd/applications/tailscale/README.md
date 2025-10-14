@@ -1,6 +1,6 @@
 # Tailscale Operator Secrets
 
-Use `scripts/generate-tailscale-sealed-secret.sh` after installing the Tailscale operator to refresh the OAuth client credentials managed by Sealed Secrets. The script:
+Use `scripts/generate-tailscale-sealed-secret.ts` after installing the Tailscale operator to refresh the OAuth client credentials managed by Sealed Secrets. The script:
 
 1. Reads `client_id` and `client_secret` from 1Password via the CLI (`op`).
 2. Generates a plain Kubernetes `Secret` and pipes it through `kubeseal` using the controller in the `sealed-secrets` namespace.
@@ -24,10 +24,10 @@ export TAILSCALE_SEALED_CONTROLLER_NAME=sealed-secrets
 export TAILSCALE_SEALED_CONTROLLER_NAMESPACE=sealed-secrets
 
 # Regenerate the sealed secret (writes to argocd/applications/tailscale/base/secrets.yaml)
-./scripts/generate-tailscale-sealed-secret.sh
+./scripts/generate-tailscale-sealed-secret.ts
 
 # Regenerate the sealed secret and write it somewhere else first
-./scripts/generate-tailscale-sealed-secret.sh /tmp/tailscale-sealed-secret.yaml
+./scripts/generate-tailscale-sealed-secret.ts /tmp/tailscale-sealed-secret.yaml
 ```
 
 After committing the refreshed `secrets.yaml`, Argo CD will reconcile the new credentials automatically.

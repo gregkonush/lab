@@ -1,3 +1,5 @@
+#!/usr/bin/env zsh
+# shellcheck shell=bash
 # Argo Workflows aliases and helpers for the oh-my-posh Zsh setup.
 # The file is sourced from .zshrc so keep definitions idempotent.
 
@@ -8,6 +10,7 @@ fi
 # Keep argo completion available even when running without Oh My Zsh.
 if [[ -z ${__ARGO_COMPLETION_SOURCED:-} ]]; then
   autoload -U +X compinit && compinit
+  # shellcheck disable=SC1090
   source <(argo completion zsh 2>/dev/null)
   __ARGO_COMPLETION_SOURCED=1
 fi
@@ -19,6 +22,7 @@ alias awd='argo delete'
 alias aws='argo submit'
 alias awt='argo get --watch'
 
+# shellcheck disable=SC2154
 if (( $+functions[compdef] )); then
   compdef aw=argo 2>/dev/null
 fi
