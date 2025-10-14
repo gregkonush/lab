@@ -12,6 +12,20 @@ Prepare the cluster resources required by Harvester:
 k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
 ```
 
+Install the Sealed Secrets controller so Argo CD (and Dex) can decrypt the bundled secrets:
+
+```bash
+kubectl create namespace sealed-secrets --dry-run=client -o yaml | kubectl apply -f -
+kubectl kustomize argocd/applications/sealed-secrets --enable-helm | kubectl apply -f -
+```
+
+Lay down MetalLB so LoadBalancer services (Traefik, registry, etc.) receive an address range:
+
+```bash
+kubectl create namespace metallb-system --dry-run=client -o yaml | kubectl apply -f -
+kubectl kustomize argocd/applications/metallb-system --enable-helm | kubectl apply -f -
+```
+
 ## Deploy Argo CD itself
 
 Apply the Argo CD manifests with Kustomize to get the control plane and Lovely plugin online:
@@ -66,6 +80,25 @@ argocd appset create --upsert argocd/applicationsets/cdk8s.yaml
 ```
 
 All generated Applications default to manual sync. Promote a workload by running `argocd app sync <name>`. Once stable, flip its `automation` value to `auto` inside the relevant stage file to enable automatic reconcilation.
+
+### Bringing the control plane up before Dex is ready
+
+Dex relies on Sealed Secrets to decrypt the Argo Workflows SSO credentials. When rebuilding a cluster you can bring Argo CD online first and delay Dex until Sealed Secrets and Argo Workflows are configured.
+
+1. Disable the Dex deployment (scales to zero and removes its network policy):
+   ```bash
+   bun scripts/disable-dex.ts --disable
+   ```
+   Pass `--namespace <ns>` if Argo CD runs outside the default `argocd` namespace, or add `--dry-run` to preview the kubectl commands.
+
+2. After Sealed Secrets is healthy and the SSO secrets have been applied, re-enable Dex:
+   ```bash
+   bun scripts/restore-dex.ts
+   # optionally: bun scripts/restore-dex.ts --sync
+   # or: bun scripts/disable-dex.ts --enable
+   # or: kubectl -n argocd scale deployment argocd-dex-server --replicas=1
+   ```
+   Use `--sync` to call `argocd app sync` automatically; otherwise sync the `argocd` application manually so the network policy and overlays reconcile.
 
 ### Removing stuck Applications
 
