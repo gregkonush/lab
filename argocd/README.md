@@ -20,6 +20,16 @@ argocd/
 
 Applications in the `applications/` directory are automatically discovered and deployed by the ApplicationSet defined in `applicationsets/lovely-apps.yaml`. This removes the need for creating individual Application resources.
 
+## Bootstrap MetalLB
+
+To install MetalLB and watch it become ready:
+
+```bash
+kubectl apply -k argocd/applications/metallb-system
+kubectl -n metallb-system rollout status deploy/controller --timeout=180s
+kubectl -n metallb-system rollout status ds/speaker --timeout=300s
+```
+
 ## Kustomize Approach (kitty-krew)
 
 The `kitty-krew` application demonstrates a reusable pattern using Kustomize for managing multi-environment deployments:

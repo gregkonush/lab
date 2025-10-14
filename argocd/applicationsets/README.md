@@ -15,8 +15,9 @@ k --kubeconfig ~/.kube/altra.yaml apply -f tofu/harvester/templates/
 Lay down MetalLB so LoadBalancer services (Traefik, registry, etc.) receive an address range:
 
 ```bash
-kubectl create namespace metallb-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl kustomize argocd/applications/metallb-system --enable-helm | kubectl apply -f -
+kubectl apply -k argocd/applications/metallb-system
+kubectl -n metallb-system rollout status deploy/controller --timeout=180s
+kubectl -n metallb-system rollout status ds/speaker --timeout=300s
 ```
 
 ## Deploy Argo CD itself

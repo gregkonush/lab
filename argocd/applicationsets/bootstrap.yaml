@@ -14,7 +14,7 @@ spec:
             namespace: argocd
             annotations:
               argocd.argoproj.io/sync-wave: "-2"
-            automation: auto
+            automation: manual
             enabled: true
           - name: sealed-secrets
             path: argocd/applications/sealed-secrets
