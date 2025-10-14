@@ -160,16 +160,6 @@ async function exec(parts: ExecArgs, options: { capture?: boolean; silent?: bool
   return undefined
 }
 
-async function execOptional(parts: ExecArgs, label: string) {
-  try {
-    await exec(parts)
-  } catch (error) {
-    if (!dryRun) {
-      console.warn(`Ignored error while ${label}:`, error instanceof Error ? error.message : error)
-    }
-  }
-}
-
 async function fetchNodeToken() {
   const output = (await exec(
     ['k3sup', 'node-token', '--host', primaryHost, '--user', sshUser, '--ssh-key', sshKeyPath],
@@ -185,7 +175,6 @@ async function fetchNodeToken() {
 }
 
 async function installPrimary() {
-  await cleanupServer(primaryHost)
   console.log(`Setting up primary server ${primaryHost}`)
   await exec([
     'k3sup',
@@ -208,7 +197,6 @@ async function installPrimary() {
 
 async function joinAdditionalServers(nodeToken: string) {
   await runParallel(additionalServers, serverParallelism, async (host, index) => {
-    await cleanupServer(host)
     console.log(`Setting up additional server ${index + 2} (${host})`)
     await exec([
       'k3sup',
@@ -232,7 +220,6 @@ async function joinAdditionalServers(nodeToken: string) {
 
 async function joinWorkers(nodeToken: string) {
   await runParallel(workerHosts, workerParallelism, async (host, index) => {
-    await cleanupAgent(host)
     console.log(`Setting up worker ${index + 1} (${host})`)
     await exec([
       'k3sup',
@@ -254,6 +241,7 @@ async function joinWorkers(nodeToken: string) {
 }
 
 async function main() {
+  await clearKnownHosts([primaryHost, ...additionalServers, ...workerHosts])
   await installPrimary()
   await waitForServerReady()
   console.log('Fetching node token from primary')
@@ -287,34 +275,6 @@ async function runParallel<T>(items: T[], concurrency: number, task: (item: T, i
   }
 
   await Promise.all(Array.from({ length: limit }, worker))
-}
-
-async function cleanupServer(host: string) {
-  await cleanupNode(host, true)
-}
-
-async function cleanupAgent(host: string) {
-  await cleanupNode(host, false)
-}
-
-async function cleanupNode(host: string, isServer: boolean) {
-  if (dryRun) {
-    console.log(`$ (dry-run) ssh cleanup on ${host}`)
-    return
-  }
-  await runIfExists(host, '/usr/local/bin/k3s-killall.sh', `running k3s-killall on ${host}`)
-  if (isServer) {
-    await runIfExists(host, '/usr/local/bin/k3s-uninstall.sh', `running k3s-uninstall on ${host}`)
-  } else {
-    await runIfExists(host, '/usr/local/bin/k3s-agent-uninstall.sh', `running k3s-agent-uninstall on ${host}`)
-    await runIfExists(host, '/usr/local/bin/k3s-uninstall.sh', `running k3s-uninstall fallback on ${host}`)
-  }
-  const target = `${sshUser}@${host}`
-  const sshBase = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', target]
-  await execOptional(
-    [...sshBase, 'sudo', 'rm', '-f', '/var/lib/kubelet/cpu_manager_state'],
-    `clearing cpu_manager_state on ${host}`,
-  )
 }
 
 async function waitForServerReady() {
@@ -362,17 +322,11 @@ async function sleep(ms: number) {
   })
 }
 
-async function runIfExists(host: string, path: string, label: string) {
-  if (dryRun) {
-    console.log(`$ (dry-run) ssh check ${path} on ${host}`)
-    return
+async function clearKnownHosts(hosts: string[]) {
+  for (const host of new Set(hosts)) {
+    console.log(`Clearing known_hosts entry for ${host}`)
+    for (const target of [host, `[${host}]:22`]) {
+      await exec(['ssh-keygen', '-R', target], { silent: true })
+    }
   }
-  const target = `${sshUser}@${host}`
-  const sshBase = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', target]
-  try {
-    await exec([...sshBase, 'sudo', 'test', '-x', path], { silent: true })
-  } catch {
-    return
-  }
-  await execOptional([...sshBase, 'sudo', path], label)
 }
