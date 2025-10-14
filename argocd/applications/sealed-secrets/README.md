@@ -4,7 +4,7 @@
 
 ### Managed via ArgoCD (GitOps)
 
-- This app is managed from the folder `argocd/applications/sealed-secrets/` (Helm chart + values). Do not `kubectl apply` upstream manifests directly.
+- This app is managed from the folder `argocd/applications/sealed-secrets/` using a Kustomize overlay that renders the upstream Helm charts. Do not `kubectl apply` upstream manifests directly.
 - Controller namespace: `sealed-secrets`.
 
 Verify app health:
