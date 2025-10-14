@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/argo"
+	"github.com/proompteng/lab/services/facteur/internal/argo"
 )
 
 func TestWorkflowRunnerRun(t *testing.T) {

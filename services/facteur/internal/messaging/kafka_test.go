@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/messaging"
+	"github.com/proompteng/lab/services/facteur/internal/messaging"
 )
 
 func TestNewReaderValidatesInputs(t *testing.T) {

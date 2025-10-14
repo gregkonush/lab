@@ -2,7 +2,7 @@
 
 A multi-language monorepo for experimenting with conversational tooling, data pipelines, and deployment workflows. The repo combines Next.js frontends, Convex-backed APIs, Go microservices, and Kubernetes/Terraform automation for end-to-end prototyping.
 
-[![Open in Coder](https://coder.proompteng.ai/open-in-coder.svg)](https://coder.proompteng.ai/templates/k8s-arm64/workspace?param.repository_url=https%3A%2F%2Fgithub.com%2Fgregkonush%2Flab&param.repository_directory=%7E%2Fgithub.com)
+[![Open in Coder](https://coder.proompteng.ai/open-in-coder.svg)](https://coder.proompteng.ai/templates/k8s-arm64/workspace?param.repository_url=https%3A%2F%2Fgithub.com%2Fproompteng%2Flab&param.repository_directory=%7E%2Fgithub.com)
 
 ---
 

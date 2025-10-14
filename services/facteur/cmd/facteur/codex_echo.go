@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/gregkonush/lab/services/facteur/internal/codex"
-	"github.com/gregkonush/lab/services/facteur/internal/config"
-	"github.com/gregkonush/lab/services/facteur/internal/messaging"
+	"github.com/proompteng/lab/services/facteur/internal/codex"
+	"github.com/proompteng/lab/services/facteur/internal/config"
+	"github.com/proompteng/lab/services/facteur/internal/messaging"
 )
 
 // NewCodexEchoCommand streams structured Codex tasks and logs them.

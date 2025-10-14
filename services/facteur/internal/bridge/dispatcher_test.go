@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/argo"
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/argo"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
 )
 
 func TestWorkflowDispatcherDispatch(t *testing.T) {

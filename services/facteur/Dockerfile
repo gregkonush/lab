@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY ${SERVICE_PATH}/ ./
 RUN --mount=type=cache,target=/go/pkg/mod \
 	CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
-	-ldflags="-s -w -X github.com/gregkonush/lab/services/facteur/internal/server.buildVersion=$FACTEUR_VERSION -X github.com/gregkonush/lab/services/facteur/internal/server.buildCommit=$FACTEUR_COMMIT" \
+	-ldflags="-s -w -X github.com/proompteng/lab/services/facteur/internal/server.buildVersion=$FACTEUR_VERSION -X github.com/proompteng/lab/services/facteur/internal/server.buildCommit=$FACTEUR_COMMIT" \
 	-o /out/facteur .
 
 FROM gcr.io/distroless/static-debian12:nonroot

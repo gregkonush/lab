@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/config"
+	"github.com/proompteng/lab/services/facteur/internal/config"
 )
 
 func TestLoadWithOptions(t *testing.T) {

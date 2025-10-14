@@ -1,4 +1,4 @@
-module github.com/gregkonush/lab/services/prix
+module github.com/proompteng/lab/services/prix
 
 go 1.24.1
 

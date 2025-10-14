@@ -40,7 +40,7 @@ coder workspaces create sutro --template "kubernetes/coder"
 - CPU cores: 4/6/8 (default 4)
 - Memory (GiB): 4/6/8 (default 8)
 - Home disk size (GiB): default 30
-- Repository URL: defaults to `https://github.com/gregkonush/lab`; accepts HTTPS or SSH remotes
+- Repository URL: defaults to `https://github.com/proompteng/lab`; accepts HTTPS or SSH remotes
 - Checkout directory: defaults to `~/github.com` and expands to `${directory}/${repo}` inside the workspace
 
 ## Modules & automation

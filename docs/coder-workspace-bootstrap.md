@@ -38,7 +38,7 @@ This document explains how to maintain the single `k8s-arm64` template, push new
      --parameter cpu=4 \
      --parameter memory=8 \
      --parameter home_disk_size=30 \
-     --parameter repository_url=https://github.com/gregkonush/lab \
+     --parameter repository_url=https://github.com/proompteng/lab \
      --parameter repository_directory=/home/coder/github.com \
      --yes
    ```

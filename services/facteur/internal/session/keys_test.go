@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/session"
 )
 
 func TestDispatchKey(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	sdkalpaca "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
-	"github.com/gregkonush/lab/services/miel/internal/backtest"
-	"github.com/gregkonush/lab/services/miel/internal/config"
+	"github.com/proompteng/lab/services/miel/internal/backtest"
+	"github.com/proompteng/lab/services/miel/internal/config"
 	"github.com/shopspring/decimal"
 	"github.com/tigerbeetle/tigerbeetle-go/pkg/types"
 )

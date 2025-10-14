@@ -9,9 +9,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 
-	"github.com/gregkonush/lab/services/facteur/internal/argo"
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/config"
+	"github.com/proompteng/lab/services/facteur/internal/argo"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/config"
 )
 
 func buildDispatcher(cfg *config.Config) (bridge.Dispatcher, error) {

@@ -4,7 +4,7 @@ package github.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/gregkonush/lab/services/facteur/internal/githubpb";
+option go_package = "github.com/proompteng/lab/services/facteur/internal/githubpb";
 
 enum CodexTaskStage {
   CODEX_TASK_STAGE_UNSPECIFIED = 0;

@@ -12,8 +12,8 @@ import (
 	tb "github.com/tigerbeetle/tigerbeetle-go"
 	"github.com/tigerbeetle/tigerbeetle-go/pkg/types"
 
-	"github.com/gregkonush/lab/services/miel/internal/backtest"
-	"github.com/gregkonush/lab/services/miel/internal/config"
+	"github.com/proompteng/lab/services/miel/internal/backtest"
+	"github.com/proompteng/lab/services/miel/internal/config"
 )
 
 // Recorder captures ledger events for downstream reconciliation.

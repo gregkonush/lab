@@ -4,9 +4,9 @@ metadata:
   name: cdk8s
 spec:
   sourceRepos:
-    - https://github.com/gregkonush/lab.git
-    - https://github.com/gregkonush/lab
-    - git@github.com:gregkonush/lab.git
+    - https://github.com/proompteng/lab.git
+    - https://github.com/proompteng/lab
+    - git@github.com:proompteng/lab.git
   allowConcurrency: false
   lockRepo: true
   generate:

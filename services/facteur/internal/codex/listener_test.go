@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/gregkonush/lab/services/facteur/internal/codex"
-	"github.com/gregkonush/lab/services/facteur/internal/githubpb"
+	"github.com/proompteng/lab/services/facteur/internal/codex"
+	"github.com/proompteng/lab/services/facteur/internal/githubpb"
 )
 
 type stubReader struct {
@@ -53,7 +53,7 @@ func (s *stubReader) Close() error {
 func TestListenerRun_LogsStructuredMessage(t *testing.T) {
 	task := &githubpb.CodexTask{
 		Stage:       githubpb.CodexTaskStage_CODEX_TASK_STAGE_PLANNING,
-		Repository:  "gregkonush/lab",
+		Repository:  "proompteng/lab",
 		IssueNumber: 42,
 	}
 	payload, err := proto.Marshal(task)

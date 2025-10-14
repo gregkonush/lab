@@ -8,7 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	v1alpha1 "github.com/gregkonush/lab/services/tigresse/api/v1alpha1"
+	v1alpha1 "github.com/proompteng/lab/services/tigresse/api/v1alpha1"
 )
 
 func testCluster() *v1alpha1.TigerBeetleCluster {

@@ -16,7 +16,7 @@ const originalFetch = global.fetch
 describe('buildChannelName', () => {
   it('creates a stable channel name using repo slug, issue, stage, timestamp, and run id', () => {
     const channel = buildChannelName({
-      repository: 'gregkonush/lab',
+      repository: 'proompteng/lab',
       issueNumber: 1243,
       stage: 'planning',
       runId: 'relay-xyz123',

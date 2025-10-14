@@ -1,5 +1,5 @@
 version: v1
-name: buf.build/gregkonush/lab-proto
+name: buf.build/proompteng/lab-proto
 deps:
   - buf.build/protocolbuffers/wellknowntypes
 lint:

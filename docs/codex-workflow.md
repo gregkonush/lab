@@ -66,7 +66,7 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
      printf 'hello discord\nthis is a dry run\n' | \
        bunx tsx apps/froussard/scripts/discord-relay.ts \
          --stage planning \
-         --repo gregkonush/lab \
+         --repo proompteng/lab \
          --issue 999 \
          --run-id local-test \
          --dry-run
@@ -84,7 +84,7 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
 - Provide the comment body via stdin or `--body-file`; set `ISSUE_REPO`, `ISSUE_NUMBER`, and (optionally) `CODEX_PROGRESS_COMMENT_MARKER`/`CODEX_PROGRESS_COMMENT_LOG_PATH` before invoking the helper.
 - Use `--dry-run` when validating changes locally—this prints the resolved body/action without mutating GitHub.
 
-1. **Create a test issue** in `gregkonush/lab` (while logged in as `gregkonush`).
+1. **Create a test issue** in `proompteng/lab` (while logged in as `gregkonush`).
    - Check `argo get @latest -n argo-workflows` to see the planning workflow run via `github-codex-planning`.
    - Confirm the issue received a comment beginning with `<!-- codex:plan -->` that follows the Summary/Steps/Validation/Risks/Handoff Notes template.
 2. **Approve the plan** by replying `execute plan` on the issue (as `gregkonush`).
@@ -114,7 +114,7 @@ Submit the template manually to isolate execution from GitHub/Kafka:
 ```bash
 argo submit --from workflowtemplate/github-codex-planning -n argo-workflows \
   -p rawEvent='{}' \
-  -p eventBody='{"stage":"planning","prompt":"Dry run","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration"}'
+  -p eventBody='{"stage":"planning","prompt":"Dry run","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration"}'
 ```
 
 Trigger the implementation flow directly when you have an approved plan payload handy:
@@ -122,7 +122,7 @@ Trigger the implementation flow directly when you have an approved plan payload 
 ```bash
 argo submit --from workflowtemplate/github-codex-implementation -n argo-workflows \
   -p rawEvent='{}' \
-  -p eventBody='{"stage":"implementation","prompt":"<codex prompt>","repository":"gregkonush/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/gregkonush/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}'
+  -p eventBody='{"stage":"implementation","prompt":"<codex prompt>","repository":"proompteng/lab","issueNumber":999,"base":"main","head":"codex/test","issueUrl":"https://github.com/proompteng/lab/issues/999","issueTitle":"Codex dry run","issueBody":"Testing orchestration","planCommentBody":"<!-- codex:plan -->\n..."}'
 ```
 
 The implementation workflow writes verbose output to `/workspace/lab/.codex-implementation.log`; inspect the artifact in Argo if you need the full Codex transcript.

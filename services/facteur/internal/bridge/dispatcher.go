@@ -8,8 +8,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/gregkonush/lab/services/facteur/internal/argo"
-	"github.com/gregkonush/lab/services/facteur/internal/telemetry"
+	"github.com/proompteng/lab/services/facteur/internal/argo"
+	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 // DispatchRequest describes a workflow submission triggered by a Discord command.

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/session"
 )
 
 const (

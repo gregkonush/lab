@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package facteur.v1;
 
-option go_package = "github.com/gregkonush/lab/services/facteur/internal/facteurpb";
+option go_package = "github.com/proompteng/lab/services/facteur/internal/facteurpb";
 
 message CommandEvent {
   string provider = 1;

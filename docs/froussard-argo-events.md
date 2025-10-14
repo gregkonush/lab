@@ -13,7 +13,7 @@
 ## Verification Steps
 
 1. Apply the manifests and allow the `github-codex` sensor deployment to roll.
-2. Open a GitHub issue in `gregkonush/lab` to emit a webhook.
+2. Open a GitHub issue in `proompteng/lab` to emit a webhook.
 3. Inspect the latest workflow with:
    ```bash
    kubectl get wf -n argo-workflows github-codex-planning-<suffix> -o jsonpath='{.spec.arguments.parameters[*].value}'

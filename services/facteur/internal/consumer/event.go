@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/gregkonush/lab/services/facteur/internal/bridge"
-	"github.com/gregkonush/lab/services/facteur/internal/facteurpb"
-	"github.com/gregkonush/lab/services/facteur/internal/session"
-	"github.com/gregkonush/lab/services/facteur/internal/telemetry"
+	"github.com/proompteng/lab/services/facteur/internal/bridge"
+	"github.com/proompteng/lab/services/facteur/internal/facteurpb"
+	"github.com/proompteng/lab/services/facteur/internal/session"
+	"github.com/proompteng/lab/services/facteur/internal/telemetry"
 )
 
 const (

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	instrumentationName = "github.com/gregkonush/lab/services/facteur"
+	instrumentationName = "github.com/proompteng/lab/services/facteur"
 	defaultServiceName  = "facteur"
 	defaultOTLPProtocol = "http/protobuf"
 )
