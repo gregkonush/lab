@@ -5,7 +5,7 @@ This document explains how to maintain the single `k8s-arm64` template, push new
 ## Prerequisites
 
 - Logged in to the Coder deployment (`coder login ...`).
-- `coder` CLI v2.26.0 or newer on your local machine.
+- `coder` CLI v2.27.0 or newer on your local machine.
 - Repository cloned locally (this repo, default path `~/github.com/lab`).
 
 ## Template Update Loop
