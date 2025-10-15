@@ -184,11 +184,10 @@ const argocdOutput = resolve(options.argocdOutput ?? defaultArgocdOutput)
 const workflowsOutput = resolve(options.workflowsOutput ?? defaultWorkflowsOutput)
 const configPath = resolve(options.configPath ?? defaultConfigPath)
 
-const clientIdAlphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const clientSecretAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
 const passwordAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+'
 
-const clientId = options.clientId ?? randomString(24, clientIdAlphabet)
+const clientId = options.clientId ?? 'argo-workflows-sso'
 const clientSecret = options.clientSecret ?? randomString(48, clientSecretAlphabet)
 const password = options.password ?? randomString(20, passwordAlphabet)
 
