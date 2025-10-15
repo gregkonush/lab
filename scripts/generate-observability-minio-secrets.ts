@@ -130,8 +130,7 @@ const indentBlock = (value: string, spaces: number) => {
   const padding = ' '.repeat(spaces)
   return value
     .split('\n')
-    .filter((line) => line.length > 0)
-    .map((line) => `${padding}${line}`)
+    .map((line) => (line.length ? `${padding}${line}` : ''))
     .join('\n')
 }
 
@@ -158,7 +157,9 @@ const tempoSecretKey = randomString(40, secretKeyAlphabet)
 const mimirAccessKey = randomString(20, accessKeyAlphabet)
 const mimirSecretKey = randomString(40, secretKeyAlphabet)
 
-const configEnv = `MINIO_ROOT_USER=${rootUser}\nMINIO_ROOT_PASSWORD=${rootPassword}`
+const configEnvLines = [`export MINIO_ROOT_USER=${rootUser}`, `export MINIO_ROOT_PASSWORD=${rootPassword}`]
+
+const configEnv = configEnvLines.join('\n') + '\n'
 
 const minioSecretManifest = `apiVersion: v1
 kind: Secret
@@ -166,8 +167,10 @@ metadata:
   name: observability-minio-creds
   namespace: minio
 stringData:
-  config.env: |-
+  config.env: |
 ${indentBlock(configEnv, 4)}
+  accesskey: ${rootUser}
+  secretkey: ${rootPassword}
 type: Opaque
 `
 
