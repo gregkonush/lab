@@ -120,7 +120,7 @@ spec:
               argocd-image-updater.argoproj.io/git-repository: git@github.com:proompteng/lab.git
               argocd-image-updater.argoproj.io/git-branch: main:release/{{.SHA256}}
               argocd-image-updater.argoproj.io/write-back-target: kustomization:/argocd/applications/dernier
-            automation: auto
+            automation: manual
             enabled: true
           - name: froussard
             path: argocd/applications/froussard

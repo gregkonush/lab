@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { $ } from 'bun'
+import { Buffer } from 'node:buffer'
 
 $.throws(true)
 
@@ -39,9 +40,33 @@ const dockerfile = process.env.DERNIER_DOCKERFILE ?? 'services/dernier/Dockerfil
 const namespace = process.env.DERNIER_KN_NAMESPACE ?? 'dernier'
 const service = process.env.DERNIER_KN_SERVICE ?? 'dernier'
 const knBinary = process.env.DERNIER_KN_BIN ?? 'kn'
+const secretName = process.env.DERNIER_SECRET_NAME ?? 'dernier-secrets'
 
 const buildArgs = splitArgs(process.env.DERNIER_BUILD_ARGS)
 const knExtraArgs = splitArgs(process.env.DERNIER_KN_EXTRA_ARGS)
+
+const fetchSecretValue = async (key: string) => {
+  const output = await $`kubectl get secret ${secretName} --namespace ${namespace} -o json`.text()
+  const payload = JSON.parse(output)
+  const encoded = payload?.data?.[key]
+  if (!encoded) {
+    throw new Error(`Secret ${secretName} in namespace ${namespace} is missing key ${key}`)
+  }
+  const decoded = Buffer.from(encoded, 'base64').toString('utf8').trim()
+  if (!decoded) {
+    throw new Error(`Secret ${secretName} key ${key} decoded to empty value`)
+  }
+  console.log(`Loaded ${key} from secret/${secretName}`)
+  return decoded
+}
+
+if (!process.env.RAILS_MASTER_KEY) {
+  process.env.RAILS_MASTER_KEY = await fetchSecretValue('RAILS_MASTER_KEY')
+}
+
+if (!process.env.SECRET_KEY_BASE) {
+  process.env.SECRET_KEY_BASE = await fetchSecretValue('SECRET_KEY_BASE')
+}
 
 const buildParts = ['docker', 'build', '-f', dockerfile, '-t', image, ...buildArgs]
 if (process.env.RAILS_MASTER_KEY) {
