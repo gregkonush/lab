@@ -81,43 +81,6 @@ metadata:
 spec:
   authentication:
     type: scram-sha-512
-  authorization:
-    type: simple
-    acls:
-      - resource:
-          type: topic
-          name: discord.commands.incoming
-          patternType: literal
-        operations:
-          - Describe
-          - Read
-      - resource:
-          type: topic
-          name: discord.commands.incoming.dlq
-          patternType: literal
-        operations:
-          - Describe
-          - Read
-          - Write
-      - resource:
-          type: topic
-          name: github.issues.codex.tasks
-          patternType: literal
-        operations:
-          - Describe
-          - Read
-      - resource:
-          type: group
-          name: facteur-consumer
-          patternType: literal
-        operations:
-          - Read
-      - resource:
-          type: group
-          name: facteur-codex-listener
-          patternType: literal
-        operations:
-          - Read
   template:
     secret:
       metadata:
