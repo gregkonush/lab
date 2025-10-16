@@ -50,29 +50,37 @@ export type FaqItem = {
   answer: string
 }
 
+export type ComparisonPoint = {
+  capability: string
+  proompteng: string
+  salesforceAgentforce: string
+  googleGemini: string
+}
+
 export const HERO = {
   announcement: {
-    label: 'Launch Week: new control plane and guardrail packs',
+    label: 'New: enterprise guardrail blueprints + SOC 2 toolkit',
     href: 'https://docs.proompteng.ai',
   },
-  headline: 'ship ai agents',
-  subheadline: 'proompteng is the control plane for engineers to launch, govern, and scale AI agents across any stack.',
+  headline: 'enterprise ai agent control plane',
+  subheadline:
+    'proompteng lets platform and security teams govern, secure, and scale AI agents across any cloud with policy-as-code guardrails, unified observability, and multi-model orchestration.',
   ctaLabel: 'talk to us',
   secondaryCtaLabel: 'book an architecture review',
   secondaryCtaHref: 'mailto:greg@proompteng.ai?subject=Architecture%20Review',
-  deRisk: 'no credit card • deploy to your cloud • open-source control plane',
+  deRisk: 'soc 2 evidence • deploy in your vpc • open-source control plane',
   highlights: [
     {
-      title: 'policy-as-code guardrails',
-      description: 'Ship rules from Git and enforce every call instantly.',
+      title: 'compliance-grade guardrails',
+      description: 'Enforce policies from GitHub, sign every action, and ship audit-ready evidence.',
     },
     {
-      title: 'observability on day one',
-      description: 'Trace, replay, and compare agent decisions in seconds.',
+      title: 'multi-model orchestration',
+      description: 'Route across OpenAI, Claude, Gemini, DeepSeek, and on-prem weights with one API.',
     },
     {
-      title: 'model freedom',
-      description: 'Swap providers or weights without touching downstream code.',
+      title: 'traceable decisions',
+      description: 'Replay conversations, diff agent runs, and share post-mortems in minutes.',
     },
   ] satisfies HeroHighlight[],
 } as const
@@ -191,6 +199,66 @@ export const MODEL_CATALOG: CardItem[] = [
   },
 ]
 
+export const USE_CASES: CardItem[] = [
+  {
+    icon: 'ShieldCheck',
+    title: 'regulated industries',
+    text: 'launch compliant customer support and underwriting copilots with SOC 2 evidence and guardrails.',
+  },
+  {
+    icon: 'Activity',
+    title: 'operations automation',
+    text: 'coordinate agent swarms for logistics, field service, and supply chain handoffs with audit-ready playbooks.',
+  },
+  {
+    icon: 'Eye',
+    title: 'agent observability',
+    text: 'trace, replay, and evaluate AI assistant decisions to improve win rates and reduce hallucinations.',
+  },
+  {
+    icon: 'Server',
+    title: 'self-hosted agents',
+    text: 'ship on-prem orchestration for sensitive data using mistral, gemini, and llama weights in your VPC.',
+  },
+  {
+    icon: 'Network',
+    title: 'multi-model routing',
+    text: 'route across o1, claude 3.5, deepseek r1, and internal fine-tunes with policy-aware fallbacks.',
+  },
+  {
+    icon: 'Database',
+    title: 'governed rag',
+    text: 'connect retrieval layers to agent memory with approvals, retention policies, and audit trails.',
+  },
+]
+
+export const COMPARISON_POINTS = [
+  {
+    capability: 'Policy-as-code guardrails',
+    proompteng: 'Versioned policies, approvals, and automated SOC 2 mappings out-of-the-box.',
+    salesforceAgentforce: 'Limited to Salesforce ecosystem guardrails; custom code for external tools.',
+    googleGemini: 'No native policy engine; relies on Cloud IAM and custom middleware.',
+  },
+  {
+    capability: 'Multi-model orchestration',
+    proompteng: 'Abstracted routing for OpenAI, Claude, Gemini, DeepSeek, open weights, and custom adapters.',
+    salesforceAgentforce: 'Optimized for Einstein/GPT; external models via integrations with added latency.',
+    googleGemini: 'Vendor-locked to Gemini family; third-party weights require Vertex custom pipelines.',
+  },
+  {
+    capability: 'Observability & replay',
+    proompteng: 'Full trace capture, diff tooling, eval hooks, and incident post-mortem exports.',
+    salesforceAgentforce: 'Basic monitoring dashboards; limited replay for non-Salesforce channels.',
+    googleGemini: 'Logging via Cloud Logging; replay needs custom instrumentation.',
+  },
+  {
+    capability: 'Deployment flexibility',
+    proompteng: 'SaaS or self-hosted in your VPC/Kubernetes with Terraform + Argo CD automation.',
+    salesforceAgentforce: 'Runs in Salesforce cloud; no self-hosted option.',
+    googleGemini: 'Runs on Google Cloud; hybrid requires complex networking.',
+  },
+] as const
+
 export const SECURITY: CardItem[] = [
   {
     icon: 'KeyRound',
@@ -231,19 +299,19 @@ export const TESTIMONIAL = {
 
 export const METRICS: Metric[] = [
   {
-    value: '9x',
-    label: 'faster to production',
-    sublabel: 'teams shrinking agent rollout timelines from quarters to days.',
+    value: '40%',
+    label: 'faster governance sign-off',
+    sublabel: 'Policy-as-code reviews and SOC 2 evidence bundles cut approval cycles nearly in half.',
   },
   {
     value: '45%',
     label: 'lower runtime spend',
-    sublabel: 'Smart routing and caching trim wasted calls and spend.',
+    sublabel: 'Multi-model routing and caching trim wasted LLM calls without sacrificing quality.',
   },
   {
-    value: '99.7%',
+    value: '99.9%',
     label: 'observed uptime',
-    sublabel: 'Multi-region control plane with one-click rollbacks.',
+    sublabel: 'Multi-region control plane with progressive delivery and instant rollback.',
   },
 ]
 
@@ -298,6 +366,11 @@ export const FAQS: FaqItem[] = [
       'yes. helm charts and terraform modules let you deploy to your own kubernetes clusters. argo cd keeps environments drift‑free.',
   },
   {
+    question: 'do you include compliance evidence for soc 2 or iso 27001?',
+    answer:
+      'yes. exportable policy logs, access trails, and change history map to soc 2 cc series and iso annex controls, ready for auditors.',
+  },
+  {
     question: 'what does onboarding look like?',
     answer:
       'import your agents, connect data stores, and run our launch checklist. solution architects help you wire evals, incident response, and compliance flows.',
@@ -306,5 +379,15 @@ export const FAQS: FaqItem[] = [
     question: 'how is security handled?',
     answer:
       'field‑level encryption, scoped tokens, and audit trails ship by default. integrate with your sso and siem in under an hour.',
+  },
+  {
+    question: 'does proompteng support rbac for agent actions?',
+    answer:
+      'role- and policy-based controls restrict tool use, prompt libraries, and data access. approvals are logged and synced with your identity provider.',
+  },
+  {
+    question: 'how do policy-as-code guardrails work in production?',
+    answer:
+      'policies compile to deterministic runtimes evaluated on every agent decision. violations are blocked instantly, alerts are dispatched, and remediation workflows retain full audit trails.',
   },
 ]

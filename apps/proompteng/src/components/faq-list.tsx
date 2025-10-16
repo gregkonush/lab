@@ -11,10 +11,11 @@ export default function FaqList() {
       <div className="mx-auto max-w-3xl text-center">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">questions</p>
         <h2 id="faq-heading" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-          Everything you need to know before launching
+          AI agent governance FAQs
         </h2>
         <p className="mt-3 text-sm text-muted-foreground">
-          Still unsure? Reach out for a guided walkthrough tailored to your stack and compliance needs.
+          Still unsure? Reach out for a guided walkthrough tailored to your compliance posture, deployment model, and
+          policy requirements.
         </p>
       </div>
 
