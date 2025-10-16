@@ -45,7 +45,7 @@ issue number, and delivery identifier for observability.
 ## Prerequisites
 
 - Secrets `github-token` and `codex-openai` in `argo-workflows` namespace.
-- SealedSecret `discord-codex-bot` seeded with the Discord bot token, guild id, and optional category id.
+- Discord secrets regenerated in `argocd/applications/froussard/discord-secrets.yaml` (provides both `discord-bot` and `discord-codex-bot` sealed manifests).
 - Kafka topics `github.webhook.events`, `github.codex.tasks`, and `github.issues.codex.tasks` deployed via Strimzi.
 - Argo Events resources under `argocd/applications/froussard/` synced.
 
@@ -56,7 +56,7 @@ issue number, and delivery identifier for observability.
 Codex now mirrors planning and implementation output into a per-run Discord channel when the bot credentials are present.
 
 1. **Provision the secret**
-   - Edit `argocd/applications/froussard/discord-codex-secret.yaml` with sealed values for `bot-token`, `guild-id`, and (optionally) `category-id` using your cluster's `kubeseal` public certificate.
+   - Run `pnpm run froussard:reseal` (requires `op`, `kubectl`, and `kubeseal`) to refresh `argocd/applications/froussard/discord-secrets.yaml` with sealed values for `bot-token`, `guild-id`, and optionally `category-id`.
    - Argo CD reconciles the sealed secret into an opaque secret named `discord-codex-bot` in `argo-workflows`.
 2. **Verify workflow envs**
    - Both `github-codex-planning` and `github-codex-implementation` templates now inject `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, and `DISCORD_CATEGORY_ID` into the Codex container. The relay only activates when the token and guild id are present.

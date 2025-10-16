@@ -91,3 +91,24 @@ spec:
           reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "facteur"
           reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
           reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "facteur"
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: froussard
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  template:
+    secret:
+      metadata:
+        labels:
+          kafka.eventing.knative.dev/kafka-secret: "true"
+        annotations:
+          reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+          reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "froussard"
+          reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+          reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "froussard"
