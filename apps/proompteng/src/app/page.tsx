@@ -1,9 +1,10 @@
 import Link from 'next/link'
 
-import { MODEL_CATALOG } from '@/app/config'
+import { MODEL_CATALOG, USE_CASES } from '@/app/config'
 import BenefitsGrid from '@/components/benefits-grid'
 import ClosingCta from '@/components/closing-cta'
 import ContentCards from '@/components/content-cards'
+import ControlPlaneOverview from '@/components/control-plane-overview'
 import FaqList from '@/components/faq-list'
 import FeatureShowcase from '@/components/feature-showcase'
 import Hero from '@/components/hero'
@@ -59,11 +60,13 @@ export default function Home() {
           </header>
           <main className="flex flex-col gap-12 py-10 sm:gap-16 sm:py-16">
             <Hero />
+            <ControlPlaneOverview />
             <SocialProof />
             <Metrics />
             <BenefitsGrid />
             <FeatureShowcase />
-            <ContentCards id="models" title="model catalog" items={MODEL_CATALOG} />
+            <ContentCards sectionId="use-cases" title="enterprise ai agent use cases" items={USE_CASES} />
+            <ContentCards sectionId="models" title="model catalog" items={MODEL_CATALOG} />
             <PlaybookTimeline />
             <Testimonial />
             <FaqList />

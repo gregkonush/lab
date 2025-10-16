@@ -1,15 +1,17 @@
 import { SOCIAL_PROOF } from '@/app/config'
 
+const SOCIAL_PROOF_HEADING_ID = 'social-proof-heading'
+
 export default function SocialProof() {
   return (
     <section
-      aria-labelledby="social-proof-heading"
+      aria-labelledby={SOCIAL_PROOF_HEADING_ID}
       className="rounded-3xl border bg-card/60 px-6 py-10 shadow-sm backdrop-blur sm:px-10"
     >
       <div className="mx-auto flex max-w-4xl flex-col items-center gap-4 text-center sm:flex-row sm:justify-between sm:text-left">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-primary">trusted by launch partners</p>
-          <h2 id="social-proof-heading" className="mt-2 text-2xl font-semibold tracking-tight">
+          <h2 id={SOCIAL_PROOF_HEADING_ID} className="mt-2 text-2xl font-semibold tracking-tight">
             Designed with teams operating regulated workloads
           </h2>
         </div>

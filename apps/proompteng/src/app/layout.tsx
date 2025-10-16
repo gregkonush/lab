@@ -4,6 +4,11 @@ import Script from 'next/script'
 import Providers from '@/components/providers'
 import './globals.css'
 
+const WEBSITE_JSON_LD_ID = 'ld+json-website'
+const PRODUCT_JSON_LD_ID = 'ld+json-product'
+const FAQ_JSON_LD_ID = 'ld+json-faq'
+const BREADCRUMB_JSON_LD_ID = 'ld+json-breadcrumb'
+
 const spaceGrotesk = Space_Grotesk({
   variable: '--font-space-grotesk',
   subsets: ['latin'],
@@ -22,16 +27,18 @@ export const metadata: Metadata = {
     template: '%s — proompteng',
   },
   description:
-    'proompteng is the control plane that lets software teams launch, govern, and scale AI agents with guardrails, observability, and model freedom across any stack.',
+    'proompteng is the enterprise AI agent control plane that lets platform teams launch, govern, and scale AI assistants with policy-as-code guardrails, observability, and multi-model orchestration.',
   applicationName: 'proompteng',
+  category: 'AI Agent Platform',
   keywords: [
     'ai agent control plane',
-    'ai agent platform',
-    'ai agent devtools',
-    'ai guardrails',
+    'enterprise ai agent platform',
+    'ai agent governance',
+    'policy as code guardrails',
     'agent observability',
-    'policy as code',
     'multi model orchestration',
+    'llm routing platform',
+    'ai compliance tooling',
     'ai infrastructure',
   ],
   alternates: { canonical: '/' },
@@ -41,7 +48,7 @@ export const metadata: Metadata = {
     siteName: 'proompteng',
     title: 'proompteng – Ship AI agents with a control plane built for engineers',
     description:
-      'Launch, govern, and scale AI agents with guardrails, observability, and model freedom across any stack.',
+      'Launch, govern, and scale AI agents with policy-as-code guardrails, observability, and model freedom across any stack.',
     images: [
       {
         url: '/opengraph-image',
@@ -55,7 +62,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'proompteng – Ship AI agents',
     description:
-      'Control plane for engineers to launch, govern, and scale AI agents with guardrails and observability.',
+      'Control plane for platform teams to launch, govern, and scale AI agents with guardrails and observability.',
     images: ['/opengraph-image'],
   },
   robots: { index: true, follow: true },
@@ -86,7 +93,7 @@ export default function RootLayout({
     name: 'proompteng',
     url: 'https://proompteng.ai',
     description:
-      'Control plane for engineers to launch, govern, and scale AI agents with guardrails, observability, and model freedom.',
+      'Enterprise AI agent control plane to launch, govern, and scale assistants with guardrails, observability, and model freedom.',
     publisher: {
       '@type': 'Organization',
       name: 'proompteng',
@@ -128,6 +135,7 @@ export default function RootLayout({
       'Observability and replay',
       'Multi-model routing',
       'Agent memory integrations',
+      'SOC 2 evidence automation',
     ],
     creator: {
       '@type': 'Organization',
@@ -139,6 +147,30 @@ export default function RootLayout({
         contactType: 'sales',
       },
     },
+  }
+  const breadcrumbLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      {
+        '@type': 'ListItem',
+        position: 1,
+        name: 'Home',
+        item: 'https://proompteng.ai',
+      },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'AI Agent Control Plane',
+        item: 'https://proompteng.ai/#control-plane',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: 'Enterprise Use Cases',
+        item: 'https://proompteng.ai/#use-cases',
+      },
+    ],
   }
   const faqLd = {
     '@context': 'https://schema.org',
@@ -166,14 +198,17 @@ export default function RootLayout({
     <html lang="en" className="dark scroll-smooth">
       <body className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} antialiased`}>
         <Providers>
-          <Script id="ld+json-website" type="application/ld+json" strategy="afterInteractive">
+          <Script id={WEBSITE_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(jsonLd)}
           </Script>
-          <Script id="ld+json-product" type="application/ld+json" strategy="afterInteractive">
+          <Script id={PRODUCT_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(productLd)}
           </Script>
-          <Script id="ld+json-faq" type="application/ld+json" strategy="afterInteractive">
+          <Script id={FAQ_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(faqLd)}
+          </Script>
+          <Script id={BREADCRUMB_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
+            {JSON.stringify(breadcrumbLd)}
           </Script>
           {children}
         </Providers>
