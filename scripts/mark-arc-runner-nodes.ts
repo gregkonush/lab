@@ -23,6 +23,19 @@ type ExecParts = string[]
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 
+function parseNodeNames(): string[] {
+  const override = args.find((part) => part.startsWith('--nodes='))
+  const envOverride = process.env.ARC_RUNNER_NODE_NAMES
+  const raw = override?.slice('--nodes='.length) ?? envOverride ?? ''
+  if (!raw.trim()) {
+    return []
+  }
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
+
 function readCount(): number {
   const override = args.find((part) => part.startsWith('--count='))
   const envOverride = process.env.ARC_RUNNER_NODE_COUNT
@@ -34,6 +47,7 @@ function readCount(): number {
   return parsed
 }
 
+const explicitNodeNames = parseNodeNames()
 const nodeCount = readCount()
 const labelKey = process.env.ARC_RUNNER_LABEL_KEY ?? 'github.com/arc-runner'
 const labelValue = process.env.ARC_RUNNER_LABEL_VALUE ?? 'true'
@@ -76,14 +90,54 @@ if (nodes.length === 0) {
 }
 
 const sortedNodes = [...nodes].sort((a, b) => a.metadata.name!.localeCompare(b.metadata.name!))
-const selected = sortedNodes.slice(-nodeCount)
+
+function resolveExplicitNodes(): Required<NodeResource>[] {
+  if (explicitNodeNames.length === 0) {
+    return []
+  }
+
+  const map = new Map(sortedNodes.map((node) => [node.metadata.name!, node]))
+  const missing: string[] = []
+  const resolved: Required<NodeResource>[] = []
+
+  for (const name of explicitNodeNames) {
+    const match = map.get(name)
+    if (match) {
+      resolved.push(match)
+    } else {
+      missing.push(name)
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Node(s) not found: ${missing.join(', ')}. Available nodes: ${sortedNodes
+        .map((node) => node.metadata.name)
+        .join(', ')}`,
+    )
+  }
+
+  return resolved
+}
+
+const explicitTargets = resolveExplicitNodes()
+const selected = explicitTargets.length > 0 ? explicitTargets : sortedNodes.slice(-nodeCount)
 const selectedNames = new Set(selected.map((node) => node.metadata.name!))
 
-if (selected.length < nodeCount) {
+if (explicitTargets.length === 0 && selected.length < nodeCount) {
   console.warn(`Requested ${nodeCount} nodes but only found ${selected.length}. Proceeding with available nodes.`)
 }
 
-console.log(`Targeting nodes: ${selected.map((node) => node.metadata.name).join(', ')} (sorted lexicographically)`)
+if (selected.length === 0) {
+  throw new Error('No target nodes selected. Provide --nodes or ensure node count > 0.')
+}
+
+const targetDescriptor =
+  explicitTargets.length > 0
+    ? selected.map((node) => node.metadata.name).join(', ')
+    : `${selected.map((node) => node.metadata.name).join(', ')} (selected by highest lex order)`
+
+console.log(`Targeting nodes: ${targetDescriptor}`)
 
 for (const node of selected) {
   const name = node.metadata.name!
