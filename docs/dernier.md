@@ -112,7 +112,7 @@ argocd app sync dernier
 
 - **Rollout:** Bump the image tag via CI (Skaffold profiles `dernier` / `dernier-remote`) or Argo CD Image Updater. Confirm HPA status with `kubectl get hpa -n dernier`.
 - **Database Maintenance:** Use `kubectl cnpg psql dernier-db -n dernier` for direct access. Certificates are mounted from `dernier-db-ca`.
-- **Secret Rotation:** Run `scripts/generate-dernier-sealed-secret.sh --print-values` to emit and seal fresh keys. Capture the printed `RAILS_MASTER_KEY`/`SECRET_KEY_BASE`, commit the updated sealed secret, and sync `dernier`.
+- **Secret Rotation:** Run `scripts/generate-dernier-sealed-secret.ts --print-values` to emit and seal fresh keys. Capture the printed `RAILS_MASTER_KEY`/`SECRET_KEY_BASE`, commit the updated sealed secret, and sync `dernier`.
 - **Credentials Re-encryption:** When rotating the master key, regenerate `config/credentials.yml.enc` with the new key before deploying.
   1. Back up the existing encrypted file (`mv services/dernier/config/credentials.yml.enc services/dernier/config/credentials.yml.enc.bak`).
   2. Use the app image to re-encrypt with the new values:
