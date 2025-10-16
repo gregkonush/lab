@@ -58,7 +58,7 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 
 - `pnpm run build:facteur` builds and pushes the multi-arch image via Docker (override registry/tag with `FACTEUR_IMAGE_*`).
 - `pnpm run facteur:reseal` refreshes the `facteur-discord` SealedSecret from 1Password (`op` must be logged in). Kafka credentials are sourced from Strimzi-managed `KafkaUser` secrets instead of SealedSecrets.
-- `pnpm run facteur:deploy` applies the `kubernetes/facteur/overlays/cluster` manifests; append `-- --dry-run` to validate without mutating the cluster.
+- `pnpm run facteur:deploy` builds a fresh container image, pushes it to the registry, reapplies supporting manifests, and then rolls the Knative Service via `kn service apply`. Override `FACTEUR_IMAGE_TAG`/`FACTEUR_IMAGE_REGISTRY`/`FACTEUR_IMAGE_REPOSITORY` as needed before running.
 - `pnpm run facteur:consume` runs the local Kafka consumer with `services/facteur/config/example.yaml` (override via `FACTEUR_CONSUMER_CONFIG`).
 
 ### Kafka credentials
