@@ -4,6 +4,11 @@ import Script from 'next/script'
 import Providers from '@/components/providers'
 import './globals.css'
 
+const WEBSITE_JSON_LD_ID = 'ld+json-website'
+const PRODUCT_JSON_LD_ID = 'ld+json-product'
+const FAQ_JSON_LD_ID = 'ld+json-faq'
+const BREADCRUMB_JSON_LD_ID = 'ld+json-breadcrumb'
+
 const spaceGrotesk = Space_Grotesk({
   variable: '--font-space-grotesk',
   subsets: ['latin'],
@@ -193,16 +198,16 @@ export default function RootLayout({
     <html lang="en" className="dark scroll-smooth">
       <body className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} antialiased`}>
         <Providers>
-          <Script id="ld+json-website" type="application/ld+json" strategy="afterInteractive">
+          <Script id={WEBSITE_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(jsonLd)}
           </Script>
-          <Script id="ld+json-product" type="application/ld+json" strategy="afterInteractive">
+          <Script id={PRODUCT_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(productLd)}
           </Script>
-          <Script id="ld+json-faq" type="application/ld+json" strategy="afterInteractive">
+          <Script id={FAQ_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(faqLd)}
           </Script>
-          <Script id="ld+json-breadcrumb" type="application/ld+json" strategy="afterInteractive">
+          <Script id={BREADCRUMB_JSON_LD_ID} type="application/ld+json" strategy="afterInteractive">
             {JSON.stringify(breadcrumbLd)}
           </Script>
           {children}

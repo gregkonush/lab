@@ -5,8 +5,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
+const HERO_HEADING_ID = 'hero-heading'
+const CTA_REASSURANCE_ID = 'cta-reassurance'
+
 export default function Hero() {
-  const reassuranceId = 'cta-reassurance'
+  const reassuranceId = CTA_REASSURANCE_ID
 
   return (
     <section
@@ -38,7 +41,7 @@ export default function Hero() {
           </Link>
         ) : null}
 
-        <h1 id="hero-heading" className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-6xl">
+        <h1 id={HERO_HEADING_ID} className="mt-6 text-balance text-5xl font-semibold tracking-tight sm:text-6xl">
           {HERO.headline}
         </h1>
         <p className="mx-auto mt-4 max-w-3xl text-pretty text-base text-muted-foreground sm:text-xl">

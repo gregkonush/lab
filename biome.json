@@ -48,6 +48,9 @@
       "correctness": {
         "noUnusedImports": "error",
         "noNodejsModules": "off"
+      },
+      "suspicious": {
+        "noUnknownAtRules": "off"
       }
     }
   },

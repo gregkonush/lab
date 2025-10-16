@@ -1,15 +1,18 @@
 import { COMPARISON_POINTS } from '@/app/config'
 
+const CONTROL_PLANE_SECTION_ID = 'control-plane'
+const CONTROL_PLANE_HEADING_ID = 'control-plane-heading'
+
 export default function ControlPlaneOverview() {
   return (
     <section
-      id="control-plane"
-      aria-labelledby="control-plane-heading"
+      id={CONTROL_PLANE_SECTION_ID}
+      aria-labelledby={CONTROL_PLANE_HEADING_ID}
       className="rounded-3xl border bg-card/75 px-6 py-12 shadow-sm backdrop-blur sm:px-12"
     >
       <div className="mx-auto max-w-4xl text-center">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">control plane fundamentals</p>
-        <h2 id="control-plane-heading" className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+        <h2 id={CONTROL_PLANE_HEADING_ID} className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
           What is an AI Agent Control Plane?
         </h2>
         <p className="mt-3 text-sm text-muted-foreground sm:text-base">

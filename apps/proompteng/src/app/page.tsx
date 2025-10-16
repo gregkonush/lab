@@ -4,6 +4,7 @@ import { MODEL_CATALOG, USE_CASES } from '@/app/config'
 import BenefitsGrid from '@/components/benefits-grid'
 import ClosingCta from '@/components/closing-cta'
 import ContentCards from '@/components/content-cards'
+import ControlPlaneOverview from '@/components/control-plane-overview'
 import FaqList from '@/components/faq-list'
 import FeatureShowcase from '@/components/feature-showcase'
 import Hero from '@/components/hero'
@@ -12,7 +13,6 @@ import Navbar from '@/components/navbar'
 import PlaybookTimeline from '@/components/playbook-timeline'
 import SocialProof from '@/components/social-proof'
 import Testimonial from '@/components/testimonial'
-import ControlPlaneOverview from '@/components/control-plane-overview'
 
 export default function Home() {
   const footerGroups = [
@@ -65,8 +65,8 @@ export default function Home() {
             <Metrics />
             <BenefitsGrid />
             <FeatureShowcase />
-            <ContentCards id="use-cases" title="enterprise ai agent use cases" items={USE_CASES} />
-            <ContentCards id="models" title="model catalog" items={MODEL_CATALOG} />
+            <ContentCards sectionId="use-cases" title="enterprise ai agent use cases" items={USE_CASES} />
+            <ContentCards sectionId="models" title="model catalog" items={MODEL_CATALOG} />
             <PlaybookTimeline />
             <Testimonial />
             <FaqList />

@@ -1,15 +1,18 @@
 import { PLAYBOOK } from '@/app/config'
 
+const PLAYBOOK_SECTION_ID = 'playbook'
+const PLAYBOOK_HEADING_ID = 'playbook-heading'
+
 export default function PlaybookTimeline() {
   return (
     <section
-      id="playbook"
-      aria-labelledby="playbook-heading"
+      id={PLAYBOOK_SECTION_ID}
+      aria-labelledby={PLAYBOOK_HEADING_ID}
       className="rounded-3xl border bg-card/70 px-6 py-12 shadow-sm backdrop-blur sm:px-10"
     >
       <div className="mx-auto max-w-3xl text-center">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">launch playbook</p>
-        <h2 id="playbook-heading" className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
+        <h2 id={PLAYBOOK_HEADING_ID} className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
           From prototype to governed production in one week
         </h2>
         <p className="mt-3 text-sm text-muted-foreground">
