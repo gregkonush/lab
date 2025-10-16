@@ -8,6 +8,8 @@
   "files": {
     "ignoreUnknown": true,
     "includes": [
+      "packages/scripts/**",
+      "scripts/**",
       "**",
       "!**/node_modules",
       "!**/.next",

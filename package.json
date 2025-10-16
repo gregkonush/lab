@@ -28,7 +28,10 @@
     "dev:docs": "pnpm --filter docs dev",
     "build:docs": "pnpm --filter docs build",
     "start:docs": "pnpm --filter docs start",
-    "build:facteur": "bun run scripts/build-facteur.ts"
+    "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
+    "facteur:reseal": "bun run packages/scripts/src/facteur/reseal-secrets.ts",
+    "facteur:deploy": "bun run packages/scripts/src/facteur/deploy-service.ts",
+    "facteur:consume": "bun run packages/scripts/src/facteur/run-consumer.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",

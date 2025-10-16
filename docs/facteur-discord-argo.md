@@ -54,6 +54,17 @@ The role map controls which Discord roles can invoke specific commands. Schema d
 - `kubernetes/facteur/base/redis.yaml` provisions an in-cluster Redis instance via the OT-Container-Kit Redis Operator; confirm the platform `redis-operator` Application stays healthy before syncing facteur.
 - Argo CD applications reside in `argocd/applications/facteur` and are referenced by `argocd/applicationsets/product.yaml` so the automation discovers and syncs the service.
 
+## Operations scripts
+
+- `pnpm run build:facteur` builds and pushes the multi-arch image via Docker (override registry/tag with `FACTEUR_IMAGE_*`).
+- `pnpm run facteur:reseal` refreshes the `facteur-discord` SealedSecret from 1Password (`op` must be logged in). Kafka credentials are sourced from Strimzi-managed `KafkaUser` secrets instead of SealedSecrets.
+- `pnpm run facteur:deploy` applies the `kubernetes/facteur/overlays/cluster` manifests; append `-- --dry-run` to validate without mutating the cluster.
+- `pnpm run facteur:consume` runs the local Kafka consumer with `services/facteur/config/example.yaml` (override via `FACTEUR_CONSUMER_CONFIG`).
+
+### Kafka credentials
+
+Create a dedicated `KafkaUser` (the repo defines one named `facteur`) in the Strimzi `kafka` namespace and let the User Operator manage its SCRAM secret. The `kubernetes-reflector` application mirrors the generated secret into the `facteur` namespace, so the Knative `KafkaSource` can mount live credentials without touching SealedSecrets. This keeps Kafka passwords under Strimzi’s rotation model and avoids committing new YAML when they rotate.
+
 ## Codex knowledge base persistence
 
 Facteur now owns a dedicated CloudNativePG cluster so Codex automation can persist the artefacts generated during `plan` → `implement` → `review` runs.

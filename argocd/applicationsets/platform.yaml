@@ -86,6 +86,13 @@ spec:
               argocd.argoproj.io/sync-wave: "2"
             automation: auto
             enabled: "true"
+          - name: kubernetes-reflector
+            path: argocd/applications/kubernetes-reflector
+            namespace: kubernetes-reflector
+            annotations:
+              argocd.argoproj.io/sync-wave: "2"
+            automation: auto
+            enabled: "true"
           - name: argo-workflows
             path: argocd/applications/argo-workflows
             namespace: argo-workflows
