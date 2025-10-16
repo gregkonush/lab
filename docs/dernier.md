@@ -112,7 +112,34 @@ argocd app sync dernier
 
 - **Rollout:** Bump the image tag via CI (Skaffold profiles `dernier` / `dernier-remote`) or Argo CD Image Updater. Confirm HPA status with `kubectl get hpa -n dernier`.
 - **Database Maintenance:** Use `kubectl cnpg psql dernier-db -n dernier` for direct access. Certificates are mounted from `dernier-db-ca`.
-- **Secret Rotation:** Generate fresh keys, run `scripts/seal-generic-secret.sh dernier dernier-secrets argocd/applications/dernier/overlays/cluster/sealed-secret.yaml RAILS_MASTER_KEY=<value> SECRET_KEY_BASE=<value>`, and resync.
+- **Secret Rotation:** Run `scripts/generate-dernier-sealed-secret.sh --print-values` to emit and seal fresh keys. Capture the printed `RAILS_MASTER_KEY`/`SECRET_KEY_BASE`, commit the updated sealed secret, and sync `dernier`.
+- **Credentials Re-encryption:** When rotating the master key, regenerate `config/credentials.yml.enc` with the new key before deploying.
+  1. Back up the existing encrypted file (`mv services/dernier/config/credentials.yml.enc services/dernier/config/credentials.yml.enc.bak`).
+  2. Use the app image to re-encrypt with the new values:
+     ```bash
+     tmp=$(mktemp /tmp/cred-edit.XXXXXX.sh)
+     cat <<'EOF' > "$tmp"
+     #!/bin/sh
+     cat <<'DATA' > "$1"
+     # dernier credentials regenerated
+     secret_key_base: <%= ENV.fetch('SECRET_KEY_BASE') %>
+     DATA
+     EOF
+     chmod +x "$tmp"
+     RAILS_MASTER_KEY=<new-master-key> \
+     SECRET_KEY_BASE=<new-secret-key-base> \
+     docker run --rm \
+       --entrypoint /bin/bash \
+       -e RAILS_MASTER_KEY \
+       -e SECRET_KEY_BASE \
+       -v "$tmp":/tmp/cred-editor.sh \
+       -v "$(pwd)":/workspace \
+       -w /workspace/services/dernier \
+       registry.ide-newton.ts.net/lab/dernier:latest \
+       -lc 'EDITOR=/tmp/cred-editor.sh bundle exec rails credentials:edit'
+     rm "$tmp"
+     ```
+  3. Remove the backup once the new file is committed.
 - **Cache Reset:** Flush redis via `kubectl exec -n dernier $(kubectl get pod -l app=dernier-redis -o name) -- redis-cli FLUSHALL`.
 
 ## Observability
