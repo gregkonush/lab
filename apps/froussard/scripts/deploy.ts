@@ -6,12 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import YAML from 'yaml'
 
-const ignoredAnnotations = new Set([
-  'kubectl.kubernetes.io/last-applied-configuration',
-  'client.knative.dev/nonce',
-  'serving.knative.dev/lastModifier',
-  'serving.knative.dev/creator',
-])
+const ignoredAnnotations = new Set(['kubectl.kubernetes.io/last-applied-configuration', 'client.knative.dev/nonce'])
 
 const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'
 const service = process.env.FROUSSARD_SERVICE?.trim() || 'froussard'
@@ -158,19 +153,28 @@ async function exportKnativeManifest({
     return Object.keys(result).length > 0 ? result : {}
   }
 
+  const annotations = sanitizeObject(parsed?.metadata?.annotations) ?? {}
+  const templateAnnotations = sanitizeObject(parsed?.spec?.template?.metadata?.annotations) ?? {}
+
+  const knServiceAccount = 'system:serviceaccount:argocd:argocd-application-controller'
+  annotations['serving.knative.dev/creator'] = knServiceAccount
+  annotations['serving.knative.dev/lastModifier'] = knServiceAccount
+  templateAnnotations['serving.knative.dev/creator'] = knServiceAccount
+  templateAnnotations['serving.knative.dev/lastModifier'] = knServiceAccount
+
   const sanitizedManifest = {
     apiVersion: 'serving.knative.dev/v1',
     kind: 'Service',
     metadata: {
       name: parsed?.metadata?.name ?? exportService,
       namespace: parsed?.metadata?.namespace ?? exportNamespace,
-      annotations: sanitizeObject(parsed?.metadata?.annotations),
+      annotations,
       labels: sanitizeObject(parsed?.metadata?.labels),
     },
     spec: {
       template: {
         metadata: {
-          annotations: sanitizeObject(parsed?.spec?.template?.metadata?.annotations),
+          annotations: templateAnnotations,
           labels: sanitizeObject(parsed?.spec?.template?.metadata?.labels),
         },
         spec: {
