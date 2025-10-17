@@ -6,6 +6,8 @@ metadata:
   namespace: froussard
   annotations:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
+    serving.knative.dev/creator: system:admin
+    serving.knative.dev/lastModifier: system:admin
     serving.knative.dev/revision-history-limit: "3"
     argocd.argoproj.io/tracking-id: froussard:serving.knative.dev/Service:froussard/froussard
   labels:
@@ -16,7 +18,9 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/min-scale: "1"
+        serving.knative.dev/creator: system:admin
         serving.knative.dev/revision-history-limit: "3"
+        serving.knative.dev/lastModifier: system:admin
       labels:
         function.knative.dev/name: froussard
         function.knative.dev/runtime: typescript
