@@ -1,10 +1,9 @@
 #!/usr/bin/env bun
-import process from 'node:process'
-
-import { $ } from 'bun'
 import { writeFile } from 'node:fs/promises'
 import { dirname, join, relative } from 'node:path'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { $ } from 'bun'
 import YAML from 'yaml'
 
 const ignoredAnnotations = new Set([
