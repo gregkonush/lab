@@ -14,7 +14,7 @@ spec:
       serviceAccountName: facteur
       containers:
         - name: facteur
-          image: registry.ide-newton.ts.net/lab/facteur:latest
+          image: registry.ide-newton.ts.net/lab/facteur:16169c46
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
