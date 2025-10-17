@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { createWorker } from '../worker.ts'
+import { createWorker } from '../worker.js'
 
 const main = async () => {
   const { worker } = await createWorker()
