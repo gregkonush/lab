@@ -10,7 +10,7 @@ on:
 
 jobs:
   test:
-    runs-on: arc-arm64
+    runs-on: ubuntu-latest
 
     env:
       TEMPORAL_TEST_SERVER: '1'
