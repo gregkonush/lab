@@ -8,6 +8,7 @@ metadata:
     serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller
     serving.knative.dev/revision-history-limit: "3"
+    argocd.argoproj.io/tracking-id: froussard:serving.knative.dev/Service:froussard/froussard
   labels:
     function.knative.dev/name: froussard
     function.knative.dev/runtime: typescript
@@ -28,7 +29,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:4838d3b90821a9231d7ddc42101151dedb14d624fdef1329210ef2c349270aee
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:f2ceb2fe8259a78d96e6c729db8f25405ca914ae82b8be38cbcb4d22b3f21957
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
@@ -69,9 +70,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.241.2-3-gecea9f19
+              value: v0.241.5-1-gf6ab3ec0
             - name: FROUSSARD_COMMIT
-              value: ecea9f19c08461e088dbce6f188c2afdc178a9de
+              value: f6ab3ec0086de10d3ba85fcc45a6f67e24dcd99e
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT
