@@ -1,3 +1,2 @@
-import * as native from './native.ts'
-export { native }
+export * as native from '../internal/core-bridge/native.js'
 export * from '../../vendor/sdk-typescript/packages/core-bridge/ts/errors'
