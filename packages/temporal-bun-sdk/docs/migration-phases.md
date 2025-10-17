@@ -28,6 +28,7 @@ flowchart LR
 
 - Implement FFI for client operations (start, signal, query, terminate, headers, TLS).
 - Rewrite `src/client.ts` to use new Core bridge client.
+- ✅ `start_workflow` wired through Rust bridge + Bun client (`createTemporalClient.workflow.start`).
 - Remove `@temporalio/client` dependency.
 - Add unit + integration tests for client operations.
 

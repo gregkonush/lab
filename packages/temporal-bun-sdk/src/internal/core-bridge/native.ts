@@ -30,6 +30,7 @@ const {
     temporal_bun_client_connect,
     temporal_bun_client_free,
     temporal_bun_client_describe_namespace,
+    temporal_bun_client_start_workflow,
     temporal_bun_byte_array_free,
   },
 } = dlopen(libraryFile, {
@@ -61,6 +62,10 @@ const {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
   },
+  temporal_bun_client_start_workflow: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
   temporal_bun_byte_array_free: {
     args: [FFIType.ptr],
     returns: FFIType.void,
@@ -78,12 +83,12 @@ export const native = {
   },
 
   runtimeShutdown(runtime: Runtime): void {
-    temporal_bun_runtime_free(runtime.handle)
+    temporal_bun_runtime_free(runtime.handle as Pointer)
   },
 
   createClient(runtime: Runtime, config: Record<string, unknown>): NativeClient {
     const payload = Buffer.from(JSON.stringify(config), 'utf8')
-    const handle = Number(temporal_bun_client_connect(runtime.handle, ptr(payload), payload.byteLength))
+    const handle = Number(temporal_bun_client_connect(runtime.handle as Pointer, ptr(payload), payload.byteLength))
     if (!handle) {
       throw new Error(readLastError())
     }
@@ -91,12 +96,25 @@ export const native = {
   },
 
   clientShutdown(client: NativeClient): void {
-    temporal_bun_client_free(client.handle)
+    temporal_bun_client_free(client.handle as Pointer)
   },
 
   describeNamespace(client: NativeClient, namespace: string): Uint8Array {
     const payload = Buffer.from(JSON.stringify({ namespace }), 'utf8')
-    const arrayPtr = Number(temporal_bun_client_describe_namespace(client.handle, ptr(payload), payload.byteLength))
+    const arrayPtr = Number(
+      temporal_bun_client_describe_namespace(client.handle as Pointer, ptr(payload), payload.byteLength),
+    )
+    if (!arrayPtr) {
+      throw new Error(readLastError())
+    }
+    return readByteArray(arrayPtr)
+  },
+
+  startWorkflow(client: NativeClient, request: Record<string, unknown>): Uint8Array {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const arrayPtr = Number(
+      temporal_bun_client_start_workflow(client.handle as Pointer, ptr(payload), payload.byteLength),
+    )
     if (!arrayPtr) {
       throw new Error(readLastError())
     }
@@ -126,7 +144,7 @@ function readByteArray(pointer: number): Uint8Array {
   const view = new Uint8Array(toArrayBuffer(dataPtr, 0, len))
   // Copy into JS-owned memory before the native buffer is released.
   const copy = new Uint8Array(view)
-  temporal_bun_byte_array_free(pointer)
+  temporal_bun_byte_array_free(pointer as Pointer)
   return copy
 }
 
@@ -141,6 +159,6 @@ function readLastError(): string {
     const buffer = Buffer.from(toArrayBuffer(errPtr, 0, len))
     return buffer.toString('utf8')
   } finally {
-    temporal_bun_error_free(errPtr, len)
+    temporal_bun_error_free(errPtr as Pointer, len)
   }
 }

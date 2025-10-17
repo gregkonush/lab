@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
 
 use prost::Message;
+use prost_types::Duration;
 use serde::Deserialize;
 use temporal_client::{
     ClientOptionsBuilder, ConfiguredClient, Namespace, RetryClient, TemporalServiceClient,
@@ -10,8 +12,15 @@ use temporal_client::{
 };
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
+use temporal_sdk_core_protos::temporal::api::common::v1::{
+    Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowType,
+};
+use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
+use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
 use thiserror::Error;
 use url::Url;
+use uuid::Uuid;
 
 mod error;
 mod byte_array;
@@ -26,6 +35,7 @@ pub struct ClientHandle {
     runtime: Arc<CoreRuntime>,
     client: RetryClient<ConfiguredClient<TemporalServiceClient>>,
     namespace: String,
+    identity: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,6 +53,51 @@ struct ClientConfig {
 #[derive(Debug, Deserialize)]
 struct DescribeNamespaceRequestPayload {
     namespace: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StartWorkflowRequestPayload {
+    #[serde(default)]
+    namespace: Option<String>,
+    workflow_id: String,
+    workflow_type: String,
+    task_queue: String,
+    #[serde(default)]
+    args: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    memo: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    search_attributes: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    headers: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    cron_schedule: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    workflow_execution_timeout_ms: Option<u64>,
+    #[serde(default)]
+    workflow_run_timeout_ms: Option<u64>,
+    #[serde(default)]
+    workflow_task_timeout_ms: Option<u64>,
+    #[serde(default)]
+    retry_policy: Option<RetryPolicyPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RetryPolicyPayload {
+    #[serde(default)]
+    initial_interval_ms: Option<u64>,
+    #[serde(default)]
+    maximum_interval_ms: Option<u64>,
+    #[serde(default)]
+    maximum_attempts: Option<i32>,
+    #[serde(default)]
+    backoff_coefficient: Option<f64>,
+    #[serde(default)]
+    non_retryable_error_types: Option<Vec<String>>,
 }
 
 #[derive(Debug, Error)]
@@ -63,6 +118,10 @@ enum BridgeError {
     ClientInit(String),
     #[error("Temporal request failed: {0}")]
     ClientRequest(String),
+    #[error("failed to encode payload: {0}")]
+    PayloadEncode(String),
+    #[error("failed to encode response payload: {0}")]
+    ResponseEncode(String),
 }
 
 #[unsafe(no_mangle)]
@@ -180,7 +239,7 @@ pub extern "C" fn temporal_bun_client_connect(
         .target_url(url)
         .client_name(client_name)
         .client_version(client_version)
-        .identity(identity);
+        .identity(identity.clone());
 
     let options = match builder.build() {
         Ok(options) => options,
@@ -200,6 +259,7 @@ pub extern "C" fn temporal_bun_client_connect(
         runtime,
         client,
         namespace: config.namespace,
+        identity,
     };
 
     Box::into_raw(Box::new(handle)) as *mut c_void
@@ -255,6 +315,208 @@ pub extern "C" fn temporal_bun_client_describe_namespace(
 
     let bytes = response.encode_to_vec();
     byte_array::ByteArray::from_vec(bytes)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_start_workflow(
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> *mut byte_array::ByteArray {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    let payload = match request_from_raw::<StartWorkflowRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let StartWorkflowRequestPayload {
+        namespace,
+        workflow_id,
+        workflow_type,
+        task_queue,
+        args,
+        memo,
+        search_attributes,
+        headers,
+        cron_schedule,
+        request_id,
+        identity,
+        workflow_execution_timeout_ms,
+        workflow_run_timeout_ms,
+        workflow_task_timeout_ms,
+        retry_policy,
+    } = payload;
+
+    let namespace = namespace.unwrap_or_else(|| client_handle.namespace.clone());
+    let identity = identity.unwrap_or_else(|| client_handle.identity.clone());
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    let mut request = StartWorkflowExecutionRequest {
+        namespace: namespace.clone(),
+        workflow_id: workflow_id.clone(),
+        workflow_type: Some(WorkflowType { name: workflow_type }),
+        task_queue: Some(TaskQueue {
+            name: task_queue,
+            kind: TaskQueueKind::Normal as i32,
+        }),
+        identity,
+        request_id,
+        ..Default::default()
+    };
+
+    if let Some(values) = args {
+        let mut payloads = Vec::with_capacity(values.len());
+        for value in values {
+            match encode_payload(value) {
+                Ok(payload) => payloads.push(payload),
+                Err(err) => {
+                    return into_string_error(err) as *mut byte_array::ByteArray;
+                }
+            }
+        }
+        request.input = Some(Payloads { payloads });
+    }
+
+    match encode_payload_map(memo) {
+        Ok(Some(fields)) => {
+            request.memo = Some(Memo { fields });
+        }
+        Ok(None) => {}
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    }
+
+    match encode_payload_map(search_attributes) {
+        Ok(Some(fields)) => {
+            request.search_attributes = Some(SearchAttributes {
+                indexed_fields: fields,
+            });
+        }
+        Ok(None) => {}
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    }
+
+    match encode_payload_map(headers) {
+        Ok(Some(fields)) => {
+            request.header = Some(Header { fields });
+        }
+        Ok(None) => {}
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    }
+
+    if let Some(schedule) = cron_schedule {
+        request.cron_schedule = schedule;
+    }
+
+    if let Some(ms) = workflow_execution_timeout_ms {
+        request.workflow_execution_timeout = Some(duration_from_millis(ms));
+    }
+
+    if let Some(ms) = workflow_run_timeout_ms {
+        request.workflow_run_timeout = Some(duration_from_millis(ms));
+    }
+
+    if let Some(ms) = workflow_task_timeout_ms {
+        request.workflow_task_timeout = Some(duration_from_millis(ms));
+    }
+
+    if let Some(policy) = retry_policy {
+        match encode_retry_policy(policy) {
+            Ok(policy) => request.retry_policy = Some(policy),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        }
+    }
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let response = runtime.tokio_handle().block_on(async move {
+        let mut inner = client.clone();
+        WorkflowService::start_workflow_execution(&mut inner, request.into_request()).await
+    });
+
+    let response = match response {
+        Ok(resp) => resp.into_inner(),
+        Err(err) => {
+            return into_string_error(BridgeError::ClientRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let response_body = serde_json::json!({
+        "runId": response.run_id,
+        "workflowId": workflow_id,
+        "namespace": namespace,
+    });
+
+    let bytes = match json_bytes(&response_body) {
+        Ok(bytes) => bytes,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    byte_array::ByteArray::from_vec(bytes)
+}
+
+fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
+    let data = serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
+    let mut metadata = HashMap::new();
+    metadata.insert("encoding".to_string(), b"json/plain".to_vec());
+    Ok(Payload { metadata, data })
+}
+
+fn encode_payload_map(
+    map: Option<HashMap<String, serde_json::Value>>,
+) -> Result<Option<HashMap<String, Payload>>, BridgeError> {
+    match map {
+        Some(entries) => {
+            if entries.is_empty() {
+                return Ok(None);
+            }
+            let mut encoded = HashMap::with_capacity(entries.len());
+            for (key, value) in entries {
+                encoded.insert(key, encode_payload(value)?);
+            }
+            Ok(Some(encoded))
+        }
+        None => Ok(None),
+    }
+}
+
+fn duration_from_millis(ms: u64) -> Duration {
+    Duration {
+        seconds: (ms / 1000) as i64,
+        nanos: ((ms % 1000) * 1_000_000) as i32,
+    }
+}
+
+fn encode_retry_policy(payload: RetryPolicyPayload) -> Result<RetryPolicy, BridgeError> {
+    let mut policy = RetryPolicy::default();
+    if let Some(ms) = payload.initial_interval_ms {
+        policy.initial_interval = Some(duration_from_millis(ms));
+    }
+    if let Some(ms) = payload.maximum_interval_ms {
+        policy.maximum_interval = Some(duration_from_millis(ms));
+    }
+    if let Some(attempts) = payload.maximum_attempts {
+        policy.maximum_attempts = attempts;
+    }
+    if let Some(coefficient) = payload.backoff_coefficient {
+        policy.backoff_coefficient = coefficient;
+    }
+    if let Some(errors) = payload.non_retryable_error_types {
+        policy.non_retryable_error_types = errors;
+    }
+    Ok(policy)
+}
+
+fn json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, BridgeError> {
+    serde_json::to_vec(value).map_err(|err| BridgeError::ResponseEncode(err.to_string()))
 }
 
 #[unsafe(no_mangle)]

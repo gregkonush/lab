@@ -1,7 +1,17 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import type { TLSConfig } from '@temporalio/client'
 import { z } from 'zod'
+
+export interface TLSCertPair {
+  crt: Buffer
+  key: Buffer
+}
+
+export interface TLSConfig {
+  serverRootCACertificate?: Buffer
+  serverNameOverride?: string
+  clientCertPair?: TLSCertPair
+}
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 7233
