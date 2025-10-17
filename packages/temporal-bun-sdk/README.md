@@ -8,6 +8,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Example workflows/activities plus an executable `temporal-bun-worker` binary.
 - Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
 - Dockerfile and `docker-compose` example for containerized development.
+- Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
 
 ## Installation
 

@@ -120,6 +120,7 @@ Key design points:
 
 - Example app with workflow/activity scaffolding, environment templates ( `.env.example` ), and `pnpm run demo` to start Temporal server + worker + sample client.
 - CLI helper to bootstrap workflows/activities with TypeScript templates **(initial `temporal-bun init` implemented; follow-up work needed to integrate native worker path once bridge is complete).**
+- Native FFI blueprint maintained separately in [`ffi-surface.md`](./ffi-surface.md) to keep implementation steps unambiguous.
 - Rich README covering local dev & Temporal Cloud setup (cert paths, API key assignment).
 
 
