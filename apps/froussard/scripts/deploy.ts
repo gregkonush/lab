@@ -117,6 +117,35 @@ async function exportKnativeManifest({
   const repoRoot = join(baseDir, '..', '..', '..')
   const manifestAbsolutePath = join(repoRoot, manifestPath)
 
+  const sanitizeResources = (value: unknown): Record<string, unknown> | undefined => {
+    if (!value || typeof value !== 'object') {
+      return undefined
+    }
+
+    const result: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (entry === undefined || entry === null) {
+        continue
+      }
+
+      if (typeof entry === 'object') {
+        const nested = sanitizeResources(entry)
+        if (nested && Object.keys(nested).length > 0) {
+          result[key] = nested
+        }
+        continue
+      }
+
+      if (typeof entry === 'string' && entry.trim().length === 0) {
+        continue
+      }
+
+      result[key] = entry
+    }
+
+    return Object.keys(result).length > 0 ? result : undefined
+  }
+
   const sanitizedManifest = {
     apiVersion: 'serving.knative.dev/v1',
     kind: 'Service',
@@ -143,8 +172,7 @@ async function exportKnativeManifest({
               env,
               readinessProbe: container.readinessProbe,
               livenessProbe: container.livenessProbe,
-              resources:
-                container.resources && Object.keys(container.resources).length > 0 ? container.resources : undefined,
+              resources: sanitizeResources(container.resources),
               securityContext:
                 container.securityContext && Object.keys(container.securityContext).length > 0
                   ? container.securityContext
