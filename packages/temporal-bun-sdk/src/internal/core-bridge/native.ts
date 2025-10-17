@@ -1,22 +1,33 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
+import { dlopen, FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-type Pointer = number
-
-type RuntimePtr = Pointer
-
-type ClientPtr = Pointer
-
 export interface Runtime {
   type: 'runtime'
-  handle: RuntimePtr
+  handle: Pointer
 }
 
 export interface NativeClient {
   type: 'client'
-  handle: ClientPtr
+  handle: Pointer
+}
+
+export interface CreateClientConfig {
+  address: string
+  namespace: string
+  identity?: string
+  clientName?: string
+  clientVersion?: string
+  apiKey?: string
+  tls?: {
+    serverRootCACertificate?: string
+    clientCertPair?: {
+      crt: string
+      key: string
+    }
+    serverNameOverride?: string
+  }
 }
 
 const libraryFile = resolveBridgeLibraryPath()
@@ -60,8 +71,8 @@ const {
 export const native = {
   createRuntime(options: Record<string, unknown> = {}): Runtime {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
-    const handle = Number(temporal_bun_runtime_new(ptr(payload), payload.byteLength))
-    if (!handle) {
+    const handle = temporal_bun_runtime_new(ptr(payload), payload.byteLength) as Pointer
+    if (Number(handle) === 0) {
       throw new Error(readLastError())
     }
     return { type: 'runtime', handle }
@@ -71,10 +82,10 @@ export const native = {
     temporal_bun_runtime_free(runtime.handle)
   },
 
-  createClient(runtime: Runtime, config: Record<string, unknown>): NativeClient {
+  createClient(runtime: Runtime, config: CreateClientConfig): NativeClient {
     const payload = Buffer.from(JSON.stringify(config), 'utf8')
-    const handle = Number(temporal_bun_client_connect(runtime.handle, ptr(payload), payload.byteLength))
-    if (!handle) {
+    const handle = temporal_bun_client_connect(runtime.handle, ptr(payload), payload.byteLength) as Pointer
+    if (Number(handle) === 0) {
       throw new Error(readLastError())
     }
     return { type: 'client', handle }
@@ -86,25 +97,32 @@ export const native = {
 }
 
 function resolveBridgeLibraryPath(): string {
-  const dir = fileURLToPath(new URL('../../../native/temporal-bun-bridge/target/release', import.meta.url))
+  const developmentDir = fileURLToPath(new URL('../../../native/temporal-bun-bridge/target/release', import.meta.url))
+  const packagedDir = fileURLToPath(new URL('../../../dist/native', import.meta.url))
   const baseName =
     process.platform === 'win32'
       ? 'temporal_bun_bridge.dll'
       : process.platform === 'darwin'
         ? 'libtemporal_bun_bridge.dylib'
         : 'libtemporal_bun_bridge.so'
-  const candidate = join(dir, baseName)
-  if (!existsSync(candidate)) {
-    throw new Error(`Temporal Bun bridge library not found at ${candidate}. Did you build the native bridge?`)
+  const candidates = [join(developmentDir, baseName), join(packagedDir, baseName)]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate
+    }
   }
-  return candidate
+  throw new Error(
+    `Temporal Bun bridge library not found in ${candidates.join(
+      ', ',
+    )}. Build the bridge with \"pnpm --filter @proompteng/temporal-bun-sdk run build:native\".`,
+  )
 }
 
 function readLastError(): string {
   const lenBuffer = new BigUint64Array(1)
-  const errPtr = Number(temporal_bun_error_message(ptr(lenBuffer)))
+  const errPtr = temporal_bun_error_message(ptr(lenBuffer)) as Pointer
   const len = Number(lenBuffer[0])
-  if (!errPtr || len === 0) {
+  if (Number(errPtr) === 0 || len === 0) {
     return 'Unknown native error'
   }
   try {

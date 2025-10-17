@@ -1,53 +1,90 @@
-import { Connection, WorkflowClient } from '@temporalio/client'
-import type { ConnectionOptions, WorkflowClientOptions } from '@temporalio/client'
-import { loadTemporalConfig, type TemporalConfig } from './config'
+import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import { native, type NativeClient, type Runtime } from './internal/core-bridge/native.js'
 
-export interface CreateTemporalConnectionOptions {
+export interface CreateTemporalClientOptions {
   config?: TemporalConfig
-  connectionOptions?: ConnectionOptions
+  clientName?: string
+  clientVersion?: string
 }
 
-export const createTemporalConnection = async (options: CreateTemporalConnectionOptions = {}): Promise<Connection> => {
+export interface TemporalClient {
+  readonly config: TemporalConfig
+  readonly runtime: Runtime
+  readonly handle: NativeClient
+  close(): void
+  isClosed(): boolean
+}
+
+const encodeTls = (tls?: TLSConfig) => {
+  if (!tls) return undefined
+  return {
+    serverRootCACertificate: tls.serverRootCACertificate?.toString('base64'),
+    clientCertPair: tls.clientCertPair
+      ? {
+          crt: tls.clientCertPair.crt.toString('base64'),
+          key: tls.clientCertPair.key.toString('base64'),
+        }
+      : undefined,
+    serverNameOverride: tls.serverNameOverride,
+  }
+}
+
+class BunTemporalClient implements TemporalClient {
+  public readonly config: TemporalConfig
+  public readonly runtime: Runtime
+  public readonly handle: NativeClient
+  #closed = false
+
+  constructor(runtime: Runtime, client: NativeClient, config: TemporalConfig) {
+    this.runtime = runtime
+    this.handle = client
+    this.config = config
+  }
+
+  close(): void {
+    if (this.#closed) return
+    native.clientShutdown(this.handle)
+    native.runtimeShutdown(this.runtime)
+    this.#closed = true
+  }
+
+  isClosed(): boolean {
+    return this.#closed
+  }
+}
+
+export const createTemporalClient = async (options: CreateTemporalClientOptions = {}) => {
   const config = options.config ?? (await loadTemporalConfig())
-  const baseOptions: ConnectionOptions = {
-    address: config.address,
-    ...(options.connectionOptions ?? {}),
-  }
-
-  if (config.apiKey && baseOptions.apiKey === undefined) {
-    baseOptions.apiKey = config.apiKey
-  }
-
-  if (config.tls && baseOptions.tls === undefined) {
-    baseOptions.tls = config.tls
-  }
 
   if (config.allowInsecureTls) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
   }
 
-  return await Connection.connect(baseOptions)
+  const runtime = native.createRuntime({})
+  try {
+    const handle = native.createClient(runtime, {
+      address: config.address,
+      namespace: config.namespace,
+      identity: config.workerIdentity,
+      clientName: options.clientName ?? 'temporal-bun-sdk',
+      clientVersion: options.clientVersion ?? process.env.npm_package_version ?? '0.0.0-dev',
+      apiKey: config.apiKey,
+      tls: encodeTls(config.tls),
+    })
+
+    const client = new BunTemporalClient(runtime, handle, config)
+    return { client, config }
+  } catch (error) {
+    native.runtimeShutdown(runtime)
+    throw error
+  }
 }
 
-export interface CreateTemporalClientOptions extends CreateTemporalConnectionOptions {
-  connection?: Connection
-  clientOptions?: WorkflowClientOptions
-}
-
-export const createTemporalClient = async (options: CreateTemporalClientOptions = {}) => {
-  const config = options.config ?? (await loadTemporalConfig())
-  const connection =
-    options.connection ??
-    (await createTemporalConnection({
-      config,
-      connectionOptions: options.connectionOptions,
-    }))
-
-  const client = new WorkflowClient({
-    connection,
-    namespace: options.clientOptions?.namespace ?? config.namespace,
-    ...(options.clientOptions ?? {}),
-  })
-
-  return { client, connection, config }
+export const withTemporalClient = async <T>(fn: (client: TemporalClient) => Promise<T>): Promise<T> => {
+  const { client } = await createTemporalClient()
+  try {
+    return await fn(client)
+  } finally {
+    client.close()
+  }
 }

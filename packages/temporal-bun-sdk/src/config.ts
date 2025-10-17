@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import type { TLSConfig } from '@temporalio/client'
 import { z } from 'zod'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -51,6 +50,17 @@ export interface LoadTemporalConfigOptions {
     readFile?: typeof readFile
   }
   defaults?: Partial<TemporalConfig>
+}
+
+export interface TLSClientCertPair {
+  crt: Buffer
+  key: Buffer
+}
+
+export interface TLSConfig {
+  serverRootCACertificate?: Buffer
+  clientCertPair?: TLSClientCertPair
+  serverNameOverride?: string
 }
 
 export interface TemporalConfig {

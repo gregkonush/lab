@@ -1,161 +1,77 @@
 # Temporal Bun SDK — End-to-End Design
 
-**Author:** Your Name  
-**Date:** 13 Oct 2025  
-**Status:** Draft
+**Author:** Platform DX  
+**Last Updated:** 17 Oct 2025  
+**Status:** Final
 
 ---
 
-## 1. Target Experience
+## Goals
 
-Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that developers can install from npm, configure quickly, and rely on for production-quality workflow execution.
+- Provide a Bun-only Temporal SDK that installs directly from npm with no git submodules or manual bridge compilation.
+- Support macOS and Linux (x64/arm64) for both self-hosted Temporal clusters and Temporal Cloud.
+- Ship reference docs—quickstart, migration, troubleshooting—inside the published package so practitioners on npm see the same guidance as the repository.
 
-### Supported Platforms & Scenarios
-
-- **Platforms:** macOS, Linux (x86_64 / arm64). Windows support is out of scope for the initial release.
-- **Temporal Deployment Targets:**
-  - Self-managed Temporal servers (local Docker Compose, Kubernetes clusters).
-  - Temporal Cloud (requires mTLS and API key metadata).
-- **Developer Experience Goals:**
-  - `pnpm install @proompteng/temporal-bun-sdk` should “just work” after basic environment setup.
-  - Minimal manual steps; provide scripts and docs for building native bridge.
-  - Example project demonstrating workflow authoring, activity registration, and client calls.
-  - Clear instructions for provisioning certificates/API keys for Temporal Cloud.
-
-
-## 2. Architecture Overview
+## Architecture Overview
 
 ```
-┌────────────────────────────┐
-│  @proompteng/temporal-bun  │  npm package
-│  ├─ TypeScript re-exports  │  (Bun-friendly ESM)
-│  ├─ Bun FFI loader         │  → libtemporal_sdk_core_c_bridge
-└────────────┬───────────────┘
-             │
-             ▼
-┌────────────────────────────┐
-│  temporal-sdk-core-c-bridge│ (vendored upstream build)
-│  ├─ Runtime API            │
-│  ├─ Client API             │
-│  ├─ Worker API             │
-│  └─ Metrics/Logging        │
-└────────────┬───────────────┘
-             │
-             ▼
-┌────────────────────────────┐
-│  temporal-sdk-core (Rust)  │
-│  ├─ gRPC client            │
-│  └─ Workflow engine        │
-└────────────┬───────────────┘
-             │
-             ▼
-   Temporal Server / Temporal Cloud
+┌──────────────────────────────────────┐
+│ @proompteng/temporal-bun-sdk (npm)   │
+│  ├─ dist/esm runtime + types         │
+│  ├─ dist/native/libtemporal_*.{so,dylib} │
+│  ├─ docs/, examples/                 │
+│  └─ bin/temporal-bun-worker (Bun stub) │
+└───────────────┬──────────────────────┘
+                │ Bun FFI
+                ▼
+┌──────────────────────────────────────┐
+│ temporal-sdk-core-c-bridge (prebuilt)│
+│  └─ Compiled per target (x64/arm64)  │
+└───────────────┬──────────────────────┘
+                │
+                ▼
+      Temporal Server / Temporal Cloud
 ```
 
-Key design points:
+Key decisions:
 
-- **Native Bridge:** Build the upstream `temporal-sdk-core-c-bridge` and load it via Bun FFI. No custom Rust reimplementation; we leverage Temporal’s battle-tested core.
-- **TypeScript Surface:** Re-export upstream TypeScript modules (`common`, `worker`, `workflow`, `client`) under the `@proompteng` namespace, allowing developers to write workflows exactly as they would with the upstream SDK.
-- **Configuration:** Provide typed configuration loaders for both local Temporal server and Temporal Cloud (mTLS + API key).
-- **Metrics & Logging:** Support Prometheus and OpenTelemetry exporters, plus log forwarding callbacks.
+- **Prebuilt bridge artifacts** live under `dist/native/<platform>/`, generated during release. Consumers no longer clone upstream repositories.
+- **SDK surface area** re-exports curated modules (client, worker, workflow helpers) compiled for Bun’s runtime semantics.
+- **Configuration helpers** (`loadTemporalConfig`, TLS/API key utilities) remove the need for app-specific boilerplate.
+- **Examples and docs** ship alongside code so `pnpm pack` mirrors the published npm experience.
+- **Worker runtime** ships as a stub while the Bun worker bridge is implemented; the CLI exits early with guidance instead of starting a worker.
 
+## Package Layout
 
-## 3. Implementation Plan
+- `src/` – Bun-native TypeScript emitting ESM (no CommonJS shims).
+- `dist/` – build output, bundling platform-specific bridges and type definitions.
+- `docs/` – design, migration, and troubleshooting guides referenced from the README.
+- `examples/` – `pnpm run demo` connectivity check (will evolve into a workflow demo once worker support lands).
+- `tests/` – Bun unit tests covering configuration, TLS loading, and worker boot basics.
 
-### 3.1 Native FFI Coverage
+## Developer Experience
 
-1. **Runtime API**
-   - Map TS `RuntimeOptions` to Rust `TemporalCoreRuntimeOptions`, including telemetry, metrics, logging callbacks.
-   - Support log forwarding (`forward_to` callback) and custom metrics (meter creation).
+1. `pnpm add @proompteng/temporal-bun-sdk` installs the SDK plus docs.
+2. `pnpm run demo` verifies client connectivity (optionally pair with the docker-compose stack under `examples/`).
+3. `loadTemporalConfig()` reads `.env` files, enabling teams to switch between localhost, staging, and Temporal Cloud with environment overrides.
+4. Migration from upstream packages happens in phases—see `docs/migration-guide.md` for drop-in commands and compatibility notes.
+5. Worker execution remains a TODO; once the bridge lands we will update the demo and helpers accordingly.
 
-2. **Client API**
-   - Expose `clientUpdateHeaders`, `clientUpdateApiKey`, and `clientSend*ServiceRequest` wrappers, converting Buffers ↔ ByteArray.
-   - Propagate gRPC errors/status codes to TypeScript.
+## Release lifecycle
 
-3. **Worker API**
-   - Implement `newWorker`, `workerValidate`, poll/complete/heartbeat functions, Nexus, replay, shutdown.
-   - Support either `workflowBundle` or `workflowsPath`; align with TS worker expectations.
+1. `pnpm --filter @proompteng/temporal-bun-sdk run build` – compile TypeScript, bundle platform bridges, and stage docs/examples in `dist/`.
+2. `pnpm --filter @proompteng/temporal-bun-sdk run test` – execute Bun tests; add targeted integration suites as they land.
+3. `pnpm pack --filter @proompteng/temporal-bun-sdk` – verify the tarball only includes Bun runtime modules, docs, and example assets.
+4. Inspect the generated tarball (see validation checklist) to confirm native artifacts for macOS/Linux and absence of upstream `@temporalio/*` dependencies.
+5. Publish with `pnpm publish --filter @proompteng/temporal-bun-sdk --access public` once validation passes.
+6. (Future) Replace the stubbed worker binary with the FFI-backed implementation and extend validation to run workflow smoke tests.
 
-4. **Ephemeral Server API** (optional but helpful for deterministic tests).
+## Documentation & Support
 
-5. **Error Handling**
-   - Reuse thread-local error storage; ensure all FFI functions return 0/null on error and set detailed messages.
-
-
-### 3.2 TypeScript Layer
-
-1. **Namespace Rewrites**
-   - Add `paths` in `tsconfig.json` so `@proompteng/temporal-bun-sdk/*` resolves to the vendored upstream modules.
-   - Update bundler config to emit ESM with `.ts` extension imports (Bun-compatible).
-
-2. **Core Bridge Typings**
-   - Wrap `core-bridge` to expose our FFI loader while reusing upstream error types.
-
-3. **Cloud Support**
-   - Provide utilities for loading mTLS certs/keys (paths), constructing API key metadata, and injecting into worker/client options.
-
-4. **Packaging**
-   - Update `package.json` `files` & `exports` to ship compiled JS, type declarations, and README.
-
-
-### 3.3 Build & Tooling
-
-1. **Vendor Setup**
-   - Document manual clone (macOS/Linux) of upstream repos (`sdk-core`, `sdk-typescript`).
-   - Provide optional script to build `temporal-sdk-core-c-bridge` via Cargo.
-
-2. **Native Build**
-   - `pnpm run build:native` – compiles the bridge using system `protoc`.
-   - Output stored under `native/temporal-bun-bridge/target/release` (ignored by git).
-
-3. **Testing**
-   - Unit tests: runtime/client creation, error propagation, ByteArray lifecycle.
-   - Integration tests: mix of local Temporal server (docker-compose) and mocked gRPC to keep CI light.
-
-4. **CI Pipeline**
-   - Linting, type-checking, native build, unit tests, optional integration tests (flag to skip in CI).
-
-
-### 3.4 Developer Experience Enhancements
-
-- Example app with workflow/activity scaffolding, environment templates ( `.env.example` ), and `pnpm run demo` to start Temporal server + worker + sample client.
-- CLI helper (optional) to bootstrap workflows/activities with TypeScript templates.
-- Rich README covering local dev & Temporal Cloud setup (cert paths, API key assignment).
-
-
-## 4. Temporal Cloud Support
-
-1. **mTLS**
-   - Load CA, client cert/key via `TEMPORAL_TLS_CA_PATH`, `TEMPORAL_TLS_CERT_PATH`, `TEMPORAL_TLS_KEY_PATH` env vars.
-   - Validate file existence; propagate errors with actionable messages.
-
-2. **API Key Metadata**
-   - Support API key injection via `TEMPORAL_API_KEY` or header overrides.
-
-3. **Server Name Override**
-   - Expose `TEMPORAL_TLS_SERVER_NAME` to match Temporal Cloud endpoints.
-
-4. **Documentation**
-   - Provide example `.env.cloud` and step-by-step instructions for obtaining credentials.
-
-
-## 5. Deliverables & Publication
-
-- **NPM Package** containing:
-  - ES modules targeting Bun (compiled TS + type declarations).
-  - `postinstall` guidance (if needed) to check bridge presence.
-  - README with quick start, Temporal Cloud setup, integration example.
-
-- **Repository** includes:
-  - Docs (`docs/design-e2e.md`, in-progress architecture notes).
-  - Example project and automated tests.
-  - CI (GitHub Actions) verifying lint/build/test.
-
-- **Release Process:**
-  1. Tag version (e.g., `v0.1.0`).
-  2. Build native bridge and package tarball.
-  3. Publish to npm via `pnpm publish --access public`.
-  4. Document required environment setup in release notes.
+- **Quickstart:** README + `examples/README.md`.
+- **Migration:** `docs/migration-guide.md` details Phase 0 → Phase 3 steps with commands.
+- **Troubleshooting:** `docs/troubleshooting.md` covers native bridge errors, TLS setup, and CI environments.
+- **Design history:** this document (package copy) plus the mirrored summary in `/docs/design-e2e.md` track the architecture intent for future updates.
 
 
 ## 6. Timeline (High-Level)

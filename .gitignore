@@ -52,6 +52,7 @@ out/
 bin/
 !services/dernier/bin/
 !services/dernier/bin/entrypoint
+!packages/temporal-bun-sdk/src/bin/
 
 # Node.js
 npm-debug.log
@@ -94,6 +95,7 @@ build/
 # Cache
 .cache/
 .pnpm-store/
+.codex-implementation-events.jsonl
 
 # Coverage directory used by tools like istanbul
 coverage/

@@ -8,7 +8,9 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "docs",
+    "examples"
   ],
   "bin": {
     "temporal-bun-worker": "./dist/bin/start-worker.js"
@@ -30,6 +32,18 @@
       "types": "./dist/worker.d.ts",
       "default": "./dist/worker.js"
     },
+    "./activities": {
+      "types": "./dist/activities/index.d.ts",
+      "default": "./dist/activities/index.js"
+    },
+    "./core-bridge": {
+      "types": "./dist/core-bridge/index.d.ts",
+      "default": "./dist/core-bridge/index.js"
+    },
+    "./workflows": {
+      "types": "./dist/workflows/index.d.ts",
+      "default": "./dist/workflows/index.js"
+    },
     "./bin/start-worker": "./dist/bin/start-worker.js"
   },
   "scripts": {
@@ -37,6 +51,7 @@
     "dev": "bun --watch src/bin/start-worker.ts",
     "build": "bunx tsc --project tsconfig.json --pretty false",
     "test": "bun test",
+    "demo": "bun run examples/run-demo.ts",
     "start:worker": "bun run dist/bin/start-worker.js",
     "build:native": "cargo build --release --manifest-path native/temporal-bun-bridge/Cargo.toml"
   },
@@ -44,11 +59,6 @@
     "bun": ">=1.1.20"
   },
   "dependencies": {
-    "@temporalio/activity": "^1.13.0",
-    "@temporalio/common": "^1.13.0",
-    "@temporalio/client": "^1.13.0",
-    "@temporalio/worker": "^1.13.0",
-    "@temporalio/workflow": "^1.13.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

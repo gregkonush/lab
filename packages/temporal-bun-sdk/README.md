@@ -1,103 +1,78 @@
 # `@proompteng/temporal-bun-sdk`
 
-A Bun-first starter kit for running Temporal workers that mirrors our existing Go-based setup (namespace `default`, task queue `prix`, gRPC port `7233`) while providing typed helpers for connection, workflow, and activity registration.
+Temporal connectivity helpers for Bun—bundled with our pre-built Temporal bridge so teams can install, configure, and verify Temporal access without cloning upstream SDKs.
 
-## Features
-- Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
-- Factories for Temporal connections, workflow clients, and workers.
-- Example workflows/activities plus an executable `temporal-bun-worker` binary.
-- Dockerfile and `docker-compose` example for containerized development.
+## Quickstart
 
-## Installation
+1. **Install the package:**
+   ```bash
+   pnpm add @proompteng/temporal-bun-sdk
+   ```
+2. **Bootstrap environment variables:** copy `.env.local` from the examples guide and set namespace, task queue, and TLS/API key values if you connect to Temporal Cloud.
+3. **Verify connectivity:** follow `packages/temporal-bun-sdk/examples/README.md` to run `pnpm run demo`, which loads `.env.local`, opens a Bun Temporal client handle, and reports success/failure.
 
-```bash
-pnpm install
-
-# Clone upstream Temporal sources (one-time setup)
-git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git ~/github.com/temporalio/sdk-core
-git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git ~/github.com/temporalio/sdk-typescript
-
-# Symlink the checkouts into this workspace (kept out of git)
-mkdir -p packages/temporal-bun-sdk/vendor
-ln -s ~/github.com/temporalio/sdk-core packages/temporal-bun-sdk/vendor/sdk-core
-ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sdk-typescript
-
-# Compile the native Temporal bridge (requires protoc in PATH)
-pnpm --filter @proompteng/temporal-bun-sdk run build:native
-```
-
-> **Tip:** For deterministic builds, pin the repositories to the versions we test against:
-> ```bash
-> git -C ~/github.com/temporalio/sdk-core checkout 9a54f72f  # example commit
-> git -C ~/github.com/temporalio/sdk-typescript checkout v1.13.1
-> ```
-
-Ensure `protoc` ≥ 28 is installed (`brew install protobuf` on macOS, `apt install protobuf-compiler` on Debian/Ubuntu).
-
-Build and test the package:
-
-```bash
-pnpm --filter @proompteng/temporal-bun-sdk build
-pnpm --filter @proompteng/temporal-bun-sdk test
-```
+When you are ready to embed the SDK in an existing service, see the [migration guide](./docs/migration-guide.md) for phase-by-phase commands.
 
 ## Usage
 
 ```ts
-import { createTemporalClient, loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
+import { createTemporalClient, withTemporalClient } from '@proompteng/temporal-bun-sdk'
 
 const { client } = await createTemporalClient()
-const workflow = await client.workflow.start('helloTemporal', {
-  taskQueue: 'prix',
-  args: ['Proompteng']
+console.log('Connected to Temporal at', client.config.address)
+client.close()
+
+await withTemporalClient(async (activeClient) => {
+  console.log('Namespace resolved to', activeClient.config.namespace)
 })
-console.log('Workflow execution started', workflow.workflowId)
 ```
 
-Start the bundled worker (after building):
+All helpers use `loadTemporalConfig()` under the hood, so environment variables drive both local development (`127.0.0.1:7233`) and Temporal Cloud connections. Worker execution is not yet available in the Bun runtime—track progress in `docs/troubleshooting.md`.
 
-```bash
-pnpm --filter @proompteng/temporal-bun-sdk run start:worker
-```
+## Configuration Reference
 
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TEMPORAL_ADDRESS` | `${TEMPORAL_HOST}:${TEMPORAL_GRPC_PORT}` | Direct address override (e.g. `temporal.example.com:7233`). |
-| `TEMPORAL_HOST` | `127.0.0.1` | Hostname used when `TEMPORAL_ADDRESS` is unset. |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TEMPORAL_ADDRESS` | `${TEMPORAL_HOST}:${TEMPORAL_GRPC_PORT}` | Set when you have a single endpoint (e.g. `foo.temporal.io:7233`). |
+| `TEMPORAL_HOST` | `127.0.0.1` | Used to compose the address when `TEMPORAL_ADDRESS` is unset. |
 | `TEMPORAL_GRPC_PORT` | `7233` | Temporal gRPC port. |
-| `TEMPORAL_NAMESPACE` | `default` | Namespace passed to the workflow client. |
-| `TEMPORAL_TASK_QUEUE` | `prix` | Worker task queue. |
-| `TEMPORAL_API_KEY` | _unset_ | Injected into connection metadata for Cloud/API auth. |
-| `TEMPORAL_TLS_CA_PATH` | _unset_ | Path to trusted CA bundle. |
-| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | _unset_ | Paths to mTLS client certificate & key (require both). |
-| `TEMPORAL_TLS_SERVER_NAME` | _unset_ | Overrides TLS server name. |
-| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to disable TLS verification (sets `NODE_TLS_REJECT_UNAUTHORIZED=0`). |
-| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (appends host + PID). |
+| `TEMPORAL_NAMESPACE` | `default` | Namespace used by clients and workers. |
+| `TEMPORAL_TASK_QUEUE` | `prix` | Default worker task queue. |
+| `TEMPORAL_API_KEY` | — | Injected into connection metadata (Temporal Cloud). |
+| `TEMPORAL_TLS_CA_PATH` | — | Absolute path to the root CA bundle. |
+| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` | — | Client certificate pair for mTLS. |
+| `TEMPORAL_TLS_SERVER_NAME` | — | Overrides TLS server name—required for Temporal Cloud regional endpoints. |
+| `TEMPORAL_ALLOW_INSECURE` / `ALLOW_INSECURE_TLS` | `false` | Accepts `1/true/on` to skip certificate validation (local only). |
+| `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Prepended to worker identities before host/PID suffixes. |
 
-These align with the existing Temporal setup (`services/prix/worker/main.go`, `packages/atelier/src/create-default-namespace.ts`) so Bun workers can drop into current environments without additional configuration.
-
-## Docker
-
-Build the worker image from the repo root:
+### Temporal Cloud example
 
 ```bash
-docker build -f packages/temporal-bun-sdk/Dockerfile -t temporal-bun-sdk:dev .
+cp packages/temporal-bun-sdk/examples/.env.cloud.example .env.local
+echo 'TEMPORAL_ADDRESS=foo.a1c1.tmprl.cloud:7233' >> .env.local
+echo 'TEMPORAL_NAMESPACE=proompteng.default' >> .env.local
+echo 'TEMPORAL_API_KEY=tmprlsk_live_...' >> .env.local
+echo 'TEMPORAL_TLS_CA_PATH=/etc/temporal/ca.pem' >> .env.local
+echo 'TEMPORAL_TLS_CERT_PATH=/etc/temporal/client.pem' >> .env.local
+echo 'TEMPORAL_TLS_KEY_PATH=/etc/temporal/client-key.pem' >> .env.local
 ```
 
-Or spin up a full stack (Temporal + worker) via Compose:
+The worker and client automatically load these secrets, enable TLS, and set `NODE_TLS_REJECT_UNAUTHORIZED=0` only when explicitly requested through the `TEMPORAL_ALLOW_INSECURE` flags.
 
-```bash
-docker compose -f packages/temporal-bun-sdk/examples/docker-compose.yaml up --build
-```
+## Development Workflow
 
-## Scripts
+- `pnpm --filter @proompteng/temporal-bun-sdk dev` — watch the worker entry point (currently emits a “not yet available” notice).
+- `pnpm --filter @proompteng/temporal-bun-sdk build` — emit Bun/ESM artifacts to `dist/`.
+- `pnpm --filter @proompteng/temporal-bun-sdk test` — run Bun unit tests.
+- `pnpm run demo` from the repo root — verify the Bun client can connect using the active environment variables.
 
-| Script | Description |
-|--------|-------------|
-| `pnpm --filter @proompteng/temporal-bun-sdk dev` | Watch `src/bin/start-worker.ts` with Bun. |
-| `pnpm --filter @proompteng/temporal-bun-sdk build` | Type-check and emit to `dist/`. |
-| `pnpm --filter @proompteng/temporal-bun-sdk test` | Run Bun tests under `tests/`. |
-| `pnpm --filter @proompteng/temporal-bun-sdk run start:worker` | Launch the compiled worker. |
-| `pnpm --filter @proompteng/temporal-bun-sdk run build:native` | Build the Bun ↔ Temporal native bridge. |
+Packaging and release steps are documented in [docs/design-e2e.md](./docs/design-e2e.md#release-lifecycle) and validated via `pnpm pack --filter @proompteng/temporal-bun-sdk`.
+
+## Additional Guides
+
+- [End-to-end architecture](./docs/design-e2e.md)
+- [Migration guide (Phase 0 → Phase 3)](./docs/migration-guide.md)
+- [Example workflows walkthrough](./examples/README.md)
+- [Troubleshooting & FAQ](./docs/troubleshooting.md)
+
+These references ship with the npm package so developers can access them directly from npmjs.com or `node_modules`.

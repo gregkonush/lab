@@ -1,1 +1,2 @@
-export * from '../../vendor/sdk-typescript/packages/common/src/index.ts'
+export type { TemporalConfig, TLSConfig, TLSClientCertPair } from '../config.js'
+export { loadTemporalConfig, temporalDefaults } from '../config.js'
