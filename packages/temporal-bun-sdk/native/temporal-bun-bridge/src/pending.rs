@@ -71,3 +71,52 @@ impl<T> PendingResult<T> {
 }
 
 pub type PendingByteArray = PendingResult<Vec<u8>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_returns_pending_when_not_ready() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let pending: PendingResult<Vec<u8>> = PendingResult::new(rx);
+
+        assert!(matches!(pending.poll(), PendingState::Pending));
+        // A second poll should remain pending since no sender ever fulfills it.
+        assert!(matches!(pending.poll(), PendingState::Pending));
+    }
+
+    #[test]
+    fn poll_observes_ready_ok_result() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let pending: PendingResult<Vec<u8>> = PendingResult::new(rx);
+        tx.send(Ok(vec![1, 2, 3])).expect("send succeeds");
+
+        assert!(matches!(pending.poll(), PendingState::ReadyOk));
+        let value = pending
+            .take_result()
+            .expect("result present")
+            .expect("result ok");
+        assert_eq!(value, vec![1, 2, 3]);
+        // After take_result the internal cache is cleared.
+        assert!(pending.take_result().is_none());
+    }
+
+    #[test]
+    fn poll_observes_ready_err_result() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let pending: PendingResult<Vec<u8>> = PendingResult::new(rx);
+        tx.send(Err("boom".to_string())).expect("send succeeds");
+
+        match pending.poll() {
+            PendingState::ReadyErr(err) => assert_eq!(err, "boom"),
+            other => panic!("expected ReadyErr, got {other:?}"),
+        }
+
+        let err = pending
+            .take_result()
+            .expect("result present")
+            .expect_err("expected error result");
+        assert_eq!(err, "boom");
+    }
+}
