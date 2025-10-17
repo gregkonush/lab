@@ -5,6 +5,8 @@ metadata:
   name: froussard
   namespace: froussard
   annotations:
+    serving.knative.dev/creator: system:admin
+    serving.knative.dev/lastModifier: system:admin
     serving.knative.dev/revision-history-limit: "3"
   labels:
     function.knative.dev/name: froussard
@@ -14,6 +16,7 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/min-scale: "1"
+        serving.knative.dev/creator: system:admin
         serving.knative.dev/revision-history-limit: "3"
       labels:
         function.knative.dev/name: froussard
@@ -24,24 +27,8 @@ spec:
       enableServiceLinks: false
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:3ce50f859b246572fb6fc68df2132c70920ccfd05d8cabeb8b8125f3e13e7eac
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:0da2905d9f672346dc2e15f5d94bf5f1618109c12c4757c019bd5fefe09eb6a3
           env:
-            - name: ADDRESS
-              value: 0.0.0.0
-            - name: DISCORD_PUBLIC_KEY
-              valueFrom:
-                secretKeyRef:
-                  key: public-key
-                  name: discord-bot
-            - name: FROUSSARD_COMMIT
-              value: c7f5ba2c4c48dc21c2b155b344e0f82507395e45
-            - name: FROUSSARD_VERSION
-              value: v0.241.0-1-gc7f5ba2c
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  key: token
-                  name: github-token
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
@@ -49,35 +36,51 @@ spec:
                   name: github-secret
             - name: KAFKA_BROKERS
               value: kafka-kafka-bootstrap.kafka:9092
+            - name: KAFKA_TOPIC
+              value: github.webhook.events
             - name: KAFKA_CODEX_TOPIC
               value: github.codex.tasks
             - name: KAFKA_CODEX_TOPIC_STRUCTURED
               value: github.issues.codex.tasks
             - name: KAFKA_DISCORD_COMMAND_TOPIC
               value: discord.commands.incoming
+            - name: KAFKA_USERNAME
+              value: froussard
             - name: KAFKA_PASSWORD
               valueFrom:
                 secretKeyRef:
                   key: password
                   name: froussard
-            - name: KAFKA_TOPIC
-              value: github.webhook.events
-            - name: KAFKA_USERNAME
-              value: froussard
             - name: KAFKAJS_NO_PARTITIONER_WARNING
               value: "1"
-            - name: LGTM_LOKI_ENDPOINT
-              value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
-            - name: LGTM_MIMIR_METRICS_ENDPOINT
-              value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
-            - name: LGTM_TEMPO_TRACES_ENDPOINT
-              value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
-            - name: OTEL_EXPORTER_OTLP_PROTOCOL
-              value: http/protobuf
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: token
+                  name: github-token
+            - name: DISCORD_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: public-key
+                  name: discord-bot
             - name: OTEL_SERVICE_NAME
               value: froussard
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
+            - name: FROUSSARD_VERSION
+              value: v0.241.0-2-gb99acabe
+            - name: FROUSSARD_COMMIT
+              value: b99acabe1757728c7db8e178a87b3e1956f42ee2
+            - name: LGTM_TEMPO_TRACES_ENDPOINT
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
+            - name: LGTM_MIMIR_METRICS_ENDPOINT
+              value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
+            - name: LGTM_LOKI_ENDPOINT
+              value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: ADDRESS
+              value: 0.0.0.0
           readinessProbe:
             httpGet:
               path: /health/readiness
@@ -87,3 +90,4 @@ spec:
             httpGet:
               path: /health/liveness
               port: 0
+          resources: {}

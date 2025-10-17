@@ -6,12 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import YAML from 'yaml'
 
-const ignoredAnnotations = new Set([
-  'kubectl.kubernetes.io/last-applied-configuration',
-  'serving.knative.dev/creator',
-  'serving.knative.dev/lastModifier',
-  'client.knative.dev/nonce',
-])
+const ignoredAnnotations = new Set(['kubectl.kubernetes.io/last-applied-configuration', 'client.knative.dev/nonce'])
 
 const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'
 const service = process.env.FROUSSARD_SERVICE?.trim() || 'froussard'
@@ -104,7 +99,6 @@ async function exportKnativeManifest({
           )
         })
         .filter((entry) => entry.name !== 'BUILT')
-        .sort((a, b) => a.name.localeCompare(b.name))
         .map((entry) => {
           if ('valueFrom' in entry && entry.valueFrom) {
             return { name: entry.name, valueFrom: entry.valueFrom }
@@ -117,33 +111,46 @@ async function exportKnativeManifest({
   const repoRoot = join(baseDir, '..', '..', '..')
   const manifestAbsolutePath = join(repoRoot, manifestPath)
 
-  const sanitizeResources = (value: unknown): Record<string, unknown> | undefined => {
-    if (!value || typeof value !== 'object') {
+  const sanitizeResources = (value: unknown): unknown => {
+    if (value === undefined || value === null) {
       return undefined
+    }
+
+    if (Array.isArray(value)) {
+      const sanitizedArray = value
+        .map((entry) => sanitizeResources(entry))
+        .filter((entry) => entry !== undefined) as unknown[]
+      return sanitizedArray.length > 0 ? sanitizedArray : []
+    }
+
+    if (typeof value !== 'object') {
+      if (typeof value === 'string' && value.trim().length === 0) {
+        return undefined
+      }
+      return value
     }
 
     const result: Record<string, unknown> = {}
     for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      if (entry === undefined || entry === null) {
+      const sanitized = sanitizeResources(entry)
+      if (sanitized === undefined) {
         continue
       }
 
-      if (typeof entry === 'object') {
-        const nested = sanitizeResources(entry)
-        if (nested && Object.keys(nested).length > 0) {
-          result[key] = nested
-        }
+      if (Array.isArray(sanitized)) {
+        result[key] = sanitized
         continue
       }
 
-      if (typeof entry === 'string' && entry.trim().length === 0) {
+      if (typeof sanitized === 'object' && sanitized !== null && Object.keys(sanitized).length === 0) {
+        result[key] = sanitized
         continue
       }
 
-      result[key] = entry
+      result[key] = sanitized
     }
 
-    return Object.keys(result).length > 0 ? result : undefined
+    return Object.keys(result).length > 0 ? result : {}
   }
 
   const sanitizedManifest = {

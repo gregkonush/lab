@@ -27,6 +27,8 @@ describe('deploy script', () => {
         namespace: 'froussard',
         annotations: {
           'serving.knative.dev/revision-history-limit': '3',
+          'serving.knative.dev/creator': 'system:admin',
+          'serving.knative.dev/lastModifier': 'system:admin',
           'kubectl.kubernetes.io/last-applied-configuration': 'should be dropped',
         },
         labels: {
@@ -63,6 +65,7 @@ describe('deploy script', () => {
                   requests: {
                     cpu: '',
                   },
+                  claims: [{ name: 'cache' }, { name: '' }, null],
                 },
               },
             ],
@@ -110,7 +113,11 @@ describe('deploy script', () => {
     expect(writtenYaml).toContain('secretKeyRef')
     expect(writtenYaml).toContain(version)
     expect(writtenYaml).toContain(commit)
-    expect(writtenYaml).not.toMatch(/^\s*resources:/m)
+    expect(writtenYaml).toMatch(/^\s*resources:\s*\{\}/m)
+    expect(writtenYaml).toMatch(/- name: FOO[\s\S]*- name: SECRET/)
+    expect(writtenYaml).toMatch(/serving\.knative\.dev\/creator: system:admin/)
+    expect(writtenYaml).toMatch(/serving\.knative\.dev\/lastModifier: system:admin/)
+    expect(writtenYaml).toMatch(/claims:\s*\n\s+- name: cache/)
 
     resetEnv(envKeys)
   })
