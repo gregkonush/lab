@@ -35,7 +35,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler netcat-openbsd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler netcat-openbsd build-essential
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
