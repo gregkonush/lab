@@ -26,7 +26,7 @@ run:
   - name: KAFKA_DISCORD_COMMAND_TOPIC
     value: discord.commands.incoming
   - name: KAFKA_USERNAME
-    value: '{{ secret:froussard:username }}'
+    value: froussard
   - name: KAFKA_PASSWORD
     value: '{{ secret:froussard:password }}'
   - name: KAFKAJS_NO_PARTITIONER_WARNING
