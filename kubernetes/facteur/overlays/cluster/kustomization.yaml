@@ -8,7 +8,7 @@ generatorOptions:
   disableNameSuffixHash: true
 images:
 - name: registry.ide-newton.ts.net/lab/facteur
-  newTag: main
+  newTag: 16169c46
 kind: Kustomization
 namespace: facteur
 resources:
