@@ -29,6 +29,8 @@ const {
     temporal_bun_error_free,
     temporal_bun_client_connect,
     temporal_bun_client_free,
+    temporal_bun_client_describe_namespace,
+    temporal_bun_byte_array_free,
   },
 } = dlopen(libraryFile, {
   temporal_bun_runtime_new: {
@@ -52,6 +54,14 @@ const {
     returns: FFIType.ptr,
   },
   temporal_bun_client_free: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
+  },
+  temporal_bun_client_describe_namespace: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_byte_array_free: {
     args: [FFIType.ptr],
     returns: FFIType.void,
   },
@@ -83,6 +93,15 @@ export const native = {
   clientShutdown(client: NativeClient): void {
     temporal_bun_client_free(client.handle)
   },
+
+  describeNamespace(client: NativeClient, namespace: string): Uint8Array {
+    const payload = Buffer.from(JSON.stringify({ namespace }), 'utf8')
+    const arrayPtr = Number(temporal_bun_client_describe_namespace(client.handle, ptr(payload), payload.byteLength))
+    if (!arrayPtr) {
+      throw new Error(readLastError())
+    }
+    return readByteArray(arrayPtr)
+  },
 }
 
 function resolveBridgeLibraryPath(): string {
@@ -98,6 +117,17 @@ function resolveBridgeLibraryPath(): string {
     throw new Error(`Temporal Bun bridge library not found at ${candidate}. Did you build the native bridge?`)
   }
   return candidate
+}
+
+function readByteArray(pointer: number): Uint8Array {
+  const header = new BigUint64Array(toArrayBuffer(pointer, 0, 24))
+  const dataPtr = Number(header[0])
+  const len = Number(header[1])
+  const view = new Uint8Array(toArrayBuffer(dataPtr, 0, len))
+  // Copy into JS-owned memory before the native buffer is released.
+  const copy = new Uint8Array(view)
+  temporal_bun_byte_array_free(pointer)
+  return copy
 }
 
 function readLastError(): string {

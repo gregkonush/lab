@@ -6,7 +6,21 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
 - Factories for Temporal connections, workflow clients, and workers.
 - Example workflows/activities plus an executable `temporal-bun-worker` binary.
+- Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
 - Dockerfile and `docker-compose` example for containerized development.
+- Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
+
+## Documentation
+
+- [`docs/design-e2e.md`](./docs/design-e2e.md) – product and architecture overview.
+- [`docs/ffi-surface.md`](./docs/ffi-surface.md) – native bridge blueprint.
+- [`docs/ts-core-bridge.md`](./docs/ts-core-bridge.md) – TypeScript core bridge implementation.
+- [`docs/client-runtime.md`](./docs/client-runtime.md) – Bun Temporal client rewrite.
+- [`docs/worker-runtime.md`](./docs/worker-runtime.md) – worker orchestration plan.
+- [`docs/workflow-runtime.md`](./docs/workflow-runtime.md) – deterministic workflow runtime strategy.
+- [`docs/payloads-codec.md`](./docs/payloads-codec.md) – payload encoding & data conversion.
+- [`docs/testing-plan.md`](./docs/testing-plan.md) – validation matrix.
+- [`docs/migration-phases.md`](./docs/migration-phases.md) – phased rollout checklist.
 
 ## Installation
 
@@ -58,6 +72,24 @@ Start the bundled worker (after building):
 
 ```bash
 pnpm --filter @proompteng/temporal-bun-sdk run start:worker
+```
+
+## CLI
+
+The package ships a CLI for project scaffolding and container packaging.
+
+```bash
+temporal-bun init my-worker
+cd my-worker
+bun install
+bun run dev          # runs the worker locally
+bun run docker:build # builds Docker image via Bun script
+```
+
+To build an image from the current directory without scaffolding:
+
+```bash
+temporal-bun docker-build --tag my-worker:latest
 ```
 
 ## Environment Variables
