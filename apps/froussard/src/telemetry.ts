@@ -1,3 +1,5 @@
+import os from 'node:os'
+
 import { DiagConsoleLogger, DiagLogLevel, diag } from '@opentelemetry/api'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
@@ -11,7 +13,7 @@ diag.setLogger(new DiagConsoleLogger(), DiagLogLevel.ERROR)
 
 const serviceName = process.env.OTEL_SERVICE_NAME ?? process.env.LGTM_SERVICE_NAME ?? 'froussard'
 const serviceNamespace = process.env.OTEL_SERVICE_NAMESPACE ?? process.env.POD_NAMESPACE ?? 'default'
-const serviceInstanceId = process.env.POD_NAME ?? process.pid.toString()
+const serviceInstanceId = process.env.POD_NAME ?? process.env.HOSTNAME ?? os.hostname() ?? process.pid.toString()
 
 const tracesEndpoint =
   process.env.LGTM_TEMPO_TRACES_ENDPOINT ??

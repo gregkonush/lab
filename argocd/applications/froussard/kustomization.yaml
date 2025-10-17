@@ -16,3 +16,4 @@ resources:
   - github-codex-implementation-workflow-template.yaml
   - github-codex-sensor.yaml
   - coder-workspace-access.yaml
+  - knative-service.yaml

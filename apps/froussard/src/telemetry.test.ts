@@ -145,6 +145,21 @@ describe('telemetry', () => {
     expect(processOnceSpy).toHaveBeenCalledWith('SIGTERM', expect.any(Function))
   })
 
+  it('falls back to host metadata when POD_NAME is not set', async () => {
+    process.env.OTEL_SERVICE_NAME = 'froussard'
+    process.env.OTEL_SERVICE_NAMESPACE = 'froussard'
+    process.env.HOSTNAME = 'froussard-host'
+
+    await import('./telemetry')
+
+    expect(nodeSdkCtorMock).toHaveBeenCalledTimes(1)
+    const config = nodeSdkCtorMock.mock.calls[0][0] as { resource: MockResource }
+
+    expect(config.resource.attributes).toMatchObject({
+      'service.instance.id': 'froussard-host',
+    })
+  })
+
   it('falls back to default observability endpoints when environment variables are unset', async () => {
     await import('./telemetry')
 

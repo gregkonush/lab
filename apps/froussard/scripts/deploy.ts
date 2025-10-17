@@ -2,6 +2,22 @@
 import process from 'node:process'
 
 import { $ } from 'bun'
+import { writeFile } from 'node:fs/promises'
+import { dirname, join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import YAML from 'yaml'
+
+const ignoredAnnotations = new Set([
+  'kubectl.kubernetes.io/last-applied-configuration',
+  'serving.knative.dev/creator',
+  'serving.knative.dev/lastModifier',
+  'client.knative.dev/nonce',
+])
+
+const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'
+const service = process.env.FROUSSARD_SERVICE?.trim() || 'froussard'
+const manifestRelativePath =
+  process.env.FROUSSARD_KNATIVE_MANIFEST?.trim() || 'argocd/applications/froussard/knative-service.yaml'
 
 const run = async () => {
   $.throws(true)
@@ -32,9 +48,119 @@ const run = async () => {
   const passThrough = args.length > 0 ? ['--', ...args] : []
 
   await $.env(env)`pnpm --filter froussard run deploy ${passThrough}`
+
+  await exportKnativeManifest({
+    namespace,
+    service,
+    manifestPath: manifestRelativePath,
+  })
 }
 
 void run().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error))
   process.exitCode = 1
 })
+
+async function exportKnativeManifest({
+  namespace: exportNamespace,
+  service: exportService,
+  manifestPath,
+}: {
+  namespace: string
+  service: string
+  manifestPath: string
+}) {
+  const manifestJson = await $`kubectl get ksvc ${exportService} --namespace ${exportNamespace} -o json`.text()
+  const parsed = JSON.parse(manifestJson)
+
+  const container = parsed?.spec?.template?.spec?.containers?.[0]
+  if (!container || typeof container !== 'object') {
+    throw new Error(`Unable to resolve container spec for service ${exportService}`)
+  }
+
+  const sanitizeObject = (value: Record<string, unknown> | undefined) => {
+    if (!value) return undefined
+    const entries = Object.entries(value).filter(
+      ([key, v]) =>
+        !ignoredAnnotations.has(key) &&
+        v !== undefined &&
+        v !== null &&
+        !(typeof v === 'string' && v.trim().length === 0),
+    )
+    if (entries.length === 0) {
+      return undefined
+    }
+    return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)))
+  }
+
+  const env = Array.isArray(container.env)
+    ? container.env
+        .filter((entry: unknown): entry is { name: string; value?: string; valueFrom?: unknown } => {
+          return (
+            !!entry &&
+            typeof entry === 'object' &&
+            typeof (entry as { name?: unknown }).name === 'string' &&
+            (('value' in (entry as object) && typeof (entry as { value?: unknown }).value === 'string') ||
+              'valueFrom' in (entry as object))
+          )
+        })
+        .filter((entry) => entry.name !== 'BUILT')
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((entry) => {
+          if ('valueFrom' in entry && entry.valueFrom) {
+            return { name: entry.name, valueFrom: entry.valueFrom }
+          }
+          return { name: entry.name, value: entry.value ?? '' }
+        })
+    : []
+
+  const baseDir = dirname(fileURLToPath(import.meta.url))
+  const repoRoot = join(baseDir, '..', '..', '..')
+  const manifestAbsolutePath = join(repoRoot, manifestPath)
+
+  const sanitizedManifest = {
+    apiVersion: 'serving.knative.dev/v1',
+    kind: 'Service',
+    metadata: {
+      name: parsed?.metadata?.name ?? exportService,
+      namespace: parsed?.metadata?.namespace ?? exportNamespace,
+      annotations: sanitizeObject(parsed?.metadata?.annotations),
+      labels: sanitizeObject(parsed?.metadata?.labels),
+    },
+    spec: {
+      template: {
+        metadata: {
+          annotations: sanitizeObject(parsed?.spec?.template?.metadata?.annotations),
+          labels: sanitizeObject(parsed?.spec?.template?.metadata?.labels),
+        },
+        spec: {
+          containerConcurrency: parsed?.spec?.template?.spec?.containerConcurrency ?? 0,
+          timeoutSeconds: parsed?.spec?.template?.spec?.timeoutSeconds ?? 300,
+          enableServiceLinks: parsed?.spec?.template?.spec?.enableServiceLinks ?? false,
+          containers: [
+            {
+              name: container.name ?? 'user-container',
+              image: container.image,
+              env,
+              readinessProbe: container.readinessProbe,
+              livenessProbe: container.livenessProbe,
+              resources:
+                container.resources && Object.keys(container.resources).length > 0 ? container.resources : undefined,
+              securityContext:
+                container.securityContext && Object.keys(container.securityContext).length > 0
+                  ? container.securityContext
+                  : undefined,
+            },
+          ],
+        },
+      },
+    },
+  }
+
+  const manifestYaml = `---\n${YAML.stringify(sanitizedManifest, { lineWidth: 120 })}`
+  await writeFile(manifestAbsolutePath, manifestYaml)
+
+  console.log(
+    `Exported Knative service manifest to ${relative(process.cwd(), manifestAbsolutePath)}. Please commit the updated file.`,
+  )
+}
