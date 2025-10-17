@@ -127,6 +127,43 @@ argo submit --from workflowtemplate/github-codex-implementation -n argo-workflow
 
 The implementation workflow writes verbose output to `/workspace/lab/.codex-implementation.log`; inspect the artifact in Argo if you need the full Codex transcript.
 
+## Argo Workflows Observability
+
+### Metrics and Telemetry
+
+- The Helm chart override at `argocd/applications/argo-workflows/kustomization.yaml` now enables both `controller.metricsConfig.enabled` and `controller.telemetryConfig.enabled`.  
+- Controller and server Services carry `lgtm.grafana.com/scrape: "true"` plus `lgtm.grafana.com/job` labels so cluster discovery can target them without custom ServiceMonitors.  
+- Scrape ports are exposed on the generated Service, so Prometheus-compatible clients can collect metrics from `argo-workflows-controller` (`metrics` and `telemetry` ports) and `argo-workflows-server` (`2746`).
+
+### Grafana Agent Flow
+
+- A Flow-based Grafana Agent lives under `argocd/applications/lgtm/agent/` (ConfigMap, ServiceAccount, ClusterRole, Deployment).  
+- The Agent discovers Services with the `lgtm.grafana.com/scrape=true` annotation in the `argo-workflows` namespace and forwards their metrics to `http://lgtm-mimir-nginx/api/v1/push`.  
+- `loki.source.kubernetes` fans in controller and server pod logs, remote-writing them to `http://lgtm-loki-gateway/loki/api/v1/push`.  
+- An embedded `otelcol.receiver.otlp` listens on `:4317`/`:4318` so future workflow OTLP clients can push traces, which the Agent relays to `lgtm-tempo-distributor:4317`.  
+- RBAC is scoped through the `grafana-agent-flow` ClusterRole so the Agent can read Services, Endpoints, and pod logs across namespaces.
+
+### Grafana Dashboards
+
+- Dashboards 20348 and 21393 from grafana.com are vendored as JSON in `argocd/applications/lgtm/dashboards/`.  
+- `configMapGenerator` objects mark them with `grafana_dashboard: "1"` and place both into an "Argo Workflows" folder via the `grafana_folder` annotation.  
+- `grafana.sidecar.dashboards.enabled` is set in `lgtm-values.yaml`, so the Grafana sidecar imports these ConfigMaps automatically on sync.
+
+### Post-sync Validation
+
+1. `scripts/kubeconform.sh argocd` and `scripts/argo-lint.sh argocd` should pass locally before syncing.  
+2. After Argo CD applies the manifests, confirm the Agent pod is healthy:  
+   ```bash
+   kubectl -n lgtm get pods -l app.kubernetes.io/name=grafana-agent-flow
+   kubectl -n lgtm logs deploy/grafana-agent-flow | tail
+   ```  
+3. Check that the controller Service exposes the scrape annotation:  
+   ```bash
+   kubectl -n argo-workflows get svc argo-workflows-argo-workflows-controller -o jsonpath='{.metadata.annotations.lgtm\.grafana\.com/scrape}'
+   ```  
+4. In Grafana (folder: *Argo Workflows*), verify the imported dashboards render data; the "Controller – Workflows" dashboard should show scrape timestamps within the last few minutes.  
+5. Optional: push a test workflow and confirm Loki logs (`{namespace="argo-workflows"}`) and Tempo traces (if the workflow emits OTLP) appear via Explore.
+
 ## Manifest & CI Safety Checks
 
 Whenever you introduce a new Codex workflow or touch the surrounding manifests, run the validation scripts locally before opening a PR:

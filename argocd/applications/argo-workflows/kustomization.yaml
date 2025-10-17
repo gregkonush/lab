@@ -17,10 +17,22 @@ helmCharts:
       controller:
         workflowNamespaces:
           - argo-workflows
+        metricsConfig:
+          enabled: true
+        telemetryConfig:
+          enabled: true
+        serviceAnnotations:
+          lgtm.grafana.com/scrape: "true"
+        serviceLabels:
+          lgtm.grafana.com/job: argo-controller
       server:
         secure: false
         authModes:
           - sso
+        serviceAnnotations:
+          lgtm.grafana.com/scrape: "true"
+        serviceLabels:
+          lgtm.grafana.com/job: argo-server
         sso:
           enabled: true
           issuer: https://argocd.proompteng.ai/api/dex

@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-agent-flow-config
+  labels:
+    app.kubernetes.io/component: agent
+    grafana.com/flow-config: "true"
+data:
+  config.river: |
+    local.cluster = "lab"
+
+    discovery.kubernetes "argo_services" {
+      role = "service"
+
+      namespaces {
+        names = ["argo-workflows"]
+      }
+
+      selectors {
+        role  = "service"
+        label = "lgtm.grafana.com/scrape=true"
+      }
+    }
+
+    discovery.relabel "argo_metrics" {
+      targets = discovery.kubernetes.argo_services.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_service_label_lgtm_grafana_com_job"]
+        target_label  = "job"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        target_label = "cluster"
+        replacement  = local.cluster
+      }
+    }
+
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://lgtm-mimir-nginx/api/v1/push"
+      }
+    }
+
+    prometheus.scrape "argo" {
+      job_name        = "argo-workflows"
+      scrape_interval = "30s"
+      scrape_timeout  = "10s"
+
+      targets    = discovery.relabel.argo_metrics.output
+      forward_to = [prometheus.remote_write.mimir.receiver]
+    }
+
+    discovery.kubernetes "argo_pods" {
+      role = "pod"
+
+      namespaces {
+        names = ["argo-workflows"]
+      }
+
+      selectors {
+        role  = "pod"
+        label = "app.kubernetes.io/instance=argo-workflows"
+      }
+    }
+
+    loki.write "loki" {
+      endpoint {
+        url = "http://lgtm-loki-gateway/loki/api/v1/push"
+      }
+
+      external_labels = {
+        cluster = local.cluster
+      }
+    }
+
+    loki.source.kubernetes "argo" {
+      targets    = discovery.kubernetes.argo_pods.targets
+      forward_to = [loki.write.loki.receiver]
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "lgtm-tempo-distributor:4317"
+        tls {
+          insecure = true
+        }
+      }
+    }
+
+    otelcol.receiver.otlp "argo" {
+      grpc {
+        endpoint = "0.0.0.0:4317"
+      }
+
+      http {
+        endpoint = "0.0.0.0:4318"
+      }
+
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
