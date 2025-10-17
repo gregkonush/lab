@@ -6,12 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import YAML from 'yaml'
 
-const ignoredAnnotations = new Set([
-  'kubectl.kubernetes.io/last-applied-configuration',
-  'serving.knative.dev/creator',
-  'serving.knative.dev/lastModifier',
-  'client.knative.dev/nonce',
-])
+const ignoredAnnotations = new Set(['kubectl.kubernetes.io/last-applied-configuration', 'client.knative.dev/nonce'])
 
 const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'
 const service = process.env.FROUSSARD_SERVICE?.trim() || 'froussard'
@@ -104,7 +99,6 @@ async function exportKnativeManifest({
           )
         })
         .filter((entry) => entry.name !== 'BUILT')
-        .sort((a, b) => a.name.localeCompare(b.name))
         .map((entry) => {
           if ('valueFrom' in entry && entry.valueFrom) {
             return { name: entry.name, valueFrom: entry.valueFrom }
@@ -143,7 +137,7 @@ async function exportKnativeManifest({
       result[key] = entry
     }
 
-    return Object.keys(result).length > 0 ? result : undefined
+    return Object.keys(result).length > 0 ? result : {}
   }
 
   const sanitizedManifest = {
