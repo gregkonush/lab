@@ -124,8 +124,10 @@ function readByteArray(pointer: number): Uint8Array {
   const dataPtr = Number(header[0])
   const len = Number(header[1])
   const view = new Uint8Array(toArrayBuffer(dataPtr, 0, len))
+  // Copy into JS-owned memory before the native buffer is released.
+  const copy = new Uint8Array(view)
   temporal_bun_byte_array_free(pointer)
-  return view
+  return copy
 }
 
 function readLastError(): string {
