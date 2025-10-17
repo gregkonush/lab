@@ -3,15 +3,9 @@ import { native } from '../src/internal/core-bridge/native.ts'
 
 const shouldRun = process.env.TEMPORAL_TEST_SERVER === '1'
 
-describe('native bridge integration', () => {
-  // Skip entire suite when Temporal server isn't available.
-  if (!shouldRun) {
-    test('skip describeNamespace when server unavailable', () => {
-      expect(true).toBe(true)
-    })
-    return
-  }
+const suite = shouldRun ? describe : describe.skip
 
+suite('native bridge integration', () => {
   let runtime: ReturnType<typeof native.createRuntime>
 
   beforeAll(() => {
