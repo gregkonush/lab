@@ -19,12 +19,16 @@ pub fn take_error(len_out: *mut usize) -> *const u8 {
             let ptr = bytes.as_ptr();
             std::mem::forget(bytes);
             if !len_out.is_null() {
-                unsafe { *len_out = len; }
+                unsafe {
+                    *len_out = len;
+                }
             }
             ptr
         } else {
             if !len_out.is_null() {
-                unsafe { *len_out = 0; }
+                unsafe {
+                    *len_out = 0;
+                }
             }
             std::ptr::null()
         }
