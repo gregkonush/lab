@@ -6,7 +6,12 @@ import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import YAML from 'yaml'
 
-const ignoredAnnotations = new Set(['kubectl.kubernetes.io/last-applied-configuration', 'client.knative.dev/nonce'])
+const ignoredAnnotations = new Set([
+  'client.knative.dev/nonce',
+  'kubectl.kubernetes.io/last-applied-configuration',
+  'serving.knative.dev/creator',
+  'serving.knative.dev/lastModifier',
+])
 
 const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'
 const service = process.env.FROUSSARD_SERVICE?.trim() || 'froussard'
@@ -157,6 +162,7 @@ async function exportKnativeManifest({
   const templateAnnotations = sanitizeObject(parsed?.spec?.template?.metadata?.annotations) ?? {}
   annotations['argocd.argoproj.io/tracking-id'] =
     `${exportNamespace}:serving.knative.dev/Service:${exportNamespace}/${parsed?.metadata?.name ?? exportService}`
+  annotations['argocd.argoproj.io/compare-options'] = 'IgnoreExtraneous'
 
   const sanitizedManifest = {
     apiVersion: 'serving.knative.dev/v1',
