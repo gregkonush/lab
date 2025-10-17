@@ -18,14 +18,12 @@
 ## Phase 1 — Client Parity
 
 ```mermaid
-timeline
-  title Bun Temporal SDK Migration
-  Phase 0 : Baseline hybrid SDK
-  Phase 1 : Client parity via FFI
-  Phase 2 : Worker core & runtime
-  Phase 3 : Workflow determinism & interceptors
-  Phase 4 : Telemetry & tooling
-  Phase 5 : Release readiness
+flowchart LR
+  P0["Phase 0<br/>Baseline hybrid SDK"] --> P1["Phase 1<br/>Client parity via FFI"]
+  P1 --> P2["Phase 2<br/>Worker core & runtime"]
+  P2 --> P3["Phase 3<br/>Workflow determinism & interceptors"]
+  P3 --> P4["Phase 4<br/>Telemetry & tooling"]
+  P4 --> P5["Phase 5<br/>Release readiness"]
 ```
 
 - Implement FFI for client operations (start, signal, query, terminate, headers, TLS).

@@ -14,14 +14,12 @@
 | Smoke (CLI) | Validate scaffolding CLI and example project | `bun run`, `temporal-bun init` scenarios |
 
 ```mermaid
-pyramid
-  title Test Coverage Pyramid
-  section Smoke
-    CLI scaffolding smoke tests
-  section Integration
-    Docker Temporal stack integration suite
-  section Unit
-    Bun-based unit tests (FFI, worker, workflow, codecs)
+flowchart BT
+  Unit["Unit Tests<br/>FFI, worker, workflow, codecs"]
+  Integration["Integration Tests<br/>Docker Temporal stack suite"]
+  Smoke["Smoke Tests<br/>CLI scaffolding"]
+
+  Smoke --> Integration --> Unit
 ```
 
 ---
