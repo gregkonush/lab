@@ -15,7 +15,7 @@ spec:
       sasl:
         mechanism: SCRAM-SHA-512
         userSecret:
-          name: kafka-codex-credentials
+          name: kafka-codex-username
           key: username
         passwordSecret:
           name: kafka-codex-credentials

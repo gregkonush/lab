@@ -52,7 +52,13 @@ The local runtime exposes:
 ## Deployment Notes
 
 - Environment configuration is provided via the ArgoCD `froussard` application.
-- Kafka credentials are mounted from `kafka-codex-credentials` secrets.
+- Kafka credentials are mirrored from the Strimzi-managed `KafkaUser/kafka-codex-credentials`
+  (reflected into both `kafka` and `argo-workflows` namespaces); a companion secret
+  `kafka-codex-username` in `argo-workflows` defines the SASL username consumed by
+  Argo Events. Strimzi surfaces the username only inside the `sasl.jaas.config`
+  field, so we persist a lightweight static secret to expose it under the `username`
+  key that `userSecret.key` consumers expect while leaving Strimzi in charge of
+  password rotation.
 - The Argo Events sensor in `argocd/applications/froussard/github-codex-sensor.yaml`
   maps CloudEvent payloads into the `github-codex-planning` Workflow arguments.
 - Discord slash command signature verification requires `DISCORD_PUBLIC_KEY`. Set
