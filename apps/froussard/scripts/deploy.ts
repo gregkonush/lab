@@ -155,12 +155,6 @@ async function exportKnativeManifest({
 
   const annotations = sanitizeObject(parsed?.metadata?.annotations) ?? {}
   const templateAnnotations = sanitizeObject(parsed?.spec?.template?.metadata?.annotations) ?? {}
-
-  const knServiceAccount = 'system:serviceaccount:argocd:argocd-application-controller'
-  annotations['serving.knative.dev/creator'] = knServiceAccount
-  annotations['serving.knative.dev/lastModifier'] = knServiceAccount
-  templateAnnotations['serving.knative.dev/creator'] = knServiceAccount
-  templateAnnotations['serving.knative.dev/lastModifier'] = knServiceAccount
   annotations['argocd.argoproj.io/tracking-id'] =
     `${exportNamespace}:serving.knative.dev/Service:${exportNamespace}/${parsed?.metadata?.name ?? exportService}`
 
