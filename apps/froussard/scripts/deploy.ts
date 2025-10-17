@@ -10,6 +10,7 @@ const ignoredAnnotations = new Set([
   'kubectl.kubernetes.io/last-applied-configuration',
   'client.knative.dev/nonce',
   'serving.knative.dev/lastModifier',
+  'serving.knative.dev/creator',
 ])
 
 const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'

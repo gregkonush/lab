@@ -5,7 +5,6 @@ metadata:
   name: froussard
   namespace: froussard
   annotations:
-    serving.knative.dev/creator: system:admin
     serving.knative.dev/revision-history-limit: "3"
   labels:
     function.knative.dev/name: froussard
@@ -15,7 +14,6 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/min-scale: "1"
-        serving.knative.dev/creator: system:admin
         serving.knative.dev/revision-history-limit: "3"
       labels:
         function.knative.dev/name: froussard
@@ -26,7 +24,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:0da2905d9f672346dc2e15f5d94bf5f1618109c12c4757c019bd5fefe09eb6a3
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:ebf12aa12e3236803643c19b42e4695d04d836eba089a25a304a3b3f7dfa38ed
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
@@ -67,9 +65,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.241.0-2-gb99acabe
+              value: v0.241.2-2-gbe4a3de6
             - name: FROUSSARD_COMMIT
-              value: b99acabe1757728c7db8e178a87b3e1956f42ee2
+              value: be4a3de6cc97c2f63afdb8686834e03d8013ddbe
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT
