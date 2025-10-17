@@ -10,6 +10,18 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Dockerfile and `docker-compose` example for containerized development.
 - Detailed FFI implementation blueprint in [`docs/ffi-surface.md`](./docs/ffi-surface.md) to guide future native bridge work.
 
+## Documentation
+
+- [`docs/design-e2e.md`](./docs/design-e2e.md) – product and architecture overview.
+- [`docs/ffi-surface.md`](./docs/ffi-surface.md) – native bridge blueprint.
+- [`docs/ts-core-bridge.md`](./docs/ts-core-bridge.md) – TypeScript core bridge implementation.
+- [`docs/client-runtime.md`](./docs/client-runtime.md) – Bun Temporal client rewrite.
+- [`docs/worker-runtime.md`](./docs/worker-runtime.md) – worker orchestration plan.
+- [`docs/workflow-runtime.md`](./docs/workflow-runtime.md) – deterministic workflow runtime strategy.
+- [`docs/payloads-codec.md`](./docs/payloads-codec.md) – payload encoding & data conversion.
+- [`docs/testing-plan.md`](./docs/testing-plan.md) – validation matrix.
+- [`docs/migration-phases.md`](./docs/migration-phases.md) – phased rollout checklist.
+
 ## Installation
 
 ```bash
