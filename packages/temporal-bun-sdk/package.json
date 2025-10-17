@@ -11,7 +11,8 @@
     "README.md"
   ],
   "bin": {
-    "temporal-bun-worker": "./dist/bin/start-worker.js"
+    "temporal-bun-worker": "./dist/bin/start-worker.js",
+    "temporal-bun": "./dist/bin/temporal-bun.js"
   },
   "exports": {
     ".": {
@@ -30,7 +31,8 @@
       "types": "./dist/worker.d.ts",
       "default": "./dist/worker.js"
     },
-    "./bin/start-worker": "./dist/bin/start-worker.js"
+    "./bin/start-worker": "./dist/bin/start-worker.js",
+    "./bin/cli": "./dist/bin/temporal-bun.js"
   },
   "scripts": {
     "clean": "rm -rf dist",

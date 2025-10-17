@@ -6,6 +6,7 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
 - Factories for Temporal connections, workflow clients, and workers.
 - Example workflows/activities plus an executable `temporal-bun-worker` binary.
+- Project scaffolding CLI (`temporal-bun init`) with Docker packaging helpers.
 - Dockerfile and `docker-compose` example for containerized development.
 
 ## Installation
@@ -58,6 +59,24 @@ Start the bundled worker (after building):
 
 ```bash
 pnpm --filter @proompteng/temporal-bun-sdk run start:worker
+```
+
+## CLI
+
+The package ships a CLI for project scaffolding and container packaging.
+
+```bash
+temporal-bun init my-worker
+cd my-worker
+bun install
+bun run dev          # runs the worker locally
+bun run docker:build # builds Docker image via Bun script
+```
+
+To build an image from the current directory without scaffolding:
+
+```bash
+temporal-bun docker-build --tag my-worker:latest
 ```
 
 ## Environment Variables

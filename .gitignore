@@ -52,6 +52,7 @@ out/
 bin/
 !services/dernier/bin/
 !services/dernier/bin/entrypoint
+!packages/temporal-bun-sdk/src/bin/
 
 # Node.js
 npm-debug.log

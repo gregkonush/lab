@@ -119,7 +119,7 @@ Key design points:
 ### 3.4 Developer Experience Enhancements
 
 - Example app with workflow/activity scaffolding, environment templates ( `.env.example` ), and `pnpm run demo` to start Temporal server + worker + sample client.
-- CLI helper (optional) to bootstrap workflows/activities with TypeScript templates.
+- CLI helper to bootstrap workflows/activities with TypeScript templates **(initial `temporal-bun init` implemented; follow-up work needed to integrate native worker path once bridge is complete).**
 - Rich README covering local dev & Temporal Cloud setup (cert paths, API key assignment).
 
 
