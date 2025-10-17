@@ -1,8 +1,13 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 
+use prost::Message;
 use serde::Deserialize;
-use temporal_client::{ClientOptionsBuilder, ConfiguredClient, RetryClient, TemporalServiceClient};
+use temporal_client::{
+    ClientOptionsBuilder, ConfiguredClient, Namespace, RetryClient, TemporalServiceClient,
+    WorkflowService,
+    tonic::IntoRequest,
+};
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
 use thiserror::Error;
@@ -35,18 +40,29 @@ struct ClientConfig {
     client_version: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DescribeNamespaceRequestPayload {
+    namespace: String,
+}
+
 #[derive(Debug, Error)]
 enum BridgeError {
     #[error("invalid runtime handle")]
     InvalidRuntimeHandle,
+    #[error("invalid client handle")]
+    InvalidClientHandle,
     #[error("missing configuration payload")]
     MissingConfig,
     #[error("failed to parse client configuration: {0}")]
     InvalidConfig(String),
+    #[error("failed to parse request payload: {0}")]
+    InvalidRequest(String),
     #[error("failed to parse Temporal address: {0}")]
     InvalidAddress(String),
     #[error("Temporal client initialization failed: {0}")]
     ClientInit(String),
+    #[error("Temporal request failed: {0}")]
+    ClientRequest(String),
 }
 
 #[unsafe(no_mangle)]
@@ -104,9 +120,28 @@ fn config_from_raw(ptr: *const u8, len: usize) -> Result<ClientConfig, BridgeErr
     serde_json::from_slice(bytes).map_err(|err| BridgeError::InvalidConfig(err.to_string()))
 }
 
+fn request_from_raw<T>(ptr: *const u8, len: usize) -> Result<T, BridgeError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    if ptr.is_null() || len == 0 {
+        return Err(BridgeError::InvalidRequest("empty payload".to_owned()));
+    }
+
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    serde_json::from_slice(bytes).map_err(|err| BridgeError::InvalidRequest(err.to_string()))
+}
+
 fn into_string_error(err: BridgeError) -> *mut c_void {
     error::set_error(err.to_string());
     std::ptr::null_mut()
+}
+
+fn client_from_ptr(ptr: *mut c_void) -> Result<&'static ClientHandle, BridgeError> {
+    if ptr.is_null() {
+        return Err(BridgeError::InvalidClientHandle);
+    }
+    Ok(unsafe { &*(ptr as *mut ClientHandle) })
 }
 
 #[unsafe(no_mangle)]
@@ -182,6 +217,47 @@ pub extern "C" fn temporal_bun_client_free(handle: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_describe_namespace(
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> *mut byte_array::ByteArray {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    let payload = match request_from_raw::<DescribeNamespaceRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+    let namespace = payload.namespace;
+
+    let response = runtime.tokio_handle().block_on(async move {
+        let mut inner = client.clone();
+        let request = Namespace::Name(namespace).into_describe_namespace_request();
+        WorkflowService::describe_namespace(&mut inner, request.into_request()).await
+    });
+
+    let response = match response {
+        Ok(resp) => resp.into_inner(),
+        Err(err) => {
+            return into_string_error(BridgeError::ClientRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let bytes = response.encode_to_vec();
+    byte_array::ByteArray::from_vec(bytes)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_byte_array_free(ptr: *mut byte_array::ByteArray) {
     if ptr.is_null() {
         return;
@@ -192,5 +268,40 @@ pub extern "C" fn temporal_bun_byte_array_free(ptr: *mut byte_array::ByteArray) 
         if !ba.ptr.is_null() && ba.cap > 0 {
             let _ = Vec::from_raw_parts(ba.ptr, ba.len, ba.cap);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_from_raw_parses_defaults() {
+        let json = br#"{"address":"http://localhost:7233","namespace":"default"}"#;
+        let cfg = config_from_raw(json.as_ptr(), json.len()).expect("config parsed")
+;
+        assert_eq!(cfg.address, "http://localhost:7233");
+        assert_eq!(cfg.namespace, "default");
+    }
+
+    #[test]
+    fn config_from_raw_errors_on_missing_payload() {
+        let err = config_from_raw(std::ptr::null(), 0).unwrap_err();
+        assert!(matches!(err, BridgeError::MissingConfig));
+    }
+
+    #[test]
+    fn request_from_raw_validates_payload() {
+        let json = br#"{"namespace":"test"}"#;
+        let payload: DescribeNamespaceRequestPayload =
+            request_from_raw(json.as_ptr(), json.len()).expect("parsed request");
+        assert_eq!(payload.namespace, "test");
+
+        let invalid = request_from_raw::<DescribeNamespaceRequestPayload>(
+            br"{}".as_ptr(),
+            2,
+        )
+        .unwrap_err();
+        assert!(matches!(invalid, BridgeError::InvalidRequest(_)));
     }
 }

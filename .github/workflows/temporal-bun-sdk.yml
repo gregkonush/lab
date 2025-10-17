@@ -1,0 +1,71 @@
+name: Temporal Bun SDK CI
+
+on:
+  pull_request:
+    paths:
+      - 'packages/temporal-bun-sdk/**'
+      - '.github/workflows/temporal-bun-sdk.yml'
+      - 'pnpm-lock.yaml'
+      - 'packages/temporal-bun-sdk-example/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    env:
+      TEMPORAL_TEST_SERVER: '1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: 'pnpm'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler netcat-openbsd
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Temporal vendor sources
+        run: |
+          mkdir -p packages/temporal-bun-sdk/vendor
+          git clone --depth 1 --branch master https://github.com/temporalio/sdk-core.git packages/temporal-bun-sdk/vendor/sdk-core
+          git clone --depth 1 --branch main https://github.com/temporalio/sdk-typescript.git packages/temporal-bun-sdk/vendor/sdk-typescript
+
+      - name: Build native bridge
+        run: pnpm --filter @proompteng/temporal-bun-sdk run build:native
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path packages/temporal-bun-sdk/native/temporal-bun-bridge/Cargo.toml
+
+      - name: Start Temporal server
+        run: docker compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml up -d
+
+      - name: Wait for Temporal server
+        run: |
+          for i in {1..30}; do
+            if nc -z localhost 7233; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Temporal server did not start in time" >&2
+          exit 1
+
+      - name: Run Bun SDK tests
+        run: pnpm --filter @proompteng/temporal-bun-sdk test
+
+      - name: Stop Temporal server
+        if: always()
+        run: docker compose -f packages/temporal-bun-sdk/tests/docker-compose.yaml down -v

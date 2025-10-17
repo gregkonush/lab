@@ -9,12 +9,27 @@ describe('native bridge', () => {
     native.runtimeShutdown(runtime)
   })
 
-  test('client connect fails when Temporal server unavailable', () => {
+  test('client connect returns handle', () => {
+    const runtime = native.createRuntime({})
+    try {
+      const client = native.createClient(runtime, {
+        address: 'http://127.0.0.1:7233',
+        namespace: 'default',
+      })
+      expect(client.type).toBe('client')
+      expect(typeof client.handle).toBe('number')
+      native.clientShutdown(client)
+    } finally {
+      native.runtimeShutdown(runtime)
+    }
+  })
+
+  test('client connect errors on unreachable host', () => {
     const runtime = native.createRuntime({})
     try {
       expect(() =>
         native.createClient(runtime, {
-          address: 'http://127.0.0.1:7233',
+          address: 'http://127.0.0.1:65535',
           namespace: 'default',
         }),
       ).toThrow()
