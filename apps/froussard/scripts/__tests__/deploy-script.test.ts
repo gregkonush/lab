@@ -121,6 +121,9 @@ describe('deploy script', () => {
     expect(writtenYaml).toMatch(
       /serving\.knative\.dev\/lastModifier: system:serviceaccount:argocd:argocd-application-controller/,
     )
+    expect(writtenYaml).toMatch(
+      /argocd\.argoproj\.io\/tracking-id: froussard:serving\.knative\.dev\/Service:froussard\/froussard/,
+    )
     expect(writtenYaml).toMatch(/claims:\s*\n\s+- name: cache/)
 
     resetEnv(envKeys)

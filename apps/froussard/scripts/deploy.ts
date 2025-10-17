@@ -161,6 +161,8 @@ async function exportKnativeManifest({
   annotations['serving.knative.dev/lastModifier'] = knServiceAccount
   templateAnnotations['serving.knative.dev/creator'] = knServiceAccount
   templateAnnotations['serving.knative.dev/lastModifier'] = knServiceAccount
+  annotations['argocd.argoproj.io/tracking-id'] =
+    `${exportNamespace}:serving.knative.dev/Service:${exportNamespace}/${parsed?.metadata?.name ?? exportService}`
 
   const sanitizedManifest = {
     apiVersion: 'serving.knative.dev/v1',
