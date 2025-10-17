@@ -1,0 +1,89 @@
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: froussard
+  namespace: froussard
+  annotations:
+    serving.knative.dev/revision-history-limit: "3"
+  labels:
+    function.knative.dev/name: froussard
+    function.knative.dev/runtime: typescript
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "1"
+        serving.knative.dev/revision-history-limit: "3"
+      labels:
+        function.knative.dev/name: froussard
+        function.knative.dev/runtime: typescript
+    spec:
+      containerConcurrency: 0
+      timeoutSeconds: 300
+      enableServiceLinks: false
+      containers:
+        - name: user-container
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:c29289cc45bd7d69ce11829d005f45e4415492fe70a27e1b077fdaff94112ec4
+          env:
+            - name: ADDRESS
+              value: 0.0.0.0
+            - name: DISCORD_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: public-key
+                  name: discord-bot
+            - name: FROUSSARD_COMMIT
+              value: 1252d93d732ee9683948eb7949485dbc7594a476
+            - name: FROUSSARD_VERSION
+              value: v0.240.1-2-g1252d93d
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: token
+                  name: github-token
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: webhook-secret
+                  name: github-secret
+            - name: KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka:9092
+            - name: KAFKA_CODEX_TOPIC
+              value: github.codex.tasks
+            - name: KAFKA_CODEX_TOPIC_STRUCTURED
+              value: github.issues.codex.tasks
+            - name: KAFKA_DISCORD_COMMAND_TOPIC
+              value: discord.commands.incoming
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: password
+                  name: froussard
+            - name: KAFKA_TOPIC
+              value: github.webhook.events
+            - name: KAFKA_USERNAME
+              value: froussard
+            - name: KAFKAJS_NO_PARTITIONER_WARNING
+              value: "1"
+            - name: LGTM_LOKI_ENDPOINT
+              value: http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push
+            - name: LGTM_MIMIR_METRICS_ENDPOINT
+              value: http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics
+            - name: LGTM_TEMPO_TRACES_ENDPOINT
+              value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
+            - name: OTEL_SERVICE_NAME
+              value: froussard
+            - name: OTEL_SERVICE_NAMESPACE
+              value: froussard
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: 0
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: 0

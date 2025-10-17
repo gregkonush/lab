@@ -1,5 +1,5 @@
-# $schema: https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
-# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/d04ff0a3/schema/func_yaml-schema.json
+# $schema: https://raw.githubusercontent.com/knative/func/2988acf3/schema/func_yaml-schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/knative/func/2988acf3/schema/func_yaml-schema.json
 specVersion: 1.17.0
 name: froussard
 runtime: typescript
@@ -39,14 +39,6 @@ run:
     value: froussard
   - name: OTEL_SERVICE_NAMESPACE
     value: froussard
-  - name: POD_NAME
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: POD_NAMESPACE
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.namespace
   - name: FROUSSARD_VERSION
     value: '{{ env:FROUSSARD_VERSION }}'
   - name: FROUSSARD_COMMIT
@@ -61,7 +53,7 @@ run:
     value: http/protobuf
 deploy:
   namespace: froussard
-  image: registry.ide-newton.ts.net/lab/froussard@sha256:3340b1740920dfec937f57ba889d54d78b7230a70f69b9041917c0709ce8dbef
+  image: registry.ide-newton.ts.net/lab/froussard@sha256:c29289cc45bd7d69ce11829d005f45e4415492fe70a27e1b077fdaff94112ec4
   annotations:
     serving.knative.dev/revision-history-limit: "3"
   options:

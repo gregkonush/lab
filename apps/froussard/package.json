@@ -29,7 +29,8 @@
     "elysia": "^1.4.9",
     "kafkajs": "^2.2.4",
     "pino": "^9.12.0",
-    "pino-loki": "^2.6.0"
+    "pino-loki": "^2.6.0",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@types/bun": "^1.2.23",
