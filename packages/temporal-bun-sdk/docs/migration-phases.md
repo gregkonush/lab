@@ -17,6 +17,17 @@
 
 ## Phase 1 — Client Parity
 
+```mermaid
+timeline
+  title Bun Temporal SDK Migration
+  Phase 0 : Baseline hybrid SDK
+  Phase 1 : Client parity via FFI
+  Phase 2 : Worker core & runtime
+  Phase 3 : Workflow determinism & interceptors
+  Phase 4 : Telemetry & tooling
+  Phase 5 : Release readiness
+```
+
 - Implement FFI for client operations (start, signal, query, terminate, headers, TLS).
 - Rewrite `src/client.ts` to use new Core bridge client.
 - Remove `@temporalio/client` dependency.

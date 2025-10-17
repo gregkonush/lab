@@ -24,6 +24,20 @@ src/common/payloads/
   failure.ts            // convert errors to payloads and back
 ```
 
+```mermaid
+flowchart LR
+  InputValue --> DataConverter
+  DataConverter -->|select codec| CodecRegistry
+  CodecRegistry --> JSONCodec
+  CodecRegistry --> BinaryCodec
+  JSONCodec --> Payload
+  BinaryCodec --> Payload
+  Payload --> DataConverter
+  DataConverter -->|decode| OutputValue
+  DataConverter --> FailureCodec
+  FailureCodec --> FailurePayload
+```
+
 ---
 
 ## 3. Codec Interface

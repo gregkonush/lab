@@ -18,6 +18,23 @@ createWorker(options)
 
 ---
 
+```mermaid
+stateDiagram-v2
+  [*] --> Initializing
+  Initializing --> PollingWorkflow : spawn workflow loops
+  Initializing --> PollingActivity : spawn activity loops
+  PollingWorkflow --> ExecutingWorkflow : activation received
+  ExecutingWorkflow --> PollingWorkflow : completion sent
+  PollingActivity --> ExecutingActivity : activity task received
+  ExecutingActivity --> PollingActivity : response sent
+  PollingWorkflow --> ShuttingDown : shutdown signal
+  PollingActivity --> ShuttingDown : shutdown signal
+  ShuttingDown --> Finalizing : finalize native worker
+  Finalizing --> [*]
+```
+
+---
+
 ## 2. Responsibilities
 
 | Component | Description |

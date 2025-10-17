@@ -13,6 +13,17 @@
 | Replay/Determinism | Ensure workflow histories replay identically | Custom replay harness |
 | Smoke (CLI) | Validate scaffolding CLI and example project | `bun run`, `temporal-bun init` scenarios |
 
+```mermaid
+pyramid
+  title Test Coverage Pyramid
+  section Smoke
+    CLI scaffolding smoke tests
+  section Integration
+    Docker Temporal stack integration suite
+  section Unit
+    Bun-based unit tests (FFI, worker, workflow, codecs)
+```
+
 ---
 
 ## 2. Unit Test Suites

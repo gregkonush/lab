@@ -35,6 +35,18 @@
    - Wrap built-ins (`Date`, `Math.random`, `UUID`) with deterministic shims.
    - Provide workflow `Context` (activities via `proxyActivities`, continue-as-new helper, etc.) identical to upstream API.
 
+```mermaid
+flowchart TD
+  Activation[Workflow Activation] --> Decode
+  Decode --> Replay
+  Replay --> Execute[Execute Workflow Logic]
+  Execute --> Commands[Generate Commands]
+  Commands --> Completion[Workflow Task Completion]
+  Replay --> StateStore[Workflow Environment State]
+  StateStore --> Execute
+  StateStore --> Commands
+```
+
 ---
 
 ## 3. Modules to Implement

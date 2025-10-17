@@ -20,6 +20,34 @@ src/
     native.ts             // FFI wiring (already present)
 ```
 
+### Architecture Diagram
+
+```mermaid
+flowchart LR
+  subgraph TS["TypeScript Layer"]
+    RuntimeImpl -->|wraps| NativeRuntime
+    ClientImpl -->|uses| NativeClient
+    WorkerImpl -->|uses| NativeWorker
+    WorkerImpl --> WorkflowRuntime
+  end
+
+  subgraph FFI["FFI Bridge"]
+    NativeRuntime["runtime_ptr"]
+    NativeClient["client_ptr"]
+    NativeWorker["worker_ptr"]
+  end
+
+  subgraph Core["Temporal Core (Rust)"]
+    CoreRuntime
+    CoreClient
+    CoreWorker
+  end
+
+  NativeRuntime --> CoreRuntime
+  NativeClient --> CoreClient
+  NativeWorker --> CoreWorker
+```
+
 ---
 
 ## 2. Public API Shape

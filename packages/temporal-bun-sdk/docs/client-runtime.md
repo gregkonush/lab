@@ -36,6 +36,24 @@ interface WorkflowHandle {
 
 ## 2. Configuration Handling
 
+```mermaid
+sequenceDiagram
+  participant App as Application
+  participant Config as loadTemporalConfig
+  participant Client as createTemporalClient
+  participant FFI as CoreBridge Client
+  participant Core as Temporal Core
+
+  App->>Config: read env/TLS/api key
+  Config-->>App: TemporalConfig
+  App->>Client: createTemporalClient(config)
+  Client->>FFI: createClient(runtime_ptr, config_json)
+  FFI->>Core: connect (TLS, API key)
+  Core-->>FFI: client_handle
+  FFI-->>Client: client_handle
+  Client-->>App: { workflow: { start, signal, query... } }
+```
+
 `loadTemporalConfig` already provides host, port, TLS, API key, namespace. Extend to surface:
 
 - gRPC metadata overrides

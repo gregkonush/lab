@@ -15,6 +15,15 @@
 | Crash resilience | All exported functions must guard null pointers, return deterministic errors via `temporal_bun_error_message`, and never panic. |
 | Testable contracts | Every FFI export gets a dedicated Bun test (unit) plus integration coverage via docker-compose Temporal stack. |
 
+```mermaid
+flowchart LR
+  BunTS["Bun TypeScript<br/>Layer"] -->|FFI calls| Bridge["temporal_bun_* functions"]
+  Bridge -->|Rust ABI| CoreRuntime["Temporal Core Runtime"]
+  CoreRuntime --> TemporalServer["Temporal Server"]
+  BunTS -->|Config + payloads| Bridge
+  TemporalServer --> CoreRuntime
+```
+
 ---
 
 ## 2. Function Matrix
