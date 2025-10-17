@@ -65,6 +65,7 @@ describe('deploy script', () => {
                   requests: {
                     cpu: '',
                   },
+                  claims: [{ name: 'cache' }, { name: '' }, null],
                 },
               },
             ],
@@ -116,6 +117,7 @@ describe('deploy script', () => {
     expect(writtenYaml).toMatch(/- name: FOO[\s\S]*- name: SECRET/)
     expect(writtenYaml).toMatch(/serving\.knative\.dev\/creator: system:admin/)
     expect(writtenYaml).toMatch(/serving\.knative\.dev\/lastModifier: system:admin/)
+    expect(writtenYaml).toMatch(/claims:\s*\n\s+- name: cache/)
 
     resetEnv(envKeys)
   })
