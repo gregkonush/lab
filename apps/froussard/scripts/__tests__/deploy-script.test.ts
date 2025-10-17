@@ -58,6 +58,12 @@ describe('deploy script', () => {
                 ],
                 readinessProbe: { httpGet: { path: '/ready', port: 0 } },
                 livenessProbe: { httpGet: { path: '/live', port: 0 } },
+                resources: {
+                  limits: {},
+                  requests: {
+                    cpu: '',
+                  },
+                },
               },
             ],
           },
@@ -104,6 +110,7 @@ describe('deploy script', () => {
     expect(writtenYaml).toContain('secretKeyRef')
     expect(writtenYaml).toContain(version)
     expect(writtenYaml).toContain(commit)
+    expect(writtenYaml).not.toMatch(/^\s*resources:/m)
 
     resetEnv(envKeys)
   })
