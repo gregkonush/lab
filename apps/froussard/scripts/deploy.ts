@@ -6,7 +6,11 @@ import { fileURLToPath } from 'node:url'
 import { $ } from 'bun'
 import YAML from 'yaml'
 
-const ignoredAnnotations = new Set(['kubectl.kubernetes.io/last-applied-configuration', 'client.knative.dev/nonce'])
+const ignoredAnnotations = new Set([
+  'kubectl.kubernetes.io/last-applied-configuration',
+  'client.knative.dev/nonce',
+  'serving.knative.dev/lastModifier',
+])
 
 const namespace = process.env.FROUSSARD_NAMESPACE?.trim() || 'froussard'
 const service = process.env.FROUSSARD_SERVICE?.trim() || 'froussard'

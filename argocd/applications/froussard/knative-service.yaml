@@ -6,7 +6,6 @@ metadata:
   namespace: froussard
   annotations:
     serving.knative.dev/creator: system:admin
-    serving.knative.dev/lastModifier: system:admin
     serving.knative.dev/revision-history-limit: "3"
   labels:
     function.knative.dev/name: froussard
