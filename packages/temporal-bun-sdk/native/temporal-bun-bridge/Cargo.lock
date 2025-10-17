@@ -2106,6 +2106,8 @@ name = "temporal-bun-bridge"
 version = "0.1.0"
 dependencies = [
  "prost",
+ "prost-types",
+ "prost-wkt-types",
  "serde",
  "serde_json",
  "temporal-client",
@@ -2115,6 +2117,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]

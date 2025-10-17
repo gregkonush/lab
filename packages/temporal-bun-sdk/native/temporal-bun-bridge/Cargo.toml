@@ -18,4 +18,5 @@ thiserror = "1"
 url = "2"
 prost = "0.14"
 prost-types = "0.14"
+prost-wkt-types = "0.7"
 uuid = { version = "1", features = ["v4"] }
