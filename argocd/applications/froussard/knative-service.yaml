@@ -24,7 +24,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:c29289cc45bd7d69ce11829d005f45e4415492fe70a27e1b077fdaff94112ec4
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:3ce50f859b246572fb6fc68df2132c70920ccfd05d8cabeb8b8125f3e13e7eac
           env:
             - name: ADDRESS
               value: 0.0.0.0
@@ -34,9 +34,9 @@ spec:
                   key: public-key
                   name: discord-bot
             - name: FROUSSARD_COMMIT
-              value: 1252d93d732ee9683948eb7949485dbc7594a476
+              value: c7f5ba2c4c48dc21c2b155b344e0f82507395e45
             - name: FROUSSARD_VERSION
-              value: v0.240.1-2-g1252d93d
+              value: v0.241.0-1-gc7f5ba2c
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:
