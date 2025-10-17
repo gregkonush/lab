@@ -16,15 +16,31 @@ suite('native bridge integration', () => {
     native.runtimeShutdown(runtime)
   })
 
-  test('describe namespace succeeds against live Temporal server', () => {
+  test('describe namespace succeeds against live Temporal server', async () => {
     const client = native.createClient(runtime, {
       address: 'http://127.0.0.1:7233',
       namespace: 'default',
     })
 
-    const responseBytes = native.describeNamespace(client, 'default')
-    expect(responseBytes.byteLength).toBeGreaterThan(0)
+    try {
+      let responseBytes: Uint8Array | undefined
+      const maxAttempts = 10
 
-    native.clientShutdown(client)
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          responseBytes = native.describeNamespace(client, 'default')
+          break
+        } catch (error) {
+          if (attempt === maxAttempts) {
+            throw error
+          }
+          await Bun.sleep(500)
+        }
+      }
+
+      expect(responseBytes?.byteLength ?? 0).toBeGreaterThan(0)
+    } finally {
+      native.clientShutdown(client)
+    }
   })
 })
