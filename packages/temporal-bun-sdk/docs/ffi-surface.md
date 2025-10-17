@@ -28,32 +28,41 @@ flowchart LR
 
 ## 2. Function Matrix
 
+Current progress snapshot:
+
+- ✅ Client connect + describe namespace working (Bun integration tests exercise live Temporal).
+- ⚙️ Next up: add workflow operations (start/signal/query/terminate) in both Rust and TS layers.
+- ⬜️ Worker and runtime APIs remain untouched.
+
 | Area | Rust Export | Purpose | TS Wrapper | Status |
 |------|-------------|---------|------------|--------|
 | Runtime | `temporal_bun_runtime_new(options_ptr, len)` | Create `CoreRuntime` with telemetry/logging config | `native.createRuntime` (extend options) | ✅ (options ignored today) |
 | Runtime | `temporal_bun_runtime_free(runtime_ptr)` | Release runtime | `native.runtimeShutdown` | ✅ |
-| Runtime | `temporal_bun_runtime_update_telemetry(runtime_ptr, options_ptr, len)` | Apply telemetry exporters (Prom, OTLP) | `coreBridge.configureTelemetry` | **NEW** |
-| Runtime | `temporal_bun_runtime_set_logger(runtime_ptr, callback_ptr)` | Forward core logs into Bun | `coreBridge.installLogger` | **NEW** |
-| Client | `temporal_bun_client_connect(runtime_ptr, config_ptr, len)` | Create gRPC retry client + namespace | `native.createClient` | ✅ (but no TLS/api key yet) |
+| Runtime | `temporal_bun_runtime_update_telemetry(runtime_ptr, options_ptr, len)` | Apply telemetry exporters (Prom, OTLP) | `coreBridge.configureTelemetry` | ⬜️ TODO |
+| Runtime | `temporal_bun_runtime_set_logger(runtime_ptr, callback_ptr)` | Forward core logs into Bun | `coreBridge.installLogger` | ⬜️ TODO |
+| Client | `temporal_bun_client_connect(runtime_ptr, config_ptr, len)` | Create gRPC retry client + namespace | `native.createClient` | ✅ (need TLS/api key) |
 | Client | `temporal_bun_client_free(client_ptr)` | Dispose client | `native.clientShutdown` | ✅ |
-| Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | **NEW** |
-| Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | **NEW** |
-| Client | `temporal_bun_client_query(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | **NEW** |
-| Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.start` | **NEW** |
-| Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | **NEW** |
-| Byte transport | `temporal_bun_byte_array_new(ptr, len)` | Allocate vector for responses | `byteArray.fromBuffer` | **NEW** |
+| Client | `temporal_bun_client_describe_namespace(client_ptr, payload_ptr, len)` | Describe namespace (parity smoke) | `native.describeNamespace` | ✅ (new) |
+| Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | ⬜️ TODO |
+| Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.start` | ⬜️ TODO |
+| Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⬜️ TODO |
+| Client | `temporal_bun_client_query(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | ⬜️ TODO |
+| Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | ⬜️ TODO |
+| Client | `temporal_bun_client_cancel_workflow(...)` | Cancel workflow | `client.cancel` | ⬜️ TODO |
+| Client | `temporal_bun_client_signal_with_start(...)` | Signal-with-start helper | `client.signalWithStart` | ⬜️ TODO |
+| Byte transport | `temporal_bun_byte_array_new(ptr, len)` | Allocate vector for responses | `byteArray.fromBuffer` | ⬜️ TODO |
 | Byte transport | `temporal_bun_byte_array_free(array_ptr)` | Free allocated data | `native.freeByteArray` | ✅ |
-| Worker | `temporal_bun_worker_new(runtime_ptr, client_ptr, config_ptr, len)` | Instantiate worker for task queue | `native.createWorker` | **NEW** |
-| Worker | `temporal_bun_worker_free(worker_ptr)` | Free worker | `native.workerShutdown` | **NEW** |
-| Worker | `temporal_bun_worker_poll_workflow_task(worker_ptr)` | Poll workflow tasks (blocking) | `workerBridge.pollWorkflowTask` | **NEW** |
-| Worker | `temporal_bun_worker_complete_workflow_task(worker_ptr, payload_ptr, len)` | Complete workflow task | `workerBridge.completeWorkflowTask` | **NEW** |
-| Worker | `temporal_bun_worker_poll_activity_task(worker_ptr)` | Poll activity task | `workerBridge.pollActivityTask` | **NEW** |
-| Worker | `temporal_bun_worker_complete_activity_task(worker_ptr, payload_ptr, len)` | Respond to activity task | `workerBridge.completeActivityTask` | **NEW** |
-| Worker | `temporal_bun_worker_record_activity_heartbeat(worker_ptr, payload_ptr, len)` | Activity heartbeat | `workerBridge.recordHeartbeat` | **NEW** |
-| Worker | `temporal_bun_worker_initiate_shutdown(worker_ptr)` | Soft shutdown (no new polls) | `worker.shutdown` | **NEW** |
-| Worker | `temporal_bun_worker_finalize_shutdown(worker_ptr)` | Wait for inflight tasks | `worker.runUntilShutdown` | **NEW** |
-| Ephemeral | `temporal_bun_test_server_start(config_ptr, len)` | Optional local test server | `testServer.start` | **NEW / OPTIONAL** |
-| Ephemeral | `temporal_bun_test_server_stop(server_ptr)` | Stop test server | `testServer.stop` | **NEW / OPTIONAL** |
+| Worker | `temporal_bun_worker_new(runtime_ptr, client_ptr, config_ptr, len)` | Instantiate worker for task queue | `native.createWorker` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_free(worker_ptr)` | Free worker | `native.workerShutdown` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_poll_workflow_task(worker_ptr)` | Poll workflow tasks (blocking) | `workerBridge.pollWorkflowTask` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_complete_workflow_task(worker_ptr, payload_ptr, len)` | Complete workflow task | `workerBridge.completeWorkflowTask` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_poll_activity_task(worker_ptr)` | Poll activity task | `workerBridge.pollActivityTask` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_complete_activity_task(worker_ptr, payload_ptr, len)` | Respond to activity task | `workerBridge.completeActivityTask` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_record_activity_heartbeat(worker_ptr, payload_ptr, len)` | Activity heartbeat | `workerBridge.recordHeartbeat` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_initiate_shutdown(worker_ptr)` | Soft shutdown (no new polls) | `worker.shutdown` | ⬜️ TODO |
+| Worker | `temporal_bun_worker_finalize_shutdown(worker_ptr)` | Wait for inflight tasks | `worker.runUntilShutdown` | ⬜️ TODO |
+| Ephemeral | `temporal_bun_test_server_start(config_ptr, len)` | Optional local test server | `testServer.start` | ⬜️ OPTIONAL |
+| Ephemeral | `temporal_bun_test_server_stop(server_ptr)` | Stop test server | `testServer.stop` | ⬜️ OPTIONAL |
 
 > **Implementation note:** The worker-related FFI functions mirror `temporal-sdk-core`’s `CoreSDK` interface. Use the existing `temporal-sdk-core-c-bridge` as a reference for payload shapes.
 
