@@ -116,7 +116,7 @@ describe('deploy script', () => {
     expect(writtenYaml).toMatch(/^\s*resources:\s*\{\}/m)
     expect(writtenYaml).toMatch(/- name: FOO[\s\S]*- name: SECRET/)
     expect(writtenYaml).toMatch(/serving\.knative\.dev\/creator: system:admin/)
-    expect(writtenYaml).toMatch(/serving\.knative\.dev\/lastModifier: system:admin/)
+    expect(writtenYaml).not.toMatch(/serving\.knative\.dev\/lastModifier/)
     expect(writtenYaml).toMatch(/claims:\s*\n\s+- name: cache/)
 
     resetEnv(envKeys)
