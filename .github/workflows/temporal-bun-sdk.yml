@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on:
       - self-hosted
-      - arc-runner
+      - arc-arm64
 
     env:
       TEMPORAL_TEST_SERVER: '1'
@@ -25,12 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.20.0'
-          package-manager-cache: false
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: '1.1.20'
 
       - name: Enable Corepack
         run: corepack enable
