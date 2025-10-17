@@ -1,0 +1,17 @@
+{
+  "name": "temporal-bun-sdk-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/worker.ts",
+    "worker:start": "bun run src/worker.ts",
+    "docker:build": "bun run scripts/build-docker.ts --tag temporal-bun-sdk-example:latest"
+  },
+  "dependencies": {
+    "@proompteng/temporal-bun-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.20"
+  }
+}
