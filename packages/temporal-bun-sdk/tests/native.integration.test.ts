@@ -17,30 +17,39 @@ suite('native bridge integration', () => {
   })
 
   test('describe namespace succeeds against live Temporal server', async () => {
-    const client = native.createClient(runtime, {
-      address: 'http://127.0.0.1:7233',
-      namespace: 'default',
-    })
+    const maxAttempts = 10
+    const waitMs = 500
+
+    const client = await withRetry(
+      async () => {
+        return native.createClient(runtime, {
+          address: 'http://127.0.0.1:7233',
+          namespace: 'default',
+        })
+      },
+      maxAttempts,
+      waitMs,
+    )
 
     try {
-      let responseBytes: Uint8Array | undefined
-      const maxAttempts = 10
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          responseBytes = native.describeNamespace(client, 'default')
-          break
-        } catch (error) {
-          if (attempt === maxAttempts) {
-            throw error
-          }
-          await Bun.sleep(500)
-        }
-      }
-
-      expect(responseBytes?.byteLength ?? 0).toBeGreaterThan(0)
+      const responseBytes = await withRetry(() => native.describeNamespace(client, 'default'), maxAttempts, waitMs)
+      expect(responseBytes.byteLength).toBeGreaterThan(0)
     } finally {
       native.clientShutdown(client)
     }
   })
 })
+
+async function withRetry<T>(fn: () => T | Promise<T>, attempts: number, waitMs: number): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (attempt === attempts) break
+      await Bun.sleep(waitMs)
+    }
+  }
+  throw lastError
+}
