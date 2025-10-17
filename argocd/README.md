@@ -16,6 +16,17 @@ argocd/
 └── root.yaml         # Root application
 ```
 
+## Bootstrap Prerequisites
+
+- **Redis auth secret**: The upstream HA manifest expects a `argocd/argocd-redis` secret with the `auth` key. On a fresh cluster create it before the first sync:
+
+  ```bash
+  openssl rand -base64 32 | tr -d '\n' | \
+    kubectl -n argocd create secret generic argocd-redis --from-literal=auth="$(cat)"
+  ```
+
+  Prefer a managed source (SealedSecret, ExternalSecret, etc.) for long-term storage; the imperative command above is a one-time bootstrap.
+
 ## ApplicationSets
 
 Applications in the `applications/` directory are automatically discovered and deployed by the ApplicationSet defined in `applicationsets/lovely-apps.yaml`. This removes the need for creating individual Application resources.
