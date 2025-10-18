@@ -474,8 +474,13 @@ pub extern "C" fn temporal_bun_client_update_headers(
         return -1;
     }
 
-    if let Some(auth) = bearer_token {
-        configured.set_api_key(Some(auth));
+    match bearer_token {
+        Some(auth) => {
+            configured.set_api_key(Some(auth));
+        }
+        None => {
+            configured.set_api_key(None);
+        }
     }
 
     0
