@@ -56,22 +56,26 @@ struct ClientConfig {
     client_name: Option<String>,
     #[serde(default)]
     client_version: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "apiKey")]
     api_key: Option<String>,
+    #[serde(default, alias = "allowInsecureTls")]
+    allow_insecure_tls: Option<bool>,
     #[serde(default)]
     tls: Option<ClientTlsConfigPayload>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct ClientTlsConfigPayload {
-    #[serde(default)]
+    #[serde(default, alias = "serverRootCACertificate")]
     server_root_ca_cert: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "clientCert")]
     client_cert: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "clientPrivateKey")]
     client_private_key: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "serverNameOverride")]
     server_name_override: Option<String>,
+    #[serde(default, alias = "clientCertPair", alias = "client_cert_pair")]
+    client_cert_pair: Option<ClientCertPairPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +165,14 @@ struct TerminateWorkflowRequestPayload {
 struct TerminateWorkflowDefaults<'a> {
     namespace: &'a str,
     identity: &'a str,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ClientCertPairPayload {
+    #[serde(alias = "client_cert")]
+    crt: String,
+    #[serde(alias = "client_private_key")]
+    key: String,
 }
 
 #[derive(Debug, Error)]
@@ -391,6 +403,7 @@ pub extern "C" fn temporal_bun_client_connect_async(
         .client_name(client_name)
         .client_version(client_version)
         .identity(identity.clone());
+    let _allow_insecure_tls = config.allow_insecure_tls.unwrap_or(false);
 
     if let Some(api_key) = config.api_key.clone() {
         builder.api_key(Some(api_key));
@@ -436,7 +449,6 @@ pub extern "C" fn temporal_bun_client_connect_async(
 
     Box::into_raw(Box::new(PendingClientHandle::new(rx)))
 }
-
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_free(handle: *mut c_void) {
     if handle.is_null() {
@@ -1118,37 +1130,59 @@ fn encode_retry_policy(payload: RetryPolicyPayload) -> Result<RetryPolicy, Bridg
 }
 
 fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig, BridgeError> {
+    let ClientTlsConfigPayload {
+        server_root_ca_cert,
+        client_cert,
+        client_private_key,
+        server_name_override,
+        client_cert_pair,
+    } = payload;
+
     let mut tls = TlsConfig::default();
 
-    if let Some(server_root_ca) = payload.server_root_ca_cert {
+    if let Some(server_root_ca) = server_root_ca_cert {
         let bytes = decode_base64(&server_root_ca).map_err(|err| {
-            BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}"))
+            BridgeError::InvalidTlsConfig(format!("invalid serverRootCACertificate/server_root_ca_cert: {err}"))
         })?;
         tls.server_root_ca_cert = Some(bytes);
     }
 
-    match (payload.client_cert, payload.client_private_key) {
-        (Some(cert_b64), Some(key_b64)) => {
-            let cert = decode_base64(&cert_b64).map_err(|err| {
-                BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}"))
-            })?;
-            let key = decode_base64(&key_b64).map_err(|err| {
-                BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}"))
-            })?;
-            tls.client_tls_config = Some(ClientTlsConfig {
-                client_cert: cert,
-                client_private_key: key,
-            });
-        }
-        (None, None) => {}
-        _ => {
-            return Err(BridgeError::InvalidTlsConfig(
-                "client_cert and client_private_key must both be provided".to_string(),
-            ));
+    if let Some(pair) = client_cert_pair {
+        let cert = decode_base64(&pair.crt).map_err(|err| {
+            BridgeError::InvalidTlsConfig(format!("invalid clientCertPair.crt: {err}"))
+        })?;
+        let key = decode_base64(&pair.key).map_err(|err| {
+            BridgeError::InvalidTlsConfig(format!("invalid clientCertPair.key: {err}"))
+        })?;
+        tls.client_tls_config = Some(ClientTlsConfig {
+            client_cert: cert,
+            client_private_key: key,
+        });
+    } else {
+        match (client_cert, client_private_key) {
+            (Some(cert_b64), Some(key_b64)) => {
+                let cert = decode_base64(&cert_b64).map_err(|err| {
+                    BridgeError::InvalidTlsConfig(format!("invalid client_cert/clientCert: {err}"))
+                })?;
+                let key = decode_base64(&key_b64).map_err(|err| {
+                    BridgeError::InvalidTlsConfig(format!("invalid client_private_key/clientPrivateKey: {err}"))
+                })?;
+                tls.client_tls_config = Some(ClientTlsConfig {
+                    client_cert: cert,
+                    client_private_key: key,
+                });
+            }
+            (None, None) => {}
+            _ => {
+                return Err(BridgeError::InvalidTlsConfig(
+                    "client_cert/clientCert and client_private_key/clientPrivateKey must both be provided"
+                        .to_string(),
+                ));
+            }
         }
     }
 
-    if let Some(server_name) = payload.server_name_override {
+    if let Some(server_name) = server_name_override {
         if !server_name.is_empty() {
             tls.domain = Some(server_name);
         }
@@ -1211,6 +1245,7 @@ mod tests {
             client_cert: Some(general_purpose::STANDARD.encode(b"CERT")),
             client_private_key: Some(general_purpose::STANDARD.encode(b"KEY")),
             server_name_override: Some("server.test".to_string()),
+            client_cert_pair: None,
         };
 
         let tls = tls_config_from_payload(payload).expect("parsed tls config");
@@ -1228,6 +1263,7 @@ mod tests {
             client_cert: Some(general_purpose::STANDARD.encode(b"CERT")),
             client_private_key: None,
             server_name_override: None,
+            client_cert_pair: None,
         };
 
         let err = tls_config_from_payload(payload).unwrap_err();

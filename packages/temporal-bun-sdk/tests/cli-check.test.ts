@@ -1,10 +1,9 @@
 import { Buffer } from 'node:buffer'
-import { describe, expect, mock, spyOn, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import type { TemporalConfig } from '../src/config.ts'
-import * as configModule from '../src/config.ts'
-import * as runtimeModule from '../src/core-bridge/runtime.ts'
-import * as clientModule from '../src/core-bridge/client.ts'
 import { handleCheck } from '../src/bin/temporal-bun.ts'
+
+type NativeBridge = typeof import('../src/internal/core-bridge/native').native
 
 const baseConfig: TemporalConfig = {
   host: '127.0.0.1',
@@ -31,65 +30,87 @@ const originalConsoleError = console.error
 
 describe('temporal-bun check command', () => {
   test('logs success when Temporal namespace is reachable', async () => {
-    const runtimeShutdown = mock(async () => {})
-    const describeNamespace = mock(async () => new Uint8Array([1, 2, 3]))
-    const clientShutdown = mock(async () => {})
-    const logSpy = mock(() => {})
+    const runtimeHandle = { type: 'runtime' as const, handle: 101 }
+    const clientHandle = { type: 'client' as const, handle: 202 }
 
-    const loadConfigSpy = spyOn(configModule, 'loadTemporalConfig').mockResolvedValue(baseConfig)
-    const createRuntimeSpy = spyOn(runtimeModule, 'createRuntime').mockReturnValue({
-      shutdown: runtimeShutdown,
-    } as unknown as ReturnType<typeof runtimeModule.createRuntime>)
-    const createClientSpy = spyOn(clientModule, 'createClient').mockResolvedValue({
-      describeNamespace,
-      shutdown: clientShutdown,
-    } as unknown as Awaited<ReturnType<typeof clientModule.createClient>>)
+    const nativeBridge = {
+      createRuntime: mock(() => runtimeHandle),
+      runtimeShutdown: mock(() => {}),
+      createClient: mock(async () => clientHandle),
+      clientShutdown: mock(() => {}),
+      describeNamespace: mock(async () => new Uint8Array([1, 2, 3])),
+    }
+
+    const logSpy = mock(() => {})
 
     console.log = logSpy
 
     try {
-      await handleCheck([], {})
+      await handleCheck(
+        [],
+        {},
+        {
+          loadConfig: async () => baseConfig,
+          nativeBridge: nativeBridge as unknown as NativeBridge,
+        },
+      )
 
-      expect(describeNamespace).toHaveBeenCalledWith('default')
-      expect(clientShutdown).toHaveBeenCalledTimes(1)
-      expect(runtimeShutdown).toHaveBeenCalledTimes(1)
-      expect(logSpy.mock.calls[0][0]).toContain('Connected to Temporal namespace "default"')
-
-      const [, clientOptions] = createClientSpy.mock.calls[0]
-      expect(clientOptions.apiKey).toBe('test-api-key')
-      expect(clientOptions.tls).toEqual({
-        serverRootCACertificate: Buffer.from('CA').toString('base64'),
-        clientCert: Buffer.from('CERT').toString('base64'),
-        clientPrivateKey: Buffer.from('KEY').toString('base64'),
-        serverNameOverride: 'tls.example',
-      })
+      expect(nativeBridge.createRuntime).toHaveBeenCalledTimes(1)
+      expect(nativeBridge.createClient).toHaveBeenCalledWith(
+        runtimeHandle,
+        expect.objectContaining({
+          address: 'https://127.0.0.1:7233',
+          namespace: 'default',
+          apiKey: 'test-api-key',
+          allowInsecureTls: false,
+          tls: {
+            serverRootCACertificate: Buffer.from('CA').toString('base64'),
+            serverNameOverride: 'tls.example',
+            clientCertPair: {
+              crt: Buffer.from('CERT').toString('base64'),
+              key: Buffer.from('KEY').toString('base64'),
+            },
+          },
+        }),
+      )
+      expect(nativeBridge.describeNamespace).toHaveBeenCalledWith(clientHandle, 'default')
+      expect(nativeBridge.clientShutdown).toHaveBeenCalledWith(clientHandle)
+      expect(nativeBridge.runtimeShutdown).toHaveBeenCalledWith(runtimeHandle)
+      expect(logSpy.mock.calls[0][0]).toContain('Temporal connection successful.')
     } finally {
       console.log = originalConsoleLog
-      loadConfigSpy.mockRestore()
-      createRuntimeSpy.mockRestore()
-      createClientSpy.mockRestore()
     }
   })
 
   test('throws contextual error when connection fails', async () => {
-    const runtimeShutdown = mock(async () => {})
+    const runtimeHandle = { type: 'runtime' as const, handle: 101 }
 
-    const loadConfigSpy = spyOn(configModule, 'loadTemporalConfig').mockResolvedValue(baseConfig)
-    const createRuntimeSpy = spyOn(runtimeModule, 'createRuntime').mockReturnValue({
-      shutdown: runtimeShutdown,
-    } as unknown as ReturnType<typeof runtimeModule.createRuntime>)
-    const createClientSpy = spyOn(clientModule, 'createClient').mockRejectedValue(new Error('boom'))
+    const nativeBridge = {
+      createRuntime: mock(() => runtimeHandle),
+      runtimeShutdown: mock(() => {}),
+      createClient: mock(async () => {
+        throw new Error('boom')
+      }),
+      clientShutdown: mock(() => {}),
+      describeNamespace: mock(async () => new Uint8Array()),
+    }
 
     console.error = mock(() => {})
 
     try {
-      await expect(handleCheck([], {})).rejects.toThrow('Failed to reach Temporal at 127.0.0.1:7233: boom')
-      expect(runtimeShutdown).toHaveBeenCalledTimes(1)
+      await expect(
+        handleCheck(
+          [],
+          {},
+          {
+            loadConfig: async () => baseConfig,
+            nativeBridge: nativeBridge as unknown as NativeBridge,
+          },
+        ),
+      ).rejects.toThrow('Failed to reach Temporal at 127.0.0.1:7233: boom')
+      expect(nativeBridge.runtimeShutdown).toHaveBeenCalledWith(runtimeHandle)
     } finally {
       console.error = originalConsoleError
-      loadConfigSpy.mockRestore()
-      createRuntimeSpy.mockRestore()
-      createClientSpy.mockRestore()
     }
   })
 })

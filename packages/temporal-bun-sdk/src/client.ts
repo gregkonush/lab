@@ -324,17 +324,22 @@ const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefine
 
   const caCertificate = encode(tls.serverRootCACertificate)
   if (caCertificate) {
+    payload.serverRootCACertificate = caCertificate
     payload.server_root_ca_cert = caCertificate
   }
 
   const clientCert = encode(tls.clientCertPair?.crt)
   const clientPrivateKey = encode(tls.clientCertPair?.key)
   if (clientCert && clientPrivateKey) {
+    const pair = { crt: clientCert, key: clientPrivateKey }
+    payload.clientCertPair = pair
+    payload.client_cert_pair = pair
     payload.client_cert = clientCert
     payload.client_private_key = clientPrivateKey
   }
 
   if (tls.serverNameOverride) {
+    payload.serverNameOverride = tls.serverNameOverride
     payload.server_name_override = tls.serverNameOverride
   }
 
