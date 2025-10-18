@@ -25,7 +25,8 @@ use temporal_sdk_core_protos::temporal::api::enums::v1::{
 use temporal_sdk_core_protos::temporal::api::query::v1::WorkflowQuery;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    QueryWorkflowRequest, SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest,
+    QueryWorkflowRequest, RequestCancelWorkflowExecutionRequest,
+    SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest,
     TerminateWorkflowExecutionRequest,
 };
 use thiserror::Error;
@@ -168,6 +169,24 @@ struct QueryWorkflowDefaults<'a> {
 struct StartWorkflowResponseInfo {
     workflow_id: String,
     namespace: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelWorkflowRequestPayload {
+    #[serde(default)]
+    namespace: Option<String>,
+    workflow_id: String,
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    first_execution_run_id: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+struct CancelWorkflowDefaults<'a> {
+    namespace: &'a str,
+    identity: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -909,13 +928,51 @@ pub extern "C" fn temporal_bun_client_terminate_workflow(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_cancel_workflow(
-    _client_ptr: *mut c_void,
-    _payload_ptr: *const u8,
-    _payload_len: usize,
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
 ) -> *mut pending::PendingByteArray {
-    // TODO(codex): Implement cancellation via WorkflowService::request_cancel_workflow_execution (docs/ffi-surface.md).
-    error::set_error("temporal_bun_client_cancel_workflow is not implemented yet".to_string());
-    std::ptr::null_mut()
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut pending::PendingByteArray,
+    };
+
+    let payload = match request_from_raw::<CancelWorkflowRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut pending::PendingByteArray
+        }
+    };
+
+    let defaults = CancelWorkflowDefaults {
+        namespace: &client_handle.namespace,
+        identity: &client_handle.identity,
+    };
+
+    let request = match build_cancel_workflow_request(payload, defaults) {
+        Ok(request) => request,
+        Err(err) => return into_string_error(err) as *mut pending::PendingByteArray,
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let (tx, rx) = channel();
+
+    thread::spawn(move || {
+        let result = runtime.tokio_handle().block_on(async move {
+            let mut inner = client.clone();
+            WorkflowService::request_cancel_workflow_execution(&mut inner, request.into_request())
+                .await
+                .map(|_| Vec::new())
+                .map_err(|err| BridgeError::ClientRequest(err.to_string()).to_string())
+        });
+
+        let _ = tx.send(result);
+    });
+
+    Box::into_raw(Box::new(pending::PendingByteArray::new(rx)))
 }
 
 #[unsafe(no_mangle)]
@@ -1090,6 +1147,44 @@ fn build_start_workflow_request(
     };
 
     Ok((request, response_info))
+}
+
+fn build_cancel_workflow_request(
+    payload: CancelWorkflowRequestPayload,
+    defaults: CancelWorkflowDefaults,
+) -> Result<RequestCancelWorkflowExecutionRequest, BridgeError> {
+    if payload.workflow_id.trim().is_empty() {
+        return Err(BridgeError::InvalidRequest(
+            "workflow_id cannot be empty".to_string(),
+        ));
+    }
+
+    let namespace = payload
+        .namespace
+        .unwrap_or_else(|| defaults.namespace.to_string());
+    let identity = payload
+        .identity
+        .unwrap_or_else(|| defaults.identity.to_string());
+
+    let mut workflow_execution = WorkflowExecution::default();
+    workflow_execution.workflow_id = payload.workflow_id;
+
+    if let Some(run_id) = payload.run_id {
+        workflow_execution.run_id = run_id;
+    }
+
+    let mut request = RequestCancelWorkflowExecutionRequest {
+        namespace,
+        identity,
+        workflow_execution: Some(workflow_execution),
+        ..Default::default()
+    };
+
+    if let Some(first_run_id) = payload.first_execution_run_id {
+        request.first_execution_run_id = first_run_id;
+    }
+
+    Ok(request)
 }
 
 fn build_terminate_workflow_request(
@@ -1615,6 +1710,56 @@ mod tests {
         assert!(header_fields.contains_key("auth"));
         let search_fields = request.search_attributes.unwrap().indexed_fields;
         assert!(search_fields.contains_key("env"));
+    }
+
+    #[test]
+    fn build_cancel_workflow_request_applies_defaults() {
+        let payload = CancelWorkflowRequestPayload {
+            namespace: None,
+            workflow_id: "wf-123".to_string(),
+            run_id: None,
+            first_execution_run_id: None,
+            identity: None,
+        };
+
+        let defaults = CancelWorkflowDefaults {
+            namespace: "default",
+            identity: "client-1",
+        };
+
+        let request = build_cancel_workflow_request(payload, defaults).expect("build request");
+        assert_eq!(request.namespace, "default");
+        assert_eq!(request.identity, "client-1");
+
+        let execution = request.workflow_execution.expect("workflow execution");
+        assert_eq!(execution.workflow_id, "wf-123");
+        assert!(execution.run_id.is_empty());
+        assert!(request.first_execution_run_id.is_empty());
+    }
+
+    #[test]
+    fn build_cancel_workflow_request_respects_optional_fields() {
+        let payload = CancelWorkflowRequestPayload {
+            namespace: Some("other".to_string()),
+            workflow_id: "wf-abc".to_string(),
+            run_id: Some("run-42".to_string()),
+            first_execution_run_id: Some("first-run".to_string()),
+            identity: Some("caller".to_string()),
+        };
+
+        let defaults = CancelWorkflowDefaults {
+            namespace: "default",
+            identity: "client-1",
+        };
+
+        let request = build_cancel_workflow_request(payload, defaults).expect("build request");
+        assert_eq!(request.namespace, "other");
+        assert_eq!(request.identity, "caller");
+
+        let execution = request.workflow_execution.expect("workflow execution");
+        assert_eq!(execution.workflow_id, "wf-abc");
+        assert_eq!(execution.run_id, "run-42");
+        assert_eq!(request.first_execution_run_id, "first-run");
     }
 
     #[test]
