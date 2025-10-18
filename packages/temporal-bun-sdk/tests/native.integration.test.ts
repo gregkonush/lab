@@ -168,29 +168,71 @@ async function withRetry<T>(fn: () => T | Promise<T>, attempts: number, waitMs: 
   throw lastError
 }
 
-async function waitForWorkerReady(proc: ReturnType<typeof Bun.spawn>, timeoutMs = 10_000): Promise<void> {
-  const reader = proc.stdout?.getReader()
-  if (!reader) {
+async function waitForWorkerReady(proc: ReturnType<typeof Bun.spawn>, timeoutMs = 30_000): Promise<void> {
+  const stdoutReader = proc.stdout?.getReader()
+  if (!stdoutReader) {
     throw new Error('Worker stdout is not readable')
   }
 
+  const stderrReader = proc.stderr?.getReader()
   const decoder = new TextDecoder()
+  let stdoutBuffer = ''
+  let stderrBuffer = ''
   const start = Date.now()
-  let buffer = ''
+
+  let stdoutPromise = stdoutReader.read()
+  let stderrPromise = stderrReader?.read()
 
   while (Date.now() - start < timeoutMs) {
-    const { value, done } = await reader.read()
-    if (done) {
-      break
+    const elapsed = Date.now() - start
+    const remaining = Math.max(0, timeoutMs - elapsed)
+
+    const tasks: Array<Promise<{ kind: 'tick' | 'stdout' | 'stderr'; value?: Uint8Array; done?: boolean }>> = [
+      Bun.sleep(Math.min(remaining, 250)).then(() => ({ kind: 'tick' as const })),
+      stdoutPromise.then((result) => ({ kind: 'stdout' as const, value: result.value, done: result.done })),
+    ]
+
+    if (stderrPromise) {
+      tasks.push(stderrPromise.then((result) => ({ kind: 'stderr' as const, value: result.value, done: result.done })))
     }
-    buffer += decoder.decode(value, { stream: true })
-    if (buffer.includes('worker-ready')) {
-      reader.releaseLock()
-      return
+
+    const result = await Promise.race(tasks)
+
+    if (result.kind === 'stdout') {
+      if (result.done) {
+        break
+      }
+      if (result.value) {
+        stdoutBuffer += decoder.decode(result.value, { stream: true })
+        if (stdoutBuffer.includes('worker-ready')) {
+          stdoutReader.releaseLock()
+          stderrReader?.releaseLock()
+          return
+        }
+      }
+      stdoutPromise = stdoutReader.read()
+      continue
+    }
+
+    if (result.kind === 'stderr') {
+      if (result.done) {
+        stderrPromise = undefined
+      } else if (result.value) {
+        stderrBuffer += decoder.decode(result.value, { stream: true })
+        stderrPromise = stderrReader?.read()
+      }
+      continue
+    }
+
+    if (proc.killed || proc.exitCode !== null) {
+      break
     }
   }
 
-  reader.releaseLock()
+  stdoutReader.releaseLock()
+  stderrReader?.releaseLock()
 
-  throw new Error(`Worker did not become ready within ${timeoutMs}ms. stdout="${buffer}"`)
+  throw new Error(
+    `Worker did not become ready within ${timeoutMs}ms. stdout="${stdoutBuffer.trim()}" stderr="${stderrBuffer.trim()}"`,
+  )
 }
