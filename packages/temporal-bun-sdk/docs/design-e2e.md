@@ -1,7 +1,7 @@
 # Temporal Bun SDK — End-to-End Design
 
 **Author:** Your Name  
-**Date:** 13 Oct 2025  
+**Date:** 17 Oct 2025  
 **Status:** Draft
 
 ---
@@ -54,13 +54,23 @@ Deliver `@proompteng/temporal-bun-sdk`, a Bun-first Temporal SDK that developers
 
 Key design points:
 
-- **Native Bridge:** Build the upstream `temporal-sdk-core-c-bridge` and load it via Bun FFI. No custom Rust reimplementation; we leverage Temporal’s battle-tested core.
+- **Native Bridge:** Build the upstream `temporal-sdk-core-c-bridge` and load it via Bun FFI. No custom Rust reimplementation; we leverage Temporal’s battle-tested core. All bridge calls expose non-blocking async handles so Bun’s event loop stays responsive.
 - **TypeScript Surface:** Re-export upstream TypeScript modules (`common`, `worker`, `workflow`, `client`) under the `@proompteng` namespace, allowing developers to write workflows exactly as they would with the upstream SDK.
 - **Configuration:** Provide typed configuration loaders for both local Temporal server and Temporal Cloud (mTLS + API key).
 - **Metrics & Logging:** Support Prometheus and OpenTelemetry exporters, plus log forwarding callbacks.
 
 
 ## 3. Implementation Plan
+
+### 3.0 Vertical Slice — Async Bun Execution (MVP-0)
+
+Deliver a fully Bun-native workflow loop without `@temporalio/*` dependencies by landing the following slice:
+
+- **Async bridge primitives:** Introduce pending-operation handles (`temporal_bun_pending_*`) that encapsulate Tokio futures and surface poll/consume semantics to Bun without blocking the main thread.
+- **Client describe workflow smoke:** Rework `client_connect` and `describe_namespace` paths to use async handles, proving out the pattern against a live Temporal service.
+- **Worker bootstrap contracts:** Sketch the async worker call graph (create → poll workflow task → complete) and document the data model needed for Bun to drive core activations.
+- **Example script:** Update the sample Bun worker/client scripts to rely exclusively on the new bridge so we can execute a “hello workflow” end to end.
+- **Exit criteria:** A developer can run `pnpm --filter temporal-bun-sdk run demo:e2e` (tracked follow-up) and watch a Bun worker execute a workflow without any Node.js SDK packages installed.
 
 ### 3.1 Native FFI Coverage
 
@@ -109,8 +119,8 @@ Key design points:
    - Output stored under `native/temporal-bun-bridge/target/release` (ignored by git).
 
 3. **Testing**
-   - Unit tests: runtime/client creation, error propagation, ByteArray lifecycle.
-   - Integration tests: mix of local Temporal server (docker-compose) and mocked gRPC to keep CI light.
+   - Unit tests: runtime/client creation, error propagation, pending-handle lifecycle, ByteArray transfer.
+   - Integration tests: mix of local Temporal server (docker-compose) and mocked gRPC to keep CI light; assert async handles resolve without blocking the Bun event loop.
 
 4. **CI Pipeline**
    - Linting, type-checking, native build, unit tests, optional integration tests (flag to skip in CI).

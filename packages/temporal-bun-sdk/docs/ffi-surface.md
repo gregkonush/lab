@@ -40,9 +40,9 @@ Current progress snapshot:
 | Runtime | `temporal_bun_runtime_free(runtime_ptr)` | Release runtime | `native.runtimeShutdown` | ✅ |
 | Runtime | `temporal_bun_runtime_update_telemetry(runtime_ptr, options_ptr, len)` | Apply telemetry exporters (Prom, OTLP) | `coreBridge.configureTelemetry` | ⬜️ TODO |
 | Runtime | `temporal_bun_runtime_set_logger(runtime_ptr, callback_ptr)` | Forward core logs into Bun | `coreBridge.installLogger` | ⬜️ TODO |
-| Client | `temporal_bun_client_connect(runtime_ptr, config_ptr, len)` | Create gRPC retry client + namespace | `native.createClient` | ✅ (need TLS/api key) |
+| Client | `temporal_bun_client_connect_async(runtime_ptr, config_ptr, len)` | Create gRPC retry client + namespace | `native.createClient` | ✅ (async pending handle) |
 | Client | `temporal_bun_client_free(client_ptr)` | Dispose client | `native.clientShutdown` | ✅ |
-| Client | `temporal_bun_client_describe_namespace(client_ptr, payload_ptr, len)` | Describe namespace (parity smoke) | `native.describeNamespace` | ✅ (new) |
+| Client | `temporal_bun_client_describe_namespace_async(client_ptr, payload_ptr, len)` | Describe namespace via async pending handle | `native.describeNamespace` | ✅ (new) |
 | Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | ⬜️ TODO |
 | Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.start` | ⬜️ TODO |
 | Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⬜️ TODO |
@@ -52,6 +52,19 @@ Current progress snapshot:
 | Client | `temporal_bun_client_signal_with_start(...)` | Signal-with-start helper | `client.signalWithStart` | ⬜️ TODO |
 | Byte transport | `temporal_bun_byte_array_new(ptr, len)` | Allocate vector for responses | `byteArray.fromBuffer` | ⬜️ TODO |
 | Byte transport | `temporal_bun_byte_array_free(array_ptr)` | Free allocated data | `native.freeByteArray` | ✅ |
+| Pending | `temporal_bun_pending_client_poll(pending_ptr)` | Readiness check for client connect (0=pending,1=ready,-1=error) | `pendingClient.poll` | ✅ (new) |
+| Pending | `temporal_bun_pending_client_consume(pending_ptr)` | Consume pending client handle | `pendingClient.consume` | ✅ (new) |
+| Pending | `temporal_bun_pending_client_free(pending_ptr)` | Drop pending client handle | `pendingClient.destroy` | ✅ (new) |
+| Pending | `temporal_bun_pending_byte_array_poll(pending_ptr)` | Non-blocking readiness check (0=pending,1=ready,-1=error) | `pending.poll` | ✅ (new) |
+| Pending | `temporal_bun_pending_byte_array_consume(pending_ptr)` | Consume ready result into ByteArray | `pending.consume` | ✅ (new) |
+| Pending | `temporal_bun_pending_byte_array_free(pending_ptr)` | Drop pending handle (cleanup) | `pending.destroy` | ✅ (new) |
+
+### Async Pending Handles
+
+- Pending handles wrap Tokio futures in a background thread, surface `poll` + `consume` semantics to Bun, and ensure the JS event loop never blocks on gRPC calls.
+- Every async FFI export must return a pending handle (or reuse the shared helpers) so we can apply the same lifecycle guarantees: single-consume, deterministic error propagation via `temporal_bun_error_message`, and explicit `free`.
+- The Bun side polls on an interval (`setTimeout` cadence) and calls `consume` only once `poll` reports ready. Errors surface immediately via the shared error buffer, and the handle is freed regardless of success or failure.
+
 | Worker | `temporal_bun_worker_new(runtime_ptr, client_ptr, config_ptr, len)` | Instantiate worker for task queue | `native.createWorker` | ⬜️ TODO |
 | Worker | `temporal_bun_worker_free(worker_ptr)` | Free worker | `native.workerShutdown` | ⬜️ TODO |
 | Worker | `temporal_bun_worker_poll_workflow_task(worker_ptr)` | Poll workflow tasks (blocking) | `workerBridge.pollWorkflowTask` | ⬜️ TODO |

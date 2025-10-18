@@ -1,20 +1,24 @@
 use std::ffi::c_void;
+use std::sync::mpsc::channel;
 use std::sync::Arc;
+use std::thread;
 
 use prost::Message;
 use serde::Deserialize;
 use temporal_client::{
-    ClientOptionsBuilder, ConfiguredClient, Namespace, RetryClient, TemporalServiceClient,
-    WorkflowService,
-    tonic::IntoRequest,
+    tonic::IntoRequest, ClientOptionsBuilder, ConfiguredClient, Namespace, RetryClient,
+    TemporalServiceClient, WorkflowService,
 };
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
 use thiserror::Error;
 use url::Url;
 
-mod error;
 mod byte_array;
+mod error;
+mod pending;
+
+type PendingClientHandle = pending::PendingResult<ClientHandle>;
 
 #[repr(C)]
 pub struct RuntimeHandle {
@@ -66,7 +70,10 @@ enum BridgeError {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_runtime_new(_options_ptr: *const u8, _options_len: usize) -> *mut c_void {
+pub extern "C" fn temporal_bun_runtime_new(
+    _options_ptr: *const u8,
+    _options_len: usize,
+) -> *mut c_void {
     match CoreRuntime::new(TelemetryOptions::default(), TokioRuntimeBuilder::default()) {
         Ok(runtime) => {
             let handle = RuntimeHandle {
@@ -145,24 +152,27 @@ fn client_from_ptr(ptr: *mut c_void) -> Result<&'static ClientHandle, BridgeErro
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_client_connect(
+pub extern "C" fn temporal_bun_client_connect_async(
     runtime_ptr: *mut c_void,
     config_ptr: *const u8,
     config_len: usize,
-) -> *mut c_void {
+) -> *mut PendingClientHandle {
     let runtime = match runtime_from_ptr(runtime_ptr) {
         Ok(runtime) => runtime,
-        Err(err) => return into_string_error(err),
+        Err(err) => return into_string_error(err) as *mut PendingClientHandle,
     };
 
     let config = match config_from_raw(config_ptr, config_len) {
         Ok(config) => config,
-        Err(err) => return into_string_error(err),
+        Err(err) => return into_string_error(err) as *mut PendingClientHandle,
     };
 
     let url = match Url::parse(&config.address) {
         Ok(url) => url,
-        Err(err) => return into_string_error(BridgeError::InvalidAddress(err.to_string())),
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidAddress(err.to_string()))
+                as *mut PendingClientHandle
+        }
     };
 
     let identity = config
@@ -184,25 +194,32 @@ pub extern "C" fn temporal_bun_client_connect(
 
     let options = match builder.build() {
         Ok(options) => options,
-        Err(err) => return into_string_error(BridgeError::ClientInit(err.to_string())),
+        Err(err) => {
+            return into_string_error(BridgeError::ClientInit(err.to_string()))
+                as *mut PendingClientHandle
+        }
     };
 
-    let connect_result = runtime
-        .tokio_handle()
-        .block_on(async { options.connect_no_namespace(None).await });
+    let namespace = config.namespace;
+    let runtime_clone = runtime.clone();
+    let (tx, rx) = channel();
 
-    let client = match connect_result {
-        Ok(client) => client,
-        Err(err) => return into_string_error(BridgeError::ClientInit(err.to_string())),
-    };
+    thread::spawn(move || {
+        let result = runtime_clone.tokio_handle().block_on(async move {
+            match options.connect_no_namespace(None).await {
+                Ok(client) => Ok(ClientHandle {
+                    runtime: runtime_clone.clone(),
+                    client,
+                    namespace,
+                }),
+                Err(err) => Err(BridgeError::ClientInit(err.to_string()).to_string()),
+            }
+        });
 
-    let handle = ClientHandle {
-        runtime,
-        client,
-        namespace: config.namespace,
-    };
+        let _ = tx.send(result);
+    });
 
-    Box::into_raw(Box::new(handle)) as *mut c_void
+    Box::into_raw(Box::new(PendingClientHandle::new(rx)))
 }
 
 #[unsafe(no_mangle)]
@@ -217,44 +234,99 @@ pub extern "C" fn temporal_bun_client_free(handle: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_client_describe_namespace(
+pub extern "C" fn temporal_bun_pending_client_poll(ptr: *mut PendingClientHandle) -> i32 {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return -1;
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.poll() {
+        pending::PendingState::Pending => 0,
+        pending::PendingState::ReadyOk => 1,
+        pending::PendingState::ReadyErr(err) => {
+            error::set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_client_consume(
+    ptr: *mut PendingClientHandle,
+) -> *mut c_void {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return std::ptr::null_mut();
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.take_result() {
+        Some(Ok(handle)) => Box::into_raw(Box::new(handle)) as *mut c_void,
+        Some(Err(err)) => {
+            error::set_error(err);
+            std::ptr::null_mut()
+        }
+        None => {
+            error::set_error("pending result not ready".to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_client_free(ptr: *mut PendingClientHandle) {
+    if ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(ptr);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_describe_namespace_async(
     client_ptr: *mut c_void,
     payload_ptr: *const u8,
     payload_len: usize,
-) -> *mut byte_array::ByteArray {
+) -> *mut pending::PendingByteArray {
     let client_handle = match client_from_ptr(client_ptr) {
         Ok(client) => client,
-        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        Err(err) => return into_string_error(err) as *mut pending::PendingByteArray,
     };
 
-    let payload = match request_from_raw::<DescribeNamespaceRequestPayload>(payload_ptr, payload_len) {
-        Ok(payload) => payload,
-        Err(err) => {
-            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
-                as *mut byte_array::ByteArray
-        }
-    };
+    let payload =
+        match request_from_raw::<DescribeNamespaceRequestPayload>(payload_ptr, payload_len) {
+            Ok(payload) => payload,
+            Err(err) => {
+                return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                    as *mut pending::PendingByteArray
+            }
+        };
 
     let runtime = client_handle.runtime.clone();
     let client = client_handle.client.clone();
     let namespace = payload.namespace;
 
-    let response = runtime.tokio_handle().block_on(async move {
-        let mut inner = client.clone();
-        let request = Namespace::Name(namespace).into_describe_namespace_request();
-        WorkflowService::describe_namespace(&mut inner, request.into_request()).await
+    let (tx, rx) = channel();
+
+    thread::spawn(move || {
+        let result = runtime.tokio_handle().block_on(async move {
+            let mut inner = client.clone();
+            let request = Namespace::Name(namespace).into_describe_namespace_request();
+            WorkflowService::describe_namespace(&mut inner, request.into_request())
+                .await
+                .map(|resp| resp.into_inner().encode_to_vec())
+                .map_err(|err| BridgeError::ClientRequest(err.to_string()).to_string())
+        });
+
+        let _ = tx.send(result);
     });
 
-    let response = match response {
-        Ok(resp) => resp.into_inner(),
-        Err(err) => {
-            return into_string_error(BridgeError::ClientRequest(err.to_string()))
-                as *mut byte_array::ByteArray
-        }
-    };
-
-    let bytes = response.encode_to_vec();
-    byte_array::ByteArray::from_vec(bytes)
+    Box::into_raw(Box::new(pending::PendingByteArray::new(rx)))
 }
 
 #[unsafe(no_mangle)]
@@ -271,6 +343,60 @@ pub extern "C" fn temporal_bun_byte_array_free(ptr: *mut byte_array::ByteArray) 
     }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_byte_array_poll(ptr: *mut pending::PendingByteArray) -> i32 {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return -1;
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.poll() {
+        pending::PendingState::Pending => 0,
+        pending::PendingState::ReadyOk => 1,
+        pending::PendingState::ReadyErr(err) => {
+            error::set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_byte_array_consume(
+    ptr: *mut pending::PendingByteArray,
+) -> *mut byte_array::ByteArray {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return std::ptr::null_mut();
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.take_result() {
+        Some(Ok(bytes)) => byte_array::ByteArray::from_vec(bytes),
+        Some(Err(err)) => {
+            error::set_error(err);
+            std::ptr::null_mut()
+        }
+        None => {
+            error::set_error("pending result not ready".to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_byte_array_free(ptr: *mut pending::PendingByteArray) {
+    if ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(ptr);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,8 +404,7 @@ mod tests {
     #[test]
     fn config_from_raw_parses_defaults() {
         let json = br#"{"address":"http://localhost:7233","namespace":"default"}"#;
-        let cfg = config_from_raw(json.as_ptr(), json.len()).expect("config parsed")
-;
+        let cfg = config_from_raw(json.as_ptr(), json.len()).expect("config parsed");
         assert_eq!(cfg.address, "http://localhost:7233");
         assert_eq!(cfg.namespace, "default");
     }
@@ -297,11 +422,8 @@ mod tests {
             request_from_raw(json.as_ptr(), json.len()).expect("parsed request");
         assert_eq!(payload.namespace, "test");
 
-        let invalid = request_from_raw::<DescribeNamespaceRequestPayload>(
-            br"{}".as_ptr(),
-            2,
-        )
-        .unwrap_err();
+        let invalid =
+            request_from_raw::<DescribeNamespaceRequestPayload>(br"{}".as_ptr(), 2).unwrap_err();
         assert!(matches!(invalid, BridgeError::InvalidRequest(_)));
     }
 }

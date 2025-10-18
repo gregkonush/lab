@@ -11,7 +11,7 @@ describe('native bridge', () => {
     native.runtimeShutdown(runtime)
   })
 
-  test('client connect respects server availability', () => {
+  test('client connect respects server availability', async () => {
     const runtime = native.createRuntime({})
     try {
       const connect = () =>
@@ -21,27 +21,27 @@ describe('native bridge', () => {
         })
 
       if (hasLiveTemporalServer) {
-        const client = connect()
+        const client = await connect()
         expect(client.type).toBe('client')
         expect(typeof client.handle).toBe('number')
         native.clientShutdown(client)
       } else {
-        expect(connect).toThrow()
+        await expect(connect()).rejects.toThrow()
       }
     } finally {
       native.runtimeShutdown(runtime)
     }
   })
 
-  test('client connect errors on unreachable host', () => {
+  test('client connect errors on unreachable host', async () => {
     const runtime = native.createRuntime({})
     try {
-      expect(() =>
+      await expect(
         native.createClient(runtime, {
           address: 'http://127.0.0.1:65535',
           namespace: 'default',
         }),
-      ).toThrow()
+      ).rejects.toThrow()
     } finally {
       native.runtimeShutdown(runtime)
     }
