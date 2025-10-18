@@ -27,6 +27,7 @@
 - Run Biome before commits; it enforces two-space indentation, single quotes, trailing commas, and 120-character lines.
 - Name files in kebab-case (`dialog-panel.tsx`, `cron-worker.go`).
 - Order imports standard → third-party → internal with blank lines between groups.
+- Prefer explicit conditional statements over nested ternaries for readability.
 - Compose React UI with Tailwind utilities via `cn()` and keep schema validation in `schemas/` using Zod.
 - Wrap Go errors as `fmt.Errorf("operation failed: %w", err)`.
 

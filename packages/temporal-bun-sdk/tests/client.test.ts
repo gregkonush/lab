@@ -26,7 +26,6 @@ const ensureNativeBridgeStub = () => {
   const stubSource = join(fixturesDir, 'stub_temporal_bridge.c')
   mkdirSync(join(targetDir, 'debug'), { recursive: true })
 
-<<<<<<< HEAD
   const compilerArgs: string[] = []
   if (process.platform === 'darwin') {
     compilerArgs.push('-dynamiclib')
@@ -38,16 +37,6 @@ const ensureNativeBridgeStub = () => {
   compilerArgs.push(stubSource, '-o', binaryPath)
 
   const result = spawnSync('cc', compilerArgs, { stdio: 'inherit' })
-=======
-  // Use platform-specific compilation flags
-  const compilerArgs = process.platform === 'darwin'
-    ? ['-dynamiclib', stubSource, '-o', binaryPath]
-    : process.platform === 'win32'
-      ? ['-shared', stubSource, '-o', binaryPath]
-      : ['-shared', '-fPIC', stubSource, '-o', binaryPath]
-  
-  const result = spawnSync('cc', compilerArgs, { stdio: 'inherit' })
->>>>>>> d4cff2f6 (chore: update macos flags)
   if (result.status !== 0) {
     throw new Error('Failed to compile Temporal bridge stub for tests')
   }
