@@ -8,18 +8,28 @@ import {
   buildStartWorkflowPayload,
   buildTerminateRequest,
 } from './client/serialization'
-import type {
-  SignalWithStartOptions,
-  StartWorkflowOptions,
-  TerminateWorkflowOptions,
-  WorkflowHandle,
+import {
+  createWorkflowHandle,
+  type RetryPolicyOptions,
+  type SignalWithStartOptions,
+  type StartWorkflowOptions,
+  type StartWorkflowResult,
+  type TerminateWorkflowOptions,
+  type WorkflowHandle,
+  type WorkflowHandleMetadata,
 } from './client/types'
 import { native, type NativeClient, type Runtime } from './internal/core-bridge/native'
 
-const startWorkflowResponseSchema = z.object({
+const startWorkflowMetadataSchema = z.object({
   runId: z.string().min(1),
   workflowId: z.string().min(1),
   namespace: z.string().min(1),
+  firstExecutionRunId: z.string().min(1).optional(),
+})
+
+const toStartWorkflowResult = (metadata: WorkflowHandleMetadata): StartWorkflowResult => ({
+  ...metadata,
+  handle: createWorkflowHandle(metadata),
 })
 
 const metadataHeadersSchema = z
@@ -93,15 +103,12 @@ const startWorkflowOptionsSchema = z.object({
   retryPolicy: retryPolicySchema,
 })
 
-export type StartWorkflowResult = z.infer<typeof startWorkflowResponseSchema>
-
 const terminateWorkflowOptionsSchema = z.object({
   reason: z.string().optional(),
   details: z.array(z.unknown()).optional(),
   runId: z.string().min(1).optional(),
   firstExecutionRunId: z.string().min(1).optional(),
 })
-
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
   signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
@@ -231,8 +238,8 @@ class TemporalClientImpl implements TemporalClient {
 
     const bytes = await native.startWorkflow(this.client, payload)
     const response = parseJson(bytes)
-    // TODO(codex): Return a WorkflowHandle alongside StartWorkflowResult to match docs/client-runtime.md.
-    return startWorkflowResponseSchema.parse(response)
+    const metadata = startWorkflowMetadataSchema.parse(response)
+    return toStartWorkflowResult(metadata)
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
@@ -268,7 +275,8 @@ class TemporalClientImpl implements TemporalClient {
     })
     const bytes = await native.signalWithStart(this.client, request)
     const response = parseJson(bytes)
-    return startWorkflowResponseSchema.parse(response)
+    const metadata = startWorkflowMetadataSchema.parse(response)
+    return toStartWorkflowResult(metadata)
   }
 
   async describeNamespace(targetNamespace?: string): Promise<Uint8Array> {
@@ -336,8 +344,11 @@ const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefine
 
   return payload
 }
+export { createWorkflowHandle } from './client/types'
 export type {
   WorkflowHandle,
+  WorkflowHandleMetadata,
+  StartWorkflowResult,
   TerminateWorkflowOptions,
   SignalWithStartOptions,
   RetryPolicyOptions,

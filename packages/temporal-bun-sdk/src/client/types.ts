@@ -5,6 +5,24 @@ export interface WorkflowHandle {
   namespace: string
 }
 
+export interface WorkflowHandleMetadata {
+  workflowId: string
+  runId: string
+  namespace: string
+  firstExecutionRunId?: string
+}
+
+export interface StartWorkflowResult extends WorkflowHandleMetadata {
+  handle: WorkflowHandle
+}
+
+export const createWorkflowHandle = (metadata: WorkflowHandleMetadata): WorkflowHandle => ({
+  workflowId: metadata.workflowId,
+  runId: metadata.runId,
+  firstExecutionRunId: metadata.firstExecutionRunId,
+  namespace: metadata.namespace,
+})
+
 export interface RetryPolicyOptions {
   initialIntervalMs?: number
   maximumIntervalMs?: number
