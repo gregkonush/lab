@@ -1,12 +1,21 @@
 import type { Runtime } from './runtime.ts'
 import { native, type NativeClient } from '../internal/core-bridge/native.ts'
 
+export interface ClientTlsOptions {
+  readonly serverRootCACertificate?: string
+  readonly clientCert?: string
+  readonly clientPrivateKey?: string
+  readonly serverNameOverride?: string
+}
+
 export interface ClientOptions {
   readonly address: string
   readonly namespace: string
   readonly identity?: string
   readonly clientName?: string
   readonly clientVersion?: string
+  readonly apiKey?: string
+  readonly tls?: ClientTlsOptions
 }
 
 export class Client {
@@ -28,13 +37,24 @@ export class Client {
 
   async #init(): Promise<void> {
     const nativeRuntime = this.runtime.nativeHandle
-    this.#native = await native.createClient(nativeRuntime, {
-      address: normalizeTemporalAddress(this.options.address),
+    const payload: Record<string, unknown> = {
+      address: normalizeTemporalAddress(this.options.address, Boolean(this.options.tls)),
       namespace: this.options.namespace,
       identity: this.options.identity,
       client_name: this.options.clientName,
       client_version: this.options.clientVersion,
-    })
+    }
+
+    if (this.options.apiKey) {
+      payload.api_key = this.options.apiKey
+    }
+
+    const tlsPayload = serializeTlsOptions(this.options.tls)
+    if (tlsPayload) {
+      payload.tls = tlsPayload
+    }
+
+    this.#native = await native.createClient(nativeRuntime, payload)
     clientFinalizer.register(this, this.#native, this)
   }
 
@@ -70,17 +90,42 @@ const finalizeClient = (client: NativeClient): void => {
   }
 }
 
+const serializeTlsOptions = (tls?: ClientTlsOptions): Record<string, string> | undefined => {
+  if (!tls) return undefined
+  const payload: Record<string, string> = {}
+
+  if (tls.serverRootCACertificate) {
+    payload.server_root_ca_cert = tls.serverRootCACertificate
+  }
+
+  if (tls.clientCert) {
+    payload.client_cert = tls.clientCert
+  }
+
+  if (tls.clientPrivateKey) {
+    payload.client_private_key = tls.clientPrivateKey
+  }
+
+  if (tls.serverNameOverride) {
+    payload.server_name_override = tls.serverNameOverride
+  }
+
+  return Object.keys(payload).length > 0 ? payload : undefined
+}
+
 const clientFinalizer = new FinalizationRegistry<NativeClient>(finalizeClient)
 
 const ADDRESS_WITH_PROTOCOL = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//
 
-export const normalizeTemporalAddress = (address: string): string => {
+export const normalizeTemporalAddress = (address: string, useTls = false): string => {
   if (ADDRESS_WITH_PROTOCOL.test(address)) {
     return address
   }
-  return `http://${address}`
+  const scheme = useTls ? 'https' : 'http'
+  return `${scheme}://${address}`
 }
 
 export const __TEST__ = {
   finalizeClient,
+  serializeTlsOptions,
 }

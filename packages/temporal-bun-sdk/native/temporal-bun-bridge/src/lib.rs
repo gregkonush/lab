@@ -3,11 +3,12 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use prost::Message;
 use serde::Deserialize;
 use temporal_client::{
-    tonic::IntoRequest, ClientOptionsBuilder, ConfiguredClient, Namespace, RetryClient,
-    TemporalServiceClient, WorkflowService,
+    tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace,
+    RetryClient, TemporalServiceClient, TlsConfig, WorkflowService,
 };
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
@@ -42,6 +43,22 @@ struct ClientConfig {
     client_name: Option<String>,
     #[serde(default)]
     client_version: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    tls: Option<ClientTlsConfigPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClientTlsConfigPayload {
+    #[serde(default)]
+    server_root_ca_cert: Option<String>,
+    #[serde(default)]
+    client_cert: Option<String>,
+    #[serde(default)]
+    client_private_key: Option<String>,
+    #[serde(default)]
+    server_name_override: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +209,56 @@ pub extern "C" fn temporal_bun_client_connect_async(
         .client_version(client_version)
         .identity(identity);
 
+    if let Some(api_key) = config.api_key {
+        builder.api_key(Some(api_key));
+    }
+
+    if let Some(tls_payload) = config.tls {
+        let mut tls = TlsConfig {
+            server_root_ca_cert: None,
+            domain: tls_payload.server_name_override,
+            client_tls_config: None,
+        };
+
+        if let Some(ca_b64) = tls_payload.server_root_ca_cert {
+            match decode_base64_field(&ca_b64, "server_root_ca_cert") {
+                Ok(ca_bytes) => tls.server_root_ca_cert = Some(ca_bytes),
+                Err(err) => {
+                    return into_string_error(err) as *mut PendingClientHandle;
+                }
+            }
+        }
+
+        match (tls_payload.client_cert, tls_payload.client_private_key) {
+            (None, None) => {}
+            (Some(cert_b64), Some(key_b64)) => {
+                let cert_bytes = match decode_base64_field(&cert_b64, "client_cert") {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        return into_string_error(err) as *mut PendingClientHandle;
+                    }
+                };
+                let key_bytes = match decode_base64_field(&key_b64, "client_private_key") {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        return into_string_error(err) as *mut PendingClientHandle;
+                    }
+                };
+                tls.client_tls_config = Some(ClientTlsConfig {
+                    client_cert: cert_bytes,
+                    client_private_key: key_bytes,
+                });
+            }
+            _ => {
+                return into_string_error(BridgeError::InvalidConfig(
+                    "client TLS configuration requires both client_cert and client_private_key".to_owned(),
+                )) as *mut PendingClientHandle;
+            }
+        }
+
+        builder.tls_cfg(tls);
+    }
+
     let options = match builder.build() {
         Ok(options) => options,
         Err(err) => {
@@ -220,6 +287,12 @@ pub extern "C" fn temporal_bun_client_connect_async(
     });
 
     Box::into_raw(Box::new(PendingClientHandle::new(rx)))
+}
+
+fn decode_base64_field(value: &str, field: &str) -> Result<Vec<u8>, BridgeError> {
+    BASE64_STANDARD
+        .decode(value)
+        .map_err(|err| BridgeError::InvalidConfig(format!("invalid base64 for {field}: {err}")))
 }
 
 #[unsafe(no_mangle)]

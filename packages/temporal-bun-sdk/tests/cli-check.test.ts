@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { describe, expect, mock, spyOn, test } from 'bun:test'
 import type { TemporalConfig } from '../src/config.ts'
 import * as configModule from '../src/config.ts'
@@ -11,8 +12,15 @@ const baseConfig: TemporalConfig = {
   address: '127.0.0.1:7233',
   namespace: 'default',
   taskQueue: 'prix',
-  apiKey: undefined,
-  tls: undefined,
+  apiKey: 'test-api-key',
+  tls: {
+    serverRootCACertificate: Buffer.from('CA'),
+    clientCertPair: {
+      crt: Buffer.from('CERT'),
+      key: Buffer.from('KEY'),
+    },
+    serverNameOverride: 'tls.example',
+  },
   allowInsecureTls: false,
   workerIdentity: 'test-worker-123',
   workerIdentityPrefix: 'test-worker',
@@ -46,6 +54,15 @@ describe('temporal-bun check command', () => {
       expect(clientShutdown).toHaveBeenCalledTimes(1)
       expect(runtimeShutdown).toHaveBeenCalledTimes(1)
       expect(logSpy.mock.calls[0][0]).toContain('Connected to Temporal namespace "default"')
+
+      const [, clientOptions] = createClientSpy.mock.calls[0]
+      expect(clientOptions.apiKey).toBe('test-api-key')
+      expect(clientOptions.tls).toEqual({
+        serverRootCACertificate: Buffer.from('CA').toString('base64'),
+        clientCert: Buffer.from('CERT').toString('base64'),
+        clientPrivateKey: Buffer.from('KEY').toString('base64'),
+        serverNameOverride: 'tls.example',
+      })
     } finally {
       console.log = originalConsoleLog
       loadConfigSpy.mockRestore()

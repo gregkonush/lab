@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
-import { Client, createClient, normalizeTemporalAddress } from '../src/core-bridge/client.ts'
+import { Client, createClient, normalizeTemporalAddress, __TEST__ as clientTest } from '../src/core-bridge/client.ts'
 import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
 import { native } from '../src/internal/core-bridge/native.ts'
-import { __TEST__ as clientTest } from '../src/core-bridge/client.ts'
 
 const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
@@ -18,8 +17,9 @@ describe('core bridge runtime wrapper', () => {
 const integrationSuite = hasLiveServer ? describe : describe.skip
 
 describe('core bridge client wrapper', () => {
-  test('normalizes addresses without protocol', () => {
+  test('normalizes addresses with protocol inference', () => {
     expect(normalizeTemporalAddress('127.0.0.1:7233')).toBe('http://127.0.0.1:7233')
+    expect(normalizeTemporalAddress('127.0.0.1:7233', true)).toBe('https://127.0.0.1:7233')
     expect(normalizeTemporalAddress('https://example.com:443')).toBe('https://example.com:443')
   })
 
@@ -53,7 +53,14 @@ describe('core bridge client wrapper', () => {
 
     native.createRuntime = mock(() => runtimeHandle)
     native.runtimeShutdown = runtimeShutdownMock
-    native.createClient = mock(async () => clientHandle)
+    const createClientMock = mock(async (_runtime: typeof runtimeHandle, payload: Record<string, unknown>) => {
+      expect(payload.address).toBe('http://127.0.0.1:7233')
+      expect(payload.namespace).toBe('default')
+      expect(payload.api_key).toBeUndefined()
+      expect(payload.tls).toBeUndefined()
+      return clientHandle
+    })
+    native.createClient = createClientMock as typeof native.createClient
     native.describeNamespace = describeMock
     native.clientShutdown = clientShutdownMock
 

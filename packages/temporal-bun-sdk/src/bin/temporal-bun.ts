@@ -2,11 +2,12 @@
 
 import { mkdirSync, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { Buffer } from 'node:buffer'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { loadTemporalConfig } from '../config.ts'
+import { loadTemporalConfig, type TemporalConfig } from '../config.ts'
 import { createRuntime } from '../core-bridge/runtime.ts'
-import { createClient } from '../core-bridge/client.ts'
+import { createClient, type ClientTlsOptions } from '../core-bridge/client.ts'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
@@ -364,6 +365,7 @@ bun run docker:build --tag ${name}:latest
 export async function handleCheck(_: string[], flags: Record<string, string | boolean>) {
   const config = await loadTemporalConfig()
   const namespace = (flags.namespace as string) ?? config.namespace
+  const tlsOptions = toClientTlsOptions(config.tls)
 
   const runtime = createRuntime()
   try {
@@ -373,6 +375,8 @@ export async function handleCheck(_: string[], flags: Record<string, string | bo
       identity: config.workerIdentity,
       clientName: 'temporal-bun-cli',
       clientVersion: process.env.npm_package_version ?? '0.0.0',
+      apiKey: config.apiKey,
+      tls: tlsOptions,
     })
 
     try {
@@ -389,6 +393,27 @@ export async function handleCheck(_: string[], flags: Record<string, string | bo
   } finally {
     await runtime.shutdown()
   }
+}
+
+function toClientTlsOptions(config: TemporalConfig['tls']): ClientTlsOptions | undefined {
+  if (!config) return undefined
+
+  const tls: ClientTlsOptions = {}
+
+  if (config.serverRootCACertificate) {
+    tls.serverRootCACertificate = Buffer.from(config.serverRootCACertificate).toString('base64')
+  }
+
+  if (config.clientCertPair?.crt && config.clientCertPair?.key) {
+    tls.clientCert = Buffer.from(config.clientCertPair.crt).toString('base64')
+    tls.clientPrivateKey = Buffer.from(config.clientCertPair.key).toString('base64')
+  }
+
+  if (config.serverNameOverride) {
+    tls.serverNameOverride = config.serverNameOverride
+  }
+
+  return Object.keys(tls).length > 0 ? tls : undefined
 }
 
 if (import.meta.main) {
