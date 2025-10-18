@@ -2,19 +2,18 @@
 
 import { mkdirSync, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { Buffer } from 'node:buffer'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
-import { loadTemporalConfig, type TemporalConfig } from '../config.ts'
-import { createRuntime } from '../core-bridge/runtime.ts'
-import { createClient, type ClientTlsOptions } from '../core-bridge/client.ts'
+import { loadTemporalConfig } from '../config'
+import type { TemporalConfig } from '../config'
+import type { NativeClient } from '../internal/core-bridge/native'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
-  'docker-build': handleDockerBuild,
   check: handleCheck,
+  'docker-build': handleDockerBuild,
   help: async () => {
     printHelp()
   },
@@ -63,6 +62,106 @@ export function parseArgs(argv: string[]) {
   }
 
   return { args, flags }
+}
+
+type NativeBridge = typeof import('../internal/core-bridge/native').native
+let cachedNativeBridge: NativeBridge | undefined
+
+const loadNativeBridge = async (): Promise<NativeBridge> => {
+  if (!cachedNativeBridge) {
+    const module = await import('../internal/core-bridge/native')
+    cachedNativeBridge = module.native
+  }
+  return cachedNativeBridge
+}
+
+type CheckDeps = {
+  loadConfig?: typeof loadTemporalConfig
+  nativeBridge?: NativeBridge
+  log?: (message: string) => void
+}
+
+export const formatTemporalAddress = (address: string, hasTls: boolean): string => {
+  if (/^[a-z]+:\/\//i.test(address)) {
+    return address
+  }
+  return `${hasTls ? 'https' : 'http'}://${address}`
+}
+
+export async function handleCheck(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  deps: CheckDeps = {},
+): Promise<void> {
+  const loadConfig = deps.loadConfig ?? loadTemporalConfig
+  const log = deps.log ?? console.log
+  const nativeBridge = deps.nativeBridge ?? (await loadNativeBridge())
+
+  const config = await loadConfig()
+  if (config.allowInsecureTls) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
+  }
+
+  const namespaceFlag = typeof flags.namespace === 'string' ? flags.namespace.trim() : ''
+  const namespaceArg = args[0]?.trim()
+  const namespace = namespaceFlag || namespaceArg || config.namespace
+
+  const useTls = Boolean(config.tls) && !config.allowInsecureTls
+  const address = formatTemporalAddress(config.address, useTls)
+
+  const runtime = nativeBridge.createRuntime({})
+  let client: NativeClient | undefined
+
+  try {
+    const clientConfig: Record<string, unknown> = {
+      address,
+      namespace,
+      identity: config.workerIdentity,
+      allowInsecureTls: config.allowInsecureTls,
+    }
+
+    if (config.apiKey) {
+      clientConfig.apiKey = config.apiKey
+    }
+
+    if (useTls && config.tls) {
+      clientConfig.tls = serializeTlsConfig(config.tls)
+    }
+
+    client = await nativeBridge.createClient(runtime, clientConfig)
+
+    const describePayload = await nativeBridge.describeNamespace(client, namespace)
+    log(
+      [
+        `Temporal connection successful.`,
+        `  Address:    ${address}`,
+        `  Namespace:  ${namespace}`,
+        `  Payload:    ${describePayload.byteLength} bytes (DescribeNamespace)`,
+      ].join('\n'),
+    )
+  } finally {
+    if (client) {
+      nativeBridge.clientShutdown(client)
+    }
+    nativeBridge.runtimeShutdown(runtime)
+  }
+}
+
+const serializeTlsConfig = (tls: NonNullable<TemporalConfig['tls']>) => {
+  const serialized: Record<string, unknown> = {}
+  if (tls.serverRootCACertificate) {
+    serialized.serverRootCACertificate = tls.serverRootCACertificate.toString('base64')
+  }
+  if (tls.serverNameOverride) {
+    serialized.serverNameOverride = tls.serverNameOverride
+  }
+  if (tls.clientCertPair) {
+    serialized.clientCertPair = {
+      crt: tls.clientCertPair.crt.toString('base64'),
+      key: tls.clientCertPair.key.toString('base64'),
+    }
+  }
+  return serialized
 }
 
 async function handleInit(args: string[], flags: Record<string, string | boolean>) {
@@ -122,16 +221,16 @@ function printHelp() {
 
 Commands:
   init [directory]        Scaffold a new Temporal worker project
+  check [namespace]       Verify Temporal connectivity using the native bridge
   docker-build            Build a Docker image for the current project
-  check                   Verify Temporal connectivity using the Bun bridge
   help                    Show this help message
 
 Options:
   --force                 Overwrite existing files during init
+  --namespace <name>      Target namespace for the check command (default from env/config)
   --tag <name>            Image tag for docker-build (default: temporal-worker:latest)
   --context <path>        Build context for docker-build (default: .)
   --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
-  --namespace <name>      Namespace to verify for the check command
 `)
 }
 
@@ -360,60 +459,6 @@ bun run docker:build --tag ${name}:latest
 `,
     },
   ]
-}
-
-export async function handleCheck(_: string[], flags: Record<string, string | boolean>) {
-  const config = await loadTemporalConfig()
-  const namespace = (flags.namespace as string) ?? config.namespace
-  const tlsOptions = toClientTlsOptions(config.tls)
-
-  const runtime = createRuntime()
-  try {
-    const client = await createClient(runtime, {
-      address: config.address,
-      namespace,
-      identity: config.workerIdentity,
-      clientName: 'temporal-bun-cli',
-      clientVersion: process.env.npm_package_version ?? '0.0.0',
-      apiKey: config.apiKey,
-      tls: tlsOptions,
-    })
-
-    try {
-      const response = await client.describeNamespace(namespace)
-      console.log(
-        `Connected to Temporal namespace "${namespace}" at ${config.address} (response ${response.byteLength} bytes).`,
-      )
-    } finally {
-      await client.shutdown()
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Failed to reach Temporal at ${config.address}: ${message}`)
-  } finally {
-    await runtime.shutdown()
-  }
-}
-
-function toClientTlsOptions(config: TemporalConfig['tls']): ClientTlsOptions | undefined {
-  if (!config) return undefined
-
-  const tls: ClientTlsOptions = {}
-
-  if (config.serverRootCACertificate) {
-    tls.serverRootCACertificate = Buffer.from(config.serverRootCACertificate).toString('base64')
-  }
-
-  if (config.clientCertPair?.crt && config.clientCertPair?.key) {
-    tls.clientCert = Buffer.from(config.clientCertPair.crt).toString('base64')
-    tls.clientPrivateKey = Buffer.from(config.clientCertPair.key).toString('base64')
-  }
-
-  if (config.serverNameOverride) {
-    tls.serverNameOverride = config.serverNameOverride
-  }
-
-  return Object.keys(tls).length > 0 ? tls : undefined
 }
 
 if (import.meta.main) {
