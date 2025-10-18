@@ -22,6 +22,49 @@ const startWorkflowResponseSchema = z.object({
   namespace: z.string().min(1),
 })
 
+const metadataHeadersSchema = z
+  .record(z.string(), z.string().trim().min(1, 'Header values must be non-empty strings'))
+  .superRefine((headers, ctx) => {
+    const seen = new Set<string>()
+    for (const key of Object.keys(headers)) {
+      const trimmedKey = key.trim()
+      if (trimmedKey.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Header keys must be non-empty strings',
+          path: [key],
+        })
+        continue
+      }
+
+      if (trimmedKey !== key) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Header keys must not include leading or trailing whitespace',
+          path: [key],
+        })
+      }
+
+      const normalizedKey = trimmedKey.toLowerCase()
+      if (seen.has(normalizedKey)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Header key '${normalizedKey}' is duplicated (case-insensitive match)`,
+          path: [key],
+        })
+      } else {
+        seen.add(normalizedKey)
+      }
+    }
+  })
+  .transform((headers) => {
+    const normalized: Record<string, string> = {}
+    for (const [key, value] of Object.entries(headers)) {
+      normalized[key.trim().toLowerCase()] = value
+    }
+    return normalized
+  })
+
 const retryPolicySchema = z
   .object({
     initialIntervalMs: z.number().int().positive().optional(),
@@ -79,6 +122,7 @@ export interface TemporalClient {
   cancelWorkflow(handle: WorkflowHandle): Promise<void>
   signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
   describeNamespace(namespace?: string): Promise<Uint8Array>
+  updateHeaders(headers: Record<string, string>): Promise<void>
   shutdown(): Promise<void>
 }
 
@@ -229,6 +273,15 @@ class TemporalClientImpl implements TemporalClient {
 
   async describeNamespace(targetNamespace?: string): Promise<Uint8Array> {
     return native.describeNamespace(this.client, targetNamespace ?? this.namespace)
+  }
+
+  async updateHeaders(headers: Record<string, string>): Promise<void> {
+    if (this.closed) {
+      throw new Error('Temporal client has already been shut down')
+    }
+
+    const parsed = metadataHeadersSchema.parse(headers)
+    native.updateClientHeaders(this.client, parsed)
   }
 
   async shutdown(): Promise<void> {

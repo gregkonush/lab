@@ -177,6 +177,8 @@ enum BridgeError {
     ResponseEncode(String),
     #[error("invalid TLS configuration: {0}")]
     InvalidTlsConfig(String),
+    #[error("invalid client metadata: {0}")]
+    InvalidMetadata(String),
 }
 
 #[unsafe(no_mangle)]
@@ -269,6 +271,62 @@ where
 
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     serde_json::from_slice(bytes).map_err(|err| BridgeError::InvalidRequest(err.to_string()))
+}
+
+fn extract_bearer_token(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    let (scheme, token) = trimmed.split_once(' ')?;
+    if scheme.eq_ignore_ascii_case("bearer") {
+        let token = token.trim();
+        if token.is_empty() {
+            None
+        } else {
+            Some(token)
+        }
+    } else {
+        None
+    }
+}
+
+fn normalize_metadata_headers(
+    raw_headers: HashMap<String, String>,
+) -> Result<(HashMap<String, String>, Option<String>), BridgeError> {
+    let mut normalized: HashMap<String, String> = HashMap::with_capacity(raw_headers.len());
+    let mut bearer: Option<String> = None;
+
+    for (key, value) in raw_headers.into_iter() {
+        let trimmed_key = key.trim();
+        if trimmed_key.is_empty() {
+            return Err(BridgeError::InvalidMetadata("header keys must be non-empty".into()));
+        }
+
+        let lower_key = trimmed_key.to_ascii_lowercase();
+        if normalized.contains_key(&lower_key)
+            || (lower_key == "authorization" && bearer.is_some())
+        {
+            return Err(BridgeError::InvalidMetadata(format!(
+                "duplicate header key '{lower_key}'",
+            )));
+        }
+
+        let trimmed_value = value.trim();
+        if trimmed_value.is_empty() {
+            return Err(BridgeError::InvalidMetadata(format!(
+                "header '{lower_key}' must have a non-empty value",
+            )));
+        }
+
+        if lower_key == "authorization" {
+            if let Some(token) = extract_bearer_token(trimmed_value) {
+                bearer = Some(token.to_string());
+                continue;
+            }
+        }
+
+        normalized.insert(lower_key, trimmed_value.to_string());
+    }
+
+    Ok((normalized, bearer))
 }
 
 fn into_string_error(err: BridgeError) -> *mut c_void {
@@ -382,13 +440,50 @@ pub extern "C" fn temporal_bun_client_free(handle: *mut c_void) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_update_headers(
-    _client_ptr: *mut c_void,
-    _headers_ptr: *const u8,
-    _headers_len: usize,
+    client_ptr: *mut c_void,
+    headers_ptr: *const u8,
+    headers_len: usize,
 ) -> i32 {
-    // TODO(codex): Allow metadata mutation on the gRPC client (api keys, routing headers) as described in docs/ffi-surface.md.
-    error::set_error("temporal_bun_client_update_headers is not implemented yet".to_string());
-    -1
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    let raw_headers: HashMap<String, String> = match request_from_raw(headers_ptr, headers_len) {
+        Ok(headers) => headers,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    let (normalized, bearer_token) = match normalize_metadata_headers(raw_headers) {
+        Ok(result) => result,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+    let configured = client_handle.client.get_client();
+
+    if let Err(err) = configured.set_headers(normalized) {
+        error::set_error(BridgeError::InvalidMetadata(err.to_string()).to_string());
+        return -1;
+    }
+
+    match bearer_token {
+        Some(auth) => {
+            configured.set_api_key(Some(auth));
+        }
+        None => {
+            configured.set_api_key(None);
+        }
+    }
+
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -1236,5 +1331,70 @@ mod tests {
         unsafe {
             error::free_error(ptr as *mut u8, len);
         }
+    }
+
+    #[test]
+    fn normalize_metadata_headers_lowercases_and_extracts_bearer() {
+        let headers = HashMap::from([
+            (String::from("Authorization"), String::from(" Bearer super-secret ")),
+            (String::from("X-Custom"), String::from(" value ")),
+        ]);
+
+        let (normalized, bearer) =
+            normalize_metadata_headers(headers).expect("headers normalized");
+
+        assert_eq!(
+            normalized.get("x-custom"),
+            Some(&"value".to_string())
+        );
+        assert!(!normalized.contains_key("authorization"));
+        assert_eq!(bearer.as_deref(), Some("super-secret"));
+    }
+
+    #[test]
+    fn normalize_metadata_headers_preserves_non_bearer_authorization() {
+        let headers = HashMap::from([(String::from("Authorization"), String::from("Basic abc"))]);
+
+        let (normalized, bearer) =
+            normalize_metadata_headers(headers).expect("headers normalized");
+
+        assert_eq!(normalized.get("authorization"), Some(&"Basic abc".to_string()));
+        assert_eq!(bearer, None);
+    }
+
+    #[test]
+    fn normalize_metadata_headers_rejects_invalid_input() {
+        let dup_headers = HashMap::from([
+            (String::from("Foo"), String::from("one")),
+            (String::from("foo"), String::from("two")),
+        ]);
+        let duplicate_err = normalize_metadata_headers(dup_headers).unwrap_err();
+        assert!(matches!(
+            duplicate_err,
+            BridgeError::InvalidMetadata(message) if message.contains("duplicate header key")
+        ));
+
+        let empty_key = HashMap::from([(String::from("   "), String::from("value"))]);
+        let err = normalize_metadata_headers(empty_key).unwrap_err();
+        assert!(matches!(
+            err,
+            BridgeError::InvalidMetadata(message) if message.contains("non-empty")
+        ));
+
+        let empty_value = HashMap::from([(String::from("auth"), String::from("   "))]);
+        let err = normalize_metadata_headers(empty_value).unwrap_err();
+        assert!(matches!(
+            err,
+            BridgeError::InvalidMetadata(message)
+                if message.contains("must have a non-empty value")
+        ));
+    }
+
+    #[test]
+    fn extract_bearer_token_handles_case_insensitive_scheme() {
+        assert_eq!(extract_bearer_token("Bearer abc"), Some("abc"));
+        assert_eq!(extract_bearer_token("bearer  abc"), Some("abc"));
+        assert_eq!(extract_bearer_token("Basic abc"), None);
+        assert_eq!(extract_bearer_token("Bearer   "), None);
     }
 }

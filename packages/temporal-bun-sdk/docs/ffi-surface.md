@@ -43,7 +43,7 @@ Current progress snapshot:
 | Client | `temporal_bun_client_connect_async(runtime_ptr, config_ptr, len)` | Create gRPC retry client + namespace | `native.createClient` | ✅ (async pending handle) |
 | Client | `temporal_bun_client_free(client_ptr)` | Dispose client | `native.clientShutdown` | ✅ |
 | Client | `temporal_bun_client_describe_namespace_async(client_ptr, payload_ptr, len)` | Describe namespace via async pending handle | `native.describeNamespace` | ✅ (new) |
-| Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | ⬜️ TODO |
+| Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | ✅ Implemented |
 | Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.workflow.start` | ✅ Implemented |
 | Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⬜️ TODO |
 | Client | `temporal_bun_client_query(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | ⬜️ TODO |
@@ -106,6 +106,9 @@ Current progress snapshot:
 4. **Error propagation**  
    Any failure: return `null` pointer or `0` and call `error::set_error`. Message template: `"bridge:<component>: <summary>: <details>"`. TS wrapper throws enriched `TemporalBridgeError`.
 
+5. **Client metadata updates**  
+   Accept a JSON object of string header pairs. Keys are normalized to lowercase and must be unique ignoring case; empty keys or values trigger `InvalidMetadata` errors. The Rust bridge trims values, maps `authorization: "Bearer <token>"` into `set_api_key`, and surfaces gRPC validation errors through `NativeBridgeError` on the TypeScript side.
+
 ---
 
 ## 4. TypeScript Layer Tasks
@@ -126,6 +129,7 @@ Current progress snapshot:
 1. **Unit Tests (Bun)**
    - `tests/native-runtime.test.ts`: runtime creation, telemetry setter, logger callback invoked.
    - `tests/native-client.test.ts`: start/signal/query with mocked core (use `tokio::test` harness or stub responses).
+   - `tests/client.test.ts`: client metadata updates, validation, and native error propagation.
    - `tests/native-worker.test.ts`: ensure poll/complete functions handle JSON + payloads correctly (use fake core responses).
 
 2. **Integration Tests**
