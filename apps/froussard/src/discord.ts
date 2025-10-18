@@ -5,6 +5,34 @@ export const DISCORD_MESSAGE_LIMIT = 1900
 const CHANNEL_NAME_MAX_LENGTH = 95
 const DEFAULT_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 5_000
+const CATEGORY_CHANNEL_LIMIT = 50
+const CATEGORY_NAME_PREFIX = 'Codex Relay - '
+
+const CATEGORY_ADJECTIVES = [
+  'Lumineuse',
+  'Sereine',
+  'Radieuse',
+  'Eclatante',
+  'Petillante',
+  'Enchantee',
+  'Celeste',
+  'Azur',
+  'Verdoyante',
+  'Charmante',
+]
+
+const CATEGORY_NOUNS = [
+  'Atelier',
+  'Salon',
+  'Promenade',
+  'Jardin',
+  'Galerie',
+  'Rivage',
+  'Bastide',
+  'Reverie',
+  'Chateau',
+  'Balcon',
+]
 
 export interface DiscordConfig {
   botToken: string
@@ -26,12 +54,28 @@ export interface RelayBootstrapResult {
   channelName: string
   guildId: string
   url?: string
+  categoryId?: string
+  categoryName?: string
+  createdCategory?: boolean
 }
 
 interface DiscordErrorPayload {
   message?: string
   code?: number
   retry_after?: number
+}
+
+interface DiscordGuildChannel {
+  id: string
+  type: number
+  name?: string
+  parent_id?: string | null
+}
+
+interface CategoryResolution {
+  categoryId?: string
+  categoryName?: string
+  createdCategory?: boolean
 }
 
 export class DiscordRelayError extends Error {
@@ -202,15 +246,118 @@ const requestJson = async <T>(response: Response): Promise<T> => {
   return (await response.json()) as T
 }
 
+const chooseWord = (words: readonly string[], offset = 0) => {
+  const randomIndex = Math.floor(Math.random() * words.length)
+  return words[(randomIndex + offset) % words.length] ?? words[0]
+}
+
+const toTitleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
+
+const generateCategoryName = (takenNames: Set<string>): string => {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const adjective = toTitleCase(chooseWord(CATEGORY_ADJECTIVES, attempt))
+    const noun = toTitleCase(chooseWord(CATEGORY_NOUNS, attempt))
+    const candidate = `${CATEGORY_NAME_PREFIX}${adjective} ${noun}`
+    const key = candidate.toLowerCase()
+    if (!takenNames.has(key)) {
+      takenNames.add(key)
+      return candidate
+    }
+  }
+  const fallback = `${CATEGORY_NAME_PREFIX}Orbit ${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+  return fallback
+}
+
+const fetchGuildChannels = async (config: DiscordConfig): Promise<DiscordGuildChannel[]> => {
+  const response = await discordFetch(config, `/guilds/${config.guildId}/channels`, { method: 'GET' })
+  const channels = await requestJson<DiscordGuildChannel[]>(response)
+  if (!Array.isArray(channels)) {
+    return []
+  }
+  return channels
+}
+
+const createCategory = async (config: DiscordConfig, takenNames: Set<string>): Promise<CategoryResolution> => {
+  const categoryName = generateCategoryName(takenNames)
+  const response = await discordFetch(config, `/guilds/${config.guildId}/channels`, {
+    method: 'POST',
+    body: JSON.stringify({ name: categoryName, type: 4 }),
+  })
+  const payload = await requestJson<{ id?: string }>(response)
+  if (!payload.id) {
+    throw new DiscordRelayError(
+      'Discord category creation response missing id',
+      response,
+      payload as DiscordErrorPayload,
+    )
+  }
+  return { categoryId: payload.id, categoryName, createdCategory: true }
+}
+
+const resolveCategory = async (config: DiscordConfig): Promise<CategoryResolution> => {
+  const channels = await fetchGuildChannels(config)
+  if (channels.length === 0) {
+    return config.categoryId ? await createCategory(config, new Set()) : {}
+  }
+
+  const categories = channels.filter((channel) => channel.type === 4)
+  const categoryMap = new Map(categories.map((category) => [category.id, category]))
+  const occupancy = new Map<string, number>()
+
+  for (const channel of channels) {
+    const parentId = channel.parent_id
+    if (typeof parentId === 'string' && parentId.length > 0) {
+      occupancy.set(parentId, (occupancy.get(parentId) ?? 0) + 1)
+    }
+  }
+
+  const candidateIds: string[] = []
+  if (config.categoryId) {
+    candidateIds.push(config.categoryId)
+  }
+  for (const category of categories) {
+    if (category.name?.startsWith(CATEGORY_NAME_PREFIX)) {
+      candidateIds.push(category.id)
+    }
+  }
+
+  const seenCandidates = new Set<string>()
+  for (const candidate of candidateIds) {
+    if (seenCandidates.has(candidate)) {
+      continue
+    }
+    seenCandidates.add(candidate)
+    const category = categoryMap.get(candidate)
+    if (!category) {
+      continue
+    }
+    const used = occupancy.get(candidate) ?? 0
+    if (used < CATEGORY_CHANNEL_LIMIT) {
+      return { categoryId: candidate, categoryName: category.name }
+    }
+  }
+
+  if (candidateIds.length === 0) {
+    return {}
+  }
+
+  const takenNames = new Set(
+    categories.map((category) => category.name?.toLowerCase()).filter((name): name is string => Boolean(name)),
+  )
+  return createCategory(config, takenNames)
+}
+
 export const createRelayChannel = async (
   config: DiscordConfig,
   metadata: RelayMetadata,
 ): Promise<RelayBootstrapResult> => {
   const channelName = buildChannelName(metadata)
+  const categoryResolution = await resolveCategory(config)
+  const parentId = categoryResolution.categoryId ?? config.categoryId ?? undefined
   const body = {
     name: channelName,
     type: 0,
-    parent_id: config.categoryId ?? undefined,
+    parent_id: parentId,
   }
 
   const response = await discordFetch(config, `/guilds/${config.guildId}/channels`, {
@@ -228,6 +375,9 @@ export const createRelayChannel = async (
     channelName,
     guildId: config.guildId,
     url: `https://discord.com/channels/${config.guildId}/${json.id}`,
+    categoryId: parentId,
+    categoryName: categoryResolution.categoryName,
+    createdCategory: categoryResolution.createdCategory,
   }
 }
 
@@ -265,6 +415,9 @@ export const bootstrapRelay = async (
   }
 
   const relayResult = await createRelayChannel(config, metadata)
+  if (options.echo && relayResult.createdCategory && relayResult.categoryName) {
+    options.echo?.(`Created Discord category '${relayResult.categoryName}' for Codex relay channels.`)
+  }
   await postMessage(config, relayResult.channelId, buildInitialMessage(metadata, relayResult))
   return relayResult
 }
