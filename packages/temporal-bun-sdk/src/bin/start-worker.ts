@@ -3,11 +3,11 @@
 import { createWorker } from '../worker.js'
 
 const main = async () => {
-  const { worker } = await createWorker()
+  const { runtime } = await createWorker()
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}, shutting down Temporal worker…`)
-    await worker.shutdown()
+    await runtime.shutdown()
     process.exit(0)
   }
 
@@ -18,7 +18,7 @@ const main = async () => {
     void shutdown('SIGTERM')
   })
 
-  await worker.run()
+  await runtime.run()
 }
 
 await main().catch((error) => {

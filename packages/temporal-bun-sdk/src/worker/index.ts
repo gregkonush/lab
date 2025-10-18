@@ -1,3 +1,4 @@
-// TODO(codex): Replace this re-export with the Bun-native worker runtime once implemented per
-// packages/temporal-bun-sdk/docs/worker-runtime.md.
-export * from '../../vendor/sdk-typescript/packages/worker/src/index.ts'
+export { WorkerRuntime } from './runtime.ts'
+export type { WorkerRuntimeOptions, ActivityFunction, ActivityRegistryInput } from './runtime.ts'
+export { createWorker, runWorker } from '../worker.ts'
+export type { CreateWorkerOptions, CreateWorkerResult } from '../worker.ts'
