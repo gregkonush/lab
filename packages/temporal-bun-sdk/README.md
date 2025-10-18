@@ -1,6 +1,7 @@
 # `@proompteng/temporal-bun-sdk`
 
 A Bun-first starter kit for running Temporal workers that mirrors our existing Go-based setup (namespace `default`, task queue `prix`, gRPC port `7233`) while providing typed helpers for connection, workflow, and activity registration.
+<!-- TODO(codex, zig-pack-03): Expand Zig toolchain prerequisites section and link install script. -->
 
 ## Features
 - Zod-backed environment parsing (`loadTemporalConfig`) with sane defaults and TLS loading.
@@ -22,6 +23,8 @@ A Bun-first starter kit for running Temporal workers that mirrors our existing G
 - [`docs/payloads-codec.md`](./docs/payloads-codec.md) – payload encoding & data conversion.
 - [`docs/testing-plan.md`](./docs/testing-plan.md) – validation matrix.
 - [`docs/migration-phases.md`](./docs/migration-phases.md) – phased rollout checklist.
+- [`docs/zig-bridge-scaffold-checklist.md`](./docs/zig-bridge-scaffold-checklist.md) – bite-sized TODOs for the Zig bridge rollout.
+- [`docs/zig-production-readiness.md`](./docs/zig-production-readiness.md) – formalities required before making Zig the default bridge.
 
 ## Installation
 
@@ -39,6 +42,10 @@ ln -s ~/github.com/temporalio/sdk-typescript packages/temporal-bun-sdk/vendor/sd
 
 # Compile the native Temporal bridge (requires protoc in PATH)
 pnpm --filter @proompteng/temporal-bun-sdk run build:native
+
+# (Experimental) Build the Zig bridge scaffold
+pnpm --filter @proompteng/temporal-bun-sdk run build:native:zig
+<!-- TODO(codex, zig-pack-02): Document copying zig-out/lib artifacts into npm package. -->
 ```
 
 > **Tip:** For deterministic builds, pin the repositories to the versions we test against:
@@ -55,6 +62,8 @@ Build and test the package:
 pnpm --filter @proompteng/temporal-bun-sdk build
 pnpm --filter @proompteng/temporal-bun-sdk test
 ```
+
+Enable the Zig bridge scaffold by setting `TEMPORAL_BUN_SDK_USE_ZIG=1` before running scripts that load the native library. The TypeScript layer will automatically fall back to the Rust bridge if the Zig artifact has not been built yet.
 
 ## Usage
 
