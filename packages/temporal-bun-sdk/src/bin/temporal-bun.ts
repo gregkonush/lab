@@ -242,21 +242,21 @@ import { createWorker } from '@proompteng/temporal-bun-sdk/worker'
 import * as activities from './activities/index.ts'
 
 const main = async () => {
-  const { worker } = await createWorker({
+  const { runtime } = await createWorker({
     activities,
     workflowsPath: fileURLToPath(new URL('./workflows/index.ts', import.meta.url)),
   })
 
   const shutdown = async (signal: string) => {
     console.log(\`Received \${signal}. Shutting down worker…\`)
-    await worker.shutdown()
+    await runtime.shutdown()
     process.exit(0)
   }
 
   process.on('SIGINT', () => void shutdown('SIGINT'))
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
 
-  await worker.run()
+  await runtime.run()
 }
 
 await main().catch((error) => {
@@ -398,22 +398,22 @@ export async function handleCheck(_: string[], flags: Record<string, string | bo
 function toClientTlsOptions(config: TemporalConfig['tls']): ClientTlsOptions | undefined {
   if (!config) return undefined
 
-  const tls: ClientTlsOptions = {}
+  const serverRootCACertificate = config.serverRootCACertificate
+    ? Buffer.from(config.serverRootCACertificate).toString('base64')
+    : undefined
+  const clientCert = config.clientCertPair?.crt ? Buffer.from(config.clientCertPair.crt).toString('base64') : undefined
+  const clientPrivateKey = config.clientCertPair?.key
+    ? Buffer.from(config.clientCertPair.key).toString('base64')
+    : undefined
+  const serverNameOverride = config.serverNameOverride
 
-  if (config.serverRootCACertificate) {
-    tls.serverRootCACertificate = Buffer.from(config.serverRootCACertificate).toString('base64')
+  const payload: ClientTlsOptions = {
+    ...(serverRootCACertificate ? { serverRootCACertificate } : {}),
+    ...(clientCert && clientPrivateKey ? { clientCert, clientPrivateKey } : {}),
+    ...(serverNameOverride ? { serverNameOverride } : {}),
   }
 
-  if (config.clientCertPair?.crt && config.clientCertPair?.key) {
-    tls.clientCert = Buffer.from(config.clientCertPair.crt).toString('base64')
-    tls.clientPrivateKey = Buffer.from(config.clientCertPair.key).toString('base64')
-  }
-
-  if (config.serverNameOverride) {
-    tls.serverNameOverride = config.serverNameOverride
-  }
-
-  return Object.keys(tls).length > 0 ? tls : undefined
+  return Object.keys(payload).length > 0 ? payload : undefined
 }
 
 if (import.meta.main) {
