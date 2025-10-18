@@ -201,7 +201,10 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
-    const request = buildCancelRequest(handle)
+    const request = buildCancelRequest(handle, {
+      namespace: this.namespace,
+      identity: this.defaultIdentity,
+    })
     await native.cancelWorkflow(this.client, request)
   }
 

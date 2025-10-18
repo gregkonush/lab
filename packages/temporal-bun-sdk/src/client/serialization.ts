@@ -44,10 +44,34 @@ export const buildTerminateRequest = (
   return notImplemented('Workflow terminate serialization', FFI_SURFACE_DOC)
 }
 
-export const buildCancelRequest = (handle: WorkflowHandle): Record<string, unknown> => {
-  void handle
-  // TODO(codex): Emit cancellation payloads for `temporal_bun_client_cancel_workflow` per ${FFI_SURFACE_DOC}.
-  return notImplemented('Workflow cancel serialization', FFI_SURFACE_DOC)
+export const buildCancelRequest = (
+  handle: WorkflowHandle,
+  defaults: { namespace: string; identity: string },
+): Record<string, unknown> => {
+  if (!handle.workflowId) {
+    throw new Error('Workflow handle is missing workflowId')
+  }
+
+  const namespace = handle.namespace ?? defaults.namespace
+  if (!namespace) {
+    throw new Error('Workflow namespace is not available')
+  }
+
+  const request: Record<string, unknown> = {
+    namespace,
+    workflow_id: handle.workflowId,
+    identity: defaults.identity,
+  }
+
+  if (handle.runId) {
+    request.run_id = handle.runId
+  }
+
+  if (handle.firstExecutionRunId) {
+    request.first_execution_run_id = handle.firstExecutionRunId
+  }
+
+  return request
 }
 
 export const buildSignalWithStartRequest = ({
