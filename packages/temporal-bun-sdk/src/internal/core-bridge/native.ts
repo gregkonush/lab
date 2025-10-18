@@ -38,6 +38,10 @@ const {
     temporal_bun_pending_byte_array_free,
     temporal_bun_byte_array_free,
     temporal_bun_client_start_workflow,
+    temporal_bun_client_signal,
+    temporal_bun_pending_status_poll,
+    temporal_bun_pending_status_consume,
+    temporal_bun_pending_status_free,
   },
 } = dlopen(libraryFile, {
   temporal_bun_runtime_new: {
@@ -99,6 +103,22 @@ const {
   temporal_bun_client_start_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
+  },
+  temporal_bun_client_signal: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_pending_status_poll: {
+    args: [FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  temporal_bun_pending_status_consume: {
+    args: [FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  temporal_bun_pending_status_free: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
   },
 })
 
@@ -180,12 +200,18 @@ export const native = {
     return notImplemented('Client metadata updates', 'docs/ffi-surface.md')
   },
 
-  async signalWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Call into `temporal_bun_client_signal` once implemented to deliver workflow signals
-    // per the packages/temporal-bun-sdk/docs/ffi-surface.md function matrix.
-    return Promise.reject(buildNotImplementedError('Workflow signal bridge', 'docs/ffi-surface.md'))
+  async signalWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const pendingHandle = Number(temporal_bun_client_signal(client.handle, ptr(payload), payload.byteLength))
+    if (!pendingHandle) {
+      throw new Error(readLastError())
+    }
+
+    try {
+      await waitForVoid(pendingHandle)
+    } finally {
+      temporal_bun_pending_status_free(pendingHandle)
+    }
   },
 
   async queryWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
@@ -328,6 +354,35 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
       }
 
       // status === -1 or unexpected
+      reject(new Error(readLastError()))
+    }
+
+    setTimeout(poll, 0)
+  })
+}
+
+async function waitForVoid(handle: number): Promise<void> {
+  return await new Promise<void>((resolve, reject) => {
+    const poll = (): void => {
+      const status = Number(temporal_bun_pending_status_poll(handle))
+      if (status === 0) {
+        setTimeout(poll, 0)
+        return
+      }
+
+      if (status === 1) {
+        try {
+          const consumeStatus = Number(temporal_bun_pending_status_consume(handle))
+          if (consumeStatus !== 0) {
+            throw new Error(readLastError())
+          }
+          resolve()
+        } catch (error) {
+          reject(error)
+        }
+        return
+      }
+
       reject(new Error(readLastError()))
     }
 

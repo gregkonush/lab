@@ -1,7 +1,27 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+
+mock.module('../src/internal/core-bridge/native.ts', () => {
+  const stubRuntime = { type: 'runtime' as const, handle: 1 }
+  const stubClient = { type: 'client' as const, handle: 2 }
+  const stub = {
+    createRuntime: () => stubRuntime,
+    runtimeShutdown: () => {},
+    createClient: async () => stubClient,
+    clientShutdown: () => {},
+    startWorkflow: async () => new Uint8Array(),
+    describeNamespace: async () => new Uint8Array(),
+    signalWorkflow: async () => {},
+    queryWorkflow: async () => new Uint8Array(),
+    terminateWorkflow: async () => {},
+    cancelWorkflow: async () => {},
+    signalWithStart: async () => new Uint8Array(),
+  }
+  return { native: stub }
+})
+
+const { createTemporalClient } = await import('../src/client.ts')
+const { native } = await import('../src/internal/core-bridge/native.ts')
 import type { TemporalConfig } from '../src/config'
-import { createTemporalClient } from '../src/client'
-import { native } from '../src/internal/core-bridge/native'
 
 const encodeJson = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
 
@@ -13,6 +33,7 @@ describe('temporal client (native bridge)', () => {
     clientShutdown: native.clientShutdown,
     startWorkflow: native.startWorkflow,
     describeNamespace: native.describeNamespace,
+    signalWorkflow: native.signalWorkflow,
   }
 
   const runtimeHandle = { type: 'runtime', handle: 101 } as const
@@ -24,6 +45,7 @@ describe('temporal client (native bridge)', () => {
     native.clientShutdown = mock(() => {})
     native.runtimeShutdown = mock(() => {})
     native.describeNamespace = mock(async () => new Uint8Array())
+    native.signalWorkflow = mock(async () => {})
   })
 
   afterEach(() => {
@@ -159,5 +181,46 @@ describe('temporal client (native bridge)', () => {
         server_name_override: 'temporal.example.internal',
       },
     })
+  })
+
+  test('signalWorkflow forwards handle context and identity defaults', async () => {
+    const config: TemporalConfig = {
+      host: '127.0.0.1',
+      port: 7233,
+      address: '127.0.0.1:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'bun-worker-01',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config, namespace: 'analytics' })
+
+    const handle = {
+      workflowId: 'workflow-abc',
+      namespace: 'analytics',
+      runId: 'run-xyz',
+      firstExecutionRunId: 'run-initial',
+    } as const
+
+    await client.workflow.signal(handle, 'updateStatus', { status: 'ok' })
+
+    expect(native.signalWorkflow).toHaveBeenCalledTimes(1)
+    const signalWorkflowMock = native.signalWorkflow as ReturnType<typeof mock>
+    const [_clientHandle, request] = signalWorkflowMock.mock.calls[0]
+    expect(request).toEqual({
+      namespace: 'analytics',
+      workflow_id: 'workflow-abc',
+      signal_name: 'updateStatus',
+      args: [{ status: 'ok' }],
+      identity: 'bun-worker-01',
+      run_id: 'run-xyz',
+      first_execution_run_id: 'run-initial',
+    })
+
+    await client.shutdown()
   })
 })
