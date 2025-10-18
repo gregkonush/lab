@@ -157,6 +157,68 @@ export const native = {
     }
     return readByteArray(arrayPtr)
   },
+
+  configureTelemetry(runtime: Runtime, options: Record<string, unknown> = {}): never {
+    void runtime
+    void options
+    // TODO(codex): Bridge telemetry configuration through `temporal_bun_runtime_update_telemetry`
+    // per packages/temporal-bun-sdk/docs/ffi-surface.md (Function Matrix, Runtime section).
+    return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
+  },
+
+  installLogger(runtime: Runtime, _callback: (...args: unknown[]) => void): never {
+    void runtime
+    // TODO(codex): Install Bun logger hook via `temporal_bun_runtime_set_logger` once the native bridge
+    // supports forwarding core logs (docs/ffi-surface.md — Runtime exports).
+    return notImplemented('Runtime logger installation', 'docs/ffi-surface.md')
+  },
+
+  updateClientHeaders(client: NativeClient, _headers: Record<string, string>): never {
+    void client
+    // TODO(codex): Expose metadata mutation via `temporal_bun_client_update_headers` as outlined in
+    // docs/ffi-surface.md (Client exports) to support API key rotation and custom headers.
+    return notImplemented('Client metadata updates', 'docs/ffi-surface.md')
+  },
+
+  async signalWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
+    void client
+    void _request
+    // TODO(codex): Call into `temporal_bun_client_signal` once implemented to deliver workflow signals
+    // per the packages/temporal-bun-sdk/docs/ffi-surface.md function matrix.
+    return Promise.reject(buildNotImplementedError('Workflow signal bridge', 'docs/ffi-surface.md'))
+  },
+
+  async queryWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
+    void client
+    void _request
+    // TODO(codex): Marshal workflow queries through `temporal_bun_client_query` once the native bridge
+    // is available (docs/ffi-surface.md — Client exports).
+    return Promise.reject(buildNotImplementedError('Workflow query bridge', 'docs/ffi-surface.md'))
+  },
+
+  async terminateWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
+    void client
+    void _request
+    // TODO(codex): Implement termination via `temporal_bun_client_terminate_workflow` per the native
+    // bridge plan documented in docs/ffi-surface.md.
+    return Promise.reject(buildNotImplementedError('Workflow termination bridge', 'docs/ffi-surface.md'))
+  },
+
+  async cancelWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
+    void client
+    void _request
+    // TODO(codex): Route cancellations through `temporal_bun_client_cancel_workflow` when the FFI export
+    // exists (docs/ffi-surface.md).
+    return Promise.reject(buildNotImplementedError('Workflow cancel bridge', 'docs/ffi-surface.md'))
+  },
+
+  async signalWithStart(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
+    void client
+    void _request
+    // TODO(codex): Implement signal-with-start via `temporal_bun_client_signal_with_start` following the
+    // parity checklist in docs/ffi-surface.md and docs/client-runtime.md.
+    return Promise.reject(buildNotImplementedError('Signal-with-start bridge', 'docs/ffi-surface.md'))
+  },
 }
 
 function resolveBridgeLibraryPath(): string {
@@ -286,4 +348,14 @@ function readLastError(): string {
   } finally {
     temporal_bun_error_free(errPtr, len)
   }
+}
+
+function buildNotImplementedError(feature: string, docPath: string): Error {
+  return new Error(
+    `${feature} is not implemented yet. See packages/temporal-bun-sdk/${docPath} for the implementation plan.`,
+  )
+}
+
+function notImplemented(feature: string, docPath: string): never {
+  throw buildNotImplementedError(feature, docPath)
 }

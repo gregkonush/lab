@@ -70,6 +70,12 @@ export class Client {
     return await native.describeNamespace(handle, namespace)
   }
 
+  updateHeaders(headers: Record<string, string>): never {
+    // TODO(codex): Support dynamic metadata updates via `temporal_bun_client_update_headers`
+    // once the native bridge provides the export (docs/ffi-surface.md).
+    return native.updateClientHeaders(this.nativeHandle, headers)
+  }
+
   async shutdown(): Promise<void> {
     if (!this.#native) return
     native.clientShutdown(this.#native)

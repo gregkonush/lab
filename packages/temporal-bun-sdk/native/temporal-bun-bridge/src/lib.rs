@@ -188,6 +188,28 @@ pub extern "C" fn temporal_bun_runtime_free(handle: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_runtime_update_telemetry(
+    _runtime_ptr: *mut c_void,
+    _options_ptr: *const u8,
+    _options_len: usize,
+) -> i32 {
+    // TODO(codex): Configure telemetry exporters (Prometheus, OTLP) via CoreRuntime once the plan in
+    // docs/ffi-surface.md is implemented.
+    error::set_error("temporal_bun_runtime_update_telemetry is not implemented yet".to_string());
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_runtime_set_logger(
+    _runtime_ptr: *mut c_void,
+    _callback_ptr: *mut c_void,
+) -> i32 {
+    // TODO(codex): Wire native Core logging into Bun callbacks per docs/ffi-surface.md.
+    error::set_error("temporal_bun_runtime_set_logger is not implemented yet".to_string());
+    -1
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_error_message(len_out: *mut usize) -> *const u8 {
     error::take_error(len_out)
 }
@@ -334,6 +356,17 @@ pub extern "C" fn temporal_bun_client_free(handle: *mut c_void) {
     unsafe {
         let _ = Box::from_raw(handle as *mut ClientHandle);
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_update_headers(
+    _client_ptr: *mut c_void,
+    _headers_ptr: *const u8,
+    _headers_len: usize,
+) -> i32 {
+    // TODO(codex): Allow metadata mutation on the gRPC client (api keys, routing headers) as described in docs/ffi-surface.md.
+    error::set_error("temporal_bun_client_update_headers is not implemented yet".to_string());
+    -1
 }
 
 #[unsafe(no_mangle)]
@@ -492,6 +525,16 @@ pub extern "C" fn temporal_bun_client_start_workflow(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_byte_array_new(ptr: *const u8, len: usize) -> *mut byte_array::ByteArray {
+    // TODO(codex): Optimize zero-copy transfers once native bridge exposes shared buffers (docs/ffi-surface.md).
+    if ptr.is_null() || len == 0 {
+        return byte_array::ByteArray::empty();
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    byte_array::ByteArray::from_vec(slice.to_vec())
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_byte_array_free(ptr: *mut byte_array::ByteArray) {
     if ptr.is_null() {
         return;
@@ -558,6 +601,62 @@ pub extern "C" fn temporal_bun_pending_byte_array_free(ptr: *mut pending::Pendin
         let _ = Box::from_raw(ptr);
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_signal(
+    _client_ptr: *mut c_void,
+    _payload_ptr: *const u8,
+    _payload_len: usize,
+) -> *mut pending::PendingByteArray {
+    // TODO(codex): Implement workflow signal bridge invoking WorkflowService::signal_workflow_execution (docs/ffi-surface.md).
+    error::set_error("temporal_bun_client_signal is not implemented yet".to_string());
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_query(
+    _client_ptr: *mut c_void,
+    _payload_ptr: *const u8,
+    _payload_len: usize,
+) -> *mut pending::PendingByteArray {
+    // TODO(codex): Implement workflow query bridge using QueryWorkflowRequest per docs/ffi-surface.md.
+    error::set_error("temporal_bun_client_query is not implemented yet".to_string());
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_terminate_workflow(
+    _client_ptr: *mut c_void,
+    _payload_ptr: *const u8,
+    _payload_len: usize,
+) -> *mut pending::PendingByteArray {
+    // TODO(codex): Implement termination via WorkflowService::terminate_workflow_execution (docs/ffi-surface.md).
+    error::set_error("temporal_bun_client_terminate_workflow is not implemented yet".to_string());
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_cancel_workflow(
+    _client_ptr: *mut c_void,
+    _payload_ptr: *const u8,
+    _payload_len: usize,
+) -> *mut pending::PendingByteArray {
+    // TODO(codex): Implement cancellation via WorkflowService::request_cancel_workflow_execution (docs/ffi-surface.md).
+    error::set_error("temporal_bun_client_cancel_workflow is not implemented yet".to_string());
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_signal_with_start(
+    _client_ptr: *mut c_void,
+    _payload_ptr: *const u8,
+    _payload_len: usize,
+) -> *mut pending::PendingByteArray {
+    // TODO(codex): Implement signal-with-start using WorkflowService::signal_with_start_workflow_execution (docs/ffi-surface.md).
+    error::set_error("temporal_bun_client_signal_with_start is not implemented yet".to_string());
+    std::ptr::null_mut()
+}
+
 
 fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
     let data = serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
