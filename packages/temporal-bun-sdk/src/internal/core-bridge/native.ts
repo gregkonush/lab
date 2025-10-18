@@ -1,5 +1,5 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -123,18 +123,42 @@ export const native = {
 }
 
 function resolveBridgeLibraryPath(): string {
-  const dir = fileURLToPath(new URL('../../../native/temporal-bun-bridge/target/release', import.meta.url))
+  const override = process.env.TEMPORAL_BUN_SDK_NATIVE_PATH
+  if (override) {
+    if (!existsSync(override)) {
+      throw new Error(`Temporal Bun bridge override not found at ${override}`)
+    }
+    return override
+  }
+
+  const targetDir = fileURLToPath(new URL('../../../native/temporal-bun-bridge/target', import.meta.url))
   const baseName =
     process.platform === 'win32'
       ? 'temporal_bun_bridge.dll'
       : process.platform === 'darwin'
         ? 'libtemporal_bun_bridge.dylib'
         : 'libtemporal_bun_bridge.so'
-  const candidate = join(dir, baseName)
-  if (!existsSync(candidate)) {
-    throw new Error(`Temporal Bun bridge library not found at ${candidate}. Did you build the native bridge?`)
+  const releaseCandidate = join(targetDir, 'release', baseName)
+  if (existsSync(releaseCandidate)) {
+    return releaseCandidate
   }
-  return candidate
+  const debugCandidate = join(targetDir, 'debug', baseName)
+  if (existsSync(debugCandidate)) {
+    return debugCandidate
+  }
+  const depsDir = join(targetDir, 'debug', 'deps')
+  if (existsSync(depsDir)) {
+    const prefix = baseName.replace(/\.[^./]+$/, '')
+    const candidates = readdirSync(depsDir)
+      .filter((file) => file.startsWith(prefix))
+      .map((file) => join(depsDir, file))
+    if (candidates.length > 0) {
+      return candidates[0]
+    }
+  }
+  throw new Error(
+    `Temporal Bun bridge library not found. Expected at ${releaseCandidate} or ${debugCandidate}. Did you build the native bridge?`,
+  )
 }
 
 function readByteArray(pointer: number): Uint8Array {

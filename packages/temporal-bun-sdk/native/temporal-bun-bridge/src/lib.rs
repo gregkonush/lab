@@ -5,8 +5,8 @@ use std::sync::Arc;
 use prost::Message;
 use serde::Deserialize;
 use temporal_client::{
-    ClientOptionsBuilder, ConfiguredClient, Namespace, RetryClient, TemporalServiceClient,
-    WorkflowService,
+    ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace, RetryClient, TemporalServiceClient,
+    TlsConfig, WorkflowService,
     tonic::IntoRequest,
 };
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
@@ -20,6 +20,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::StartWorkflowE
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
+use base64::{engine::general_purpose, Engine as _};
 
 mod error;
 mod byte_array;
@@ -47,6 +48,10 @@ struct ClientConfig {
     client_name: Option<String>,
     #[serde(default)]
     client_version: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    tls: Option<TlsConfigPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +116,18 @@ struct StartWorkflowResponseInfo {
     namespace: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct TlsConfigPayload {
+    #[serde(default)]
+    server_root_ca: Option<String>,
+    #[serde(default)]
+    client_cert: Option<String>,
+    #[serde(default)]
+    client_key: Option<String>,
+    #[serde(default)]
+    server_name: Option<String>,
+}
+
 #[derive(Debug, Error)]
 enum BridgeError {
     #[error("invalid runtime handle")]
@@ -133,6 +150,8 @@ enum BridgeError {
     PayloadEncode(String),
     #[error("failed to encode response payload: {0}")]
     ResponseEncode(String),
+    #[error("invalid TLS configuration: {0}")]
+    InvalidTlsConfig(String),
 }
 
 #[unsafe(no_mangle)]
@@ -251,6 +270,19 @@ pub extern "C" fn temporal_bun_client_connect(
         .client_name(client_name)
         .client_version(client_version)
         .identity(identity.clone());
+
+    if let Some(api_key) = config.api_key.clone() {
+        builder.api_key(Some(api_key));
+    }
+
+    if let Some(tls_payload) = config.tls.clone() {
+        match tls_config_from_payload(tls_payload) {
+            Ok(tls_cfg) => {
+                builder.tls_cfg(tls_cfg);
+            }
+            Err(err) => return into_string_error(err),
+        }
+    }
 
     let options = match builder.build() {
         Ok(options) => options,
@@ -505,6 +537,47 @@ fn encode_retry_policy(payload: RetryPolicyPayload) -> Result<RetryPolicy, Bridg
     Ok(policy)
 }
 
+fn tls_config_from_payload(payload: TlsConfigPayload) -> Result<TlsConfig, BridgeError> {
+    let mut tls = TlsConfig::default();
+
+    if let Some(server_root_ca) = payload.server_root_ca {
+        let bytes = decode_base64(&server_root_ca)
+            .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid server_root_ca: {err}")))?;
+        tls.server_root_ca_cert = Some(bytes);
+    }
+
+    match (payload.client_cert, payload.client_key) {
+        (Some(cert_b64), Some(key_b64)) => {
+            let cert = decode_base64(&cert_b64)
+                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}")))?;
+            let key = decode_base64(&key_b64)
+                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_key: {err}")))?;
+            tls.client_tls_config = Some(ClientTlsConfig {
+                client_cert: cert,
+                client_private_key: key,
+            });
+        }
+        (None, None) => {}
+        _ => {
+            return Err(BridgeError::InvalidTlsConfig(
+                "client_cert and client_key must both be provided".to_string(),
+            ));
+        }
+    }
+
+    if let Some(server_name) = payload.server_name {
+        if !server_name.is_empty() {
+            tls.domain = Some(server_name);
+        }
+    }
+
+    Ok(tls)
+}
+
+fn decode_base64(value: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    general_purpose::STANDARD.decode(value)
+}
+
 fn json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, BridgeError> {
     serde_json::to_vec(value).map_err(|err| BridgeError::ResponseEncode(err.to_string()))
 }
@@ -527,6 +600,7 @@ pub extern "C" fn temporal_bun_byte_array_free(ptr: *mut byte_array::ByteArray) 
 mod tests {
     use super::*;
     use serde_json::json;
+    use base64::{engine::general_purpose, Engine};
 
     #[test]
     fn config_from_raw_parses_defaults() {
@@ -556,6 +630,36 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(invalid, BridgeError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn tls_config_from_payload_decodes_components() {
+        let payload = TlsConfigPayload {
+            server_root_ca: Some(general_purpose::STANDARD.encode(b"ROOT")),
+            client_cert: Some(general_purpose::STANDARD.encode(b"CERT")),
+            client_key: Some(general_purpose::STANDARD.encode(b"KEY")),
+            server_name: Some("server.test".to_string()),
+        };
+
+        let tls = tls_config_from_payload(payload).expect("tls config parsed");
+        assert_eq!(tls.server_root_ca_cert, Some(b"ROOT".to_vec()));
+        assert_eq!(tls.domain.as_deref(), Some("server.test"));
+        let client = tls.client_tls_config.expect("client tls config");
+        assert_eq!(client.client_cert, b"CERT");
+        assert_eq!(client.client_private_key, b"KEY");
+    }
+
+    #[test]
+    fn tls_config_from_payload_requires_cert_and_key_pair() {
+        let payload = TlsConfigPayload {
+            server_root_ca: None,
+            client_cert: Some(general_purpose::STANDARD.encode(b"CERT")),
+            client_key: None,
+            server_name: None,
+        };
+
+        let err = tls_config_from_payload(payload).unwrap_err();
+        assert!(matches!(err, BridgeError::InvalidTlsConfig(_)));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { loadTemporalConfig, type TemporalConfig } from './config'
+import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
 import { native, type NativeClient, type Runtime } from './internal/core-bridge/native'
 
 const startWorkflowResponseSchema = z.object({
@@ -101,11 +101,26 @@ export const createTemporalClient = async (
   const taskQueue = options.taskQueue ?? config.taskQueue
 
   const runtime = native.createRuntime(options.runtimeOptions ?? {})
-  const clientHandle = native.createClient(runtime, {
+  const nativeClientConfig: Record<string, unknown> = {
     address: formatTemporalAddress(config.address, Boolean(config.tls)),
     namespace,
     identity,
-  })
+  }
+
+  if (config.apiKey) {
+    nativeClientConfig.apiKey = config.apiKey
+  }
+
+  const tlsPayload = serializeTlsConfig(config.tls)
+  if (tlsPayload) {
+    nativeClientConfig.tls = tlsPayload
+  }
+
+  if (config.allowInsecureTls) {
+    nativeClientConfig.allowInsecure = true
+  }
+
+  const clientHandle = native.createClient(runtime, nativeClientConfig)
 
   const client = new TemporalClientImpl({
     runtime,
@@ -266,4 +281,33 @@ const formatTemporalAddress = (address: string, useTls: boolean): string => {
     return address
   }
   return `${useTls ? 'https' : 'http'}://${address}`
+}
+
+const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefined => {
+  if (!tls) return undefined
+
+  const payload: Record<string, unknown> = {}
+  const encode = (buffer?: Buffer) => buffer?.toString('base64')
+
+  const ca = encode(tls.serverRootCACertificate)
+  if (ca) {
+    payload.server_root_ca = ca
+  }
+
+  const clientCert = encode(tls.clientCertPair?.crt)
+  const clientKey = encode(tls.clientCertPair?.key)
+  if (clientCert && clientKey) {
+    payload.client_cert = clientCert
+    payload.client_key = clientKey
+  }
+
+  if (tls.serverNameOverride) {
+    payload.server_name = tls.serverNameOverride
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return undefined
+  }
+
+  return payload
 }

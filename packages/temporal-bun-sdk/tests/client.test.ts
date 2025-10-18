@@ -61,6 +61,12 @@ describe('temporal client (native bridge)', () => {
       namespace: 'analytics',
     })
 
+    expect(native.createClient).toHaveBeenCalledWith(runtimeHandle, {
+      address: 'http://127.0.0.1:7233',
+      namespace: 'analytics',
+      identity: 'bun-worker-01',
+    })
+
     const result = await client.workflow.start({
       workflowId: 'workflow-123',
       workflowType: 'ExampleWorkflow',
@@ -118,5 +124,46 @@ describe('temporal client (native bridge)', () => {
     })
 
     await client.shutdown()
+  })
+
+  test('createTemporalClient forwards TLS and API key options to native bridge', async () => {
+    native.startWorkflow = mock((_, payload: Record<string, unknown>) => {
+      return encodeJson({ runId: 'run-123', workflowId: payload.workflow_id, namespace: payload.namespace })
+    })
+
+    const config: TemporalConfig = {
+      host: 'temporal.internal',
+      port: 7233,
+      address: 'temporal.internal:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: 'test-key',
+      allowInsecureTls: false,
+      workerIdentity: 'bun-worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+      tls: {
+        serverRootCACertificate: Buffer.from('ROOT'),
+        serverNameOverride: 'temporal.example.internal',
+        clientCertPair: {
+          crt: Buffer.from('CERT'),
+          key: Buffer.from('KEY'),
+        },
+      },
+    }
+
+    await createTemporalClient({ config })
+
+    expect(native.createClient).toHaveBeenLastCalledWith(runtimeHandle, {
+      address: 'https://temporal.internal:7233',
+      namespace: 'default',
+      identity: 'bun-worker',
+      apiKey: 'test-key',
+      tls: {
+        server_root_ca: Buffer.from('ROOT').toString('base64'),
+        client_cert: Buffer.from('CERT').toString('base64'),
+        client_key: Buffer.from('KEY').toString('base64'),
+        server_name: 'temporal.example.internal',
+      },
+    })
   })
 })
