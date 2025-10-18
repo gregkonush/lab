@@ -11,7 +11,7 @@
 ```ts
 interface TemporalClient {
   workflow: {
-    start(request: StartOptions): Promise<WorkflowHandle>
+    start(request: StartOptions): Promise<StartWorkflowResult>
     signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
     query(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
     terminate(handle: WorkflowHandle, options?: TerminateOptions): Promise<void>
@@ -24,6 +24,14 @@ interface TemporalClient {
 Workflows handles must track:
 
 ```ts
+interface StartWorkflowResult {
+  workflowId: string
+  runId: string
+  namespace: string
+  firstExecutionRunId?: string
+  handle: WorkflowHandle
+}
+
 interface WorkflowHandle {
   workflowId: string
   runId?: string

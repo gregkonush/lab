@@ -1,7 +1,53 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import type { TemporalConfig } from '../src/config'
-import { createTemporalClient } from '../src/client'
-import { NativeBridgeError, native } from '../src/internal/core-bridge/native'
+
+const ensureNativeBridgeStub = () => {
+  const rootDir = fileURLToPath(new URL('..', import.meta.url))
+  const targetDir = join(rootDir, 'native/temporal-bun-bridge/target')
+  let binaryName: string
+  if (process.platform === 'win32') {
+    binaryName = 'temporal_bun_bridge.dll'
+  } else if (process.platform === 'darwin') {
+    binaryName = 'libtemporal_bun_bridge.dylib'
+  } else {
+    binaryName = 'libtemporal_bun_bridge.so'
+  }
+  const binaryPath = join(targetDir, 'debug', binaryName)
+
+  if (existsSync(binaryPath)) {
+    return binaryPath
+  }
+
+  const fixturesDir = join(rootDir, 'tests/fixtures')
+  const stubSource = join(fixturesDir, 'stub_temporal_bridge.c')
+  mkdirSync(join(targetDir, 'debug'), { recursive: true })
+
+  const args: string[] = []
+  if (process.platform === 'darwin') {
+    args.push('-dynamiclib', '-fPIC')
+  } else if (process.platform === 'win32') {
+    args.push('-shared')
+  } else {
+    args.push('-shared', '-fPIC')
+  }
+  args.push(stubSource, '-o', binaryPath)
+
+  const result = spawnSync('cc', args, { stdio: 'inherit' })
+  if (result.status !== 0) {
+    throw new Error('Failed to compile Temporal bridge stub for tests')
+  }
+
+  return binaryPath
+}
+
+ensureNativeBridgeStub()
+
+const { createTemporalClient } = await import('../src/client')
+const { NativeBridgeError, native } = await import('../src/internal/core-bridge/native')
 
 const encodeJson = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
 
@@ -34,7 +80,7 @@ describe('temporal client (native bridge)', () => {
     Object.assign(native, original)
   })
 
-  test('startWorkflow forwards defaults and parses response', async () => {
+  test('startWorkflow forwards defaults and returns workflow handle metadata', async () => {
     const startWorkflowMock = mock(async (_: unknown, payload: Record<string, unknown>) => {
       expect(payload.workflow_id).toBe('workflow-123')
       expect(payload.workflow_type).toBe('ExampleWorkflow')
@@ -42,7 +88,12 @@ describe('temporal client (native bridge)', () => {
       expect(payload.task_queue).toBe('prix')
       expect(payload.identity).toBe('bun-worker-01')
       expect(payload.args).toEqual(['hello', 42])
-      return encodeJson({ runId: 'run-xyz', workflowId: payload.workflow_id, namespace: payload.namespace })
+      return encodeJson({
+        runId: 'run-xyz',
+        workflowId: payload.workflow_id,
+        namespace: payload.namespace,
+        firstExecutionRunId: 'run-root',
+      })
     })
 
     native.startWorkflow = startWorkflowMock
@@ -71,7 +122,18 @@ describe('temporal client (native bridge)', () => {
       args: ['hello', 42],
     })
 
-    expect(result).toEqual({ runId: 'run-xyz', workflowId: 'workflow-123', namespace: 'analytics' })
+    expect(result).toEqual({
+      runId: 'run-xyz',
+      workflowId: 'workflow-123',
+      namespace: 'analytics',
+      firstExecutionRunId: 'run-root',
+      handle: {
+        runId: 'run-xyz',
+        workflowId: 'workflow-123',
+        namespace: 'analytics',
+        firstExecutionRunId: 'run-root',
+      },
+    })
     expect(startWorkflowMock).toHaveBeenCalledTimes(1)
 
     await client.shutdown()
@@ -101,7 +163,7 @@ describe('temporal client (native bridge)', () => {
 
     const { client } = await createTemporalClient({ config })
 
-    await client.startWorkflow({
+    const result = await client.startWorkflow({
       workflowId: 'wf-id',
       workflowType: 'Example',
       retryPolicy: {
@@ -119,6 +181,17 @@ describe('temporal client (native bridge)', () => {
       maximum_attempts: 5,
       backoff_coefficient: 2,
       non_retryable_error_types: ['FatalError'],
+    })
+
+    expect(result).toEqual({
+      runId: 'run-abc',
+      workflowId: 'wf-id',
+      namespace: 'default',
+      handle: {
+        runId: 'run-abc',
+        workflowId: 'wf-id',
+        namespace: 'default',
+      },
     })
 
     await client.shutdown()

@@ -62,15 +62,20 @@ pnpm --filter @proompteng/temporal-bun-sdk test
 import { createTemporalClient, loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 
 const { client } = await createTemporalClient()
-const workflow = await client.workflow.start({
+const start = await client.workflow.start({
   workflowId: 'helloTemporal-001',
   workflowType: 'helloTemporal',
   taskQueue: 'prix',
   args: ['Proompteng'],
 })
-console.log('Workflow execution started', workflow.runId)
+console.log('Workflow execution started', start.runId)
 
-> **Note:** The current Bun-native client supports workflow starts today. Signal, query, and termination APIs are under active development.
+// Persist start.handle for follow-up signal/query calls once they land.
+const handle = start.handle
+
+// Example (pending implementation): await client.workflow.signal(handle, 'complete', { ok: true })
+
+> **Note:** The current Bun-native client supports workflow starts today. Signal, query, and termination APIs are under active development. The start result surfaces `firstExecutionRunId` when Temporal returns it so you can correlate resets or continue-as-new runs.
 ```
 
 Start the bundled worker (after building):
