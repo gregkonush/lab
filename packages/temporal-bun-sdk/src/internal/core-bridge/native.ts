@@ -21,6 +21,13 @@ export interface NativeClient {
 
 const libraryFile = resolveBridgeLibraryPath()
 
+export class NativeBridgeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NativeBridgeError'
+  }
+}
+
 const {
   symbols: {
     temporal_bun_runtime_new,
@@ -30,6 +37,7 @@ const {
     temporal_bun_client_connect_async,
     temporal_bun_client_free,
     temporal_bun_client_describe_namespace_async,
+    temporal_bun_client_update_headers,
     temporal_bun_pending_client_poll,
     temporal_bun_pending_client_consume,
     temporal_bun_pending_client_free,
@@ -68,6 +76,10 @@ const {
   temporal_bun_client_describe_namespace_async: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
+  },
+  temporal_bun_client_update_headers: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.int32_t,
   },
   temporal_bun_pending_client_poll: {
     args: [FFIType.ptr],
@@ -178,11 +190,12 @@ export const native = {
     return notImplemented('Runtime logger installation', 'docs/ffi-surface.md')
   },
 
-  updateClientHeaders(client: NativeClient, _headers: Record<string, string>): never {
-    void client
-    // TODO(codex): Expose metadata mutation via `temporal_bun_client_update_headers` as outlined in
-    // docs/ffi-surface.md (Client exports) to support API key rotation and custom headers.
-    return notImplemented('Client metadata updates', 'docs/ffi-surface.md')
+  updateClientHeaders(client: NativeClient, headers: Record<string, string>): void {
+    const payload = Buffer.from(JSON.stringify(headers ?? {}), 'utf8')
+    const status = Number(temporal_bun_client_update_headers(client.handle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw new NativeBridgeError(readLastError())
+    }
   },
 
   async signalWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {

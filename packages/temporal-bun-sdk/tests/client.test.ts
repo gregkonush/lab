@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import type { TemporalConfig } from '../src/config'
 import { createTemporalClient } from '../src/client'
-import { native } from '../src/internal/core-bridge/native'
+import { NativeBridgeError, native } from '../src/internal/core-bridge/native'
 
 const encodeJson = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
 
@@ -14,6 +14,7 @@ describe('temporal client (native bridge)', () => {
     startWorkflow: native.startWorkflow,
     terminateWorkflow: native.terminateWorkflow,
     describeNamespace: native.describeNamespace,
+    updateClientHeaders: native.updateClientHeaders,
   }
 
   const runtimeHandle = { type: 'runtime', handle: 101 } as const
@@ -26,6 +27,7 @@ describe('temporal client (native bridge)', () => {
     native.runtimeShutdown = mock(() => {})
     native.terminateWorkflow = mock(async () => {})
     native.describeNamespace = mock(async () => new Uint8Array())
+    native.updateClientHeaders = mock(() => {})
   })
 
   afterEach(() => {
@@ -241,5 +243,84 @@ describe('temporal client (native bridge)', () => {
         server_name_override: 'temporal.example.internal',
       },
     })
+  })
+
+  test('updateHeaders normalizes keys and values then forwards to native', async () => {
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker-default',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    await client.updateHeaders({ Authorization: 'Bearer token-123  ', 'X-Custom': '  value ' })
+
+    expect(native.updateClientHeaders).toHaveBeenCalledWith(clientHandle, {
+      authorization: 'Bearer token-123',
+      'x-custom': 'value',
+    })
+
+    await client.shutdown()
+  })
+
+  test('updateHeaders rejects duplicate or empty header keys', async () => {
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker-default',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    await expect(client.updateHeaders({ '': 'value' })).rejects.toThrow('Header keys must be non-empty strings')
+    await expect(client.updateHeaders({ Foo: 'one', foo: 'two' })).rejects.toThrow(
+      "Header key 'foo' is duplicated (case-insensitive match)",
+    )
+
+    await client.shutdown()
+  })
+
+  test('updateHeaders throws after shutdown and forwards native errors', async () => {
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker-default',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    native.updateClientHeaders = mock(() => {
+      throw new NativeBridgeError('native failure')
+    })
+
+    await expect(client.updateHeaders({ authorization: 'Bearer rotate' })).rejects.toThrow('native failure')
+
+    await client.shutdown()
+
+    await expect(client.updateHeaders({ authorization: 'Bearer rotate' })).rejects.toThrow(
+      'Temporal client has already been shut down',
+    )
   })
 })
