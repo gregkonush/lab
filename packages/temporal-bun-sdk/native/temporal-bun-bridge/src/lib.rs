@@ -301,7 +301,9 @@ fn normalize_metadata_headers(
         }
 
         let lower_key = trimmed_key.to_ascii_lowercase();
-        if normalized.contains_key(&lower_key) {
+        if normalized.contains_key(&lower_key)
+            || (lower_key == "authorization" && bearer.is_some())
+        {
             return Err(BridgeError::InvalidMetadata(format!(
                 "duplicate header key '{lower_key}'",
             )));
@@ -317,6 +319,7 @@ fn normalize_metadata_headers(
         if lower_key == "authorization" {
             if let Some(token) = extract_bearer_token(trimmed_value) {
                 bearer = Some(token.to_string());
+                continue;
             }
         }
 
@@ -1336,14 +1339,22 @@ mod tests {
             normalize_metadata_headers(headers).expect("headers normalized");
 
         assert_eq!(
-            normalized.get("authorization"),
-            Some(&"Bearer super-secret".to_string())
-        );
-        assert_eq!(
             normalized.get("x-custom"),
             Some(&"value".to_string())
         );
+        assert!(!normalized.contains_key("authorization"));
         assert_eq!(bearer.as_deref(), Some("super-secret"));
+    }
+
+    #[test]
+    fn normalize_metadata_headers_preserves_non_bearer_authorization() {
+        let headers = HashMap::from([(String::from("Authorization"), String::from("Basic abc"))]);
+
+        let (normalized, bearer) =
+            normalize_metadata_headers(headers).expect("headers normalized");
+
+        assert_eq!(normalized.get("authorization"), Some(&"Basic abc".to_string()));
+        assert_eq!(bearer, None);
     }
 
     #[test]
