@@ -23,6 +23,7 @@ describe('loadConfig', () => {
     expect(config.codebase.baseBranch).toBe('main')
     expect(config.codebase.branchPrefix).toBe('codex/issue-')
     expect(config.codex.triggerLogin).toBe('gregkonush')
+    expect(config.codex.workflowLogin).toBe('github-actions[bot]')
     expect(config.codex.implementationTriggerPhrase).toBe('execute plan')
     expect(config.discord.publicKey).toBe('public-key')
     expect(config.discord.defaultResponse.ephemeral).toBe(true)
@@ -34,6 +35,7 @@ describe('loadConfig', () => {
       CODEX_BASE_BRANCH: 'develop',
       CODEX_BRANCH_PREFIX: 'custom/',
       CODEX_TRIGGER_LOGIN: 'TESTUSER',
+      CODEX_WORKFLOW_LOGIN: 'Automation-Bot',
       CODEX_IMPLEMENTATION_TRIGGER: 'run it',
       GITHUB_ACK_REACTION: 'eyes',
       DISCORD_DEFAULT_EPHEMERAL: 'false',
@@ -43,6 +45,7 @@ describe('loadConfig', () => {
     expect(config.codebase.baseBranch).toBe('develop')
     expect(config.codebase.branchPrefix).toBe('custom/')
     expect(config.codex.triggerLogin).toBe('testuser')
+    expect(config.codex.workflowLogin).toBe('automation-bot')
     expect(config.codex.implementationTriggerPhrase).toBe('run it')
     expect(config.github.ackReaction).toBe('eyes')
     expect(config.discord.defaultResponse.ephemeral).toBe(false)

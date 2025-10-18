@@ -4,7 +4,7 @@ This guide explains how the two-stage Codex automation pipeline works and how to
 
 ## Architecture
 
-1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks` (and mirrors a structured copy to `github.issues.codex.tasks`). When the same user later comments `execute plan` on the issue it publishes an `implementation` message with the metadata Codex needs for the branch/PR handoff. Every delivery also lands on `github.webhook.events` for downstream auditing.
+1. **Froussard** consumes GitHub webhooks. When `gregkonush` opens an issue it publishes a `planning` message to `github.codex.tasks` (and mirrors a structured copy to `github.issues.codex.tasks`). When the planning workflow comments with `<!-- codex:plan -->` on the issue, Froussard now automatically publishes an `implementation` message using that comment as the approved plan. The legacy `execute plan` comment remains as a manual fallback. Every delivery also lands on `github.webhook.events` for downstream auditing.
 2. **Argo Events** (`github-codex` EventSource/Sensor) consumes those Kafka messages. The sensor now fans out to two workflow templates:
    - `github-codex-planning` for planning requests.
    - `github-codex-implementation` for approved plans.
@@ -87,8 +87,9 @@ Codex now mirrors planning and implementation output into a per-run Discord chan
 1. **Create a test issue** in `proompteng/lab` (while logged in as `gregkonush`).
    - Check `argo get @latest -n argo-workflows` to see the planning workflow run via `github-codex-planning`.
    - Confirm the issue received a comment beginning with `<!-- codex:plan -->` that follows the Summary/Steps/Validation/Risks/Handoff Notes template.
-2. **Approve the plan** by replying `execute plan` on the issue (as `gregkonush`).
+2. **Approve the plan** by validating that the planning workflow's comment contains `<!-- codex:plan -->`. Froussard will enqueue implementation automatically once that comment lands.
    - Watch for a new workflow named `github-codex-implementation-*`; it should push a branch ( `codex/issue-<number>-*` ), open a draft PR, and upload `.codex-implementation.log` as an artifact.
+   - If automation fails, reply `execute plan` on the issue (still as `gregkonush`) to trigger the manual fallback.
    - Confirm a single progress comment remains on the issue, anchored by `<!-- codex:progress -->`, with the checklist reflecting the plan and validation state.
    - The issue gains a follow-up comment linking to the PR.
 

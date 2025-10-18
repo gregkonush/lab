@@ -28,6 +28,7 @@ export interface AppConfig {
   }
   codex: {
     triggerLogin: string
+    workflowLogin: string
     implementationTriggerPhrase: string
   }
   discord: {
@@ -71,6 +72,10 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AppConfig => {
     },
     codex: {
       triggerLogin: (env.CODEX_TRIGGER_LOGIN ?? 'gregkonush').toLowerCase(),
+      workflowLogin:
+        typeof env.CODEX_WORKFLOW_LOGIN === 'string' && env.CODEX_WORKFLOW_LOGIN.trim().length > 0
+          ? env.CODEX_WORKFLOW_LOGIN.trim().toLowerCase()
+          : 'github-actions[bot]',
       implementationTriggerPhrase: (env.CODEX_IMPLEMENTATION_TRIGGER ?? 'execute plan').trim(),
     },
     discord: {

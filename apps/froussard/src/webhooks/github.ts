@@ -23,6 +23,7 @@ export interface GithubWebhookDependencies {
 const PROTO_CONTENT_TYPE = 'application/x-protobuf'
 const PROTO_CODEX_TASK_FULL_NAME = 'github.v1.CodexTask'
 const PROTO_CODEX_TASK_SCHEMA = 'github/v1/codex_task.proto'
+const CODEX_PLAN_MARKER = '<!-- codex:plan -->'
 
 const toTimestamp = (value: string): Timestamp => {
   const date = new Date(value)
@@ -203,13 +204,19 @@ export const createGithubWebhookHandler =
       }
 
       if (eventName === 'issue_comment' && actionValue === 'created' && isGithubIssueCommentEvent(parsedPayload)) {
-        const commentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body.trim() : ''
+        const rawCommentBody = typeof parsedPayload.comment?.body === 'string' ? parsedPayload.comment.body : ''
+        const trimmedCommentBody = rawCommentBody.trim()
         const senderLoginValue = parsedPayload.sender?.login
+        const normalizedSender = normalizeLogin(senderLoginValue)
+        const isAuthorizedSender = normalizedSender === config.codexTriggerLogin
+        const isWorkflowSender = normalizedSender === config.codexWorkflowLogin
+        const hasPlanMarker = rawCommentBody.includes(CODEX_PLAN_MARKER)
+        const isManualTrigger = trimmedCommentBody === config.codexImplementationTriggerPhrase
 
-        if (
-          commentBody === config.codexImplementationTriggerPhrase &&
-          normalizeLogin(senderLoginValue) === config.codexTriggerLogin
-        ) {
+        const shouldTriggerImplementation =
+          (isAuthorizedSender && (isManualTrigger || hasPlanMarker)) || (hasPlanMarker && isWorkflowSender)
+
+        if (shouldTriggerImplementation) {
           const issue = parsedPayload.issue
           const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
           const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)
@@ -227,20 +234,27 @@ export const createGithubWebhookHandler =
             let planCommentId: number | undefined
             let planCommentUrl: string | undefined
 
-            const planLookup = await runtime.runPromise(
-              githubService.findLatestPlanComment({
-                repositoryFullName,
-                issueNumber,
-                token: config.github.token,
-                apiBaseUrl: config.github.apiBaseUrl,
-                userAgent: config.github.userAgent,
-              }),
-            )
+            if (hasPlanMarker) {
+              planCommentBody = rawCommentBody
+              planCommentId = typeof parsedPayload.comment?.id === 'number' ? parsedPayload.comment.id : undefined
+              planCommentUrl =
+                typeof parsedPayload.comment?.html_url === 'string' ? parsedPayload.comment.html_url : undefined
+            } else {
+              const planLookup = await runtime.runPromise(
+                githubService.findLatestPlanComment({
+                  repositoryFullName,
+                  issueNumber,
+                  token: config.github.token,
+                  apiBaseUrl: config.github.apiBaseUrl,
+                  userAgent: config.github.userAgent,
+                }),
+              )
 
-            if (planLookup.ok) {
-              planCommentBody = planLookup.comment.body
-              planCommentId = planLookup.comment.id
-              planCommentUrl = planLookup.comment.htmlUrl ?? undefined
+              if (planLookup.ok) {
+                planCommentBody = planLookup.comment.body
+                planCommentId = planLookup.comment.id
+                planCommentUrl = planLookup.comment.htmlUrl ?? undefined
+              }
             }
 
             const prompt = buildCodexPrompt({

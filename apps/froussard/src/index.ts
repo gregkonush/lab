@@ -33,6 +33,7 @@ export const createApp = () => {
     codebase: config.codebase,
     github: config.github,
     codexTriggerLogin: config.codex.triggerLogin,
+    codexWorkflowLogin: config.codex.workflowLogin,
     codexImplementationTriggerPhrase: config.codex.implementationTriggerPhrase,
     topics: config.kafka.topics,
     discord: {
