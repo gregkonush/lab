@@ -37,6 +37,59 @@ describe('core bridge client wrapper', () => {
     }
   })
 
+  test('serializeTlsOptions emits camelCase payload and keeps legacy aliases', () => {
+    const payload = clientTest.serializeTlsOptions({
+      serverRootCACertificate: 'ca-base64',
+      clientCert: 'cert-base64',
+      clientPrivateKey: 'key-base64',
+      serverNameOverride: 'tls.example',
+    })
+
+    expect(payload).toEqual(
+      expect.objectContaining({
+        serverRootCACertificate: 'ca-base64',
+        server_root_ca_cert: 'ca-base64',
+        serverNameOverride: 'tls.example',
+        server_name_override: 'tls.example',
+        clientCertPair: {
+          crt: 'cert-base64',
+          key: 'key-base64',
+        },
+        client_cert: 'cert-base64',
+        client_private_key: 'key-base64',
+      }),
+    )
+  })
+
+  test('serializeTlsOptions handles partial TLS inputs', () => {
+    expect(
+      clientTest.serializeTlsOptions({
+        serverRootCACertificate: 'ca-only',
+        serverNameOverride: 'tls.example',
+        clientCert: 'cert-only',
+      }),
+    ).toEqual({
+      serverRootCACertificate: 'ca-only',
+      server_root_ca_cert: 'ca-only',
+      serverNameOverride: 'tls.example',
+      server_name_override: 'tls.example',
+      clientCert: 'cert-only',
+      client_cert: 'cert-only',
+    })
+
+    expect(
+      clientTest.serializeTlsOptions({
+        serverNameOverride: 'tls.example',
+        clientPrivateKey: 'key-only',
+      }),
+    ).toEqual({
+      serverNameOverride: 'tls.example',
+      server_name_override: 'tls.example',
+      clientPrivateKey: 'key-only',
+      client_private_key: 'key-only',
+    })
+  })
+
   test('describeNamespace proxies native calls and shutdown', async () => {
     const originalCreateRuntime = native.createRuntime
     const originalRuntimeShutdown = native.runtimeShutdown

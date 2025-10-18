@@ -140,6 +140,9 @@ export async function handleCheck(
         `  Payload:    ${describePayload.byteLength} bytes (DescribeNamespace)`,
       ].join('\n'),
     )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Failed to reach Temporal at ${config.address}: ${message}`)
   } finally {
     if (client) {
       nativeBridge.clientShutdown(client)

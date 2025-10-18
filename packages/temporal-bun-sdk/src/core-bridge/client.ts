@@ -96,24 +96,37 @@ const finalizeClient = (client: NativeClient): void => {
   }
 }
 
-const serializeTlsOptions = (tls?: ClientTlsOptions): Record<string, string> | undefined => {
+const serializeTlsOptions = (tls?: ClientTlsOptions): Record<string, unknown> | undefined => {
   if (!tls) return undefined
-  const payload: Record<string, string> = {}
+  const payload: Record<string, unknown> = {}
 
   if (tls.serverRootCACertificate) {
+    payload.serverRootCACertificate = tls.serverRootCACertificate
     payload.server_root_ca_cert = tls.serverRootCACertificate
   }
 
-  if (tls.clientCert) {
-    payload.client_cert = tls.clientCert
+  if (tls.serverNameOverride) {
+    payload.serverNameOverride = tls.serverNameOverride
+    payload.server_name_override = tls.serverNameOverride
   }
 
-  if (tls.clientPrivateKey) {
+  if (tls.clientCert && tls.clientPrivateKey) {
+    payload.clientCertPair = {
+      crt: tls.clientCert,
+      key: tls.clientPrivateKey,
+    }
+    payload.client_cert = tls.clientCert
     payload.client_private_key = tls.clientPrivateKey
   }
 
-  if (tls.serverNameOverride) {
-    payload.server_name_override = tls.serverNameOverride
+  if (tls.clientCert && !tls.clientPrivateKey) {
+    payload.clientCert = tls.clientCert
+    payload.client_cert = tls.clientCert
+  }
+
+  if (!tls.clientCert && tls.clientPrivateKey) {
+    payload.clientPrivateKey = tls.clientPrivateKey
+    payload.client_private_key = tls.clientPrivateKey
   }
 
   return Object.keys(payload).length > 0 ? payload : undefined
