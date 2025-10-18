@@ -33,7 +33,7 @@ fn pool() -> &'static Mutex<Vec<Vec<u8>>> {
     BYTE_ARRAY_POOL.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub fn take(len: usize) -> Vec<u8> {
+pub(crate) fn take(len: usize) -> Vec<u8> {
     if len == 0 {
         return Vec::new();
     }
@@ -63,7 +63,7 @@ pub fn take(len: usize) -> Vec<u8> {
     Vec::with_capacity(len)
 }
 
-pub fn recycle(mut buffer: Vec<u8>) {
+pub(crate) fn recycle(mut buffer: Vec<u8>) {
     if buffer.capacity() == 0 || buffer.capacity() > MAX_BUFFER_CAPACITY {
         return;
     }
@@ -79,12 +79,12 @@ pub fn recycle(mut buffer: Vec<u8>) {
 }
 
 #[cfg(test)]
-pub fn clear_pool() {
+pub(crate) fn clear_pool() {
     pool().lock().unwrap().clear();
 }
 
 #[cfg(test)]
-pub fn pool_len() -> usize {
+pub(crate) fn pool_len() -> usize {
     pool().lock().unwrap().len()
 }
 
