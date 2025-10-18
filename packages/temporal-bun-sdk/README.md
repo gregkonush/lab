@@ -86,6 +86,12 @@ bun run dev          # runs the worker locally
 bun run docker:build # builds Docker image via Bun script
 ```
 
+Verify connectivity to your Temporal cluster using the Bun-native bridge:
+
+```bash
+temporal-bun check --namespace default
+```
+
 To build an image from the current directory without scaffolding:
 
 ```bash

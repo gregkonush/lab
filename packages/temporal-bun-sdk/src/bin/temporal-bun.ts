@@ -4,12 +4,16 @@ import { mkdirSync, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { cwd, exit } from 'node:process'
+import { loadTemporalConfig } from '../config.ts'
+import { createRuntime } from '../core-bridge/runtime.ts'
+import { createClient } from '../core-bridge/client.ts'
 
 type CommandHandler = (args: string[], flags: Record<string, string | boolean>) => Promise<void>
 
 const commands: Record<string, CommandHandler> = {
   init: handleInit,
   'docker-build': handleDockerBuild,
+  check: handleCheck,
   help: async () => {
     printHelp()
   },
@@ -118,6 +122,7 @@ function printHelp() {
 Commands:
   init [directory]        Scaffold a new Temporal worker project
   docker-build            Build a Docker image for the current project
+  check                   Verify Temporal connectivity using the Bun bridge
   help                    Show this help message
 
 Options:
@@ -125,6 +130,7 @@ Options:
   --tag <name>            Image tag for docker-build (default: temporal-worker:latest)
   --context <path>        Build context for docker-build (default: .)
   --file <path>           Dockerfile path for docker-build (default: ./Dockerfile)
+  --namespace <name>      Namespace to verify for the check command
 `)
 }
 
@@ -353,6 +359,36 @@ bun run docker:build --tag ${name}:latest
 `,
     },
   ]
+}
+
+async function handleCheck(_: string[], flags: Record<string, string | boolean>) {
+  const config = await loadTemporalConfig()
+  const namespace = (flags.namespace as string) ?? config.namespace
+
+  const runtime = createRuntime()
+  try {
+    const client = await createClient(runtime, {
+      address: config.address,
+      namespace,
+      identity: config.workerIdentity,
+      clientName: 'temporal-bun-cli',
+      clientVersion: process.env.npm_package_version ?? '0.0.0',
+    })
+
+    try {
+      const response = await client.describeNamespace(namespace)
+      console.log(
+        `Connected to Temporal namespace "${namespace}" at ${config.address} (response ${response.byteLength} bytes).`,
+      )
+    } finally {
+      await client.shutdown()
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Failed to reach Temporal at ${config.address}: ${message}`)
+  } finally {
+    await runtime.shutdown()
+  }
 }
 
 if (import.meta.main) {
