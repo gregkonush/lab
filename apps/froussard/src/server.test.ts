@@ -30,6 +30,7 @@ vi.mock('@/effect/config', () => {
     },
     codex: {
       triggerLogin: 'gregkonush',
+      workflowLogin: 'github-actions[bot]',
       implementationTriggerPhrase: 'execute plan',
     },
     discord: {

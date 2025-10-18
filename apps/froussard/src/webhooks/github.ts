@@ -209,10 +209,14 @@ export const createGithubWebhookHandler =
         const senderLoginValue = parsedPayload.sender?.login
         const normalizedSender = normalizeLogin(senderLoginValue)
         const isAuthorizedSender = normalizedSender === config.codexTriggerLogin
+        const isWorkflowSender = normalizedSender === config.codexWorkflowLogin
         const hasPlanMarker = rawCommentBody.includes(CODEX_PLAN_MARKER)
         const isManualTrigger = trimmedCommentBody === config.codexImplementationTriggerPhrase
 
-        if (isAuthorizedSender && (isManualTrigger || hasPlanMarker)) {
+        const shouldTriggerImplementation =
+          (isAuthorizedSender && (isManualTrigger || hasPlanMarker)) || (hasPlanMarker && isWorkflowSender)
+
+        if (shouldTriggerImplementation) {
           const issue = parsedPayload.issue
           const issueRepository = selectReactionRepository(issue, parsedPayload.repository)
           const repositoryFullName = deriveRepositoryFullName(issueRepository, issue?.repository_url)

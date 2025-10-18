@@ -12,6 +12,7 @@ export interface WebhookConfig {
     userAgent: string
   }
   codexTriggerLogin: string
+  codexWorkflowLogin: string
   codexImplementationTriggerPhrase: string
   topics: {
     raw: string

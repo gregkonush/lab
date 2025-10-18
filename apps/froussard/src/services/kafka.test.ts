@@ -53,6 +53,7 @@ describe('KafkaProducerLayer', () => {
     },
     codex: {
       triggerLogin: 'user',
+      workflowLogin: 'github-actions[bot]',
       implementationTriggerPhrase: 'execute plan',
     },
     discord: {

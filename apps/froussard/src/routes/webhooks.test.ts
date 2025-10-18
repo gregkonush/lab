@@ -117,6 +117,7 @@ describe('createWebhookHandler', () => {
       userAgent: 'froussard',
     },
     codexTriggerLogin: 'user',
+    codexWorkflowLogin: 'github-actions[bot]',
     codexImplementationTriggerPhrase: 'execute plan',
     topics: {
       raw: 'raw-topic',
@@ -298,7 +299,7 @@ describe('createWebhookHandler', () => {
         html_url: 'https://issue',
       },
       repository: { default_branch: 'main' },
-      sender: { login: 'USER' },
+      sender: { login: 'github-actions[bot]' },
       comment: {
         id: 42,
         body: '## Plan\n\n- Do something\n\n<!-- codex:plan -->',
