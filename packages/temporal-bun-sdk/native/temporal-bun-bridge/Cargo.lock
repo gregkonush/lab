@@ -2116,6 +2116,8 @@ dependencies = [
  "temporal-sdk-core-protos",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "tracing-core",
  "url",
  "uuid",
 ]

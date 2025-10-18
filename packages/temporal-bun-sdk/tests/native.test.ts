@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { native } from '../src/internal/core-bridge/native.ts'
+import { native, type NativeLogRecord } from '../src/internal/core-bridge/native.ts'
 
 const hasLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
@@ -43,6 +43,29 @@ describe('native bridge', () => {
         }),
       ).rejects.toThrow()
     } finally {
+      native.runtimeShutdown(runtime)
+    }
+  })
+
+  test('installLogger forwards native logs', () => {
+    const runtime = native.createRuntime({})
+    const logs: NativeLogRecord[] = []
+    const teardown = native.installLogger(runtime, (record) => {
+      logs.push(record)
+    })
+
+    try {
+      native.emitTestLog(runtime, 3, 'hello-from-native')
+      expect(logs).toHaveLength(1)
+      const [record] = logs
+      expect(record.level).toBe(3)
+      expect(record.levelName).toBe('warn')
+      expect(typeof record.target).toBe('string')
+      expect(typeof record.message).toBe('string')
+      expect(record.fields).toBeDefined()
+      expect(Array.isArray(record.spanContexts)).toBe(true)
+    } finally {
+      teardown()
       native.runtimeShutdown(runtime)
     }
   })

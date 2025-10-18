@@ -39,7 +39,7 @@ Current progress snapshot:
 | Runtime | `temporal_bun_runtime_new(options_ptr, len)` | Create `CoreRuntime` with telemetry/logging config | `native.createRuntime` (extend options) | ✅ (options ignored today) |
 | Runtime | `temporal_bun_runtime_free(runtime_ptr)` | Release runtime | `native.runtimeShutdown` | ✅ |
 | Runtime | `temporal_bun_runtime_update_telemetry(runtime_ptr, options_ptr, len)` | Apply telemetry exporters (Prom, OTLP) | `coreBridge.configureTelemetry` | ⬜️ TODO |
-| Runtime | `temporal_bun_runtime_set_logger(runtime_ptr, callback_ptr)` | Forward core logs into Bun | `coreBridge.installLogger` | ⬜️ TODO |
+| Runtime | `temporal_bun_runtime_set_logger(runtime_ptr, callback_ptr)` | Forward core logs into Bun | `coreBridge.installLogger` | ✅ Implemented |
 | Client | `temporal_bun_client_connect_async(runtime_ptr, config_ptr, len)` | Create gRPC retry client + namespace | `native.createClient` | ✅ (async pending handle) |
 | Client | `temporal_bun_client_free(client_ptr)` | Dispose client | `native.clientShutdown` | ✅ |
 | Client | `temporal_bun_client_describe_namespace_async(client_ptr, payload_ptr, len)` | Describe namespace via async pending handle | `native.describeNamespace` | ✅ (new) |

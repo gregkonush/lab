@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::mpsc::channel;
-use std::sync::Arc;
+use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::str;
+use std::sync::{mpsc::channel, Arc, Condvar, Mutex};
 use std::thread;
 
 use base64::{engine::general_purpose, Engine as _};
@@ -12,8 +14,8 @@ use temporal_client::{
     tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace,
     RetryClient, TemporalServiceClient, TlsConfig, WorkflowService,
 };
-use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
-use temporal_sdk_core_api::telemetry::TelemetryOptions;
+use temporal_sdk_core::{telemetry::construct_filter_string, CoreRuntime, TokioRuntimeBuilder};
+use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer, Logger, TelemetryOptionsBuilder};
 use temporal_sdk_core_protos::temporal::api::common::v1::{
     Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution, WorkflowType,
 };
@@ -23,6 +25,8 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     StartWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
 };
 use thiserror::Error;
+use tracing::Level as TracingLevel;
+use tracing_core::Level as TracingCoreLevel;
 use url::Url;
 use uuid::Uuid;
 
@@ -33,8 +37,228 @@ mod pending;
 type PendingClientHandle = pending::PendingResult<ClientHandle>;
 
 #[repr(C)]
+struct BunLogSlice {
+    data: *const u8,
+    len: usize,
+}
+
+impl BunLogSlice {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            data: bytes.as_ptr(),
+            len: bytes.len(),
+        }
+    }
+}
+
+#[repr(C)]
+struct BunLogRecord {
+    level: i32,
+    timestamp_ms: u64,
+    target: BunLogSlice,
+    message: BunLogSlice,
+    fields_json: BunLogSlice,
+    spans_json: BunLogSlice,
+}
+
+#[repr(C)]
+struct OwnedBunLogRecord {
+    record: BunLogRecord,
+    target: Vec<u8>,
+    message: Vec<u8>,
+    fields_json: Vec<u8>,
+    spans_json: Vec<u8>,
+}
+
+impl OwnedBunLogRecord {
+    fn from_core_log(log: CoreLog) -> Self {
+        let CoreLog {
+            target,
+            message,
+            timestamp,
+            level,
+            fields,
+            span_contexts,
+        } = log;
+
+        let target = target.into_bytes();
+        let message = message.into_bytes();
+        let fields_json = serde_json::to_vec(&fields).unwrap_or_else(|_| b"{}".to_vec());
+        let spans_json = serde_json::to_vec(&span_contexts).unwrap_or_else(|_| b"[]".to_vec());
+
+        let record = BunLogRecord {
+            level: BunLogLevel::from(level) as i32,
+            timestamp_ms: timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            target: BunLogSlice::from_bytes(&target),
+            message: BunLogSlice::from_bytes(&message),
+            fields_json: BunLogSlice::from_bytes(&fields_json),
+            spans_json: BunLogSlice::from_bytes(&spans_json),
+        };
+
+        Self {
+            record,
+            target,
+            message,
+            fields_json,
+            spans_json,
+        }
+    }
+
+    fn record_ptr(&self) -> *const BunLogRecord {
+        &self.record as *const BunLogRecord
+    }
+}
+
+type LoggerCallback = unsafe extern "C" fn(*const BunLogRecord);
+
+#[derive(Default)]
+struct LoggerState {
+    inner: Mutex<LoggerStateInner>,
+    drain: Condvar,
+}
+
+#[derive(Default)]
+struct LoggerStateInner {
+    callback: Option<LoggerCallback>,
+    in_flight: usize,
+}
+
+impl LoggerState {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(LoggerStateInner::default()),
+            drain: Condvar::new(),
+        }
+    }
+
+    fn set_callback(&self, callback: Option<LoggerCallback>) {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        guard.callback = callback;
+    }
+
+    fn checkout_callback(&self) -> Option<LoggerCallback> {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        match guard.callback {
+            Some(callback) => {
+                guard.in_flight += 1;
+                Some(callback)
+            }
+            None => None,
+        }
+    }
+
+    fn complete_dispatch(&self) {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        if guard.in_flight == 0 {
+            return;
+        }
+        guard.in_flight -= 1;
+        if guard.in_flight == 0 {
+            self.drain.notify_all();
+        }
+    }
+
+    fn clear(&self) {
+        self.set_callback(None);
+    }
+
+    fn clear_and_wait(&self) {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        guard.callback = None;
+        while guard.in_flight != 0 {
+            guard = self.drain.wait(guard).expect("logger drain wait");
+        }
+    }
+}
+
+#[repr(i32)]
+enum BunLogLevel {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+}
+
+impl From<TracingCoreLevel> for BunLogLevel {
+    fn from(level: TracingCoreLevel) -> Self {
+        match level {
+            TracingCoreLevel::TRACE => BunLogLevel::Trace,
+            TracingCoreLevel::DEBUG => BunLogLevel::Debug,
+            TracingCoreLevel::INFO => BunLogLevel::Info,
+            TracingCoreLevel::WARN => BunLogLevel::Warn,
+            TracingCoreLevel::ERROR => BunLogLevel::Error,
+        }
+    }
+}
+
+struct BunLogConsumer {
+    state: Arc<LoggerState>,
+}
+
+impl BunLogConsumer {
+    fn new(state: Arc<LoggerState>) -> Self {
+        Self { state }
+    }
+
+    fn dispatch(&self, log: CoreLog) {
+        let callback = match self.state.checkout_callback() {
+            Some(callback) => callback,
+            None => return,
+        };
+
+        let owned_record = Box::new(OwnedBunLogRecord::from_core_log(log));
+        let record_ptr = owned_record.record_ptr();
+        let owned_ptr = Box::into_raw(owned_record);
+
+        let result = catch_unwind(AssertUnwindSafe(|| unsafe {
+            callback(record_ptr);
+        }));
+
+        self.state.complete_dispatch();
+
+        if result.is_err() {
+            unsafe {
+                drop(Box::from_raw(owned_ptr));
+            }
+            eprintln!("temporal-bun-bridge: logger callback panicked; disabling logger forwarding");
+            self.state.clear();
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_log_record_free(record_ptr: *const BunLogRecord) {
+    if record_ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(record_ptr as *mut OwnedBunLogRecord));
+    }
+}
+
+impl CoreLogConsumer for BunLogConsumer {
+    fn on_log(&self, log: CoreLog) {
+        self.dispatch(log);
+    }
+}
+
+impl fmt::Debug for BunLogConsumer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<bun log consumer>")
+    }
+}
+
+#[repr(C)]
 pub struct RuntimeHandle {
     runtime: Arc<CoreRuntime>,
+    logger_state: Arc<LoggerState>,
 }
 
 #[repr(C)]
@@ -186,10 +410,28 @@ pub extern "C" fn temporal_bun_runtime_new(
     _options_ptr: *const u8,
     _options_len: usize,
 ) -> *mut c_void {
-    match CoreRuntime::new(TelemetryOptions::default(), TokioRuntimeBuilder::default()) {
+    let logger_state = Arc::new(LoggerState::new());
+    let consumer: Arc<dyn CoreLogConsumer> = Arc::new(BunLogConsumer::new(logger_state.clone()));
+
+    let telemetry_options = match TelemetryOptionsBuilder::default()
+        .logging(Logger::Push {
+            filter: construct_filter_string(TracingLevel::INFO, TracingLevel::WARN),
+            consumer,
+        })
+        .build()
+    {
+        Ok(options) => options,
+        Err(err) => {
+            error::set_error(format!("failed to configure Temporal telemetry: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+
+    match CoreRuntime::new(telemetry_options, TokioRuntimeBuilder::default()) {
         Ok(runtime) => {
             let handle = RuntimeHandle {
                 runtime: Arc::new(runtime),
+                logger_state,
             };
             Box::into_raw(Box::new(handle)) as *mut c_void
         }
@@ -207,7 +449,8 @@ pub extern "C" fn temporal_bun_runtime_free(handle: *mut c_void) {
     }
 
     unsafe {
-        let _ = Box::from_raw(handle as *mut RuntimeHandle);
+        let handle = Box::from_raw(handle as *mut RuntimeHandle);
+        handle.logger_state.clear_and_wait();
     }
 }
 
@@ -228,9 +471,83 @@ pub extern "C" fn temporal_bun_runtime_set_logger(
     _runtime_ptr: *mut c_void,
     _callback_ptr: *mut c_void,
 ) -> i32 {
-    // TODO(codex): Wire native Core logging into Bun callbacks per docs/ffi-surface.md.
-    error::set_error("temporal_bun_runtime_set_logger is not implemented yet".to_string());
-    -1
+    let handle = match runtime_handle_from_ptr(_runtime_ptr) {
+        Ok(handle) => handle,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    if _callback_ptr.is_null() {
+        handle.logger_state.clear_and_wait();
+        return 0;
+    }
+
+    let callback: LoggerCallback = unsafe { std::mem::transmute(_callback_ptr) };
+    handle.logger_state.set_callback(Some(callback));
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_runtime_emit_test_log(
+    runtime_ptr: *mut c_void,
+    level: i32,
+    message_ptr: *const u8,
+    message_len: usize,
+) -> i32 {
+    let _ = match runtime_handle_from_ptr(runtime_ptr) {
+        Ok(handle) => handle,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    let message = if message_ptr.is_null() || message_len == 0 {
+        "temporal-bun test log".to_string()
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(message_ptr, message_len) };
+        match str::from_utf8(bytes) {
+            Ok(value) => value.to_string(),
+            Err(_) => {
+                error::set_error("log message must be valid UTF-8".to_string());
+                return -1;
+            }
+        }
+    };
+
+    let level = match level {
+        0 => TracingLevel::TRACE,
+        1 => TracingLevel::DEBUG,
+        2 => TracingLevel::INFO,
+        3 => TracingLevel::WARN,
+        4 => TracingLevel::ERROR,
+        _ => {
+            error::set_error("invalid log level".to_string());
+            return -1;
+        }
+    };
+
+    match level {
+        TracingLevel::TRACE => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::TRACE, payload = %message, "{}", message)
+        }
+        TracingLevel::DEBUG => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::DEBUG, payload = %message, "{}", message)
+        }
+        TracingLevel::INFO => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::INFO, payload = %message, "{}", message)
+        }
+        TracingLevel::WARN => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::WARN, payload = %message, "{}", message)
+        }
+        TracingLevel::ERROR => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::ERROR, payload = %message, "{}", message)
+        }
+    };
+
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -244,12 +561,17 @@ pub extern "C" fn temporal_bun_error_free(ptr: *mut u8, len: usize) {
 }
 
 fn runtime_from_ptr(ptr: *mut c_void) -> Result<Arc<CoreRuntime>, BridgeError> {
+    let handle = runtime_handle_from_ptr(ptr)?;
+    Ok(handle.runtime.clone())
+}
+
+fn runtime_handle_from_ptr(ptr: *mut c_void) -> Result<&'static RuntimeHandle, BridgeError> {
     if ptr.is_null() {
         return Err(BridgeError::InvalidRuntimeHandle);
     }
 
     let runtime = unsafe { &*(ptr as *mut RuntimeHandle) };
-    Ok(runtime.runtime.clone())
+    Ok(runtime)
 }
 
 fn config_from_raw(ptr: *const u8, len: usize) -> Result<ClientConfig, BridgeError> {
