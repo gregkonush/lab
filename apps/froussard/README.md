@@ -67,7 +67,7 @@ The local runtime exposes:
 
 ### Local Deploy Script
 
-- Run `apps/froussard/scripts/deploy.ts` directly (the shebang invokes Bun) to build, push, and deploy with `pnpm --filter froussard run deploy`. The helper derives `FROUSSARD_VERSION` and `FROUSSARD_COMMIT` from `git describe --tags --always` and `git rev-parse HEAD`, but you can override them by exporting the environment variables first.
+- Run `bun apps/froussard/scripts/deploy.ts` to build, push, and deploy. The helper derives `FROUSSARD_VERSION` and `FROUSSARD_COMMIT` from `git describe --tags --always` / `git rev-parse HEAD` and injects them before shelling out to `pnpm --filter froussard run deploy`. If you invoke the pnpm script directly, make sure those two environment variables are set first—otherwise the rollout will fail.
 - The script uses Bun Shell’s `$` tagged template literal to execute commands, which safely escapes interpolated values, and `$.env()` to scope the derived environment variables to the deploy invocation.
 
 ## Verification Checklist
@@ -86,7 +86,7 @@ and your GitHub CLI token into the image before pushing it to the shared
 registry.
 
 ```bash
-apps/froussard/src/codex/cli/build-codex-image.ts
+bun apps/froussard/src/codex/cli/build-codex-image.ts
 ```
 
 - Override `IMAGE_TAG` to publish a different tag or registry.

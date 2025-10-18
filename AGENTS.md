@@ -14,7 +14,10 @@
 - Build and smoke test via `pnpm run build:<app>` then `pnpm run start:<app>`.
 - Format and lint using `pnpm run format` and `pnpm run lint:<app>`.
 - Run backend workflows through `go test ./...` and `go build ./...`.
-- Infra flow: `pnpm run tf:plan` (review), `pnpm run tf:apply` (approved), and `pnpm run ansible` for playbooks.
+- Infra flow: `pnpm run tf:plan` (review), `pnpm run tf:apply` (approved), and `pnpm run ansible` for playbooks. Use the deployment helper scripts when touching automation services:
+  - `bun apps/froussard/src/codex/cli/build-codex-image.ts` to rebuild/push the Codex runner image.
+  - `bun apps/froussard/scripts/deploy.ts` to build and roll the Froussard Knative service (sets `FROUSSARD_VERSION/FROUSSARD_COMMIT` automatically).
+  - `bun packages/scripts/src/facteur/deploy-service.ts` to build, push, and redeploy Facteur (applies the kustomize overlay and `kn service apply`).
 
 ### Tooling Notes
 

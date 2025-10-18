@@ -30,7 +30,8 @@ jobs:
       - name: Set up Buf
         uses: bufbuild/buf-setup-action@v1
         with:
-          buf-version: 1.47.2
+          version: 1.50.0
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Buf format check
         run: buf format --diff
