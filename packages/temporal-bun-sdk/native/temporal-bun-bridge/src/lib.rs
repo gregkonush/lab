@@ -157,7 +157,7 @@ struct TerminateWorkflowDefaults<'a> {
     identity: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ClientCertPairPayload {
     #[serde(alias = "client_cert")]
     crt: String,
@@ -935,39 +935,13 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
 
     let mut tls = TlsConfig::default();
 
-<<<<<<< HEAD
-    if let Some(server_root_ca) = payload.server_root_ca_cert {
-        let bytes = decode_base64(&server_root_ca).map_err(|err| {
-            BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}"))
-=======
     if let Some(server_root_ca) = server_root_ca_cert {
         let bytes = decode_base64(&server_root_ca).map_err(|err| {
             BridgeError::InvalidTlsConfig(format!("invalid serverRootCACertificate/server_root_ca_cert: {err}"))
->>>>>>> 66765cfe (feat: add temporal bun check command)
         })?;
         tls.server_root_ca_cert = Some(bytes);
     }
 
-<<<<<<< HEAD
-    match (payload.client_cert, payload.client_private_key) {
-        (Some(cert_b64), Some(key_b64)) => {
-            let cert = decode_base64(&cert_b64).map_err(|err| {
-                BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}"))
-            })?;
-            let key = decode_base64(&key_b64).map_err(|err| {
-                BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}"))
-            })?;
-            tls.client_tls_config = Some(ClientTlsConfig {
-                client_cert: cert,
-                client_private_key: key,
-            });
-        }
-        (None, None) => {}
-        _ => {
-            return Err(BridgeError::InvalidTlsConfig(
-                "client_cert and client_private_key must both be provided".to_string(),
-            ));
-=======
     if let Some(pair) = client_cert_pair {
         let cert = decode_base64(&pair.crt).map_err(|err| {
             BridgeError::InvalidTlsConfig(format!("invalid clientCertPair.crt: {err}"))
@@ -1000,7 +974,6 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
                         .to_string(),
                 ));
             }
->>>>>>> 66765cfe (feat: add temporal bun check command)
         }
     }
 
@@ -1067,6 +1040,7 @@ mod tests {
             client_cert: Some(general_purpose::STANDARD.encode(b"CERT")),
             client_private_key: Some(general_purpose::STANDARD.encode(b"KEY")),
             server_name_override: Some("server.test".to_string()),
+            client_cert_pair: None,
         };
 
         let tls = tls_config_from_payload(payload).expect("parsed tls config");
@@ -1084,6 +1058,7 @@ mod tests {
             client_cert: Some(general_purpose::STANDARD.encode(b"CERT")),
             client_private_key: None,
             server_name_override: None,
+            client_cert_pair: None,
         };
 
         let err = tls_config_from_payload(payload).unwrap_err();
