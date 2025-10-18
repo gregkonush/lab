@@ -106,8 +106,9 @@ export async function handleCheck(
   const namespaceArg = args[0]?.trim()
   const namespace = namespaceFlag || namespaceArg || config.namespace
 
-  const useTls = Boolean(config.tls) && !config.allowInsecureTls
-  const address = formatTemporalAddress(config.address, useTls)
+  const hasProtocol = /^[a-z]+:\/\//i.test(config.address)
+  const useTls = !config.allowInsecureTls
+  const address = hasProtocol ? config.address : formatTemporalAddress(config.address, useTls)
 
   const runtime = nativeBridge.createRuntime({})
   let client: NativeClient | undefined

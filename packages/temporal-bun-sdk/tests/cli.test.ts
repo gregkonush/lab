@@ -124,6 +124,52 @@ describe('temporal-bun CLI utilities', () => {
     expect(log.mock.calls[0][0]).toContain('Temporal connection successful.')
   })
 
+  it('handleCheck defaults to HTTPS when TLS is required but no protocol is provided', async () => {
+    const runtimeHandle = { type: 'runtime' as const, handle: 303 }
+    const clientHandle = { type: 'client' as const, handle: 404 }
+
+    const loadConfig = mock(
+      async (): Promise<TemporalConfig> => ({
+        host: 'foo.tmprl.cloud',
+        port: 7233,
+        address: 'foo.tmprl.cloud:7233',
+        namespace: 'production',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: undefined,
+        allowInsecureTls: false,
+        workerIdentity: 'temporal-bun-worker-host-2',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }),
+    )
+
+    const nativeBridge = {
+      createRuntime: mock(() => runtimeHandle),
+      runtimeShutdown: mock(() => {}),
+      createClient: mock(async () => clientHandle),
+      clientShutdown: mock(() => {}),
+      describeNamespace: mock(async () => new Uint8Array([4, 5, 6])),
+    }
+
+    await handleCheck(
+      [],
+      {},
+      {
+        loadConfig,
+        nativeBridge: nativeBridge as unknown as NativeBridge,
+      },
+    )
+
+    expect(nativeBridge.createClient).toHaveBeenCalledWith(
+      runtimeHandle,
+      expect.objectContaining({
+        address: 'https://foo.tmprl.cloud:7233',
+        allowInsecureTls: false,
+        namespace: 'production',
+      }),
+    )
+  })
+
   it('handleCheck falls back to HTTP when allowInsecureTls is true', async () => {
     const runtimeHandle = { type: 'runtime' as const, handle: 101 }
     const clientHandle = { type: 'client' as const, handle: 202 }
