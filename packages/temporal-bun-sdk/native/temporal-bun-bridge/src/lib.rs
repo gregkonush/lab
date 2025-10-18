@@ -660,8 +660,12 @@ pub extern "C" fn temporal_bun_byte_array_new(
     if ptr.is_null() || len == 0 {
         return byte_array::ByteArray::empty();
     }
-    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-    byte_array::ByteArray::from_vec(slice.to_vec())
+    let mut buffer = byte_array::take(len);
+    unsafe {
+        std::ptr::copy_nonoverlapping(ptr, buffer.as_mut_ptr(), len);
+        buffer.set_len(len);
+    }
+    byte_array::ByteArray::from_vec(buffer)
 }
 
 #[unsafe(no_mangle)]
@@ -671,9 +675,13 @@ pub extern "C" fn temporal_bun_byte_array_free(ptr: *mut byte_array::ByteArray) 
     }
 
     unsafe {
-        let ba = Box::from_raw(ptr);
+        let mut ba = Box::from_raw(ptr);
         if !ba.ptr.is_null() && ba.cap > 0 {
-            let _ = Vec::from_raw_parts(ba.ptr, ba.len, ba.cap);
+            let buffer = Vec::from_raw_parts(ba.ptr, ba.len, ba.cap);
+            byte_array::recycle(buffer);
+            ba.ptr = std::ptr::null_mut();
+            ba.len = 0;
+            ba.cap = 0;
         }
     }
 }
@@ -1177,6 +1185,58 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn byte_array_new_round_trips_large_payload() {
+        byte_array::clear_pool();
+
+        let len = 8 * 1024 * 1024;
+        let mut payload = vec![0u8; len];
+        for (idx, byte) in payload.iter_mut().enumerate() {
+            *byte = (idx % 251) as u8;
+        }
+
+        let array_ptr = unsafe { temporal_bun_byte_array_new(payload.as_ptr(), payload.len()) };
+        assert!(!array_ptr.is_null());
+
+        unsafe {
+            let array = &*array_ptr;
+            assert_eq!(array.len, payload.len());
+            let slice = std::slice::from_raw_parts(array.ptr, array.len);
+            assert_eq!(slice, payload.as_slice());
+        }
+
+        unsafe { temporal_bun_byte_array_free(array_ptr) };
+        assert_eq!(byte_array::pool_len(), 1);
+    }
+
+    #[test]
+    fn byte_array_new_reuses_pooled_buffers() {
+        byte_array::clear_pool();
+        assert_eq!(byte_array::pool_len(), 0);
+
+        let payload_a = vec![1u8; 1024];
+        let array_a = unsafe { temporal_bun_byte_array_new(payload_a.as_ptr(), payload_a.len()) };
+        let (ptr_a, cap_a) = unsafe {
+            let array = &*array_a;
+            (array.ptr, array.cap)
+        };
+        unsafe { temporal_bun_byte_array_free(array_a) };
+        assert_eq!(byte_array::pool_len(), 1);
+
+        let payload_b = vec![2u8; payload_a.len()];
+        let array_b = unsafe { temporal_bun_byte_array_new(payload_b.as_ptr(), payload_b.len()) };
+        let (ptr_b, cap_b) = unsafe {
+            let array = &*array_b;
+            (array.ptr, array.cap)
+        };
+        assert_eq!(byte_array::pool_len(), 0);
+        assert_eq!(ptr_a, ptr_b);
+        assert_eq!(cap_a, cap_b);
+
+        unsafe { temporal_bun_byte_array_free(array_b) };
+        assert_eq!(byte_array::pool_len(), 1);
+    }
 
     #[test]
     fn config_from_raw_parses_defaults() {

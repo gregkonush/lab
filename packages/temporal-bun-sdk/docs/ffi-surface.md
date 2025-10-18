@@ -99,6 +99,8 @@ Current progress snapshot:
 
 2. **Payload bytes**  
    For responses or streaming items, return `ByteArray` pointers. The TS side converts them into `ArrayBuffer` -> `Buffer` -> strongly typed objects.
+   - `temporal_bun_byte_array_new(ptr, len)` copies the payload into a Rust-owned buffer sourced from a small reuse pool (16 entries, capped at 32&nbsp;MiB each). Keep the Bun-side buffer alive for the duration of the call; no additional alignment beyond byte-addressable memory is required.
+   - `temporal_bun_byte_array_free(array_ptr)` returns the buffer to the pool. Call exactly once per pointer to avoid leaks or double frees.
 
 3. **TLS / Metadata**  
    Extend `ClientConfig` to include TLS PEM strings (base64) or file paths resolved in TS. Rust side configures `ClientOptionsBuilder` accordingly.
