@@ -44,6 +44,13 @@ void *temporal_bun_client_describe_namespace_async(void *client, void *payload, 
   return (void *)0x3;
 }
 
+int32_t temporal_bun_client_update_headers(void *client, void *payload, uint64_t len) {
+  (void)client;
+  (void)payload;
+  (void)len;
+  return 0;
+}
+
 int32_t temporal_bun_pending_client_poll(void *handle) {
   (void)handle;
   return -1;
@@ -81,4 +88,11 @@ void *temporal_bun_client_start_workflow(void *client, void *payload, uint64_t l
   (void)payload;
   (void)len;
   return NULL;
+}
+
+int32_t temporal_bun_client_terminate_workflow(void *client, void *payload, uint64_t len) {
+  (void)client;
+  (void)payload;
+  (void)len;
+  return 0;
 }
