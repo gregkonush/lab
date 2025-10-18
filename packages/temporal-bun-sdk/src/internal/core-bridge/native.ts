@@ -47,6 +47,7 @@ const {
     temporal_bun_byte_array_free,
     temporal_bun_client_start_workflow,
     temporal_bun_client_terminate_workflow,
+    temporal_bun_client_signal_with_start,
   },
 } = dlopen(libraryFile, {
   temporal_bun_runtime_new: {
@@ -116,6 +117,10 @@ const {
   temporal_bun_client_terminate_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.int32_t,
+  },
+  temporal_bun_client_signal_with_start: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
   },
 })
 
@@ -230,12 +235,13 @@ export const native = {
     return Promise.reject(buildNotImplementedError('Workflow cancel bridge', 'docs/ffi-surface.md'))
   },
 
-  async signalWithStart(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Implement signal-with-start via `temporal_bun_client_signal_with_start` following the
-    // parity checklist in docs/ffi-surface.md and docs/client-runtime.md.
-    return Promise.reject(buildNotImplementedError('Signal-with-start bridge', 'docs/ffi-surface.md'))
+  async signalWithStart(client: NativeClient, request: Record<string, unknown>): Promise<Uint8Array> {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const arrayPtr = Number(temporal_bun_client_signal_with_start(client.handle, ptr(payload), payload.byteLength))
+    if (!arrayPtr) {
+      throw new Error(readLastError())
+    }
+    return readByteArray(arrayPtr)
   },
 }
 

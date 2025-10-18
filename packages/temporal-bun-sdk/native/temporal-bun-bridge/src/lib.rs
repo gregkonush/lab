@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::mem::take;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::thread;
@@ -20,7 +21,7 @@ use temporal_sdk_core_protos::temporal::api::common::v1::{
 use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    StartWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
+    SignalWithStartWorkflowExecutionRequest, StartWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
 };
 use thiserror::Error;
 use url::Url;
@@ -107,6 +108,15 @@ struct StartWorkflowRequestPayload {
     workflow_task_timeout_ms: Option<u64>,
     #[serde(default)]
     retry_policy: Option<RetryPolicyPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SignalWithStartRequestPayload {
+    #[serde(flatten)]
+    start: StartWorkflowRequestPayload,
+    signal_name: String,
+    #[serde(default)]
+    signal_args: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -813,13 +823,63 @@ pub extern "C" fn temporal_bun_client_cancel_workflow(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_signal_with_start(
-    _client_ptr: *mut c_void,
-    _payload_ptr: *const u8,
-    _payload_len: usize,
-) -> *mut pending::PendingByteArray {
-    // TODO(codex): Implement signal-with-start using WorkflowService::signal_with_start_workflow_execution (docs/ffi-surface.md).
-    error::set_error("temporal_bun_client_signal_with_start is not implemented yet".to_string());
-    std::ptr::null_mut()
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> *mut byte_array::ByteArray {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    let payload = match request_from_raw::<SignalWithStartRequestPayload>(payload_ptr, payload_len)
+    {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let defaults = StartWorkflowDefaults {
+        namespace: &client_handle.namespace,
+        identity: &client_handle.identity,
+    };
+
+    let (request, response_info) = match build_signal_with_start_request(payload, defaults) {
+        Ok(result) => result,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let response = runtime.tokio_handle().block_on(async move {
+        let mut inner = client.clone();
+        WorkflowService::signal_with_start_workflow_execution(&mut inner, request.into_request())
+            .await
+    });
+
+    let response = match response {
+        Ok(resp) => resp.into_inner(),
+        Err(err) => {
+            return into_string_error(BridgeError::ClientRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let response_body = serde_json::json!({
+        "runId": response.run_id,
+        "workflowId": response_info.workflow_id,
+        "namespace": response_info.namespace,
+    });
+
+    let bytes = match json_bytes(&response_body) {
+        Ok(bytes) => bytes,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    byte_array::ByteArray::from_vec(bytes)
 }
 
 fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
@@ -967,6 +1027,56 @@ fn build_terminate_workflow_request(
     }
 
     Ok(request)
+}
+
+fn build_signal_with_start_request(
+    payload: SignalWithStartRequestPayload,
+    defaults: StartWorkflowDefaults,
+) -> Result<
+    (
+        SignalWithStartWorkflowExecutionRequest,
+        StartWorkflowResponseInfo,
+    ),
+    BridgeError,
+> {
+    let SignalWithStartRequestPayload {
+        start,
+        signal_name,
+        signal_args,
+    } = payload;
+
+    let (mut start_request, response_info) = build_start_workflow_request(start, defaults)?;
+
+    let mut request = SignalWithStartWorkflowExecutionRequest {
+        namespace: response_info.namespace.clone(),
+        workflow_id: response_info.workflow_id.clone(),
+        signal_name,
+        ..Default::default()
+    };
+
+    request.workflow_type = start_request.workflow_type.take();
+    request.task_queue = start_request.task_queue.take();
+    request.input = start_request.input.take();
+    request.identity = take(&mut start_request.identity);
+    request.request_id = take(&mut start_request.request_id);
+    request.workflow_execution_timeout = start_request.workflow_execution_timeout.take();
+    request.workflow_run_timeout = start_request.workflow_run_timeout.take();
+    request.workflow_task_timeout = start_request.workflow_task_timeout.take();
+    request.retry_policy = start_request.retry_policy.take();
+    request.memo = start_request.memo.take();
+    request.search_attributes = start_request.search_attributes.take();
+    request.header = start_request.header.take();
+    request.cron_schedule = take(&mut start_request.cron_schedule);
+
+    let mut encoded_signal = Vec::with_capacity(signal_args.len());
+    for value in signal_args {
+        encoded_signal.push(encode_payload(value)?);
+    }
+    request.signal_input = Some(Payloads {
+        payloads: encoded_signal,
+    });
+
+    Ok((request, response_info))
 }
 
 fn encode_payload_map(
@@ -1396,5 +1506,81 @@ mod tests {
         assert_eq!(extract_bearer_token("bearer  abc"), Some("abc"));
         assert_eq!(extract_bearer_token("Basic abc"), None);
         assert_eq!(extract_bearer_token("Bearer   "), None);
+    }
+
+    #[test]
+    fn build_signal_with_start_request_merges_components() {
+        let payload = SignalWithStartRequestPayload {
+            start: StartWorkflowRequestPayload {
+                namespace: Some("custom".to_string()),
+                workflow_id: "wf-789".to_string(),
+                workflow_type: "SampleWorkflow".to_string(),
+                task_queue: "primary".to_string(),
+                args: Some(vec![json!("payload")]),
+                memo: None,
+                search_attributes: None,
+                headers: None,
+                cron_schedule: Some("0 * * * *".to_string()),
+                request_id: Some("req-123".to_string()),
+                identity: Some("client-id".to_string()),
+                workflow_execution_timeout_ms: Some(1_000),
+                workflow_run_timeout_ms: Some(2_000),
+                workflow_task_timeout_ms: Some(500),
+                retry_policy: Some(RetryPolicyPayload {
+                    initial_interval_ms: Some(500),
+                    ..Default::default()
+                }),
+            },
+            signal_name: "notify".to_string(),
+            signal_args: vec![json!({"event": "start"})],
+        };
+
+        let defaults = StartWorkflowDefaults {
+            namespace: "default",
+            identity: "default-id",
+        };
+
+        let (request, info) =
+            build_signal_with_start_request(payload, defaults).expect("built request");
+
+        assert_eq!(info.workflow_id, "wf-789");
+        assert_eq!(info.namespace, "custom");
+        assert_eq!(request.namespace, "custom");
+        assert_eq!(request.workflow_id, "wf-789");
+        assert_eq!(request.signal_name, "notify");
+        assert_eq!(request.identity, "client-id");
+        assert_eq!(request.request_id, "req-123");
+        assert_eq!(request.cron_schedule, "0 * * * *");
+
+        let start_payloads = request.input.expect("start payloads").payloads;
+        assert_eq!(start_payloads.len(), 1);
+        let start_value: serde_json::Value =
+            serde_json::from_slice(&start_payloads[0].data).expect("decode start payload");
+        assert_eq!(start_value, json!("payload"));
+
+        let signal_payloads = request.signal_input.expect("signal payloads").payloads;
+        assert_eq!(signal_payloads.len(), 1);
+        let signal_value: serde_json::Value =
+            serde_json::from_slice(&signal_payloads[0].data).expect("decode signal payload");
+        assert_eq!(signal_value, json!({"event": "start"}));
+
+        let execution_timeout = request
+            .workflow_execution_timeout
+            .expect("execution timeout");
+        assert_eq!(execution_timeout.seconds, 1);
+        assert_eq!(execution_timeout.nanos, 0);
+
+        let run_timeout = request.workflow_run_timeout.expect("run timeout");
+        assert_eq!(run_timeout.seconds, 2);
+        assert_eq!(run_timeout.nanos, 0);
+
+        let task_timeout = request.workflow_task_timeout.expect("task timeout");
+        assert_eq!(task_timeout.seconds, 0);
+        assert_eq!(task_timeout.nanos, 500_000_000);
+
+        let retry = request.retry_policy.expect("retry policy");
+        let initial_interval = retry.initial_interval.expect("initial interval");
+        assert_eq!(initial_interval.seconds, 0);
+        assert_eq!(initial_interval.nanos, 500_000_000);
     }
 }

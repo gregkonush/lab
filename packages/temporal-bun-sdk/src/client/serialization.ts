@@ -82,13 +82,15 @@ export const buildSignalWithStartRequest = ({
   options: SignalWithStartOptions
   defaults: { namespace: string; identity: string; taskQueue: string }
 }): Record<string, unknown> => {
-  void options
-  void defaults
-  // TODO(codex): Combine start and signal payloads into the JSON envelope described in ${CLIENT_RUNTIME_DOC} §3.
-  return notImplemented('Signal-with-start serialization', CLIENT_RUNTIME_DOC)
+  const payload = buildStartWorkflowRequest({ options, defaults })
+  return {
+    ...payload,
+    signal_name: options.signalName,
+    signal_args: options.signalArgs ?? [],
+  }
 }
 
-export const buildStartWorkflowPayload = ({
+export const buildStartWorkflowRequest = ({
   options,
   defaults,
 }: {
@@ -137,7 +139,7 @@ export const buildStartWorkflowPayload = ({
   }
 
   if (options.retryPolicy) {
-    const retryPolicyPayload = buildRetryPolicy(options.retryPolicy)
+    const retryPolicyPayload = buildRetryPolicyPayload(options.retryPolicy)
     if (Object.keys(retryPolicyPayload).length > 0) {
       payload.retry_policy = retryPolicyPayload
     }
@@ -146,7 +148,7 @@ export const buildStartWorkflowPayload = ({
   return payload
 }
 
-const buildRetryPolicy = (policy: RetryPolicyOptions): Record<string, unknown> => {
+const buildRetryPolicyPayload = (policy: RetryPolicyOptions): Record<string, unknown> => {
   const payload: Record<string, unknown> = {}
   if (policy.initialIntervalMs !== undefined) {
     payload.initial_interval_ms = policy.initialIntervalMs
@@ -160,7 +162,7 @@ const buildRetryPolicy = (policy: RetryPolicyOptions): Record<string, unknown> =
   if (policy.backoffCoefficient !== undefined) {
     payload.backoff_coefficient = policy.backoffCoefficient
   }
-  if (policy.nonRetryableErrorTypes && policy.nonRetryableErrorTypes.length > 0) {
+  if (policy.nonRetryableErrorTypes?.length) {
     payload.non_retryable_error_types = policy.nonRetryableErrorTypes
   }
   return payload
