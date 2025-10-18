@@ -27,6 +27,7 @@ const {
     temporal_bun_runtime_free,
     temporal_bun_runtime_set_logger,
     temporal_bun_runtime_emit_test_log,
+    temporal_bun_log_record_free,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -57,6 +58,10 @@ const {
   temporal_bun_runtime_emit_test_log: {
     args: [FFIType.ptr, FFIType.int32_t, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.int32_t,
+  },
+  temporal_bun_log_record_free: {
+    args: [FFIType.ptr],
+    returns: FFIType.void,
   },
   temporal_bun_error_message: {
     args: [FFIType.ptr],
@@ -282,16 +287,22 @@ export const native = {
         if (!recordPtr) {
           return
         }
-        const record = decodeLogRecord(Number(recordPtr))
+
+        const recordPointer = Number(recordPtr)
+        const record = decodeLogRecord(recordPointer)
+
         try {
           handler(record)
         } catch (error) {
           console.error('[temporal-bun-sdk] logger handler threw', error)
+        } finally {
+          temporal_bun_log_record_free(recordPointer)
         }
       },
       {
         args: [FFIType.ptr],
         returns: FFIType.void,
+        threads: true,
       },
     )
 

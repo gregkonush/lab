@@ -14,10 +14,8 @@ use temporal_client::{
     tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace,
     RetryClient, TemporalServiceClient, TlsConfig, WorkflowService,
 };
-use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder, telemetry::construct_filter_string};
+use temporal_sdk_core::{telemetry::construct_filter_string, CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer, Logger, TelemetryOptionsBuilder};
-use tracing::Level as TracingLevel;
-use tracing_core::Level as TracingCoreLevel;
 use temporal_sdk_core_protos::temporal::api::common::v1::{
     Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowType,
 };
@@ -25,6 +23,8 @@ use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
 use thiserror::Error;
+use tracing::Level as TracingLevel;
+use tracing_core::Level as TracingCoreLevel;
 use url::Url;
 use uuid::Uuid;
 
@@ -57,6 +57,59 @@ struct BunLogRecord {
     message: BunLogSlice,
     fields_json: BunLogSlice,
     spans_json: BunLogSlice,
+}
+
+#[repr(C)]
+struct OwnedBunLogRecord {
+    record: BunLogRecord,
+    target: Vec<u8>,
+    message: Vec<u8>,
+    fields_json: Vec<u8>,
+    spans_json: Vec<u8>,
+}
+
+impl OwnedBunLogRecord {
+    fn from_core_log(log: CoreLog) -> Self {
+        let CoreLog {
+            target,
+            message,
+            timestamp,
+            level,
+            fields,
+            span_contexts,
+        } = log;
+
+        let target = target.into_bytes();
+        let message = message.into_bytes();
+        let fields_json = serde_json::to_vec(&fields).unwrap_or_else(|_| b"{}".to_vec());
+        let spans_json = serde_json::to_vec(&span_contexts).unwrap_or_else(|_| b"[]".to_vec());
+
+        let record = BunLogRecord {
+            level: BunLogLevel::from(level) as i32,
+            timestamp_ms: timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            target: BunLogSlice::from_bytes(&target),
+            message: BunLogSlice::from_bytes(&message),
+            fields_json: BunLogSlice::from_bytes(&fields_json),
+            spans_json: BunLogSlice::from_bytes(&spans_json),
+        };
+
+        Self {
+            record,
+            target,
+            message,
+            fields_json,
+            spans_json,
+        }
+    }
+
+    fn record_ptr(&self) -> *const BunLogRecord {
+        &self.record as *const BunLogRecord
+    }
 }
 
 type LoggerCallback = unsafe extern "C" fn(*const BunLogRecord);
@@ -118,45 +171,32 @@ impl BunLogConsumer {
             None => return,
         };
 
-        let CoreLog {
-            target,
-            message,
-            timestamp,
-            level,
-            fields,
-            span_contexts,
-        } = log;
-
-        let target = target.into_bytes();
-        let message = message.into_bytes();
-        let fields_json = serde_json::to_vec(&fields).unwrap_or_else(|_| b"{}".to_vec());
-        let spans_json =
-            serde_json::to_vec(&span_contexts).unwrap_or_else(|_| b"[]".to_vec());
-
-        let record = BunLogRecord {
-            level: BunLogLevel::from(level) as i32,
-            timestamp_ms: timestamp
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            target: BunLogSlice::from_bytes(&target),
-            message: BunLogSlice::from_bytes(&message),
-            fields_json: BunLogSlice::from_bytes(&fields_json),
-            spans_json: BunLogSlice::from_bytes(&spans_json),
-        };
+        let owned_record = Box::new(OwnedBunLogRecord::from_core_log(log));
+        let record_ptr = owned_record.record_ptr();
+        let owned_ptr = Box::into_raw(owned_record);
 
         let result = catch_unwind(AssertUnwindSafe(|| unsafe {
-            callback(&record);
+            callback(record_ptr);
         }));
 
         if result.is_err() {
-            eprintln!(
-                "temporal-bun-bridge: logger callback panicked; disabling logger forwarding"
-            );
+            unsafe {
+                drop(Box::from_raw(owned_ptr));
+            }
+            eprintln!("temporal-bun-bridge: logger callback panicked; disabling logger forwarding");
             self.state.clear();
         }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_log_record_free(record_ptr: *const BunLogRecord) {
+    if record_ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(record_ptr as *mut OwnedBunLogRecord));
     }
 }
 
@@ -425,11 +465,21 @@ pub extern "C" fn temporal_bun_runtime_emit_test_log(
     };
 
     match level {
-        TracingLevel::TRACE => tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::TRACE, payload = %message, "{}", message),
-        TracingLevel::DEBUG => tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::DEBUG, payload = %message, "{}", message),
-        TracingLevel::INFO => tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::INFO, payload = %message, "{}", message),
-        TracingLevel::WARN => tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::WARN, payload = %message, "{}", message),
-        TracingLevel::ERROR => tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::ERROR, payload = %message, "{}", message),
+        TracingLevel::TRACE => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::TRACE, payload = %message, "{}", message)
+        }
+        TracingLevel::DEBUG => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::DEBUG, payload = %message, "{}", message)
+        }
+        TracingLevel::INFO => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::INFO, payload = %message, "{}", message)
+        }
+        TracingLevel::WARN => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::WARN, payload = %message, "{}", message)
+        }
+        TracingLevel::ERROR => {
+            tracing::event!(target: "temporal_sdk_core::bridge::test", tracing::Level::ERROR, payload = %message, "{}", message)
+        }
     };
 
     0
@@ -756,7 +806,10 @@ pub extern "C" fn temporal_bun_client_start_workflow(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_byte_array_new(ptr: *const u8, len: usize) -> *mut byte_array::ByteArray {
+pub extern "C" fn temporal_bun_byte_array_new(
+    ptr: *const u8,
+    len: usize,
+) -> *mut byte_array::ByteArray {
     // TODO(codex): Optimize zero-copy transfers once native bridge exposes shared buffers (docs/ffi-surface.md).
     if ptr.is_null() || len == 0 {
         return byte_array::ByteArray::empty();
@@ -888,9 +941,9 @@ pub extern "C" fn temporal_bun_client_signal_with_start(
     std::ptr::null_mut()
 }
 
-
 fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
-    let data = serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
+    let data =
+        serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
     let mut metadata = HashMap::new();
     metadata.insert("encoding".to_string(), b"json/plain".to_vec());
     Ok(Payload { metadata, data })
@@ -925,7 +978,9 @@ fn build_start_workflow_request(
     let mut request = StartWorkflowExecutionRequest {
         namespace: namespace.clone(),
         workflow_id: workflow_id.clone(),
-        workflow_type: Some(WorkflowType { name: workflow_type }),
+        workflow_type: Some(WorkflowType {
+            name: workflow_type,
+        }),
         task_queue: Some(TaskQueue {
             name: task_queue,
             kind: TaskQueueKind::Normal as i32,
@@ -951,7 +1006,9 @@ fn build_start_workflow_request(
 
     match encode_payload_map(search_attributes)? {
         Some(fields) => {
-            request.search_attributes = Some(SearchAttributes { indexed_fields: fields });
+            request.search_attributes = Some(SearchAttributes {
+                indexed_fields: fields,
+            });
         }
         None => {}
     }
@@ -1031,17 +1088,20 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
     let mut tls = TlsConfig::default();
 
     if let Some(server_root_ca) = payload.server_root_ca_cert {
-        let bytes = decode_base64(&server_root_ca)
-            .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}")))?;
+        let bytes = decode_base64(&server_root_ca).map_err(|err| {
+            BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}"))
+        })?;
         tls.server_root_ca_cert = Some(bytes);
     }
 
     match (payload.client_cert, payload.client_private_key) {
         (Some(cert_b64), Some(key_b64)) => {
-            let cert = decode_base64(&cert_b64)
-                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}")))?;
-            let key = decode_base64(&key_b64)
-                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}")))?;
+            let cert = decode_base64(&cert_b64).map_err(|err| {
+                BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}"))
+            })?;
+            let key = decode_base64(&key_b64).map_err(|err| {
+                BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}"))
+            })?;
             tls.client_tls_config = Some(ClientTlsConfig {
                 client_cert: cert,
                 client_private_key: key,
@@ -1082,8 +1142,8 @@ fn duration_from_millis(ms: u64) -> ProtoDuration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn config_from_raw_parses_defaults() {
@@ -1166,7 +1226,8 @@ mod tests {
             identity: "worker-1",
         };
 
-        let (request, info) = build_start_workflow_request(payload, defaults).expect("build request");
+        let (request, info) =
+            build_start_workflow_request(payload, defaults).expect("build request");
         assert_eq!(request.namespace, "default");
         assert_eq!(request.identity, "worker-1");
         assert_eq!(request.workflow_id, "wf-123");
@@ -1215,7 +1276,8 @@ mod tests {
             identity: "worker-1",
         };
 
-        let (request, info) = build_start_workflow_request(payload, defaults).expect("build request");
+        let (request, info) =
+            build_start_workflow_request(payload, defaults).expect("build request");
 
         let inputs = request.input.expect("payloads").payloads;
         assert_eq!(inputs.len(), 2);
