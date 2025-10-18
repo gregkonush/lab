@@ -1,35 +1,5 @@
 import { native, type Runtime as NativeRuntime } from '../internal/core-bridge/native.ts'
-
-export interface RuntimeOptions {
-  readonly options?: Record<string, unknown>
-}
-
-export class Runtime {
-  #native: NativeRuntime | undefined
-
-  static create(options: RuntimeOptions = {}): Runtime {
-    return new Runtime(options)
-  }
-
-  private constructor(options: RuntimeOptions = {}) {
-    this.#native = native.createRuntime(options.options ?? {})
-    runtimeFinalizer.register(this, this.#native, this)
-  }
-
-  get nativeHandle(): NativeRuntime {
-    if (!this.#native) {
-      throw new Error('Runtime has already been shut down')
-    }
-    return this.#native
-  }
-
-  async shutdown(): Promise<void> {
-    if (!this.#native) return
-    native.runtimeShutdown(this.#native)
-    runtimeFinalizer.unregister(this)
-    this.#native = undefined
-  }
-}
+import { wrapNativeError } from './errors.ts'
 
 const finalizeRuntime = (runtime: NativeRuntime): void => {
   try {
@@ -41,7 +11,58 @@ const finalizeRuntime = (runtime: NativeRuntime): void => {
 
 const runtimeFinalizer = new FinalizationRegistry<NativeRuntime>(finalizeRuntime)
 
-export const createRuntime = (options: RuntimeOptions = {}): Runtime => Runtime.create(options)
+export interface RuntimeOptions {
+  nativeOptions?: Record<string, unknown>
+}
+
+export class TemporalRuntime {
+  #native: NativeRuntime | undefined
+
+  constructor(nativeRuntime: NativeRuntime) {
+    this.#native = nativeRuntime
+    runtimeFinalizer.register(this, nativeRuntime, this)
+  }
+
+  get handle(): number {
+    return Number(this.#getNative().handle as unknown as number)
+  }
+
+  get native(): NativeRuntime {
+    return this.#getNative()
+  }
+
+  get nativeHandle(): NativeRuntime {
+    return this.#getNative()
+  }
+
+  async shutdown(): Promise<void> {
+    if (!this.#native) return
+    runtimeFinalizer.unregister(this)
+    try {
+      native.runtimeShutdown(this.#native)
+    } catch (error) {
+      throw wrapNativeError(error, 'Failed to shut down Temporal runtime')
+    } finally {
+      this.#native = undefined
+    }
+  }
+
+  #getNative(): NativeRuntime {
+    if (!this.#native) {
+      throw new Error('Runtime has already been shut down')
+    }
+    return this.#native
+  }
+}
+
+export const createRuntime = (options: RuntimeOptions = {}) => {
+  try {
+    const nativeRuntime = native.createRuntime(options.nativeOptions ?? {})
+    return new TemporalRuntime(nativeRuntime)
+  } catch (error) {
+    throw wrapNativeError(error, 'Failed to create Temporal runtime')
+  }
+}
 
 export const __TEST__ = {
   finalizeRuntime,

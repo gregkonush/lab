@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -6,14 +7,32 @@ use std::thread;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use prost::Message;
 use serde::Deserialize;
+use serde::Serialize;
+use serde_json::{Map, Value};
 use temporal_client::{
-    tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace,
-    RetryClient, TemporalServiceClient, TlsConfig, WorkflowService,
+    tonic::IntoRequest, ClientOptionsBuilder, ClientTlsConfig, ConfiguredClient, Namespace, RetryClient,
+    TemporalServiceClient, TlsConfig, WorkflowService,
 };
-use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
+use temporal_sdk_core::CoreRuntime;
+use temporal_sdk_core::TokioRuntimeBuilder;
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
+use temporal_sdk_core_protos::{
+    ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
+    temporal::api::{
+        common::v1::{
+            Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution,
+            WorkflowType,
+        },
+        taskqueue::v1::TaskQueue,
+        workflowservice::v1::{
+            SignalWorkflowExecutionRequest, StartWorkflowExecutionRequest,
+        },
+    },
+};
 use thiserror::Error;
 use url::Url;
+use uuid::Uuid;
+use prost_wkt_types::Duration;
 
 mod byte_array;
 mod error;
@@ -31,6 +50,7 @@ pub struct ClientHandle {
     runtime: Arc<CoreRuntime>,
     client: RetryClient<ConfiguredClient<TemporalServiceClient>>,
     namespace: String,
+    identity: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,10 +79,91 @@ struct ClientTlsConfigPayload {
     client_private_key: Option<String>,
     #[serde(default)]
     server_name_override: Option<String>,
+    #[serde(default)]
+    allow_insecure: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct DescribeNamespaceRequestPayload {
+    namespace: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StartWorkflowRequestPayload {
+    #[serde(default)]
+    namespace: Option<String>,
+    workflow_id: String,
+    workflow_type: String,
+    #[serde(default)]
+    task_queue: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<Value>>,
+    #[serde(default)]
+    memo: Option<Map<String, Value>>,
+    #[serde(default)]
+    search_attributes: Option<Map<String, Value>>,
+    #[serde(default)]
+    headers: Option<Map<String, Value>>,
+    #[serde(default)]
+    workflow_execution_timeout_ms: Option<u64>,
+    #[serde(default)]
+    workflow_run_timeout_ms: Option<u64>,
+    #[serde(default)]
+    workflow_task_timeout_ms: Option<u64>,
+    #[serde(default)]
+    cron_schedule: Option<String>,
+    #[serde(default)]
+    retry_policy: Option<RetryPolicyPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SignalWorkflowRequestPayload {
+    #[serde(default)]
+    namespace: Option<String>,
+    workflow_id: String,
+    #[serde(default)]
+    run_id: Option<String>,
+    signal_name: String,
+    #[serde(default)]
+    args: Option<Vec<Value>>,
+    #[serde(default)]
+    headers: Option<Map<String, Value>>,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    request_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RetryPolicyPayload {
+    #[serde(default)]
+    initial_interval_ms: Option<u64>,
+    #[serde(default)]
+    backoff_coefficient: Option<f64>,
+    #[serde(default)]
+    maximum_interval_ms: Option<u64>,
+    #[serde(default)]
+    maximum_attempts: Option<i32>,
+    #[serde(default)]
+    non_retryable_error_types: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct StartWorkflowResponsePayload {
+    run_id: String,
+    workflow_id: String,
+    namespace: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SignalWorkflowResponsePayload {
+    workflow_id: String,
+    run_id: Option<String>,
+    signal_name: String,
     namespace: String,
 }
 
@@ -84,6 +185,8 @@ enum BridgeError {
     ClientInit(String),
     #[error("Temporal request failed: {0}")]
     ClientRequest(String),
+    #[error("serialization failed: {0}")]
+    Serialization(String),
 }
 
 #[unsafe(no_mangle)]
@@ -168,6 +271,80 @@ fn client_from_ptr(ptr: *mut c_void) -> Result<&'static ClientHandle, BridgeErro
     Ok(unsafe { &*(ptr as *mut ClientHandle) })
 }
 
+fn millis_to_duration(ms: u64) -> Result<Duration, BridgeError> {
+    const MAX_DURATION_MS: u128 = (i64::MAX as u128) * 1000;
+    if (ms as u128) > MAX_DURATION_MS {
+        return Err(BridgeError::InvalidRequest(format!(
+            "duration {ms}ms exceeds supported range"
+        )));
+    }
+    let seconds = (ms / 1000) as i64;
+    let nanos = ((ms % 1000) * 1_000_000) as i32;
+    Ok(Duration { seconds, nanos })
+}
+
+fn payload_from_json(value: &Value) -> Result<Payload, BridgeError> {
+    let data =
+        serde_json::to_vec(value).map_err(|err| BridgeError::Serialization(err.to_string()))?;
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        ENCODING_PAYLOAD_KEY.to_string(),
+        JSON_ENCODING_VAL.as_bytes().to_vec(),
+    );
+    Ok(Payload { metadata, data })
+}
+
+fn payloads_from_values(values: &[Value]) -> Result<Payloads, BridgeError> {
+    let mut payloads = Vec::with_capacity(values.len());
+    for value in values {
+        payloads.push(payload_from_json(value)?);
+    }
+    Ok(Payloads { payloads })
+}
+
+fn header_from_map(map: &Map<String, Value>) -> Result<Header, BridgeError> {
+    let mut fields = HashMap::new();
+    for (key, value) in map {
+        fields.insert(key.clone(), payload_from_json(value)?);
+    }
+    Ok(Header { fields })
+}
+
+fn memo_from_map(map: &Map<String, Value>) -> Result<Memo, BridgeError> {
+    let mut fields = HashMap::new();
+    for (key, value) in map {
+        fields.insert(key.clone(), payload_from_json(value)?);
+    }
+    Ok(Memo { fields })
+}
+
+fn search_attributes_from_map(map: &Map<String, Value>) -> Result<SearchAttributes, BridgeError> {
+    let mut indexed_fields = HashMap::new();
+    for (key, value) in map.iter() {
+        indexed_fields.insert(key.clone(), payload_from_json(value)?);
+    }
+    Ok(SearchAttributes { indexed_fields })
+}
+
+fn retry_policy_from_payload(payload: &RetryPolicyPayload) -> Result<RetryPolicy, BridgeError> {
+    Ok(RetryPolicy {
+        initial_interval: match payload.initial_interval_ms {
+            Some(ms) => Some(millis_to_duration(ms)?),
+            None => None,
+        },
+        backoff_coefficient: payload.backoff_coefficient.unwrap_or(2.0),
+        maximum_interval: match payload.maximum_interval_ms {
+            Some(ms) => Some(millis_to_duration(ms)?),
+            None => None,
+        },
+        maximum_attempts: payload.maximum_attempts.unwrap_or(0),
+        non_retryable_error_types: payload
+            .non_retryable_error_types
+            .clone()
+            .unwrap_or_default(),
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_connect_async(
     runtime_ptr: *mut c_void,
@@ -207,7 +384,7 @@ pub extern "C" fn temporal_bun_client_connect_async(
         .target_url(url)
         .client_name(client_name)
         .client_version(client_version)
-        .identity(identity);
+        .identity(identity.clone());
 
     if let Some(api_key) = config.api_key {
         builder.api_key(Some(api_key));
@@ -218,6 +395,7 @@ pub extern "C" fn temporal_bun_client_connect_async(
             server_root_ca_cert: None,
             domain: tls_payload.server_name_override,
             client_tls_config: None,
+            allow_insecure: tls_payload.allow_insecure,
         };
 
         if let Some(ca_b64) = tls_payload.server_root_ca_cert {
@@ -268,6 +446,7 @@ pub extern "C" fn temporal_bun_client_connect_async(
     };
 
     let namespace = config.namespace;
+    let identity = identity;
     let runtime_clone = runtime.clone();
     let (tx, rx) = channel();
 
@@ -278,6 +457,7 @@ pub extern "C" fn temporal_bun_client_connect_async(
                     runtime: runtime_clone.clone(),
                     client,
                     namespace,
+                    identity,
                 }),
                 Err(err) => Err(BridgeError::ClientInit(err.to_string()).to_string()),
             }
@@ -392,14 +572,276 @@ pub extern "C" fn temporal_bun_client_describe_namespace_async(
             let request = Namespace::Name(namespace).into_describe_namespace_request();
             WorkflowService::describe_namespace(&mut inner, request.into_request())
                 .await
-                .map(|resp| resp.into_inner().encode_to_vec())
                 .map_err(|err| BridgeError::ClientRequest(err.to_string()).to_string())
+                .and_then(|resp| {
+                    serde_json::to_vec(&resp.into_inner())
+                        .map_err(|err| BridgeError::Serialization(err.to_string()).to_string())
+                })
         });
 
         let _ = tx.send(result);
     });
 
     Box::into_raw(Box::new(pending::PendingByteArray::new(rx)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_start_workflow(
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> *mut byte_array::ByteArray {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    let payload = match request_from_raw::<StartWorkflowRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let StartWorkflowRequestPayload {
+        namespace,
+        workflow_id,
+        workflow_type,
+        task_queue,
+        identity,
+        request_id,
+        args,
+        memo,
+        search_attributes,
+        headers,
+        workflow_execution_timeout_ms,
+        workflow_run_timeout_ms,
+        workflow_task_timeout_ms,
+        cron_schedule,
+        retry_policy,
+    } = payload;
+
+    let namespace = namespace.unwrap_or_else(|| client_handle.namespace.clone());
+    let workflow_id_clone = workflow_id.clone();
+    let task_queue_name = match task_queue {
+        Some(name) if !name.is_empty() => name,
+        _ => {
+            return into_string_error(BridgeError::InvalidRequest(
+                "task_queue is required to start a workflow".to_string(),
+            )) as *mut byte_array::ByteArray
+        }
+    };
+
+    let identity = identity.unwrap_or_else(|| client_handle.identity.clone());
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    let input = match args {
+        Some(values) if !values.is_empty() => match payloads_from_values(&values) {
+            Ok(payloads) => Some(payloads),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        _ => None,
+    };
+
+    let header = match headers {
+        Some(map) if !map.is_empty() => match header_from_map(&map) {
+            Ok(header) => Some(header),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        _ => None,
+    };
+
+    let memo = match memo {
+        Some(map) if !map.is_empty() => match memo_from_map(&map) {
+            Ok(memo) => Some(memo),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        _ => None,
+    };
+
+    let search_attributes = match search_attributes {
+        Some(map) if !map.is_empty() => match search_attributes_from_map(&map) {
+            Ok(attrs) => Some(attrs),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        _ => None,
+    };
+
+    let workflow_execution_timeout = match workflow_execution_timeout_ms {
+        Some(ms) => match millis_to_duration(ms) {
+            Ok(duration) => Some(duration),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        None => None,
+    };
+
+    let workflow_run_timeout = match workflow_run_timeout_ms {
+        Some(ms) => match millis_to_duration(ms) {
+            Ok(duration) => Some(duration),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        None => None,
+    };
+
+    let workflow_task_timeout = match workflow_task_timeout_ms {
+        Some(ms) => match millis_to_duration(ms) {
+            Ok(duration) => Some(duration),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        None => None,
+    };
+
+    let retry_policy = match retry_policy {
+        Some(policy) => match retry_policy_from_payload(&policy) {
+            Ok(policy) => Some(policy),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        None => None,
+    };
+
+    let namespace_clone = namespace.clone();
+
+    let request = StartWorkflowExecutionRequest {
+        namespace: namespace.clone(),
+        workflow_id: workflow_id.clone(),
+        workflow_type: Some(WorkflowType { name: workflow_type }),
+        task_queue: Some(TaskQueue {
+            name: task_queue_name,
+            ..Default::default()
+        }),
+        identity,
+        request_id,
+        input,
+        memo,
+        search_attributes,
+        header,
+        workflow_execution_timeout,
+        workflow_run_timeout,
+        workflow_task_timeout,
+        cron_schedule: cron_schedule.unwrap_or_default(),
+        retry_policy,
+        ..Default::default()
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let response = runtime.tokio_handle().block_on(async move {
+        let mut inner = client;
+        WorkflowService::start_workflow_execution(&mut inner, request.into_request()).await
+    });
+
+    let response = match response {
+        Ok(resp) => resp.into_inner(),
+        Err(err) => {
+            return into_string_error(BridgeError::ClientRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+  let payload = StartWorkflowResponsePayload {
+    run_id: response.run_id,
+    workflow_id: workflow_id_clone,
+    namespace: namespace_clone,
+  };
+
+  match serde_json::to_vec(&payload) {
+    Ok(bytes) => byte_array::ByteArray::from_vec(bytes),
+    Err(err) => into_string_error(BridgeError::Serialization(err.to_string()))
+        as *mut byte_array::ByteArray,
+  }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_client_signal_workflow(
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> *mut byte_array::ByteArray {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+    };
+
+    let payload = match request_from_raw::<SignalWorkflowRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut byte_array::ByteArray
+        }
+    };
+
+    let SignalWorkflowRequestPayload {
+        namespace,
+        workflow_id,
+        run_id,
+        signal_name,
+        args,
+        headers,
+        identity,
+        request_id,
+    } = payload;
+
+    let namespace = namespace.unwrap_or_else(|| client_handle.namespace.clone());
+    let identity = identity.unwrap_or_else(|| client_handle.identity.clone());
+    let run_id = run_id.filter(|run| !run.is_empty());
+
+    let input = match args {
+        Some(values) if !values.is_empty() => match payloads_from_values(&values) {
+            Ok(payloads) => Some(payloads),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        _ => None,
+    };
+
+    let header = match headers {
+        Some(map) if !map.is_empty() => match header_from_map(&map) {
+            Ok(header) => Some(header),
+            Err(err) => return into_string_error(err) as *mut byte_array::ByteArray,
+        },
+        _ => None,
+    };
+
+    let request = SignalWorkflowExecutionRequest {
+        namespace: namespace.clone(),
+        workflow_execution: Some(WorkflowExecution {
+            workflow_id: workflow_id.clone(),
+            run_id: run_id.clone().unwrap_or_default(),
+        }),
+        signal_name: signal_name.clone(),
+        input,
+        identity,
+        header,
+        request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+        ..Default::default()
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let result = runtime.tokio_handle().block_on(async move {
+        let mut inner = client;
+        WorkflowService::signal_workflow_execution(&mut inner, request.into_request()).await
+    });
+
+    if let Err(err) = result {
+        return into_string_error(BridgeError::ClientRequest(err.to_string()))
+            as *mut byte_array::ByteArray;
+    }
+
+    let payload = SignalWorkflowResponsePayload {
+        workflow_id,
+        run_id,
+        signal_name,
+        namespace,
+    };
+
+    match serde_json::to_vec(&payload) {
+        Ok(bytes) => byte_array::ByteArray::from_vec(bytes),
+        Err(err) => into_string_error(BridgeError::Serialization(err.to_string()))
+            as *mut byte_array::ByteArray,
+    }
 }
 
 #[unsafe(no_mangle)]

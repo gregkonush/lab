@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import type { TLSConfig } from '@temporalio/client'
 import { z } from 'zod'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -60,16 +59,27 @@ export interface TemporalConfig {
   namespace: string
   taskQueue: string
   apiKey?: string
-  tls?: TLSConfig
+  tls?: TemporalTlsConfig
   allowInsecureTls: boolean
   workerIdentity: string
   workerIdentityPrefix: string
 }
 
+export interface TemporalTlsCertPair {
+  crt: Buffer
+  key: Buffer
+}
+
+export interface TemporalTlsConfig {
+  serverRootCACertificate?: Buffer
+  clientCertPair?: TemporalTlsCertPair
+  serverNameOverride?: string
+}
+
 const buildTlsConfig = async (
   env: z.infer<typeof envSchema>,
   options: LoadTemporalConfigOptions,
-): Promise<TLSConfig | undefined> => {
+): Promise<TemporalTlsConfig | undefined> => {
   const caPath = env.TEMPORAL_TLS_CA_PATH
   const certPath = env.TEMPORAL_TLS_CERT_PATH
   const keyPath = env.TEMPORAL_TLS_KEY_PATH
@@ -84,7 +94,7 @@ const buildTlsConfig = async (
   }
 
   const reader = options.fs?.readFile ?? readFile
-  const tls: TLSConfig = { ...(options.defaults?.tls ?? {}) }
+  const tls: TemporalTlsConfig = { ...(options.defaults?.tls ?? {}) }
 
   if (caPath) {
     tls.serverRootCACertificate = await reader(caPath)

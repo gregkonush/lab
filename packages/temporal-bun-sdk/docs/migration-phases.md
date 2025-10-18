@@ -31,10 +31,18 @@ flowchart LR
 - Remove `@temporalio/client` dependency.
 - Add unit + integration tests for client operations.
 
+**Progress (18 Oct 2025):**
+
+- ✅ Runtime + client connect via native bridge.
+- ✅ Workflow start implemented (`temporal_bun_client_start_workflow`) with JSON payloads.
+- ✅ Workflow signal implemented (`temporal_bun_client_signal_workflow`) with JSON payloads.
+- ⚙️ **Pending:** queries, terminations, cancellations, metadata/TLS wiring.
+- ⚙️ **Pending:** Example + CLI updates to exercise new client.
+
 **Deliverables:**
-- Passing tests (`client` suites).
-- Docs/README updated.
-- Example project uses new client for workflow start/query.
+- Passing tests (`client` suites). _Partially met — start workflow covered; extend suites for signals/queries once implemented._
+- Docs/README updated. ✅
+- Example project uses new client for workflow start/query. ⚙️ TODO
 
 ---
 

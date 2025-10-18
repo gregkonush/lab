@@ -1,1 +1,2 @@
-export * from '../../vendor/sdk-typescript/packages/client/src/index.ts'
+export * from '../core-bridge/client.js'
+export * from '../client.js'
