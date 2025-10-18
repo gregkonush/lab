@@ -1196,7 +1196,7 @@ mod tests {
             *byte = (idx % 251) as u8;
         }
 
-        let array_ptr = unsafe { temporal_bun_byte_array_new(payload.as_ptr(), payload.len()) };
+        let array_ptr = temporal_bun_byte_array_new(payload.as_ptr(), payload.len());
         assert!(!array_ptr.is_null());
 
         unsafe {
@@ -1206,7 +1206,7 @@ mod tests {
             assert_eq!(slice, payload.as_slice());
         }
 
-        unsafe { temporal_bun_byte_array_free(array_ptr) };
+        temporal_bun_byte_array_free(array_ptr);
         assert_eq!(byte_array::pool_len(), 1);
     }
 
@@ -1216,16 +1216,16 @@ mod tests {
         assert_eq!(byte_array::pool_len(), 0);
 
         let payload_a = vec![1u8; 1024];
-        let array_a = unsafe { temporal_bun_byte_array_new(payload_a.as_ptr(), payload_a.len()) };
+        let array_a = temporal_bun_byte_array_new(payload_a.as_ptr(), payload_a.len());
         let (ptr_a, cap_a) = unsafe {
             let array = &*array_a;
             (array.ptr, array.cap)
         };
-        unsafe { temporal_bun_byte_array_free(array_a) };
+        temporal_bun_byte_array_free(array_a);
         assert_eq!(byte_array::pool_len(), 1);
 
         let payload_b = vec![2u8; payload_a.len()];
-        let array_b = unsafe { temporal_bun_byte_array_new(payload_b.as_ptr(), payload_b.len()) };
+        let array_b = temporal_bun_byte_array_new(payload_b.as_ptr(), payload_b.len());
         let (ptr_b, cap_b) = unsafe {
             let array = &*array_b;
             (array.ptr, array.cap)
@@ -1234,7 +1234,7 @@ mod tests {
         assert_eq!(ptr_a, ptr_b);
         assert_eq!(cap_a, cap_b);
 
-        unsafe { temporal_bun_byte_array_free(array_b) };
+        temporal_bun_byte_array_free(array_b);
         assert_eq!(byte_array::pool_len(), 1);
     }
 
