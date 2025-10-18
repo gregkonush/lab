@@ -2,10 +2,21 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { fileURLToPath } from 'node:url'
 import process from 'node:process'
 import { native } from '../src/internal/core-bridge/native.ts'
+import { isTemporalServerAvailable, parseTemporalAddress } from './helpers/temporal-server'
 
+const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
 const shouldRun = process.env.TEMPORAL_TEST_SERVER === '1'
+const serverAvailable = shouldRun ? await isTemporalServerAvailable(temporalAddress) : false
 
-const suite = shouldRun ? describe : describe.skip
+if (shouldRun && !serverAvailable) {
+  console.warn(`Skipping native bridge integration tests: Temporal server unavailable at ${temporalAddress}`)
+}
+
+const suite = shouldRun && serverAvailable ? describe : describe.skip
+const workerAddress = (() => {
+  const { host, port } = parseTemporalAddress(temporalAddress)
+  return `${host}:${port}`
+})()
 
 suite('native bridge integration', () => {
   let runtime: ReturnType<typeof native.createRuntime>
@@ -22,7 +33,7 @@ suite('native bridge integration', () => {
       stderr: 'pipe',
       env: {
         ...process.env,
-        TEMPORAL_ADDRESS: '127.0.0.1:7233',
+        TEMPORAL_ADDRESS: workerAddress,
         TEMPORAL_NAMESPACE: 'default',
         TEMPORAL_TASK_QUEUE: taskQueue,
       },
@@ -58,7 +69,7 @@ suite('native bridge integration', () => {
     const client = await withRetry(
       async () => {
         return native.createClient(runtime, {
-          address: 'http://127.0.0.1:7233',
+          address: temporalAddress,
           namespace: 'default',
         })
       },
@@ -81,7 +92,7 @@ suite('native bridge integration', () => {
     const client = await withRetry(
       async () => {
         return native.createClient(runtime, {
-          address: 'http://127.0.0.1:7233',
+          address: temporalAddress,
           namespace: 'default',
           identity: 'bun-integration-client',
         })

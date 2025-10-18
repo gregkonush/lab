@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { native } from '../src/internal/core-bridge/native.ts'
+import { isTemporalServerAvailable } from './helpers/temporal-server'
 
-const hasLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
+const temporalAddress = process.env.TEMPORAL_TEST_SERVER_ADDRESS ?? 'http://127.0.0.1:7233'
+const wantsLiveTemporalServer = process.env.TEMPORAL_TEST_SERVER === '1'
+const hasLiveTemporalServer = wantsLiveTemporalServer && (await isTemporalServerAvailable(temporalAddress))
+
+if (wantsLiveTemporalServer && !hasLiveTemporalServer) {
+  console.warn(`Temporal server requested but unreachable at ${temporalAddress}; falling back to negative expectations`)
+}
 
 describe('native bridge', () => {
   test('create and shutdown runtime', () => {
@@ -16,7 +23,7 @@ describe('native bridge', () => {
     try {
       const connect = () =>
         native.createClient(runtime, {
-          address: 'http://127.0.0.1:7233',
+          address: temporalAddress,
           namespace: 'default',
         })
 
