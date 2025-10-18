@@ -12,6 +12,7 @@ describe('temporal client (native bridge)', () => {
     createClient: native.createClient,
     clientShutdown: native.clientShutdown,
     startWorkflow: native.startWorkflow,
+    terminateWorkflow: native.terminateWorkflow,
     describeNamespace: native.describeNamespace,
   }
 
@@ -23,6 +24,7 @@ describe('temporal client (native bridge)', () => {
     native.createClient = mock(async () => clientHandle)
     native.clientShutdown = mock(() => {})
     native.runtimeShutdown = mock(() => {})
+    native.terminateWorkflow = mock(async () => {})
     native.describeNamespace = mock(async () => new Uint8Array())
   })
 
@@ -117,6 +119,86 @@ describe('temporal client (native bridge)', () => {
       non_retryable_error_types: ['FatalError'],
     })
 
+    await client.shutdown()
+  })
+
+  test('terminateWorkflow forwards handle defaults and options to native bridge', async () => {
+    const terminateMock = mock(async (_: unknown, payload: Record<string, unknown>) => {
+      expect(payload).toEqual({
+        namespace: 'analytics',
+        workflow_id: 'workflow-terminate',
+        run_id: 'run-current',
+        first_execution_run_id: 'run-initial',
+        reason: 'finished',
+        details: ['cleanup', { ok: true }],
+      })
+    })
+    native.terminateWorkflow = terminateMock
+
+    const config: TemporalConfig = {
+      host: '127.0.0.1',
+      port: 7233,
+      address: '127.0.0.1:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config, namespace: 'analytics' })
+
+    await client.workflow.terminate(
+      {
+        workflowId: 'workflow-terminate',
+        namespace: 'analytics',
+        runId: 'run-current',
+        firstExecutionRunId: 'run-initial',
+      },
+      {
+        reason: 'finished',
+        details: ['cleanup', { ok: true }],
+      },
+    )
+
+    expect(terminateMock).toHaveBeenCalledTimes(1)
+    await client.shutdown()
+  })
+
+  test('terminateWorkflow surfaces native errors', async () => {
+    const failure = new Error('native terminate failed')
+    native.terminateWorkflow = mock(async () => {
+      throw failure
+    })
+
+    const config: TemporalConfig = {
+      host: 'localhost',
+      port: 7233,
+      address: 'localhost:7233',
+      namespace: 'default',
+      taskQueue: 'prix',
+      apiKey: undefined,
+      tls: undefined,
+      allowInsecureTls: false,
+      workerIdentity: 'worker',
+      workerIdentityPrefix: 'temporal-bun-worker',
+    }
+
+    const { client } = await createTemporalClient({ config })
+
+    await expect(
+      client.workflow.terminate(
+        {
+          workflowId: 'terminate-error',
+          namespace: 'default',
+        },
+        {},
+      ),
+    ).rejects.toThrow('native terminate failed')
+
+    expect(native.terminateWorkflow).toHaveBeenCalledTimes(1)
     await client.shutdown()
   })
 

@@ -1,4 +1,10 @@
-import type { SignalWithStartOptions, StartWorkflowOptions, TerminateWorkflowOptions, WorkflowHandle } from './types'
+import type {
+  RetryPolicyOptions,
+  SignalWithStartOptions,
+  StartWorkflowOptions,
+  TerminateWorkflowOptions,
+  WorkflowHandle,
+} from './types'
 
 const DOCS_ROOT = 'packages/temporal-bun-sdk/docs'
 const FFI_SURFACE_DOC = `${DOCS_ROOT}/ffi-surface.md`
@@ -35,13 +41,32 @@ export const buildQueryRequest = (
 
 export const buildTerminateRequest = (
   handle: WorkflowHandle,
-  options: TerminateWorkflowOptions,
+  options: TerminateWorkflowOptions = {},
 ): Record<string, unknown> => {
-  void handle
-  void options
-  // TODO(codex): Map terminate options into the FFI payload expected by `temporal_bun_client_terminate_workflow`
-  // (see ${FFI_SURFACE_DOC}, Client exports table).
-  return notImplemented('Workflow terminate serialization', FFI_SURFACE_DOC)
+  const payload: Record<string, unknown> = {
+    namespace: handle.namespace,
+    workflow_id: handle.workflowId,
+  }
+
+  const runId = options.runId ?? handle.runId
+  if (runId) {
+    payload.run_id = runId
+  }
+
+  const firstExecutionRunId = options.firstExecutionRunId ?? handle.firstExecutionRunId
+  if (firstExecutionRunId) {
+    payload.first_execution_run_id = firstExecutionRunId
+  }
+
+  if (options.reason !== undefined) {
+    payload.reason = options.reason
+  }
+
+  if (options.details !== undefined) {
+    payload.details = options.details
+  }
+
+  return payload
 }
 
 export const buildCancelRequest = (handle: WorkflowHandle): Record<string, unknown> => {
@@ -63,16 +88,80 @@ export const buildSignalWithStartRequest = ({
   return notImplemented('Signal-with-start serialization', CLIENT_RUNTIME_DOC)
 }
 
-export const buildStartWorkflowRequest = ({
+export const buildStartWorkflowPayload = ({
   options,
   defaults,
 }: {
   options: StartWorkflowOptions
   defaults: { namespace: string; identity: string; taskQueue: string }
 }): Record<string, unknown> => {
-  void options
-  void defaults
-  // TODO(codex): Replace legacy start payload builder by delegating to this helper once implemented (see
-  // ${CLIENT_RUNTIME_DOC} completion checklist).
-  return notImplemented('Start workflow serialization helper', CLIENT_RUNTIME_DOC)
+  const payload: Record<string, unknown> = {
+    namespace: options.namespace ?? defaults.namespace,
+    workflow_id: options.workflowId,
+    workflow_type: options.workflowType,
+    task_queue: options.taskQueue ?? defaults.taskQueue,
+    identity: options.identity ?? defaults.identity,
+    args: options.args ?? [],
+  }
+
+  if (options.cronSchedule) {
+    payload.cron_schedule = options.cronSchedule
+  }
+
+  if (options.memo) {
+    payload.memo = options.memo
+  }
+
+  if (options.headers) {
+    payload.headers = options.headers
+  }
+
+  if (options.searchAttributes) {
+    payload.search_attributes = options.searchAttributes
+  }
+
+  if (options.requestId) {
+    payload.request_id = options.requestId
+  }
+
+  if (options.workflowExecutionTimeoutMs !== undefined) {
+    payload.workflow_execution_timeout_ms = options.workflowExecutionTimeoutMs
+  }
+
+  if (options.workflowRunTimeoutMs !== undefined) {
+    payload.workflow_run_timeout_ms = options.workflowRunTimeoutMs
+  }
+
+  if (options.workflowTaskTimeoutMs !== undefined) {
+    payload.workflow_task_timeout_ms = options.workflowTaskTimeoutMs
+  }
+
+  if (options.retryPolicy) {
+    const retryPolicyPayload = buildRetryPolicy(options.retryPolicy)
+    if (Object.keys(retryPolicyPayload).length > 0) {
+      payload.retry_policy = retryPolicyPayload
+    }
+  }
+
+  return payload
+}
+
+const buildRetryPolicy = (policy: RetryPolicyOptions): Record<string, unknown> => {
+  const payload: Record<string, unknown> = {}
+  if (policy.initialIntervalMs !== undefined) {
+    payload.initial_interval_ms = policy.initialIntervalMs
+  }
+  if (policy.maximumIntervalMs !== undefined) {
+    payload.maximum_interval_ms = policy.maximumIntervalMs
+  }
+  if (policy.maximumAttempts !== undefined) {
+    payload.maximum_attempts = policy.maximumAttempts
+  }
+  if (policy.backoffCoefficient !== undefined) {
+    payload.backoff_coefficient = policy.backoffCoefficient
+  }
+  if (policy.nonRetryableErrorTypes && policy.nonRetryableErrorTypes.length > 0) {
+    payload.non_retryable_error_types = policy.nonRetryableErrorTypes
+  }
+  return payload
 }

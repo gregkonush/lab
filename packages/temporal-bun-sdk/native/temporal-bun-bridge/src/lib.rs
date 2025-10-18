@@ -15,11 +15,13 @@ use temporal_client::{
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
 use temporal_sdk_core_protos::temporal::api::common::v1::{
-    Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowType,
+    Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution, WorkflowType,
 };
 use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    StartWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
+};
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
@@ -129,6 +131,26 @@ struct StartWorkflowDefaults<'a> {
 struct StartWorkflowResponseInfo {
     workflow_id: String,
     namespace: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerminateWorkflowRequestPayload {
+    #[serde(default)]
+    namespace: Option<String>,
+    workflow_id: String,
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    first_execution_run_id: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    details: Option<Vec<serde_json::Value>>,
+}
+
+struct TerminateWorkflowDefaults<'a> {
+    namespace: &'a str,
+    identity: &'a str,
 }
 
 #[derive(Debug, Error)]
@@ -525,7 +547,10 @@ pub extern "C" fn temporal_bun_client_start_workflow(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_byte_array_new(ptr: *const u8, len: usize) -> *mut byte_array::ByteArray {
+pub extern "C" fn temporal_bun_byte_array_new(
+    ptr: *const u8,
+    len: usize,
+) -> *mut byte_array::ByteArray {
     // TODO(codex): Optimize zero-copy transfers once native bridge exposes shared buffers (docs/ffi-surface.md).
     if ptr.is_null() || len == 0 {
         return byte_array::ByteArray::empty();
@@ -626,13 +651,58 @@ pub extern "C" fn temporal_bun_client_query(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_terminate_workflow(
-    _client_ptr: *mut c_void,
-    _payload_ptr: *const u8,
-    _payload_len: usize,
-) -> *mut pending::PendingByteArray {
-    // TODO(codex): Implement termination via WorkflowService::terminate_workflow_execution (docs/ffi-surface.md).
-    error::set_error("temporal_bun_client_terminate_workflow is not implemented yet".to_string());
-    std::ptr::null_mut()
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> i32 {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    let payload =
+        match request_from_raw::<TerminateWorkflowRequestPayload>(payload_ptr, payload_len) {
+            Ok(payload) => payload,
+            Err(err) => {
+                error::set_error(err.to_string());
+                return -1;
+            }
+        };
+
+    let defaults = TerminateWorkflowDefaults {
+        namespace: &client_handle.namespace,
+        identity: &client_handle.identity,
+    };
+
+    let request = match build_terminate_workflow_request(payload, defaults) {
+        Ok(request) => request,
+        Err(err) => {
+            error::set_error(err.to_string());
+            return -1;
+        }
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+
+    let result = runtime.tokio_handle().block_on(async move {
+        let mut inner = client.clone();
+        WorkflowService::terminate_workflow_execution(&mut inner, request.into_request()).await
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(err) => {
+            error::set_error(
+                BridgeError::ClientRequest(format!("{}: {}", err.code(), err.message()))
+                    .to_string(),
+            );
+            -1
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -657,12 +727,20 @@ pub extern "C" fn temporal_bun_client_signal_with_start(
     std::ptr::null_mut()
 }
 
-
 fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
-    let data = serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
+    let data =
+        serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
     let mut metadata = HashMap::new();
     metadata.insert("encoding".to_string(), b"json/plain".to_vec());
     Ok(Payload { metadata, data })
+}
+
+fn encode_payloads_from_vec(values: Vec<serde_json::Value>) -> Result<Payloads, BridgeError> {
+    let mut encoded = Vec::with_capacity(values.len());
+    for value in values {
+        encoded.push(encode_payload(value)?);
+    }
+    Ok(Payloads { payloads: encoded })
 }
 
 fn build_start_workflow_request(
@@ -694,7 +772,9 @@ fn build_start_workflow_request(
     let mut request = StartWorkflowExecutionRequest {
         namespace: namespace.clone(),
         workflow_id: workflow_id.clone(),
-        workflow_type: Some(WorkflowType { name: workflow_type }),
+        workflow_type: Some(WorkflowType {
+            name: workflow_type,
+        }),
         task_queue: Some(TaskQueue {
             name: task_queue,
             kind: TaskQueueKind::Normal as i32,
@@ -720,7 +800,9 @@ fn build_start_workflow_request(
 
     match encode_payload_map(search_attributes)? {
         Some(fields) => {
-            request.search_attributes = Some(SearchAttributes { indexed_fields: fields });
+            request.search_attributes = Some(SearchAttributes {
+                indexed_fields: fields,
+            });
         }
         None => {}
     }
@@ -756,6 +838,40 @@ fn build_start_workflow_request(
     };
 
     Ok((request, response_info))
+}
+
+fn build_terminate_workflow_request(
+    payload: TerminateWorkflowRequestPayload,
+    defaults: TerminateWorkflowDefaults,
+) -> Result<TerminateWorkflowExecutionRequest, BridgeError> {
+    let TerminateWorkflowRequestPayload {
+        namespace,
+        workflow_id,
+        run_id,
+        first_execution_run_id,
+        reason,
+        details,
+    } = payload;
+
+    let namespace = namespace.unwrap_or_else(|| defaults.namespace.to_string());
+
+    let mut request = TerminateWorkflowExecutionRequest {
+        namespace,
+        identity: defaults.identity.to_string(),
+        workflow_execution: Some(WorkflowExecution {
+            workflow_id,
+            run_id: run_id.unwrap_or_default(),
+        }),
+        reason: reason.unwrap_or_default(),
+        first_execution_run_id: first_execution_run_id.unwrap_or_default(),
+        ..Default::default()
+    };
+
+    if let Some(values) = details {
+        request.details = Some(encode_payloads_from_vec(values)?);
+    }
+
+    Ok(request)
 }
 
 fn encode_payload_map(
@@ -800,17 +916,20 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
     let mut tls = TlsConfig::default();
 
     if let Some(server_root_ca) = payload.server_root_ca_cert {
-        let bytes = decode_base64(&server_root_ca)
-            .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}")))?;
+        let bytes = decode_base64(&server_root_ca).map_err(|err| {
+            BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}"))
+        })?;
         tls.server_root_ca_cert = Some(bytes);
     }
 
     match (payload.client_cert, payload.client_private_key) {
         (Some(cert_b64), Some(key_b64)) => {
-            let cert = decode_base64(&cert_b64)
-                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}")))?;
-            let key = decode_base64(&key_b64)
-                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}")))?;
+            let cert = decode_base64(&cert_b64).map_err(|err| {
+                BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}"))
+            })?;
+            let key = decode_base64(&key_b64).map_err(|err| {
+                BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}"))
+            })?;
             tls.client_tls_config = Some(ClientTlsConfig {
                 client_cert: cert,
                 client_private_key: key,
@@ -851,8 +970,8 @@ fn duration_from_millis(ms: u64) -> ProtoDuration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn config_from_raw_parses_defaults() {
@@ -935,7 +1054,8 @@ mod tests {
             identity: "worker-1",
         };
 
-        let (request, info) = build_start_workflow_request(payload, defaults).expect("build request");
+        let (request, info) =
+            build_start_workflow_request(payload, defaults).expect("build request");
         assert_eq!(request.namespace, "default");
         assert_eq!(request.identity, "worker-1");
         assert_eq!(request.workflow_id, "wf-123");
@@ -984,7 +1104,8 @@ mod tests {
             identity: "worker-1",
         };
 
-        let (request, info) = build_start_workflow_request(payload, defaults).expect("build request");
+        let (request, info) =
+            build_start_workflow_request(payload, defaults).expect("build request");
 
         let inputs = request.input.expect("payloads").payloads;
         assert_eq!(inputs.len(), 2);
@@ -1024,5 +1145,96 @@ mod tests {
         assert!(header_fields.contains_key("auth"));
         let search_fields = request.search_attributes.unwrap().indexed_fields;
         assert!(search_fields.contains_key("env"));
+    }
+
+    #[test]
+    fn build_terminate_workflow_request_applies_defaults() {
+        let payload = TerminateWorkflowRequestPayload {
+            namespace: None,
+            workflow_id: "wf-terminate".to_string(),
+            run_id: None,
+            first_execution_run_id: None,
+            reason: None,
+            details: None,
+        };
+
+        let defaults = TerminateWorkflowDefaults {
+            namespace: "default",
+            identity: "worker-1",
+        };
+
+        let request = build_terminate_workflow_request(payload, defaults).expect("request");
+        assert_eq!(request.namespace, "default");
+        assert_eq!(request.identity, "worker-1");
+        assert_eq!(request.reason, "");
+        assert_eq!(request.first_execution_run_id, "");
+        assert!(request.details.is_none());
+
+        let execution = request.workflow_execution.expect("execution");
+        assert_eq!(execution.workflow_id, "wf-terminate");
+        assert_eq!(execution.run_id, "");
+    }
+
+    #[test]
+    fn build_terminate_workflow_request_encodes_reason_and_details() {
+        let payload = TerminateWorkflowRequestPayload {
+            namespace: Some("analytics".to_string()),
+            workflow_id: "terminate-me".to_string(),
+            run_id: Some("run-123".to_string()),
+            first_execution_run_id: Some("run-initial".to_string()),
+            reason: Some("done".to_string()),
+            details: Some(vec![json!("cleanup"), json!({ "ok": true })]),
+        };
+
+        let defaults = TerminateWorkflowDefaults {
+            namespace: "fallback",
+            identity: "worker-2",
+        };
+
+        let request = build_terminate_workflow_request(payload, defaults).expect("request");
+        assert_eq!(request.namespace, "analytics");
+        assert_eq!(request.identity, "worker-2");
+        assert_eq!(request.reason, "done");
+        assert_eq!(request.first_execution_run_id, "run-initial");
+
+        let execution = request.workflow_execution.expect("execution");
+        assert_eq!(execution.workflow_id, "terminate-me");
+        assert_eq!(execution.run_id, "run-123");
+
+        let details = request.details.expect("details");
+        let decoded: Vec<serde_json::Value> = details
+            .payloads
+            .iter()
+            .map(|payload| {
+                serde_json::from_slice::<serde_json::Value>(&payload.data).expect("json")
+            })
+            .collect();
+        assert_eq!(decoded, vec![json!("cleanup"), json!({ "ok": true })]);
+        for payload in details.payloads {
+            assert_eq!(
+                payload.metadata.get("encoding"),
+                Some(&b"json/plain".to_vec())
+            );
+        }
+    }
+
+    #[test]
+    fn temporal_bun_client_terminate_workflow_sets_error_for_invalid_handle() {
+        let status =
+            temporal_bun_client_terminate_workflow(std::ptr::null_mut(), std::ptr::null(), 0);
+        assert_eq!(status, -1);
+
+        let mut len: usize = 0;
+        let ptr = error::take_error(&mut len as *mut usize);
+        assert!(len > 0);
+        assert!(!ptr.is_null());
+
+        let message = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let message = std::str::from_utf8(message).expect("utf8");
+        assert!(message.contains("invalid client handle"));
+
+        unsafe {
+            error::free_error(ptr as *mut u8, len);
+        }
     }
 }

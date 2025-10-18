@@ -38,6 +38,7 @@ const {
     temporal_bun_pending_byte_array_free,
     temporal_bun_byte_array_free,
     temporal_bun_client_start_workflow,
+    temporal_bun_client_terminate_workflow,
   },
 } = dlopen(libraryFile, {
   temporal_bun_runtime_new: {
@@ -99,6 +100,10 @@ const {
   temporal_bun_client_start_workflow: {
     args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
     returns: FFIType.ptr,
+  },
+  temporal_bun_client_terminate_workflow: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.int32_t,
   },
 })
 
@@ -196,12 +201,12 @@ export const native = {
     return Promise.reject(buildNotImplementedError('Workflow query bridge', 'docs/ffi-surface.md'))
   },
 
-  async terminateWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
-    void client
-    void _request
-    // TODO(codex): Implement termination via `temporal_bun_client_terminate_workflow` per the native
-    // bridge plan documented in docs/ffi-surface.md.
-    return Promise.reject(buildNotImplementedError('Workflow termination bridge', 'docs/ffi-surface.md'))
+  async terminateWorkflow(client: NativeClient, request: Record<string, unknown>): Promise<void> {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const status = Number(temporal_bun_client_terminate_workflow(client.handle, ptr(payload), payload.byteLength))
+    if (status !== 0) {
+      throw new Error(readLastError())
+    }
   },
 
   async cancelWorkflow(client: NativeClient, _request: Record<string, unknown>): Promise<never> {
