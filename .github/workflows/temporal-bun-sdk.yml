@@ -36,8 +36,9 @@ jobs:
         run: corepack enable
 
       - name: Prepare pnpm
-        run: >-
-          corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
+        run: |
+          PACKAGE_MANAGER=$(node -p "require('./package.json').packageManager")
+          corepack prepare "$PACKAGE_MANAGER" --activate
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
