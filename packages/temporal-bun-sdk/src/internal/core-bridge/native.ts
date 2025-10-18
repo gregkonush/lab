@@ -264,6 +264,59 @@ function resolveBridgeLibraryPath(): string {
     return override
   }
 
+  if (shouldPreferZigBridge()) {
+    const zigPath = resolveZigBridgeLibraryPath()
+    if (zigPath) {
+      return zigPath
+    }
+    console.warn(
+      'TEMPORAL_BUN_SDK_USE_ZIG was enabled but the Zig bridge was not found. Falling back to the Rust bridge.',
+    )
+  }
+
+  return resolveRustBridgeLibraryPath()
+}
+
+function shouldPreferZigBridge(): boolean {
+  const flag = process.env.TEMPORAL_BUN_SDK_USE_ZIG
+  if (!flag) {
+    return false
+  }
+  return /^(1|true|on)$/i.test(flag)
+}
+
+function resolveZigBridgeLibraryPath(): string | null {
+  const baseDir = fileURLToPath(new URL('../../../native/temporal-bun-bridge-zig', import.meta.url))
+  const libDir = join(baseDir, 'zig-out', 'lib')
+  const baseName =
+    process.platform === 'win32'
+      ? 'temporal_bun_bridge_zig.dll'
+      : process.platform === 'darwin'
+        ? 'libtemporal_bun_bridge_zig.dylib'
+        : 'libtemporal_bun_bridge_zig.so'
+
+  const releasePath = join(libDir, baseName)
+  if (existsSync(releasePath)) {
+    return releasePath
+  }
+
+  const debugName =
+    process.platform === 'win32'
+      ? 'temporal_bun_bridge_zig_debug.dll'
+      : process.platform === 'darwin'
+        ? 'libtemporal_bun_bridge_zig_debug.dylib'
+        : 'libtemporal_bun_bridge_zig_debug.so'
+
+  const debugPath = join(libDir, debugName)
+  if (existsSync(debugPath)) {
+    return debugPath
+  }
+
+  // TODO(codex, temporal-zig-phase-0): surface richer diagnostics (include zig build command output, etc.)
+  return null
+}
+
+function resolveRustBridgeLibraryPath(): string {
   const targetDir = fileURLToPath(new URL('../../../native/temporal-bun-bridge/target', import.meta.url))
   const baseName =
     process.platform === 'win32'

@@ -28,7 +28,7 @@ describe('native bridge', () => {
         })
 
       if (hasLiveTemporalServer) {
-        const client = await connect()
+        const client = await withRetry(connect, 10, 500)
         expect(client.type).toBe('client')
         expect(typeof client.handle).toBe('number')
         native.clientShutdown(client)
@@ -54,3 +54,17 @@ describe('native bridge', () => {
     }
   })
 })
+
+async function withRetry<T>(fn: () => T | Promise<T>, attempts: number, waitMs: number): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error
+      if (attempt === attempts) break
+      await Bun.sleep(waitMs)
+    }
+  }
+  throw lastError
+}

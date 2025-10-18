@@ -1,6 +1,6 @@
 # Temporal Bun SDK — Zig Bridge Migration Plan
 
-**Status:** Draft for implementation sign-off (18 Oct 2025)  
+**Status:** Scaffolded — Zig shared library placeholder merged (18 Oct 2025)  
 **Owner:** Platform Runtime (Temporal Bun)  
 **Related Issue:** #1458 — Native Bun support with Zig
 
@@ -146,4 +146,3 @@ Bun (bun:ffi) ──▶ Zig Bridge (libtemporal_bun_bridge.zig)
 1. Socialize this plan with Temporal Runtime stakeholders for approval.  
 2. Schedule Phase 0 spike (time-boxed) to validate Zig ↔ Rust static link viability.  
 3. Once approved, convert phases into tracked GitHub issues / project items with owners & timelines.
-

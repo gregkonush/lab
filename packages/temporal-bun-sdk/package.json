@@ -41,7 +41,10 @@
     "test": "bun test",
     "test:coverage": "bun test --coverage",
     "start:worker": "bun run dist/bin/start-worker.js",
-    "build:native": "cargo build --release --manifest-path native/temporal-bun-bridge/Cargo.toml"
+    "build:native": "cargo build --release --manifest-path native/temporal-bun-bridge/Cargo.toml",
+    "build:native:zig": "zig build -Doptimize=ReleaseFast --build-file native/temporal-bun-bridge-zig/build.zig",
+    "build:native:zig:debug": "zig build -Doptimize=Debug --build-file native/temporal-bun-bridge-zig/build.zig",
+    "test:native:zig": "zig build -Doptimize=Debug --build-file native/temporal-bun-bridge-zig/build.zig test"
   },
   "engines": {
     "bun": ">=1.1.20"
