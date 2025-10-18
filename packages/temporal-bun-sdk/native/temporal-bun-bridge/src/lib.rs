@@ -15,11 +15,13 @@ use temporal_client::{
 use temporal_sdk_core::{CoreRuntime, TokioRuntimeBuilder};
 use temporal_sdk_core_api::telemetry::TelemetryOptions;
 use temporal_sdk_core_protos::temporal::api::common::v1::{
-    Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowType,
+    Header, Memo, Payload, Payloads, RetryPolicy, SearchAttributes, WorkflowExecution, WorkflowType,
 };
 use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
 use temporal_sdk_core_protos::temporal::api::taskqueue::v1::TaskQueue;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    SignalWorkflowExecutionRequest, StartWorkflowExecutionRequest,
+};
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
@@ -129,6 +131,33 @@ struct StartWorkflowDefaults<'a> {
 struct StartWorkflowResponseInfo {
     workflow_id: String,
     namespace: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SignalWorkflowRequestPayload {
+    workflow_id: String,
+    signal_name: String,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    first_execution_run_id: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    headers: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    control: Option<String>,
+}
+
+struct SignalWorkflowDefaults<'a> {
+    namespace: &'a str,
+    identity: &'a str,
 }
 
 #[derive(Debug, Error)]
@@ -525,7 +554,10 @@ pub extern "C" fn temporal_bun_client_start_workflow(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_bun_byte_array_new(ptr: *const u8, len: usize) -> *mut byte_array::ByteArray {
+pub extern "C" fn temporal_bun_byte_array_new(
+    ptr: *const u8,
+    len: usize,
+) -> *mut byte_array::ByteArray {
     // TODO(codex): Optimize zero-copy transfers once native bridge exposes shared buffers (docs/ffi-surface.md).
     if ptr.is_null() || len == 0 {
         return byte_array::ByteArray::empty();
@@ -604,13 +636,50 @@ pub extern "C" fn temporal_bun_pending_byte_array_free(ptr: *mut pending::Pendin
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_bun_client_signal(
-    _client_ptr: *mut c_void,
-    _payload_ptr: *const u8,
-    _payload_len: usize,
-) -> *mut pending::PendingByteArray {
-    // TODO(codex): Implement workflow signal bridge invoking WorkflowService::signal_workflow_execution (docs/ffi-surface.md).
-    error::set_error("temporal_bun_client_signal is not implemented yet".to_string());
-    std::ptr::null_mut()
+    client_ptr: *mut c_void,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> *mut pending::PendingStatus {
+    let client_handle = match client_from_ptr(client_ptr) {
+        Ok(client) => client,
+        Err(err) => return into_string_error(err) as *mut pending::PendingStatus,
+    };
+
+    let payload = match request_from_raw::<SignalWorkflowRequestPayload>(payload_ptr, payload_len) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return into_string_error(BridgeError::InvalidRequest(err.to_string()))
+                as *mut pending::PendingStatus
+        }
+    };
+
+    let defaults = SignalWorkflowDefaults {
+        namespace: &client_handle.namespace,
+        identity: &client_handle.identity,
+    };
+
+    let request = match build_signal_workflow_request(payload, defaults) {
+        Ok(request) => request,
+        Err(err) => return into_string_error(err) as *mut pending::PendingStatus,
+    };
+
+    let runtime = client_handle.runtime.clone();
+    let client = client_handle.client.clone();
+    let (tx, rx) = channel();
+
+    thread::spawn(move || {
+        let result = runtime.tokio_handle().block_on(async move {
+            let mut inner = client.clone();
+            WorkflowService::signal_workflow_execution(&mut inner, request.into_request())
+                .await
+                .map(|_| ())
+                .map_err(|err| BridgeError::ClientRequest(err.to_string()).to_string())
+        });
+
+        let _ = tx.send(result);
+    });
+
+    Box::into_raw(Box::new(pending::PendingStatus::new(rx)))
 }
 
 #[unsafe(no_mangle)]
@@ -657,9 +726,61 @@ pub extern "C" fn temporal_bun_client_signal_with_start(
     std::ptr::null_mut()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_status_poll(ptr: *mut pending::PendingStatus) -> i32 {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return -1;
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.poll() {
+        pending::PendingState::Pending => 0,
+        pending::PendingState::ReadyOk => 1,
+        pending::PendingState::ReadyErr(err) => {
+            error::set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_status_consume(ptr: *mut pending::PendingStatus) -> i32 {
+    if ptr.is_null() {
+        error::set_error("invalid pending handle".to_string());
+        return -1;
+    }
+
+    let pending = unsafe { &*ptr };
+
+    match pending.take_result() {
+        Some(Ok(())) => 0,
+        Some(Err(err)) => {
+            error::set_error(err);
+            -1
+        }
+        None => {
+            error::set_error("pending result not ready".to_string());
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_bun_pending_status_free(ptr: *mut pending::PendingStatus) {
+    if ptr.is_null() {
+        return;
+    }
+
+    unsafe {
+        let _ = Box::from_raw(ptr);
+    }
+}
 
 fn encode_payload(value: serde_json::Value) -> Result<Payload, BridgeError> {
-    let data = serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
+    let data =
+        serde_json::to_vec(&value).map_err(|err| BridgeError::PayloadEncode(err.to_string()))?;
     let mut metadata = HashMap::new();
     metadata.insert("encoding".to_string(), b"json/plain".to_vec());
     Ok(Payload { metadata, data })
@@ -694,7 +815,9 @@ fn build_start_workflow_request(
     let mut request = StartWorkflowExecutionRequest {
         namespace: namespace.clone(),
         workflow_id: workflow_id.clone(),
-        workflow_type: Some(WorkflowType { name: workflow_type }),
+        workflow_type: Some(WorkflowType {
+            name: workflow_type,
+        }),
         task_queue: Some(TaskQueue {
             name: task_queue,
             kind: TaskQueueKind::Normal as i32,
@@ -720,7 +843,9 @@ fn build_start_workflow_request(
 
     match encode_payload_map(search_attributes)? {
         Some(fields) => {
-            request.search_attributes = Some(SearchAttributes { indexed_fields: fields });
+            request.search_attributes = Some(SearchAttributes {
+                indexed_fields: fields,
+            });
         }
         None => {}
     }
@@ -756,6 +881,59 @@ fn build_start_workflow_request(
     };
 
     Ok((request, response_info))
+}
+
+fn build_signal_workflow_request(
+    payload: SignalWorkflowRequestPayload,
+    defaults: SignalWorkflowDefaults,
+) -> Result<SignalWorkflowExecutionRequest, BridgeError> {
+    let SignalWorkflowRequestPayload {
+        workflow_id,
+        signal_name,
+        namespace,
+        run_id,
+        first_execution_run_id,
+        args,
+        identity,
+        headers,
+        request_id,
+        control,
+    } = payload;
+
+    let namespace = namespace.unwrap_or_else(|| defaults.namespace.to_string());
+    let identity = identity.unwrap_or_else(|| defaults.identity.to_string());
+    let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    let execution = WorkflowExecution {
+        workflow_id,
+        run_id: run_id.unwrap_or_default(),
+    };
+
+    let mut request = SignalWorkflowExecutionRequest {
+        namespace,
+        workflow_execution: Some(execution),
+        signal_name,
+        identity,
+        request_id,
+        control: control.unwrap_or_default(),
+        workflow_execution_run_id: first_execution_run_id.unwrap_or_default(),
+        ..Default::default()
+    };
+
+    if let Some(values) = args {
+        let mut encoded = Vec::with_capacity(values.len());
+        for value in values {
+            encoded.push(encode_payload(value)?);
+        }
+        request.input = Some(Payloads { payloads: encoded });
+    }
+
+    match encode_payload_map(headers)? {
+        Some(fields) => request.header = Some(Header { fields }),
+        None => {}
+    }
+
+    Ok(request)
 }
 
 fn encode_payload_map(
@@ -800,17 +978,20 @@ fn tls_config_from_payload(payload: ClientTlsConfigPayload) -> Result<TlsConfig,
     let mut tls = TlsConfig::default();
 
     if let Some(server_root_ca) = payload.server_root_ca_cert {
-        let bytes = decode_base64(&server_root_ca)
-            .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}")))?;
+        let bytes = decode_base64(&server_root_ca).map_err(|err| {
+            BridgeError::InvalidTlsConfig(format!("invalid server_root_ca_cert: {err}"))
+        })?;
         tls.server_root_ca_cert = Some(bytes);
     }
 
     match (payload.client_cert, payload.client_private_key) {
         (Some(cert_b64), Some(key_b64)) => {
-            let cert = decode_base64(&cert_b64)
-                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}")))?;
-            let key = decode_base64(&key_b64)
-                .map_err(|err| BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}")))?;
+            let cert = decode_base64(&cert_b64).map_err(|err| {
+                BridgeError::InvalidTlsConfig(format!("invalid client_cert: {err}"))
+            })?;
+            let key = decode_base64(&key_b64).map_err(|err| {
+                BridgeError::InvalidTlsConfig(format!("invalid client_private_key: {err}"))
+            })?;
             tls.client_tls_config = Some(ClientTlsConfig {
                 client_cert: cert,
                 client_private_key: key,
@@ -851,8 +1032,8 @@ fn duration_from_millis(ms: u64) -> ProtoDuration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn config_from_raw_parses_defaults() {
@@ -935,7 +1116,8 @@ mod tests {
             identity: "worker-1",
         };
 
-        let (request, info) = build_start_workflow_request(payload, defaults).expect("build request");
+        let (request, info) =
+            build_start_workflow_request(payload, defaults).expect("build request");
         assert_eq!(request.namespace, "default");
         assert_eq!(request.identity, "worker-1");
         assert_eq!(request.workflow_id, "wf-123");
@@ -984,7 +1166,8 @@ mod tests {
             identity: "worker-1",
         };
 
-        let (request, info) = build_start_workflow_request(payload, defaults).expect("build request");
+        let (request, info) =
+            build_start_workflow_request(payload, defaults).expect("build request");
 
         let inputs = request.input.expect("payloads").payloads;
         assert_eq!(inputs.len(), 2);
@@ -1024,5 +1207,89 @@ mod tests {
         assert!(header_fields.contains_key("auth"));
         let search_fields = request.search_attributes.unwrap().indexed_fields;
         assert!(search_fields.contains_key("env"));
+    }
+
+    #[test]
+    fn build_signal_workflow_request_applies_defaults() {
+        let payload = SignalWorkflowRequestPayload {
+            workflow_id: "wf-001".to_string(),
+            signal_name: "notify".to_string(),
+            namespace: None,
+            run_id: None,
+            first_execution_run_id: None,
+            args: None,
+            identity: None,
+            headers: None,
+            request_id: None,
+            control: None,
+        };
+
+        let defaults = SignalWorkflowDefaults {
+            namespace: "default",
+            identity: "worker-1",
+        };
+
+        let request = build_signal_workflow_request(payload, defaults).expect("request built");
+        assert_eq!(request.namespace, "default");
+        assert_eq!(request.identity, "worker-1");
+        assert_eq!(request.signal_name, "notify");
+        let execution = request.workflow_execution.expect("execution set");
+        assert_eq!(execution.workflow_id, "wf-001");
+        assert!(execution.run_id.is_empty());
+        assert!(!request.request_id.is_empty());
+        assert!(request.input.is_none());
+        assert!(request.header.is_none());
+        assert!(request.workflow_execution_run_id.is_empty());
+    }
+
+    #[test]
+    fn build_signal_workflow_request_encodes_args_and_headers() {
+        let payload = SignalWorkflowRequestPayload {
+            workflow_id: "wf-100".to_string(),
+            signal_name: "update".to_string(),
+            namespace: Some("custom".to_string()),
+            run_id: Some("run-123".to_string()),
+            first_execution_run_id: Some("first-456".to_string()),
+            args: Some(vec![json!({ "status": "ok" })]),
+            identity: Some("custom-id".to_string()),
+            headers: Some(HashMap::from([(
+                String::from("x-trace"),
+                json!("trace-001"),
+            )])),
+            request_id: Some("req-789".to_string()),
+            control: Some("control".to_string()),
+        };
+
+        let defaults = SignalWorkflowDefaults {
+            namespace: "default",
+            identity: "worker-1",
+        };
+
+        let request = build_signal_workflow_request(payload, defaults).expect("request built");
+        assert_eq!(request.namespace, "custom");
+        assert_eq!(request.identity, "custom-id");
+        assert_eq!(request.request_id, "req-789");
+        assert_eq!(request.control, "control");
+        assert_eq!(request.workflow_execution_run_id, "first-456");
+
+        let execution = request.workflow_execution.expect("execution set");
+        assert_eq!(execution.run_id, "run-123");
+
+        let payloads = request.input.expect("input present").payloads;
+        assert_eq!(payloads.len(), 1);
+        let payload = &payloads[0];
+        assert_eq!(
+            payload.metadata.get("encoding").map(|v| v.as_slice()),
+            Some(b"json/plain".as_slice())
+        );
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&payload.data).expect("json payload");
+        assert_eq!(decoded, json!({ "status": "ok" }));
+
+        let header = request.header.expect("header present");
+        let header_payload = header.fields.get("x-trace").expect("header value");
+        let header_decoded: serde_json::Value =
+            serde_json::from_slice(&header_payload.data).expect("json header");
+        assert_eq!(header_decoded, json!("trace-001"));
     }
 }

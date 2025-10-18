@@ -71,6 +71,7 @@ impl<T> PendingResult<T> {
 }
 
 pub type PendingByteArray = PendingResult<Vec<u8>>;
+pub type PendingStatus = PendingResult<()>;
 
 #[cfg(test)]
 mod tests {

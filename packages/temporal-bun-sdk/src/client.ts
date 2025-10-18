@@ -5,10 +5,10 @@ import {
   buildQueryRequest,
   buildSignalRequest,
   buildSignalWithStartRequest,
+  buildStartWorkflowPayload,
   buildTerminateRequest,
 } from './client/serialization'
 import type {
-  RetryPolicyOptions,
   SignalWithStartOptions,
   StartWorkflowOptions,
   TerminateWorkflowOptions,
@@ -185,7 +185,12 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
-    const request = buildSignalRequest(handle, signalName, args)
+    const request = buildSignalRequest({
+      handle,
+      signalName,
+      args,
+      defaults: { identity: this.defaultIdentity },
+    })
     await native.signalWorkflow(this.client, request)
   }
 
@@ -238,81 +243,6 @@ const parseJson = (bytes: Uint8Array): unknown => {
   } catch (error) {
     throw new Error(`Failed to parse Temporal bridge response: ${(error as Error).message}`)
   }
-}
-
-const buildStartWorkflowPayload = ({
-  options,
-  defaults,
-}: {
-  options: z.infer<typeof startWorkflowOptionsSchema>
-  defaults: { namespace: string; identity: string; taskQueue: string }
-}): Record<string, unknown> => {
-  const payload: Record<string, unknown> = {
-    namespace: options.namespace ?? defaults.namespace,
-    workflow_id: options.workflowId,
-    workflow_type: options.workflowType,
-    task_queue: options.taskQueue ?? defaults.taskQueue,
-    identity: options.identity ?? defaults.identity,
-    args: options.args ?? [],
-  }
-
-  if (options.cronSchedule) {
-    payload.cron_schedule = options.cronSchedule
-  }
-
-  if (options.memo) {
-    payload.memo = options.memo
-  }
-
-  if (options.headers) {
-    payload.headers = options.headers
-  }
-
-  if (options.searchAttributes) {
-    payload.search_attributes = options.searchAttributes
-  }
-
-  if (options.requestId) {
-    payload.request_id = options.requestId
-  }
-
-  if (options.workflowExecutionTimeoutMs) {
-    payload.workflow_execution_timeout_ms = options.workflowExecutionTimeoutMs
-  }
-
-  if (options.workflowRunTimeoutMs) {
-    payload.workflow_run_timeout_ms = options.workflowRunTimeoutMs
-  }
-
-  if (options.workflowTaskTimeoutMs) {
-    payload.workflow_task_timeout_ms = options.workflowTaskTimeoutMs
-  }
-
-  if (options.retryPolicy) {
-    payload.retry_policy = buildRetryPolicy(options.retryPolicy)
-  }
-
-  return payload
-}
-
-const buildRetryPolicy = (policy: RetryPolicyOptions): Record<string, unknown> => {
-  const payload: Record<string, unknown> = {}
-  if (policy.initialIntervalMs !== undefined) {
-    payload.initial_interval_ms = policy.initialIntervalMs
-  }
-  if (policy.maximumIntervalMs !== undefined) {
-    payload.maximum_interval_ms = policy.maximumIntervalMs
-  }
-  if (policy.maximumAttempts !== undefined) {
-    payload.maximum_attempts = policy.maximumAttempts
-  }
-  if (policy.backoffCoefficient !== undefined) {
-    payload.backoff_coefficient = policy.backoffCoefficient
-  }
-  if (policy.nonRetryableErrorTypes && policy.nonRetryableErrorTypes.length > 0) {
-    payload.non_retryable_error_types = policy.nonRetryableErrorTypes
-  }
-  return payload
 }
 
 const formatTemporalAddress = (address: string, useTls: boolean): string => {
