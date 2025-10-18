@@ -1388,9 +1388,16 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    fn byte_array_test_mutex() -> &'static Mutex<()> {
+        static BYTE_ARRAY_TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        BYTE_ARRAY_TEST_MUTEX.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn byte_array_new_round_trips_large_payload() {
+        let _guard = byte_array_test_mutex().lock().unwrap();
         byte_array::clear_pool();
 
         let len = 8 * 1024 * 1024;
@@ -1415,6 +1422,7 @@ mod tests {
 
     #[test]
     fn byte_array_new_reuses_pooled_buffers() {
+        let _guard = byte_array_test_mutex().lock().unwrap();
         byte_array::clear_pool();
         assert_eq!(byte_array::pool_len(), 0);
 
