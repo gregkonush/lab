@@ -5,7 +5,7 @@ import {
   buildQueryRequest,
   buildSignalRequest,
   buildSignalWithStartRequest,
-  buildStartWorkflowPayload,
+  buildStartWorkflowRequest,
   buildTerminateRequest,
 } from './client/serialization'
 import {
@@ -227,7 +227,7 @@ class TemporalClientImpl implements TemporalClient {
 
   async startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult> {
     const parsed = startWorkflowOptionsSchema.parse(options)
-    const payload = buildStartWorkflowPayload({
+    const payload = buildStartWorkflowRequest({
       options: parsed,
       defaults: {
         namespace: this.namespace,
