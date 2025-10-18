@@ -39,16 +39,23 @@ Cluster deployments rely on a namespace-scoped Grafana Alloy deployment (`argocd
 
 The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `kubernetes/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
 
-## Deploying with `kn`
+## Deploying
 
-When you need to reconcile the Knative Service directly, you can apply the manifest with the Knative CLI:
+The easiest way to ship a new build is the automation script in `packages/scripts`:
 
 ```bash
 # From the repository root
-kn service apply -f kubernetes/facteur/base/service.yaml
+bun packages/scripts/src/facteur/deploy-service.ts
 ```
 
-The command mirrors the manifest-driven deployment used by the rest of the repo, so it is safe to run between Argo CD syncs when you want to force a rollout.
+It will:
+
+1. Build `registry.ide-newton.ts.net/lab/facteur:<current commit>` (override with `FACTEUR_IMAGE_TAG`).
+2. Push the image.
+3. `kubectl apply -k kubernetes/facteur/overlays/cluster` to reconcile config/Redis/Kafka sources.
+4. `kn service apply` the refreshed image so a new revision rolls out.
+
+If you prefer to drive the deployment manually, you can still fall back to `kn service apply -f kubernetes/facteur/base/service.yaml`, but you must ensure the container image tag in `kubernetes/facteur/overlays/cluster/kustomization.yaml` is updated first.
 
 ## Infrastructure dependencies
 
