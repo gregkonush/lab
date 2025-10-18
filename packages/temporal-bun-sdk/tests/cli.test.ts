@@ -136,7 +136,9 @@ describe('temporal-bun CLI utilities', () => {
         namespace: 'production',
         taskQueue: 'prix',
         apiKey: undefined,
-        tls: undefined,
+        tls: {
+          serverRootCACertificate: Buffer.from('ca-cert'),
+        },
         allowInsecureTls: false,
         workerIdentity: 'temporal-bun-worker-host-2',
         workerIdentityPrefix: 'temporal-bun-worker',
@@ -166,11 +168,14 @@ describe('temporal-bun CLI utilities', () => {
         address: 'https://foo.tmprl.cloud:7233',
         allowInsecureTls: false,
         namespace: 'production',
+        tls: {
+          serverRootCACertificate: Buffer.from('ca-cert').toString('base64'),
+        },
       }),
     )
   })
 
-  it('handleCheck falls back to HTTP when allowInsecureTls is true', async () => {
+  it('handleCheck uses HTTP when no TLS configuration is provided', async () => {
     const runtimeHandle = { type: 'runtime' as const, handle: 101 }
     const clientHandle = { type: 'client' as const, handle: 202 }
 
@@ -183,7 +188,7 @@ describe('temporal-bun CLI utilities', () => {
         taskQueue: 'prix',
         apiKey: undefined,
         tls: undefined,
-        allowInsecureTls: true,
+        allowInsecureTls: false,
         workerIdentity: 'temporal-bun-worker-host-1',
         workerIdentityPrefix: 'temporal-bun-worker',
       }),
@@ -213,9 +218,61 @@ describe('temporal-bun CLI utilities', () => {
       runtimeHandle,
       expect.objectContaining({
         address: 'http://temporal.internal:7233',
-        allowInsecureTls: true,
+        allowInsecureTls: false,
       }),
     )
     expect(nativeBridge.describeNamespace).toHaveBeenCalled()
+  })
+
+  it('handleCheck keeps HTTPS when allowInsecureTls is true but TLS is configured', async () => {
+    const runtimeHandle = { type: 'runtime' as const, handle: 505 }
+    const clientHandle = { type: 'client' as const, handle: 606 }
+
+    const ca = Buffer.from('ca')
+
+    const loadConfig = mock(
+      async (): Promise<TemporalConfig> => ({
+        host: 'secure.tmprl.cloud',
+        port: 7233,
+        address: 'secure.tmprl.cloud:7233',
+        namespace: 'secure',
+        taskQueue: 'prix',
+        apiKey: undefined,
+        tls: {
+          serverRootCACertificate: ca,
+        },
+        allowInsecureTls: true,
+        workerIdentity: 'temporal-bun-worker-host-3',
+        workerIdentityPrefix: 'temporal-bun-worker',
+      }),
+    )
+
+    const nativeBridge = {
+      createRuntime: mock(() => runtimeHandle),
+      runtimeShutdown: mock(() => {}),
+      createClient: mock(async () => clientHandle),
+      clientShutdown: mock(() => {}),
+      describeNamespace: mock(async () => new Uint8Array([7, 8, 9])),
+    }
+
+    await handleCheck(
+      [],
+      {},
+      {
+        loadConfig,
+        nativeBridge: nativeBridge as unknown as NativeBridge,
+      },
+    )
+
+    expect(nativeBridge.createClient).toHaveBeenCalledWith(
+      runtimeHandle,
+      expect.objectContaining({
+        address: 'https://secure.tmprl.cloud:7233',
+        allowInsecureTls: true,
+        tls: {
+          serverRootCACertificate: ca.toString('base64'),
+        },
+      }),
+    )
   })
 })

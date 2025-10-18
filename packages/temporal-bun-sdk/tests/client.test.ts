@@ -235,9 +235,19 @@ describe('temporal client (native bridge)', () => {
       identity: 'bun-worker',
       apiKey: 'test-key',
       tls: {
+        serverRootCACertificate: Buffer.from('ROOT').toString('base64'),
         server_root_ca_cert: Buffer.from('ROOT').toString('base64'),
+        clientCertPair: {
+          crt: Buffer.from('CERT').toString('base64'),
+          key: Buffer.from('KEY').toString('base64'),
+        },
+        client_cert_pair: {
+          crt: Buffer.from('CERT').toString('base64'),
+          key: Buffer.from('KEY').toString('base64'),
+        },
         client_cert: Buffer.from('CERT').toString('base64'),
         client_private_key: Buffer.from('KEY').toString('base64'),
+        serverNameOverride: 'temporal.example.internal',
         server_name_override: 'temporal.example.internal',
       },
     })
