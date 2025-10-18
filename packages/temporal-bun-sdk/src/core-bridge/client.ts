@@ -62,13 +62,15 @@ export const createClient = async (runtime: Runtime, options: ClientOptions): Pr
   return await Client.connect(runtime, options)
 }
 
-const clientFinalizer = new FinalizationRegistry<NativeClient>((client) => {
+const finalizeClient = (client: NativeClient): void => {
   try {
     native.clientShutdown(client)
   } catch {
     // Best-effort cleanup; ignore errors during GC finalization.
   }
-})
+}
+
+const clientFinalizer = new FinalizationRegistry<NativeClient>(finalizeClient)
 
 const ADDRESS_WITH_PROTOCOL = /^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//
 
@@ -77,4 +79,8 @@ export const normalizeTemporalAddress = (address: string): string => {
     return address
   }
   return `http://${address}`
+}
+
+export const __TEST__ = {
+  finalizeClient,
 }

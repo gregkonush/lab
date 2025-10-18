@@ -1,6 +1,8 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { Client, createClient, normalizeTemporalAddress } from '../src/core-bridge/client.ts'
-import { createRuntime } from '../src/core-bridge/runtime.ts'
+import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
+import { native } from '../src/internal/core-bridge/native.ts'
+import { __TEST__ as clientTest } from '../src/core-bridge/client.ts'
 
 const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
@@ -33,6 +35,73 @@ describe('core bridge client wrapper', () => {
     } finally {
       await runtime.shutdown()
     }
+  })
+
+  test('describeNamespace proxies native calls and shutdown', async () => {
+    const originalCreateRuntime = native.createRuntime
+    const originalRuntimeShutdown = native.runtimeShutdown
+    const originalCreateClient = native.createClient
+    const originalDescribe = native.describeNamespace
+    const originalClientShutdown = native.clientShutdown
+
+    const runtimeHandle = { type: 'runtime', handle: 101 } as ReturnType<typeof native.createRuntime>
+    const clientHandle = { type: 'client', handle: 202 } as Awaited<ReturnType<typeof native.createClient>>
+
+    const runtimeShutdownMock = mock(() => {})
+    const clientShutdownMock = mock(() => {})
+    const describeMock = mock(async () => new Uint8Array([42]))
+
+    native.createRuntime = mock(() => runtimeHandle)
+    native.runtimeShutdown = runtimeShutdownMock
+    native.createClient = mock(async () => clientHandle)
+    native.describeNamespace = describeMock
+    native.clientShutdown = clientShutdownMock
+
+    try {
+      const runtime = createRuntime()
+      const client = await createClient(runtime, {
+        address: '127.0.0.1:7233',
+        namespace: 'default',
+      })
+
+      const result = await client.describeNamespace('custom')
+      expect(Array.from(result)).toEqual([42])
+
+      await client.shutdown()
+      await runtime.shutdown()
+
+      expect(describeMock).toHaveBeenCalledWith(clientHandle, 'custom')
+      expect(clientShutdownMock).toHaveBeenCalledTimes(1)
+      expect(runtimeShutdownMock).toHaveBeenCalledTimes(1)
+    } finally {
+      native.createRuntime = originalCreateRuntime
+      native.runtimeShutdown = originalRuntimeShutdown
+      native.createClient = originalCreateClient
+      native.describeNamespace = originalDescribe
+      native.clientShutdown = originalClientShutdown
+    }
+  })
+
+  test('runtime finalizer swallows native shutdown errors', () => {
+    const originalRuntimeShutdown = native.runtimeShutdown
+    native.runtimeShutdown = mock(() => {
+      throw new Error('finalizer-failure')
+    })
+
+    expect(() => runtimeTest.finalizeRuntime({ type: 'runtime', handle: 99 } as any)).not.toThrow()
+
+    native.runtimeShutdown = originalRuntimeShutdown
+  })
+
+  test('client finalizer swallows native shutdown errors', () => {
+    const originalClientShutdown = native.clientShutdown
+    native.clientShutdown = mock(() => {
+      throw new Error('finalizer-failure')
+    })
+
+    expect(() => clientTest.finalizeClient({ type: 'client', handle: 77 } as any)).not.toThrow()
+
+    native.clientShutdown = originalClientShutdown
   })
 })
 

@@ -361,7 +361,7 @@ bun run docker:build --tag ${name}:latest
   ]
 }
 
-async function handleCheck(_: string[], flags: Record<string, string | boolean>) {
+export async function handleCheck(_: string[], flags: Record<string, string | boolean>) {
   const config = await loadTemporalConfig()
   const namespace = (flags.namespace as string) ?? config.namespace
 

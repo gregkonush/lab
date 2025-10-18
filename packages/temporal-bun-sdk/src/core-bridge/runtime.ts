@@ -31,12 +31,18 @@ export class Runtime {
   }
 }
 
-const runtimeFinalizer = new FinalizationRegistry<NativeRuntime>((runtime) => {
+const finalizeRuntime = (runtime: NativeRuntime): void => {
   try {
     native.runtimeShutdown(runtime)
   } catch {
     // Swallow errors during GC finalization to avoid process crashes.
   }
-})
+}
+
+const runtimeFinalizer = new FinalizationRegistry<NativeRuntime>(finalizeRuntime)
 
 export const createRuntime = (options: RuntimeOptions = {}): Runtime => Runtime.create(options)
+
+export const __TEST__ = {
+  finalizeRuntime,
+}
