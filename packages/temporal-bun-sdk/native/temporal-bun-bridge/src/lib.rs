@@ -3,7 +3,7 @@ use std::ffi::c_void;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::str;
-use std::sync::{mpsc::channel, Arc, RwLock};
+use std::sync::{mpsc::channel, Arc, Condvar, Mutex};
 use std::thread;
 
 use base64::{engine::general_purpose, Engine as _};
@@ -116,22 +116,61 @@ type LoggerCallback = unsafe extern "C" fn(*const BunLogRecord);
 
 #[derive(Default)]
 struct LoggerState {
-    callback: RwLock<Option<LoggerCallback>>,
+    inner: Mutex<LoggerStateInner>,
+    drain: Condvar,
+}
+
+#[derive(Default)]
+struct LoggerStateInner {
+    callback: Option<LoggerCallback>,
+    in_flight: usize,
 }
 
 impl LoggerState {
-    fn set_callback(&self, callback: Option<LoggerCallback>) {
-        let mut guard = self.callback.write().expect("logger callback write lock");
-        *guard = callback;
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(LoggerStateInner::default()),
+            drain: Condvar::new(),
+        }
     }
 
-    fn get_callback(&self) -> Option<LoggerCallback> {
-        let guard = self.callback.read().expect("logger callback read lock");
-        *guard
+    fn set_callback(&self, callback: Option<LoggerCallback>) {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        guard.callback = callback;
+    }
+
+    fn checkout_callback(&self) -> Option<LoggerCallback> {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        match guard.callback {
+            Some(callback) => {
+                guard.in_flight += 1;
+                Some(callback)
+            }
+            None => None,
+        }
+    }
+
+    fn complete_dispatch(&self) {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        if guard.in_flight == 0 {
+            return;
+        }
+        guard.in_flight -= 1;
+        if guard.in_flight == 0 {
+            self.drain.notify_all();
+        }
     }
 
     fn clear(&self) {
         self.set_callback(None);
+    }
+
+    fn clear_and_wait(&self) {
+        let mut guard = self.inner.lock().expect("logger callback lock");
+        guard.callback = None;
+        while guard.in_flight != 0 {
+            guard = self.drain.wait(guard).expect("logger drain wait");
+        }
     }
 }
 
@@ -166,7 +205,7 @@ impl BunLogConsumer {
     }
 
     fn dispatch(&self, log: CoreLog) {
-        let callback = match self.state.get_callback() {
+        let callback = match self.state.checkout_callback() {
             Some(callback) => callback,
             None => return,
         };
@@ -178,6 +217,8 @@ impl BunLogConsumer {
         let result = catch_unwind(AssertUnwindSafe(|| unsafe {
             callback(record_ptr);
         }));
+
+        self.state.complete_dispatch();
 
         if result.is_err() {
             unsafe {
@@ -345,7 +386,7 @@ pub extern "C" fn temporal_bun_runtime_new(
     _options_ptr: *const u8,
     _options_len: usize,
 ) -> *mut c_void {
-    let logger_state = Arc::new(LoggerState::default());
+    let logger_state = Arc::new(LoggerState::new());
     let consumer: Arc<dyn CoreLogConsumer> = Arc::new(BunLogConsumer::new(logger_state.clone()));
 
     let telemetry_options = match TelemetryOptionsBuilder::default()
@@ -385,7 +426,7 @@ pub extern "C" fn temporal_bun_runtime_free(handle: *mut c_void) {
 
     unsafe {
         let handle = Box::from_raw(handle as *mut RuntimeHandle);
-        handle.logger_state.clear();
+        handle.logger_state.clear_and_wait();
     }
 }
 
@@ -415,7 +456,7 @@ pub extern "C" fn temporal_bun_runtime_set_logger(
     };
 
     if _callback_ptr.is_null() {
-        handle.logger_state.clear();
+        handle.logger_state.clear_and_wait();
         return 0;
     }
 

@@ -289,14 +289,28 @@ export const native = {
         }
 
         const recordPointer = Number(recordPtr)
-        const record = decodeLogRecord(recordPointer)
+
+        let record: NativeLogRecord
+        try {
+          record = decodeLogRecord(recordPointer)
+        } catch (error) {
+          temporal_bun_log_record_free(recordPointer)
+          throw error
+        }
 
         try {
-          handler(record)
+          queueMicrotask(() => {
+            try {
+              handler(record)
+            } catch (error) {
+              console.error('[temporal-bun-sdk] logger handler threw', error)
+            } finally {
+              temporal_bun_log_record_free(recordPointer)
+            }
+          })
         } catch (error) {
-          console.error('[temporal-bun-sdk] logger handler threw', error)
-        } finally {
           temporal_bun_log_record_free(recordPointer)
+          throw error
         }
       },
       {
