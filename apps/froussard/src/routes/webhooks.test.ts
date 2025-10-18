@@ -287,6 +287,57 @@ describe('createWebhookHandler', () => {
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
   })
 
+  it('publishes implementation message when plan comment marker is present', async () => {
+    const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
+    const payload = {
+      action: 'created',
+      issue: {
+        number: 3,
+        title: 'Implementation issue',
+        body: 'Body',
+        html_url: 'https://issue',
+      },
+      repository: { default_branch: 'main' },
+      sender: { login: 'USER' },
+      comment: {
+        id: 42,
+        body: '## Plan\n\n- Do something\n\n<!-- codex:plan -->',
+        html_url: 'https://comment/42',
+      },
+    }
+
+    await handler(
+      buildRequest(payload, {
+        'x-github-event': 'issue_comment',
+        'x-github-delivery': 'delivery-plan-marker',
+        'x-hub-signature-256': 'sig',
+        'content-type': 'application/json',
+      }),
+      'github',
+    )
+
+    expect(githubServiceMock.findLatestPlanComment).not.toHaveBeenCalled()
+    expect(publishedMessages).toHaveLength(3)
+    const [implementationJsonMessage, implementationStructuredMessage, rawJsonMessage] = publishedMessages
+
+    expect(implementationJsonMessage).toMatchObject({ topic: 'codex-topic', key: 'issue-3-implementation' })
+    expect(implementationStructuredMessage).toMatchObject({
+      topic: 'github.issues.codex.tasks',
+      key: 'issue-3-implementation',
+    })
+    expect(implementationStructuredMessage.headers?.['content-type']).toBe('application/x-protobuf')
+
+    const implementationProto = CodexTask.fromBinary(toBuffer(implementationStructuredMessage.value))
+    expect(implementationProto.stage).toBe(CodexTaskStage.IMPLEMENTATION)
+    expect(implementationProto.issueNumber).toBe(BigInt(3))
+    expect(implementationProto.planCommentId).toBe(BigInt(42))
+    expect(implementationProto.planCommentBody).toContain('<!-- codex:plan -->')
+    expect(implementationProto.planCommentUrl).toBe('https://comment/42')
+    expect(implementationProto.deliveryId).toBe('delivery-plan-marker')
+
+    expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-plan-marker' })
+  })
+
   it('returns 401 when Discord signature verification fails', async () => {
     mockVerifyDiscordRequest.mockResolvedValueOnce(false)
     const handler = createWebhookHandler({ runtime, webhooks: webhooks as never, config: baseConfig })
