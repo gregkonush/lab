@@ -5,10 +5,10 @@ import {
   buildQueryRequest,
   buildSignalRequest,
   buildSignalWithStartRequest,
+  buildStartWorkflowPayload,
   buildTerminateRequest,
 } from './client/serialization'
 import type {
-  RetryPolicyOptions,
   SignalWithStartOptions,
   StartWorkflowOptions,
   TerminateWorkflowOptions,
@@ -51,6 +51,13 @@ const startWorkflowOptionsSchema = z.object({
 })
 
 export type StartWorkflowResult = z.infer<typeof startWorkflowResponseSchema>
+
+const terminateWorkflowOptionsSchema = z.object({
+  reason: z.string().optional(),
+  details: z.array(z.unknown()).optional(),
+  runId: z.string().min(1).optional(),
+  firstExecutionRunId: z.string().min(1).optional(),
+})
 
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
@@ -196,7 +203,8 @@ class TemporalClientImpl implements TemporalClient {
   }
 
   async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
-    const request = buildTerminateRequest(handle, options)
+    const parsedOptions = terminateWorkflowOptionsSchema.parse(options)
+    const request = buildTerminateRequest(handle, parsedOptions)
     await native.terminateWorkflow(this.client, request)
   }
 
@@ -238,81 +246,6 @@ const parseJson = (bytes: Uint8Array): unknown => {
   } catch (error) {
     throw new Error(`Failed to parse Temporal bridge response: ${(error as Error).message}`)
   }
-}
-
-const buildStartWorkflowPayload = ({
-  options,
-  defaults,
-}: {
-  options: z.infer<typeof startWorkflowOptionsSchema>
-  defaults: { namespace: string; identity: string; taskQueue: string }
-}): Record<string, unknown> => {
-  const payload: Record<string, unknown> = {
-    namespace: options.namespace ?? defaults.namespace,
-    workflow_id: options.workflowId,
-    workflow_type: options.workflowType,
-    task_queue: options.taskQueue ?? defaults.taskQueue,
-    identity: options.identity ?? defaults.identity,
-    args: options.args ?? [],
-  }
-
-  if (options.cronSchedule) {
-    payload.cron_schedule = options.cronSchedule
-  }
-
-  if (options.memo) {
-    payload.memo = options.memo
-  }
-
-  if (options.headers) {
-    payload.headers = options.headers
-  }
-
-  if (options.searchAttributes) {
-    payload.search_attributes = options.searchAttributes
-  }
-
-  if (options.requestId) {
-    payload.request_id = options.requestId
-  }
-
-  if (options.workflowExecutionTimeoutMs) {
-    payload.workflow_execution_timeout_ms = options.workflowExecutionTimeoutMs
-  }
-
-  if (options.workflowRunTimeoutMs) {
-    payload.workflow_run_timeout_ms = options.workflowRunTimeoutMs
-  }
-
-  if (options.workflowTaskTimeoutMs) {
-    payload.workflow_task_timeout_ms = options.workflowTaskTimeoutMs
-  }
-
-  if (options.retryPolicy) {
-    payload.retry_policy = buildRetryPolicy(options.retryPolicy)
-  }
-
-  return payload
-}
-
-const buildRetryPolicy = (policy: RetryPolicyOptions): Record<string, unknown> => {
-  const payload: Record<string, unknown> = {}
-  if (policy.initialIntervalMs !== undefined) {
-    payload.initial_interval_ms = policy.initialIntervalMs
-  }
-  if (policy.maximumIntervalMs !== undefined) {
-    payload.maximum_interval_ms = policy.maximumIntervalMs
-  }
-  if (policy.maximumAttempts !== undefined) {
-    payload.maximum_attempts = policy.maximumAttempts
-  }
-  if (policy.backoffCoefficient !== undefined) {
-    payload.backoff_coefficient = policy.backoffCoefficient
-  }
-  if (policy.nonRetryableErrorTypes && policy.nonRetryableErrorTypes.length > 0) {
-    payload.non_retryable_error_types = policy.nonRetryableErrorTypes
-  }
-  return payload
 }
 
 const formatTemporalAddress = (address: string, useTls: boolean): string => {
