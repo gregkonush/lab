@@ -1392,5 +1392,4 @@ mod tests {
         assert_eq!(extract_bearer_token("Basic abc"), None);
         assert_eq!(extract_bearer_token("Bearer   "), None);
     }
-    }
 }
