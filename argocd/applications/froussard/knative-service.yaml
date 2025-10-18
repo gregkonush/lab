@@ -5,11 +5,11 @@ metadata:
   name: froussard
   namespace: froussard
   annotations:
-    argocd.argoproj.io/compare-options: IgnoreExtraneous
     serving.knative.dev/creator: system:admin
     serving.knative.dev/lastModifier: system:admin
     serving.knative.dev/revision-history-limit: "3"
     argocd.argoproj.io/tracking-id: froussard:serving.knative.dev/Service:froussard/froussard
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
   labels:
     function.knative.dev/name: froussard
     function.knative.dev/runtime: typescript
@@ -20,7 +20,6 @@ spec:
         autoscaling.knative.dev/min-scale: "1"
         serving.knative.dev/creator: system:admin
         serving.knative.dev/revision-history-limit: "3"
-        serving.knative.dev/lastModifier: system:admin
       labels:
         function.knative.dev/name: froussard
         function.knative.dev/runtime: typescript
@@ -30,7 +29,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: user-container
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:f2ceb2fe8259a78d96e6c729db8f25405ca914ae82b8be38cbcb4d22b3f21957
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:8749220473d139abe64e55e2c315631b65b0f800223e5c958ab1624e7688f069
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
@@ -71,9 +70,9 @@ spec:
             - name: OTEL_SERVICE_NAMESPACE
               value: froussard
             - name: FROUSSARD_VERSION
-              value: v0.241.5-1-gf6ab3ec0
+              value: v0.246.0-1-ga0788df7
             - name: FROUSSARD_COMMIT
-              value: f6ab3ec0086de10d3ba85fcc45a6f67e24dcd99e
+              value: a0788df76f3d9cc439741879b9bc5a07f27a917a
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces
             - name: LGTM_MIMIR_METRICS_ENDPOINT
