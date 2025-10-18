@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
+import { JSCallback, dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,6 +25,8 @@ const {
   symbols: {
     temporal_bun_runtime_new,
     temporal_bun_runtime_free,
+    temporal_bun_runtime_set_logger,
+    temporal_bun_runtime_emit_test_log,
     temporal_bun_error_message,
     temporal_bun_error_free,
     temporal_bun_client_connect_async,
@@ -47,6 +49,14 @@ const {
   temporal_bun_runtime_free: {
     args: [FFIType.ptr],
     returns: FFIType.void,
+  },
+  temporal_bun_runtime_set_logger: {
+    args: [FFIType.ptr, FFIType.ptr],
+    returns: FFIType.int32_t,
+  },
+  temporal_bun_runtime_emit_test_log: {
+    args: [FFIType.ptr, FFIType.int32_t, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.int32_t,
   },
   temporal_bun_error_message: {
     args: [FFIType.ptr],
@@ -102,6 +112,87 @@ const {
   },
 })
 
+const runtimeLoggerCallbacks = new Map<number, JSCallback>()
+
+const LOG_RECORD_BYTES = 80
+
+type LogLevelName = 'trace' | 'debug' | 'info' | 'warn' | 'error'
+
+export interface NativeLogRecord {
+  level: number
+  levelName: LogLevelName
+  timestampMs: number
+  target: string
+  message: string
+  fields: Record<string, unknown>
+  spanContexts: string[]
+}
+
+type NativeLogHandler = (record: NativeLogRecord) => void
+
+const levelNames: LogLevelName[] = ['trace', 'debug', 'info', 'warn', 'error']
+
+function mapLevel(level: number): LogLevelName {
+  return levelNames[level] ?? 'info'
+}
+
+function copyPointer(ptrValue: number, byteLength: number): Uint8Array {
+  if (!ptrValue || byteLength === 0) {
+    return new Uint8Array()
+  }
+  const view = new Uint8Array(toArrayBuffer(ptrValue, 0, byteLength))
+  return new Uint8Array(view)
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  if (bytes.length === 0) {
+    return ''
+  }
+  return Buffer.from(bytes).toString('utf8')
+}
+
+function parseJson<T>(bytes: Uint8Array, fallback: T): T {
+  if (bytes.length === 0) {
+    return fallback
+  }
+  try {
+    return JSON.parse(Buffer.from(bytes).toString('utf8')) as T
+  } catch {
+    return fallback
+  }
+}
+
+function decodeLogRecord(pointer: number): NativeLogRecord {
+  const view = new DataView(toArrayBuffer(pointer, 0, LOG_RECORD_BYTES))
+
+  const level = view.getInt32(0, true)
+  const timestampMs = Number(view.getBigUint64(8, true))
+
+  const targetPtr = Number(view.getBigUint64(16, true))
+  const targetLen = Number(view.getBigUint64(24, true))
+  const messagePtr = Number(view.getBigUint64(32, true))
+  const messageLen = Number(view.getBigUint64(40, true))
+  const fieldsPtr = Number(view.getBigUint64(48, true))
+  const fieldsLen = Number(view.getBigUint64(56, true))
+  const spansPtr = Number(view.getBigUint64(64, true))
+  const spansLen = Number(view.getBigUint64(72, true))
+
+  const target = decodeUtf8(copyPointer(targetPtr, targetLen))
+  const message = decodeUtf8(copyPointer(messagePtr, messageLen))
+  const fields = parseJson<Record<string, unknown>>(copyPointer(fieldsPtr, fieldsLen), {})
+  const spanContexts = parseJson<string[]>(copyPointer(spansPtr, spansLen), [])
+
+  return {
+    level,
+    levelName: mapLevel(level),
+    timestampMs,
+    target,
+    message,
+    fields,
+    spanContexts,
+  }
+}
+
 export const native = {
   createRuntime(options: Record<string, unknown> = {}): Runtime {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
@@ -113,6 +204,14 @@ export const native = {
   },
 
   runtimeShutdown(runtime: Runtime): void {
+    const existing = runtimeLoggerCallbacks.get(runtime.handle)
+    if (existing) {
+      runtimeLoggerCallbacks.delete(runtime.handle)
+      temporal_bun_runtime_set_logger(runtime.handle, 0)
+      existing.close()
+    } else {
+      temporal_bun_runtime_set_logger(runtime.handle, 0)
+    }
     temporal_bun_runtime_free(runtime.handle)
   },
 
@@ -166,11 +265,72 @@ export const native = {
     return notImplemented('Runtime telemetry configuration', 'docs/ffi-surface.md')
   },
 
-  installLogger(runtime: Runtime, _callback: (...args: unknown[]) => void): never {
-    void runtime
-    // TODO(codex): Install Bun logger hook via `temporal_bun_runtime_set_logger` once the native bridge
-    // supports forwarding core logs (docs/ffi-surface.md — Runtime exports).
-    return notImplemented('Runtime logger installation', 'docs/ffi-surface.md')
+  installLogger(runtime: Runtime, handler: NativeLogHandler): () => void {
+    if (typeof handler !== 'function') {
+      throw new TypeError('installLogger expects a function handler')
+    }
+
+    const existing = runtimeLoggerCallbacks.get(runtime.handle)
+    if (existing) {
+      runtimeLoggerCallbacks.delete(runtime.handle)
+      temporal_bun_runtime_set_logger(runtime.handle, 0)
+      existing.close()
+    }
+
+    const ffiCallback = new JSCallback(
+      (recordPtr: number) => {
+        if (!recordPtr) {
+          return
+        }
+        const record = decodeLogRecord(Number(recordPtr))
+        try {
+          handler(record)
+        } catch (error) {
+          console.error('[temporal-bun-sdk] logger handler threw', error)
+        }
+      },
+      {
+        args: [FFIType.ptr],
+        returns: FFIType.void,
+      },
+    )
+
+    runtimeLoggerCallbacks.set(runtime.handle, ffiCallback)
+
+    const status = Number(temporal_bun_runtime_set_logger(runtime.handle, ffiCallback.ptr))
+    if (status !== 0) {
+      runtimeLoggerCallbacks.delete(runtime.handle)
+      ffiCallback.close()
+      throw new Error(readLastError())
+    }
+
+    let active = true
+
+    return () => {
+      if (!active) {
+        return
+      }
+      active = false
+      const current = runtimeLoggerCallbacks.get(runtime.handle)
+      if (current === ffiCallback) {
+        runtimeLoggerCallbacks.delete(runtime.handle)
+        const resetStatus = Number(temporal_bun_runtime_set_logger(runtime.handle, 0))
+        if (resetStatus !== 0) {
+          console.warn('[temporal-bun-sdk] failed to clear native logger callback:', readLastError())
+        }
+      }
+      ffiCallback.close()
+    }
+  },
+
+  // test-only helper used by Bun unit tests to trigger a core log entry.
+  emitTestLog(runtime: Runtime, level: number, message: string): void {
+    const buffer = Buffer.from(message, 'utf8')
+    const pointer = buffer.byteLength > 0 ? ptr(buffer) : 0
+    const status = Number(temporal_bun_runtime_emit_test_log(runtime.handle, level, pointer, buffer.byteLength))
+    if (status !== 0) {
+      throw new Error(readLastError())
+    }
   },
 
   updateClientHeaders(client: NativeClient, _headers: Record<string, string>): never {

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { Client, createClient, normalizeTemporalAddress, __TEST__ as clientTest } from '../src/core-bridge/client.ts'
-import { createRuntime, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
-import { native } from '../src/internal/core-bridge/native.ts'
+import { createRuntime, type RuntimeLogRecord, __TEST__ as runtimeTest } from '../src/core-bridge/runtime.ts'
+import { native, type NativeLogRecord } from '../src/internal/core-bridge/native.ts'
 
 const hasLiveServer = process.env.TEMPORAL_TEST_SERVER === '1'
 
@@ -11,6 +11,134 @@ describe('core bridge runtime wrapper', () => {
     await runtime.shutdown()
     await runtime.shutdown()
     expect(() => runtime.nativeHandle).toThrowError('Runtime has already been shut down')
+  })
+
+  test('installLogger normalizes native records and returns teardown', () => {
+    const runtimeHandle = { type: 'runtime', handle: 101 } as ReturnType<typeof native.createRuntime>
+    const teardownNative = mock(() => {})
+    let captured: ((record: NativeLogRecord) => void) | undefined
+
+    const originalCreateRuntime = native.createRuntime
+    const originalInstallLogger = native.installLogger
+    const originalRuntimeShutdown = native.runtimeShutdown
+
+    native.createRuntime = mock(() => runtimeHandle)
+    native.installLogger = mock((handle: typeof runtimeHandle, handler: (record: NativeLogRecord) => void) => {
+      expect(handle).toBe(runtimeHandle)
+      captured = handler
+      return teardownNative
+    }) as typeof native.installLogger
+    native.runtimeShutdown = mock((_runtime: typeof runtimeHandle) => {}) as typeof native.runtimeShutdown
+
+    try {
+      const runtime = createRuntime()
+      const handler = mock<(record: RuntimeLogRecord) => void>(() => {})
+      const teardown = runtime.installLogger(handler)
+
+      expect(typeof teardown).toBe('function')
+      expect(native.installLogger).toHaveBeenCalledTimes(1)
+      expect(captured).toBeDefined()
+
+      const nativeRecord: NativeLogRecord = {
+        level: 3,
+        levelName: 'warn',
+        timestampMs: 1_234,
+        target: 'temporal_sdk_core::worker',
+        message: 'core warning',
+        fields: { foo: 'bar' },
+        spanContexts: ['outer', 'inner'],
+      }
+
+      captured!(nativeRecord)
+      expect(handler).toHaveBeenCalledTimes(1)
+      const [runtimeRecord] = handler.mock.calls[0] as [RuntimeLogRecord]
+      expect(runtimeRecord.level).toBe(3)
+      expect(runtimeRecord.levelName).toBe('warn')
+      expect(runtimeRecord.timestampMs).toBe(1_234)
+      expect(runtimeRecord.timestamp).toBeInstanceOf(Date)
+      expect(runtimeRecord.timestamp.getTime()).toBe(1_234)
+      expect(runtimeRecord.target).toBe(nativeRecord.target)
+      expect(runtimeRecord.message).toBe(nativeRecord.message)
+      expect(runtimeRecord.fields).toEqual(nativeRecord.fields)
+      expect(runtimeRecord.fields).not.toBe(nativeRecord.fields)
+      expect(Object.isFrozen(runtimeRecord.fields)).toBe(true)
+      expect(runtimeRecord.spanContexts).toEqual(nativeRecord.spanContexts)
+      expect(runtimeRecord.spanContexts).not.toBe(nativeRecord.spanContexts)
+      expect(Object.isFrozen(runtimeRecord.spanContexts)).toBe(true)
+
+      teardown()
+      expect(teardownNative).toHaveBeenCalledTimes(1)
+    } finally {
+      native.createRuntime = originalCreateRuntime
+      native.installLogger = originalInstallLogger
+      native.runtimeShutdown = originalRuntimeShutdown
+    }
+  })
+
+  test('installLogger replaces prior callbacks and tears them down', () => {
+    const runtimeHandle = { type: 'runtime', handle: 202 } as ReturnType<typeof native.createRuntime>
+    const firstTeardown = mock(() => {})
+    const secondTeardown = mock(() => {})
+    let callCount = 0
+
+    const originalCreateRuntime = native.createRuntime
+    const originalInstallLogger = native.installLogger
+    const originalRuntimeShutdown = native.runtimeShutdown
+
+    native.createRuntime = mock(() => runtimeHandle)
+    native.installLogger = mock(() => {
+      callCount += 1
+      return callCount === 1 ? firstTeardown : secondTeardown
+    }) as typeof native.installLogger
+    native.runtimeShutdown = mock((_runtime: typeof runtimeHandle) => {}) as typeof native.runtimeShutdown
+
+    try {
+      const runtime = createRuntime()
+      runtime.installLogger(() => {})
+      expect(callCount).toBe(1)
+      expect(firstTeardown).not.toHaveBeenCalled()
+
+      const teardownSecond = runtime.installLogger(() => {})
+      expect(callCount).toBe(2)
+      expect(firstTeardown).toHaveBeenCalledTimes(1)
+
+      teardownSecond()
+      expect(secondTeardown).toHaveBeenCalledTimes(1)
+    } finally {
+      native.createRuntime = originalCreateRuntime
+      native.installLogger = originalInstallLogger
+      native.runtimeShutdown = originalRuntimeShutdown
+    }
+  })
+
+  test('shutdown clears active logger before releasing native runtime', async () => {
+    const runtimeHandle = { type: 'runtime', handle: 303 } as ReturnType<typeof native.createRuntime>
+    const order: string[] = []
+
+    const originalCreateRuntime = native.createRuntime
+    const originalInstallLogger = native.installLogger
+    const originalRuntimeShutdown = native.runtimeShutdown
+
+    native.createRuntime = mock(() => runtimeHandle)
+    native.installLogger = mock(() => {
+      return () => {
+        order.push('logger-teardown')
+      }
+    }) as typeof native.installLogger
+    native.runtimeShutdown = mock((_runtime: typeof runtimeHandle) => {
+      order.push('runtime-shutdown')
+    }) as typeof native.runtimeShutdown
+
+    try {
+      const runtime = createRuntime()
+      runtime.installLogger(() => {})
+      await runtime.shutdown()
+      expect(order).toEqual(['logger-teardown', 'runtime-shutdown'])
+    } finally {
+      native.createRuntime = originalCreateRuntime
+      native.installLogger = originalInstallLogger
+      native.runtimeShutdown = originalRuntimeShutdown
+    }
   })
 })
 
