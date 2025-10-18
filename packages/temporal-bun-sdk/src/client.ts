@@ -1,5 +1,19 @@
 import { z } from 'zod'
 import { loadTemporalConfig, type TemporalConfig, type TLSConfig } from './config'
+import {
+  buildCancelRequest,
+  buildQueryRequest,
+  buildSignalRequest,
+  buildSignalWithStartRequest,
+  buildTerminateRequest,
+} from './client/serialization'
+import type {
+  RetryPolicyOptions,
+  SignalWithStartOptions,
+  StartWorkflowOptions,
+  TerminateWorkflowOptions,
+  WorkflowHandle,
+} from './client/types'
 import { native, type NativeClient, type Runtime } from './internal/core-bridge/native'
 
 const startWorkflowResponseSchema = z.object({
@@ -36,36 +50,15 @@ const startWorkflowOptionsSchema = z.object({
   retryPolicy: retryPolicySchema,
 })
 
-export interface RetryPolicyOptions {
-  initialIntervalMs?: number
-  maximumIntervalMs?: number
-  maximumAttempts?: number
-  backoffCoefficient?: number
-  nonRetryableErrorTypes?: string[]
-}
-
-export interface StartWorkflowOptions {
-  workflowId: string
-  workflowType: string
-  args?: unknown[]
-  taskQueue?: string
-  namespace?: string
-  identity?: string
-  cronSchedule?: string
-  memo?: Record<string, unknown>
-  headers?: Record<string, unknown>
-  searchAttributes?: Record<string, unknown>
-  requestId?: string
-  workflowExecutionTimeoutMs?: number
-  workflowRunTimeoutMs?: number
-  workflowTaskTimeoutMs?: number
-  retryPolicy?: RetryPolicyOptions
-}
-
 export type StartWorkflowResult = z.infer<typeof startWorkflowResponseSchema>
 
 export interface TemporalWorkflowClient {
   start(options: StartWorkflowOptions): Promise<StartWorkflowResult>
+  signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
+  query(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
+  terminate(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
+  cancel(handle: WorkflowHandle): Promise<void>
+  signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
 }
 
 export interface TemporalClient {
@@ -73,6 +66,11 @@ export interface TemporalClient {
   readonly config: TemporalConfig
   readonly workflow: TemporalWorkflowClient
   startWorkflow(options: StartWorkflowOptions): Promise<StartWorkflowResult>
+  signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
+  queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
+  terminateWorkflow(handle: WorkflowHandle, options?: TerminateWorkflowOptions): Promise<void>
+  cancelWorkflow(handle: WorkflowHandle): Promise<void>
+  signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult>
   describeNamespace(namespace?: string): Promise<Uint8Array>
   shutdown(): Promise<void>
 }
@@ -161,6 +159,11 @@ class TemporalClientImpl implements TemporalClient {
     this.defaultTaskQueue = handles.taskQueue
     this.workflow = {
       start: (options) => this.startWorkflow(options),
+      signal: (handle, signalName, ...args) => this.signalWorkflow(handle, signalName, ...args),
+      query: (handle, queryName, ...args) => this.queryWorkflow(handle, queryName, ...args),
+      terminate: (handle, options) => this.terminateWorkflow(handle, options),
+      cancel: (handle) => this.cancelWorkflow(handle),
+      signalWithStart: (options) => this.signalWithStart(options),
     }
   }
 
@@ -176,6 +179,42 @@ class TemporalClientImpl implements TemporalClient {
     })
 
     const bytes = await native.startWorkflow(this.client, payload)
+    const response = parseJson(bytes)
+    // TODO(codex): Return a WorkflowHandle alongside StartWorkflowResult to match docs/client-runtime.md.
+    return startWorkflowResponseSchema.parse(response)
+  }
+
+  async signalWorkflow(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void> {
+    const request = buildSignalRequest(handle, signalName, args)
+    await native.signalWorkflow(this.client, request)
+  }
+
+  async queryWorkflow(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown> {
+    const request = buildQueryRequest(handle, queryName, args)
+    const bytes = await native.queryWorkflow(this.client, request)
+    return parseJson(bytes)
+  }
+
+  async terminateWorkflow(handle: WorkflowHandle, options: TerminateWorkflowOptions = {}): Promise<void> {
+    const request = buildTerminateRequest(handle, options)
+    await native.terminateWorkflow(this.client, request)
+  }
+
+  async cancelWorkflow(handle: WorkflowHandle): Promise<void> {
+    const request = buildCancelRequest(handle)
+    await native.cancelWorkflow(this.client, request)
+  }
+
+  async signalWithStart(options: SignalWithStartOptions): Promise<StartWorkflowResult> {
+    const request = buildSignalWithStartRequest({
+      options,
+      defaults: {
+        namespace: this.namespace,
+        identity: this.defaultIdentity,
+        taskQueue: this.defaultTaskQueue,
+      },
+    })
+    const bytes = await native.signalWithStart(this.client, request)
     const response = parseJson(bytes)
     return startWorkflowResponseSchema.parse(response)
   }
@@ -311,3 +350,10 @@ const serializeTlsConfig = (tls?: TLSConfig): Record<string, unknown> | undefine
 
   return payload
 }
+export type {
+  WorkflowHandle,
+  TerminateWorkflowOptions,
+  SignalWithStartOptions,
+  RetryPolicyOptions,
+  StartWorkflowOptions,
+} from './client/types'

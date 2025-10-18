@@ -23,6 +23,17 @@ export class Runtime {
     return this.#native
   }
 
+  configureTelemetry(options: Record<string, unknown> = {}): never {
+    // TODO(codex): Wire telemetry exporters through the native bridge once
+    // `temporal_bun_runtime_update_telemetry` exists (see packages/temporal-bun-sdk/docs/ffi-surface.md).
+    return native.configureTelemetry(this.nativeHandle, options)
+  }
+
+  installLogger(callback: (...args: unknown[]) => void): never {
+    // TODO(codex): Forward Temporal Core logs into Bun via the native bridge per docs/ffi-surface.md.
+    return native.installLogger(this.nativeHandle, callback)
+  }
+
   async shutdown(): Promise<void> {
     if (!this.#native) return
     native.runtimeShutdown(this.#native)
