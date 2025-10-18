@@ -35,6 +35,7 @@ const PROTO_CONTENT_TYPE = 'application/x-protobuf'
 const PROTO_CODEX_TASK_FULL_NAME = 'github.v1.CodexTask'
 const PROTO_CODEX_TASK_SCHEMA = 'github/v1/codex_task.proto'
 const CODEX_PLAN_MARKER = '<!-- codex:plan -->'
+const CODEX_REVIEW_COMMENT = '@codex review'
 
 const toNumericId = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -581,6 +582,30 @@ export const createGithubWebhookHandler =
                   { deliveryId, repository: repositoryFullName, pullNumber },
                   'marking codex pull request ready for review',
                 )
+
+                const commentResult = await runtime.runPromise(
+                  githubService.createPullRequestComment({
+                    repositoryFullName,
+                    pullNumber,
+                    body: CODEX_REVIEW_COMMENT,
+                    token: config.github.token,
+                    apiBaseUrl: config.github.apiBaseUrl,
+                    userAgent: config.github.userAgent,
+                  }),
+                )
+
+                if (!commentResult.ok) {
+                  logger.warn(
+                    {
+                      deliveryId,
+                      repository: repositoryFullName,
+                      pullNumber,
+                      reason: commentResult.reason,
+                      status: commentResult.status,
+                    },
+                    'failed to post codex review handoff comment',
+                  )
+                }
               } else {
                 logger.warn(
                   {

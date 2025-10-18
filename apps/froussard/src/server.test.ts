@@ -94,6 +94,7 @@ vi.mock('@/services/github', () => {
       findLatestPlanComment: (options: unknown) => ReturnType<typeof Effect.succeed>
       fetchPullRequest: (options: unknown) => ReturnType<typeof Effect.succeed>
       markPullRequestReadyForReview: (options: unknown) => ReturnType<typeof Effect.succeed>
+      createPullRequestComment: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestReviewThreads: (options: unknown) => ReturnType<typeof Effect.succeed>
       listPullRequestCheckFailures: (options: unknown) => ReturnType<typeof Effect.succeed>
     }
@@ -104,6 +105,7 @@ vi.mock('@/services/github', () => {
     findLatestPlanComment: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     fetchPullRequest: () => Effect.succeed({ ok: false, reason: 'not-found' }),
     markPullRequestReadyForReview: () => Effect.succeed({ ok: true }),
+    createPullRequestComment: () => Effect.succeed({ ok: true }),
     listPullRequestReviewThreads: () => Effect.succeed({ ok: true, threads: [] }),
     listPullRequestCheckFailures: () => Effect.succeed({ ok: true, checks: [] }),
   })
@@ -115,6 +117,7 @@ vi.mock('@/services/github', () => {
     findLatestPlanComment: vi.fn(),
     fetchPullRequest: vi.fn(),
     markPullRequestReadyForReview: vi.fn(),
+    createPullRequestComment: vi.fn(),
     listPullRequestReviewThreads: vi.fn(),
     listPullRequestCheckFailures: vi.fn(),
   }

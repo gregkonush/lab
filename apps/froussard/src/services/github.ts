@@ -123,6 +123,28 @@ export type ReadyForReviewResult =
   | { ok: true }
   | { ok: false; reason: ReadyForReviewFailureReason; status?: number; detail?: string }
 
+export interface CreatePullRequestCommentOptions {
+  repositoryFullName: string
+  pullNumber: number
+  body: string
+  token?: string | null
+  apiBaseUrl?: string
+  userAgent?: string
+  fetchImplementation?: FetchLike | null
+}
+
+export type CreatePullRequestCommentFailureReason =
+  | 'missing-token'
+  | 'invalid-repository'
+  | 'no-fetch'
+  | 'network-error'
+  | 'http-error'
+  | 'invalid-json'
+
+export type CreatePullRequestCommentResult =
+  | { ok: true; commentUrl?: string }
+  | { ok: false; reason: CreatePullRequestCommentFailureReason; status?: number; detail?: string }
+
 export interface PullRequestReviewThread {
   summary: string
   url?: string
@@ -638,6 +660,102 @@ export const markPullRequestReadyForReview = (options: ReadyForReviewOptions): E
   )
 }
 
+export const createPullRequestComment = (
+  options: CreatePullRequestCommentOptions,
+): Effect.Effect<CreatePullRequestCommentResult> => {
+  const {
+    repositoryFullName,
+    pullNumber,
+    body,
+    token,
+    apiBaseUrl = DEFAULT_API_BASE_URL,
+    userAgent = DEFAULT_USER_AGENT,
+    fetchImplementation = typeof globalThis.fetch === 'function' ? (globalThis.fetch as FetchLike) : null,
+  } = options
+
+  if (!token || token.trim().length === 0) {
+    return Effect.succeed({ ok: false, reason: 'missing-token' } as const)
+  }
+
+  const [owner, repo] = repositoryFullName.split('/')
+  if (!owner || !repo) {
+    return Effect.succeed({
+      ok: false,
+      reason: 'invalid-repository' as const,
+      detail: repositoryFullName,
+    })
+  }
+
+  const fetchFn = fetchImplementation
+  if (!fetchFn) {
+    return Effect.succeed({ ok: false, reason: 'no-fetch' } as const)
+  }
+
+  const url = `${trimTrailingSlash(apiBaseUrl)}/repos/${owner}/${repo}/issues/${pullNumber}/comments`
+  const payload = JSON.stringify({ body })
+
+  return Effect.tryPromise({
+    try: () =>
+      fetchFn(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': userAgent,
+          Authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: payload,
+      }),
+    catch: toError,
+  }).pipe(
+    Effect.flatMap((response) => {
+      if (response.ok) {
+        return readResponseText(response).pipe(
+          Effect.map((text) => {
+            if (!text) {
+              return { ok: true } as const
+            }
+            try {
+              const parsed = JSON.parse(text) as { html_url?: unknown }
+              const commentUrl =
+                parsed && typeof parsed === 'object' && typeof parsed.html_url === 'string'
+                  ? parsed.html_url
+                  : undefined
+              return { ok: true, commentUrl }
+            } catch (error) {
+              return {
+                ok: false as const,
+                reason: 'invalid-json',
+                detail: error instanceof Error ? error.message : String(error),
+              }
+            }
+          }),
+        )
+      }
+
+      return readResponseText(response).pipe(
+        Effect.catchAll(() => Effect.succeed<string | undefined>(undefined)),
+        Effect.map(
+          (detail): CreatePullRequestCommentResult => ({
+            ok: false,
+            reason: 'http-error',
+            status: response.status,
+            detail,
+          }),
+        ),
+      )
+    }),
+    Effect.catchAll((error) =>
+      Effect.succeed<CreatePullRequestCommentResult>({
+        ok: false,
+        reason: 'network-error',
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  )
+}
+
 export const listPullRequestReviewThreads = (
   options: ListReviewThreadsOptions,
 ): Effect.Effect<ListReviewThreadsResult> => {
@@ -1041,6 +1159,9 @@ export interface GithubServiceDefinition {
   readonly findLatestPlanComment: (options: FindPlanCommentOptions) => Effect.Effect<FindPlanCommentResult>
   readonly fetchPullRequest: (options: FetchPullRequestOptions) => Effect.Effect<FetchPullRequestResult>
   readonly markPullRequestReadyForReview: (options: ReadyForReviewOptions) => Effect.Effect<ReadyForReviewResult>
+  readonly createPullRequestComment: (
+    options: CreatePullRequestCommentOptions,
+  ) => Effect.Effect<CreatePullRequestCommentResult>
   readonly listPullRequestReviewThreads: (options: ListReviewThreadsOptions) => Effect.Effect<ListReviewThreadsResult>
   readonly listPullRequestCheckFailures: (options: ListCheckFailuresOptions) => Effect.Effect<ListCheckFailuresResult>
 }
@@ -1052,6 +1173,7 @@ export const GithubServiceLayer = Layer.sync(GithubService, () => ({
   findLatestPlanComment,
   fetchPullRequest,
   markPullRequestReadyForReview,
+  createPullRequestComment,
   listPullRequestReviewThreads,
   listPullRequestCheckFailures,
 }))

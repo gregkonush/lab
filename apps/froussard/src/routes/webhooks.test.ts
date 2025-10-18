@@ -104,6 +104,7 @@ describe('createWebhookHandler', () => {
     findLatestPlanComment: ReturnType<typeof vi.fn>
     fetchPullRequest: ReturnType<typeof vi.fn>
     markPullRequestReadyForReview: ReturnType<typeof vi.fn>
+    createPullRequestComment: ReturnType<typeof vi.fn>
     listPullRequestReviewThreads: ReturnType<typeof vi.fn>
     listPullRequestCheckFailures: ReturnType<typeof vi.fn>
   }
@@ -162,6 +163,7 @@ describe('createWebhookHandler', () => {
       findLatestPlanComment: githubServiceMock.findLatestPlanComment,
       fetchPullRequest: githubServiceMock.fetchPullRequest,
       markPullRequestReadyForReview: githubServiceMock.markPullRequestReadyForReview,
+      createPullRequestComment: githubServiceMock.createPullRequestComment,
       listPullRequestReviewThreads: githubServiceMock.listPullRequestReviewThreads,
       listPullRequestCheckFailures: githubServiceMock.listPullRequestCheckFailures,
     })
@@ -176,6 +178,7 @@ describe('createWebhookHandler', () => {
       findLatestPlanComment: vi.fn(() => Effect.succeed({ ok: false, reason: 'not-found' })),
       fetchPullRequest: vi.fn(() => Effect.succeed({ ok: false as const, reason: 'not-found' as const })),
       markPullRequestReadyForReview: vi.fn(() => Effect.succeed({ ok: true })),
+      createPullRequestComment: vi.fn(() => Effect.succeed({ ok: true })),
       listPullRequestReviewThreads: vi.fn(() => Effect.succeed({ ok: true as const, threads: [] })),
       listPullRequestCheckFailures: vi.fn(() => Effect.succeed({ ok: true as const, checks: [] })),
     }
@@ -431,6 +434,7 @@ describe('createWebhookHandler', () => {
       expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 5 }),
     )
     expect(githubServiceMock.markPullRequestReadyForReview).not.toHaveBeenCalled()
+    expect(githubServiceMock.createPullRequestComment).not.toHaveBeenCalled()
     expect(mockBuildCodexPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         stage: 'review',
@@ -517,6 +521,9 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(202)
     expect(githubServiceMock.markPullRequestReadyForReview).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 6 }),
+    )
+    expect(githubServiceMock.createPullRequestComment).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryFullName: 'owner/repo', pullNumber: 6, body: '@codex review' }),
     )
     expect(publishedMessages).toHaveLength(1)
     expect(publishedMessages[0]).toMatchObject({ topic: 'raw-topic', key: 'delivery-undraft-1' })

@@ -26,6 +26,7 @@
       "!apps/proompteng/src/components/ui",
       "!schemas",
       "!services/facteur/internal/facteurpb/**",
+      "!services/dernier/vendor/**",
       "!apps/froussard/src/proto/**"
     ],
     "maxSize": 1048576
