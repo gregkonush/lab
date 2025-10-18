@@ -59,6 +59,9 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain(
       'React to the issue with :eyes: while drafting; switch to :rocket: once the final comment is posted.',
     )
+    expect(prompt).toContain(
+      'Use internet search (web.run) to ground reasoning with fresh, cited sources before finalizing steps.',
+    )
     expect(prompt).toContain('Plan template (copy verbatim):')
     expect(prompt).toContain(PLAN_COMMENT_MARKER)
     expect(prompt).toContain('### Steps')
@@ -87,6 +90,9 @@ describe('buildCodexPrompt', () => {
     expect(prompt).toContain('1. Step one')
     expect(prompt).toContain('Implementation branch: codex/issue-77-abc123')
     expect(prompt).toContain('Execution requirements:')
+    expect(prompt).toContain(
+      'Ground decisions with internet search (web.run) to capture up-to-date facts and cite key findings.',
+    )
     expect(prompt).toContain('Closes #77')
     expect(prompt).toContain(
       `Maintain a single progress comment anchored by ${PROGRESS_COMMENT_MARKER} using apps/froussard/src/codex/cli/codex-progress-comment.ts`,
