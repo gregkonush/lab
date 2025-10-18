@@ -178,13 +178,13 @@ importers:
         version: 1.131.44(@tanstack/react-router@1.131.44(react-dom@19.0.0(react@19.0.0))(react@19.0.0))(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1))(webpack@5.99.9)
       '@trpc/client':
         specifier: ^11.0.0-rc.818
-        version: 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(typescript@6.0.0-dev.20251016)
+        version: 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(typescript@6.0.0-dev.20251017)
       '@trpc/server':
         specifier: ^11.0.0-rc.818
-        version: 11.0.0-rc.824(typescript@6.0.0-dev.20251016)
+        version: 11.0.0-rc.824(typescript@6.0.0-dev.20251017)
       '@trpc/tanstack-react-query':
         specifier: ^11.0.0-rc.818
-        version: 11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(typescript@6.0.0-dev.20251016))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251016)
+        version: 11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(typescript@6.0.0-dev.20251017))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251017)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -233,7 +233,7 @@ importers:
         version: 7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@6.0.0-dev.20251016)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1))
+        version: 5.1.4(typescript@6.0.0-dev.20251017)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1))
 
   apps/nata:
     dependencies:
@@ -597,9 +597,6 @@ importers:
       '@temporalio/activity':
         specifier: ^1.13.0
         version: 1.13.1
-      '@temporalio/client':
-        specifier: ^1.13.0
-        version: 1.13.0
       '@temporalio/common':
         specifier: ^1.13.0
         version: 1.13.1
@@ -9858,8 +9855,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  typescript@6.0.0-dev.20251016:
-    resolution: {integrity: sha512-J+NPFklPwcYOagyuzRC5nLrTlVxU/cXOusqxMuWbbQR3k9sfj1PHPjv0qcPtzmiTI0MdKZ/7jVCB2e46nB4TIw==}
+  typescript@6.0.0-dev.20251017:
+    resolution: {integrity: sha512-soyESex6lT2ey9PbehWuvUjc1sMdcuPIG/6kfWYi5Opb+V6SNsNgi+/pY31QQt0xBeDuU3N8Kci2GWatOFOzUw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -15998,23 +15995,23 @@ snapshots:
       '@temporalio/proto': 1.13.1
       nexus-rpc: 0.0.1
 
-  '@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(typescript@6.0.0-dev.20251016)':
+  '@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(typescript@6.0.0-dev.20251017)':
     dependencies:
-      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251016)
-      typescript: 6.0.0-dev.20251016
+      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251017)
+      typescript: 6.0.0-dev.20251017
 
-  '@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016)':
+  '@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017)':
     dependencies:
-      typescript: 6.0.0-dev.20251016
+      typescript: 6.0.0-dev.20251017
 
-  '@trpc/tanstack-react-query@11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(typescript@6.0.0-dev.20251016))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251016)':
+  '@trpc/tanstack-react-query@11.0.0-rc.824(@tanstack/react-query@5.89.0(react@19.0.0))(@trpc/client@11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(typescript@6.0.0-dev.20251017))(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(react-dom@19.0.0(react@19.0.0))(react@19.0.0)(typescript@6.0.0-dev.20251017)':
     dependencies:
       '@tanstack/react-query': 5.89.0(react@19.0.0)
-      '@trpc/client': 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251016))(typescript@6.0.0-dev.20251016)
-      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251016)
+      '@trpc/client': 11.0.0-rc.824(@trpc/server@11.0.0-rc.824(typescript@6.0.0-dev.20251017))(typescript@6.0.0-dev.20251017)
+      '@trpc/server': 11.0.0-rc.824(typescript@6.0.0-dev.20251017)
       react: 19.0.0
       react-dom: 19.0.0(react@19.0.0)
-      typescript: 6.0.0-dev.20251016
+      typescript: 6.0.0-dev.20251017
 
   '@tsconfig/node10@1.0.11': {}
 
@@ -17439,7 +17436,7 @@ snapshots:
     dependencies:
       semver: 7.7.2
       shelljs: 0.8.5
-      typescript: 6.0.0-dev.20251016
+      typescript: 6.0.0-dev.20251017
 
   dunder-proto@1.0.1:
     dependencies:
@@ -21738,9 +21735,9 @@ snapshots:
     optionalDependencies:
       '@swc/core': 1.11.8(@swc/helpers@0.5.15)
 
-  tsconfck@3.1.5(typescript@6.0.0-dev.20251016):
+  tsconfck@3.1.5(typescript@6.0.0-dev.20251017):
     optionalDependencies:
-      typescript: 6.0.0-dev.20251016
+      typescript: 6.0.0-dev.20251017
 
   tslib@1.14.1: {}
 
@@ -21778,7 +21775,7 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  typescript@6.0.0-dev.20251016: {}
+  typescript@6.0.0-dev.20251017: {}
 
   ufo@1.5.4: {}
 
@@ -22075,11 +22072,11 @@ snapshots:
       - tsx
       - yaml
 
-  vite-tsconfig-paths@5.1.4(typescript@6.0.0-dev.20251016)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)):
+  vite-tsconfig-paths@5.1.4(typescript@6.0.0-dev.20251017)(vite@7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)):
     dependencies:
       debug: 4.4.0
       globrex: 0.1.2
-      tsconfck: 3.1.5(typescript@6.0.0-dev.20251016)
+      tsconfck: 3.1.5(typescript@6.0.0-dev.20251017)
     optionalDependencies:
       vite: 7.1.5(@types/node@24.8.1)(jiti@2.6.1)(lightningcss@1.30.1)(terser@5.39.0)(tsx@4.20.6)(yaml@2.8.1)
     transitivePeerDependencies:

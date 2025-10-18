@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
-import type { TLSConfig } from '@temporalio/client'
 import { z } from 'zod'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -64,6 +63,17 @@ export interface TemporalConfig {
   allowInsecureTls: boolean
   workerIdentity: string
   workerIdentityPrefix: string
+}
+
+export interface TLSCertPair {
+  crt: Buffer
+  key: Buffer
+}
+
+export interface TLSConfig {
+  serverRootCACertificate?: Buffer
+  serverNameOverride?: string
+  clientCertPair?: TLSCertPair
 }
 
 const buildTlsConfig = async (
