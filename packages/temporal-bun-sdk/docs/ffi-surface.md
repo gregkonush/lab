@@ -31,7 +31,9 @@ flowchart LR
 Current progress snapshot:
 
 - ✅ Client connect + describe namespace working (Bun integration tests exercise live Temporal).
-- ⚙️ Next up: add workflow operations (start/signal/query/terminate) in both Rust and TS layers.
+- ✅ Workflow start implemented via native FFI; TypeScript helper (`TemporalCoreClient.startWorkflow`) serializes JSON payloads.
+- ✅ Workflow signal implemented via `temporal_bun_client_signal_workflow` (JSON payloads + headers).
+- ⚙️ Next up: add workflow query/terminate operations in both Rust and TS layers.
 - ⬜️ Worker and runtime APIs remain untouched.
 
 | Area | Rust Export | Purpose | TS Wrapper | Status |
@@ -44,8 +46,8 @@ Current progress snapshot:
 | Client | `temporal_bun_client_free(client_ptr)` | Dispose client | `native.clientShutdown` | ✅ |
 | Client | `temporal_bun_client_describe_namespace_async(client_ptr, payload_ptr, len)` | Describe namespace via async pending handle | `native.describeNamespace` | ✅ (new) |
 | Client | `temporal_bun_client_update_headers(client_ptr, headers_ptr, len)` | Update gRPC metadata (API key, custom headers) | `coreBridge.client.updateHeaders` | ⬜️ TODO |
-| Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.start` | ⬜️ TODO |
-| Client | `temporal_bun_client_signal(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signal` | ⬜️ TODO |
+| Client | `temporal_bun_client_start_workflow(client_ptr, payload_ptr, len)` | Start workflow execution | `client.startWorkflow` | ✅ (JSON payloads, retry policy support; no eager workflow task yet) |
+| Client | `temporal_bun_client_signal_workflow(client_ptr, payload_ptr, len)` | Send signal to existing workflow | `client.signalWorkflow` | ✅ (JSON payloads, request id auto-generated) |
 | Client | `temporal_bun_client_query(client_ptr, payload_ptr, len)` | Run workflow query | `client.query` | ⬜️ TODO |
 | Client | `temporal_bun_client_terminate_workflow(...)` | Terminate workflow | `client.terminate` | ⬜️ TODO |
 | Client | `temporal_bun_client_cancel_workflow(...)` | Cancel workflow | `client.cancel` | ⬜️ TODO |
@@ -86,16 +88,16 @@ Current progress snapshot:
 1. **JSON control envelopes**  
    All FFI calls accept a JSON envelope describing the action. Example for `temporal_bun_client_start_workflow`:
    ```json
-   {
-     "namespace": "default",
-     "taskQueue": "prix",
-     "workflowId": "helloTemporal-123",
-     "workflowType": "helloTemporal",
-     "arguments": [ /* payloads encoded as base64 */ ],
-     "timeoutMs": 60000
-   }
+{
+  "namespace": "default",
+  "task_queue": "prix",
+  "workflow_id": "helloTemporal-123",
+  "workflow_type": "helloTemporal",
+  "args": ["encoded payloads as JSON"],
+  "workflow_execution_timeout_ms": 60000
+}
    ```
-   The TS helper handles encoding Temporal payloads (proto) to buffers, then wraps them in the envelope.
+The TypeScript helper encodes arguments as `json/plain` payloads and wraps them in the envelope.
 
 2. **Payload bytes**  
    For responses or streaming items, return `ByteArray` pointers. The TS side converts them into `ArrayBuffer` -> `Buffer` -> strongly typed objects.

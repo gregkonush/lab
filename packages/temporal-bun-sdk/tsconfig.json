@@ -6,7 +6,6 @@
     "declarationMap": true,
     "rootDir": "src",
     "moduleDetection": "force",
-    "allowImportingTsExtensions": true,
     "baseUrl": "./",
     "rootDirs": ["src", "vendor"],
     "paths": {

@@ -6,29 +6,24 @@
 
 ## 1. Public API Target
 
-`createTemporalClient` should return:
+`createTemporalClient` currently returns the Bun-native runtime/client bundle:
 
 ```ts
-interface TemporalClient {
-  workflow: {
-    start(request: StartOptions): Promise<WorkflowHandle>
-    signal(handle: WorkflowHandle, signalName: string, ...args: unknown[]): Promise<void>
-    query(handle: WorkflowHandle, queryName: string, ...args: unknown[]): Promise<unknown>
-    terminate(handle: WorkflowHandle, options?: TerminateOptions): Promise<void>
-  }
-  connection: { close(): Promise<void> }
-  namespace: string
+interface TemporalClientInstance {
+  runtime: TemporalRuntime
+  client: TemporalCoreClient
+  config: TemporalConfig
+  shutdown: () => Promise<void>
 }
-```
 
-Workflows handles must track:
-
-```ts
-interface WorkflowHandle {
-  workflowId: string
-  runId?: string
-  firstExecutionRunId?: string
+class TemporalCoreClient {
   namespace: string
+  identity: string
+
+  describeNamespace(namespace?: string): Promise<Record<string, unknown>>
+  startWorkflow(options: StartWorkflowOptions): Promise<{ runId: string; workflowId: string; namespace: string }>
+  signalWorkflow(options: SignalWorkflowOptions): Promise<SignalWorkflowResult>
+  // TODO: queryWorkflow, terminateWorkflow, cancelWorkflow
 }
 ```
 
@@ -66,21 +61,7 @@ Feed these into `core-bridge` client creation request.
 
 ## 3. Request Serialization
 
-Create helper module `src/client/serialization.ts`:
-
-- `buildStartWorkflowRequest(options, payloadCodec)` -> `Buffer`
-- `buildSignalRequest(handle, signal, args)`
-- `buildQueryRequest(handle, query, args)`
-- `buildTerminateRequest(handle, reason, details)`
-
-Encoding steps:
-
-1. Convert JS args into Temporal payloads (use `payloads-codec`).
-2. Pack envelope structure described in `ffi-surface.md`.
-3. Serialize to JSON, then `Buffer.from(..., 'utf8')`.
-4. Pass pointer/length to FFI.
-
-Responses should be decoded accordingly.
+Start/signal serialization currently lives inline in `TemporalCoreClient`, encoding arguments as `json/plain` payloads before forwarding to the bridge. Once query/terminate land, extract reusable helpers to keep payload handling consistent across commands.
 
 ---
 
@@ -104,10 +85,10 @@ Refer to `testing-plan.md`:
 
 ## 6. Completion Checklist
 
-- [ ] `src/client.ts` removes `@temporalio/client` import.
-- [ ] `src/client/index.ts` no longer re-exports vendor package.
+- [x] `src/client.ts` removes `@temporalio/client` import.
+- [x] `src/client/index.ts` no longer re-exports vendor package.
 - [ ] CLI example uses new client for manual testing.
-- [ ] README updated with limitations (if any).
+- [x] README updated with limitations (if any).
 - [ ] Added regression tests for starvation, start-idempotency, and signal-with-start.
 
 Once complete, remove any residual dependencies on the upstream client package from `package.json`.

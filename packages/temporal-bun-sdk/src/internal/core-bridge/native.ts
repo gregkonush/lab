@@ -1,9 +1,7 @@
-import { dlopen, FFIType, ptr, toArrayBuffer } from 'bun:ffi'
+import { dlopen, FFIType, ptr, toArrayBuffer, type Pointer } from 'bun:ffi'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-type Pointer = number
 
 type RuntimePtr = Pointer
 
@@ -18,6 +16,9 @@ export interface NativeClient {
   type: 'client'
   handle: ClientPtr
 }
+
+const pointerToNumber = (pointer: Pointer): number => Number(pointer as unknown as number)
+const pointerArg = (pointer: Pointer): number => pointer as unknown as number
 
 const libraryFile = resolveBridgeLibraryPath()
 
@@ -36,6 +37,8 @@ const {
     temporal_bun_pending_byte_array_poll,
     temporal_bun_pending_byte_array_consume,
     temporal_bun_pending_byte_array_free,
+    temporal_bun_client_start_workflow,
+    temporal_bun_client_signal_workflow,
     temporal_bun_byte_array_free,
   },
 } = dlopen(libraryFile, {
@@ -91,6 +94,14 @@ const {
     args: [FFIType.ptr],
     returns: FFIType.void,
   },
+  temporal_bun_client_start_workflow: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
+  temporal_bun_client_signal_workflow: {
+    args: [FFIType.ptr, FFIType.ptr, FFIType.uint64_t],
+    returns: FFIType.ptr,
+  },
   temporal_bun_byte_array_free: {
     args: [FFIType.ptr],
     returns: FFIType.void,
@@ -100,48 +111,80 @@ const {
 export const native = {
   createRuntime(options: Record<string, unknown> = {}): Runtime {
     const payload = Buffer.from(JSON.stringify(options), 'utf8')
-    const handle = Number(temporal_bun_runtime_new(ptr(payload), payload.byteLength))
-    if (!handle) {
+    const handle = temporal_bun_runtime_new(ptr(payload), payload.byteLength) as Pointer
+    if (!pointerToNumber(handle)) {
       throw new Error(readLastError())
     }
     return { type: 'runtime', handle }
   },
 
   runtimeShutdown(runtime: Runtime): void {
-    temporal_bun_runtime_free(runtime.handle)
+    temporal_bun_runtime_free(pointerArg(runtime.handle))
   },
 
   async createClient(runtime: Runtime, config: Record<string, unknown>): Promise<NativeClient> {
     const payload = Buffer.from(JSON.stringify(config), 'utf8')
-    const pendingHandle = Number(temporal_bun_client_connect_async(runtime.handle, ptr(payload), payload.byteLength))
-    if (!pendingHandle) {
+    const pendingHandle = temporal_bun_client_connect_async(
+      pointerArg(runtime.handle),
+      ptr(payload),
+      payload.byteLength,
+    ) as Pointer
+    if (!pointerToNumber(pendingHandle)) {
       throw new Error(readLastError())
     }
     try {
       const handle = await waitForClientHandle(pendingHandle)
       return { type: 'client', handle }
     } finally {
-      temporal_bun_pending_client_free(pendingHandle)
+      temporal_bun_pending_client_free(pointerArg(pendingHandle))
     }
   },
 
   clientShutdown(client: NativeClient): void {
-    temporal_bun_client_free(client.handle)
+    temporal_bun_client_free(pointerArg(client.handle))
   },
 
   async describeNamespace(client: NativeClient, namespace: string): Promise<Uint8Array> {
     const payload = Buffer.from(JSON.stringify({ namespace }), 'utf8')
-    const pendingHandle = Number(
-      temporal_bun_client_describe_namespace_async(client.handle, ptr(payload), payload.byteLength),
-    )
-    if (!pendingHandle) {
+    const pendingHandle = temporal_bun_client_describe_namespace_async(
+      pointerArg(client.handle),
+      ptr(payload),
+      payload.byteLength,
+    ) as Pointer
+    if (!pointerToNumber(pendingHandle)) {
       throw new Error(readLastError())
     }
     try {
       return await waitForByteArray(pendingHandle)
     } finally {
-      temporal_bun_pending_byte_array_free(pendingHandle)
+      temporal_bun_pending_byte_array_free(pointerArg(pendingHandle))
     }
+  },
+
+  startWorkflow(client: NativeClient, request: Record<string, unknown>): string {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const arrayPtr = temporal_bun_client_start_workflow(
+      pointerArg(client.handle),
+      ptr(payload),
+      payload.byteLength,
+    ) as Pointer
+    if (!pointerToNumber(arrayPtr)) {
+      throw new Error(readLastError())
+    }
+    return readByteArrayAsString(arrayPtr)
+  },
+
+  signalWorkflow(client: NativeClient, request: Record<string, unknown>): string {
+    const payload = Buffer.from(JSON.stringify(request), 'utf8')
+    const arrayPtr = temporal_bun_client_signal_workflow(
+      pointerArg(client.handle),
+      ptr(payload),
+      payload.byteLength,
+    ) as Pointer
+    if (!pointerToNumber(arrayPtr)) {
+      throw new Error(readLastError())
+    }
+    return readByteArrayAsString(arrayPtr)
   },
 }
 
@@ -160,21 +203,21 @@ function resolveBridgeLibraryPath(): string {
   return candidate
 }
 
-function readByteArray(pointer: number): Uint8Array {
+function readByteArray(pointer: Pointer): Uint8Array {
   const header = new BigUint64Array(toArrayBuffer(pointer, 0, 24))
   const dataPtr = Number(header[0])
   const len = Number(header[1])
   const view = new Uint8Array(toArrayBuffer(dataPtr, 0, len))
   // Copy into JS-owned memory before the native buffer is released.
   const copy = new Uint8Array(view)
-  temporal_bun_byte_array_free(pointer)
+  temporal_bun_byte_array_free(pointerArg(pointer))
   return copy
 }
 
-async function waitForClientHandle(handle: number): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
+async function waitForClientHandle(handle: Pointer): Promise<Pointer> {
+  return await new Promise<Pointer>((resolve, reject) => {
     const poll = (): void => {
-      const status = Number(temporal_bun_pending_client_poll(handle))
+      const status = Number(temporal_bun_pending_client_poll(pointerArg(handle)))
       if (status === 0) {
         setTimeout(poll, 0)
         return
@@ -182,8 +225,8 @@ async function waitForClientHandle(handle: number): Promise<number> {
 
       if (status === 1) {
         try {
-          const pointer = Number(temporal_bun_pending_client_consume(handle))
-          if (!pointer) {
+          const pointer = temporal_bun_pending_client_consume(pointerArg(handle)) as Pointer
+          if (!pointerToNumber(pointer)) {
             throw new Error(readLastError())
           }
           resolve(pointer)
@@ -200,10 +243,10 @@ async function waitForClientHandle(handle: number): Promise<number> {
   })
 }
 
-async function waitForByteArray(handle: number): Promise<Uint8Array> {
+async function waitForByteArray(handle: Pointer): Promise<Uint8Array> {
   return await new Promise<Uint8Array>((resolve, reject) => {
     const poll = (): void => {
-      const status = Number(temporal_bun_pending_byte_array_poll(handle))
+      const status = Number(temporal_bun_pending_byte_array_poll(pointerArg(handle)))
       if (status === 0) {
         setTimeout(poll, 0)
         return
@@ -211,8 +254,8 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
 
       if (status === 1) {
         try {
-          const arrayPtr = Number(temporal_bun_pending_byte_array_consume(handle))
-          if (!arrayPtr) {
+          const arrayPtr = temporal_bun_pending_byte_array_consume(pointerArg(handle)) as Pointer
+          if (!pointerToNumber(arrayPtr)) {
             throw new Error(readLastError())
           }
           resolve(readByteArray(arrayPtr))
@@ -228,6 +271,13 @@ async function waitForByteArray(handle: number): Promise<Uint8Array> {
 
     setTimeout(poll, 0)
   })
+}
+
+const textDecoder = new TextDecoder()
+
+function readByteArrayAsString(pointer: Pointer): string {
+  const bytes = readByteArray(pointer)
+  return textDecoder.decode(bytes)
 }
 
 function readLastError(): string {

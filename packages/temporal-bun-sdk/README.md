@@ -60,12 +60,28 @@ pnpm --filter @proompteng/temporal-bun-sdk test
 ```ts
 import { createTemporalClient, loadTemporalConfig } from '@proompteng/temporal-bun-sdk'
 
-const { client } = await createTemporalClient()
-const workflow = await client.workflow.start('helloTemporal', {
-  taskQueue: 'prix',
-  args: ['Proompteng']
+const { client, config, shutdown } = await createTemporalClient()
+
+const result = await client.startWorkflow({
+  workflowId: `hello-${Date.now()}`,
+  workflowType: 'helloTemporal',
+  taskQueue: config.taskQueue,
+  args: ['Proompteng'],
 })
-console.log('Workflow execution started', workflow.workflowId)
+
+console.log('Workflow execution started', result.runId)
+
+await client.signalWorkflow({
+  workflowId: result.workflowId,
+  runId: result.runId,
+  signalName: 'greet',
+  args: [{ phrase: '👋 from Bun' }],
+})
+
+// Later, tear down the native handles when you're done.
+await shutdown()
+
+> **Note:** Bun-native start + signal calls are live. Queries, cancellations, terminations, and TLS/API-key headers are next—track progress in [`docs/ffi-surface.md`](./docs/ffi-surface.md).
 ```
 
 Start the bundled worker (after building):
@@ -115,6 +131,8 @@ temporal-bun docker-build --tag my-worker:latest
 | `TEMPORAL_WORKER_IDENTITY_PREFIX` | `temporal-bun-worker` | Worker identity prefix (appends host + PID). |
 
 These align with the existing Temporal setup (`services/prix/worker/main.go`, `packages/atelier/src/create-default-namespace.ts`) so Bun workers can drop into current environments without additional configuration.
+
+> ⚠️ TLS and API key settings are parsed for parity with the existing Node SDK, but the native Bun client does not yet establish secure channels. Support for TLS/mTLS and metadata headers will be shipped in a follow-up.
 
 ## Docker
 

@@ -32,8 +32,53 @@ suite('native bridge integration', () => {
     )
 
     try {
-      const responseBytes = await withRetry(() => native.describeNamespace(client, 'default'), maxAttempts, waitMs)
-      expect(responseBytes.byteLength).toBeGreaterThan(0)
+      const responseJson = await withRetry(() => native.describeNamespace(client, 'default'), maxAttempts, waitMs)
+      const namespaceInfo = JSON.parse(responseJson) as {
+        namespace_info?: { name?: string }
+      }
+      expect(namespaceInfo.namespace_info?.name).toBe('default')
+
+      const workflowId = `bun-native-${crypto.randomUUID?.() ?? Date.now().toString(36)}`
+      const startResponseJson = await withRetry(
+        () =>
+          native.startWorkflow(client, {
+            namespace: 'default',
+            workflow_id: workflowId,
+            workflow_type: 'integration-test-workflow',
+            task_queue: 'prix',
+          }),
+        maxAttempts,
+        waitMs,
+      )
+
+      const startResponse = JSON.parse(startResponseJson) as {
+        run_id?: string
+        workflow_id?: string
+      }
+
+      expect(startResponse.workflow_id).toBe(workflowId)
+      expect(typeof startResponse.run_id).toBe('string')
+
+      const signalResponseJson = await withRetry(
+        () =>
+          native.signalWorkflow(client, {
+            namespace: 'default',
+            workflow_id: workflowId,
+            run_id: startResponse.run_id,
+            signal_name: 'integration-signal',
+            args: [{ message: 'ping' }],
+          }),
+        maxAttempts,
+        waitMs,
+      )
+
+      const signalResponse = JSON.parse(signalResponseJson) as {
+        workflow_id?: string
+        signal_name?: string
+      }
+
+      expect(signalResponse.workflow_id).toBe(workflowId)
+      expect(signalResponse.signal_name).toBe('integration-signal')
     } finally {
       native.clientShutdown(client)
     }
