@@ -1,5 +1,5 @@
 import { createPrivateKey, createPublicKey, createHash, sign } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 const seed = Buffer.from(Array.from({ length: 32 }, (_, i) => i))
 const key = createPrivateKey({
@@ -229,7 +229,8 @@ const fixture = {
   valid,
   invalid,
 }
-writeFileSync(
-  process.argv[2] ?? new URL('./ofz-guest-request-v3.json', import.meta.url),
-  JSON.stringify(fixture, null, 2) + '\n',
-)
+const serialized = JSON.stringify(fixture, null, 2) + '\n'
+writeFileSync(new URL('./ofz-guest-request-v3.json', import.meta.url), serialized)
+const guestTestdata = new URL('../../nanoagent/internal/guestauth/testdata/', import.meta.url)
+mkdirSync(guestTestdata, { recursive: true })
+writeFileSync(new URL('ofz-guest-request-v3.json', guestTestdata), serialized)

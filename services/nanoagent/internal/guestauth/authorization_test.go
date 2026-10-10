@@ -2,16 +2,19 @@ package guestauth
 
 import (
 	"crypto/ed25519"
+	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 )
+
+//go:embed testdata/ofz-guest-request-v3.json
+var vectorJSON []byte
 
 type vector struct {
 	RPCActions map[string]Action `json:"rpcActions"`
@@ -35,12 +38,8 @@ type vector struct {
 
 func fixture(t *testing.T) (vector, *Verifier, Context) {
 	t.Helper()
-	data, err := os.ReadFile("../../../tengri/fixtures/ofz-guest-request-v3.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var v vector
-	if err := json.Unmarshal(data, &v); err != nil {
+	if err := json.Unmarshal(vectorJSON, &v); err != nil {
 		t.Fatal(err)
 	}
 	key, err := base64.RawURLEncoding.DecodeString(v.PublicKey)
