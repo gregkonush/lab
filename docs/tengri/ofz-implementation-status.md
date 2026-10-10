@@ -180,7 +180,8 @@ This removes the retained-data migration blocker. The new Ofz API is not yet dep
 remains false. This deletion does not establish deployment or acceptance of the new authorization contract.
 The isolated physical-promotion fixture passes against pinned PostgreSQL 18.6 and SpiceDB. A physical base backup
 includes the native datastore, Ofz control tables and shared runtime state. The fixture requires synchronous streaming,
-kills the original primary, and promotes the standby at the same service address. Existing clients recover in 2.92 seconds
+kills the original primary, and promotes the standby at the same service address. The updated control fixture commits
+36 commands and 104 immutable receipts. Existing clients recover in 2.68 seconds
 and deny a consumed nonce before its original five-second expiry. Atomic pending/spent tickets, live/revoked previews,
 session/workspace/runtime bindings, unique leader acquisition and stale-fence denial all pass. Owner access stays allowed
 and a revoked viewer stays denied; every Ofz control table has the same hash before and after promotion. The initial run
