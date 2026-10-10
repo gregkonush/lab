@@ -193,3 +193,10 @@ exposed Docker's requirement for an explicit subnet when reassigning an IP, whic
 runs once in Ofz CI, replacing the separate control-only run, and requires the exact promotion test to pass. An empty
 test selection fails qualification. Shared runtime validation stays in the Tengri image workflow. This two-node fixture does not prove three-node CNPG or Kubernetes recovery, independent backups, or
 post-failure synchronous write availability. Those deployed/recovery gates remain open.
+
+The runtime-epoch layer separates persistent slot allocation from executing runtime identity. Claims require a
+canonical Ofz runtime UUID, and guest transports require exactly one current binding header for every identity field.
+Reconciliation stops an older runtime before restoring under fresh authority; a frozen guest can change runtime only
+within the same physical allocation. Never-started workspaces retain storage without inventing an executing runtime.
+This layer is being requalified on the hard-migration main base. Signed guest actions, bounded observers, independent
+execution fencing and deployed acceptance remain separate requirements.

@@ -27,8 +27,8 @@ use crate::{
         POD_UID_ANNOTATION, SLOT_SELECTOR,
     },
     slot::{
-        Claim, SlotState,
-        client::{SlotClient, claim_for},
+        Allocation, SlotState,
+        client::{SlotClient, allocation_for, claim_for},
     },
     tickets::TicketStore,
 };
@@ -297,7 +297,7 @@ pub async fn converge(
         &binding.pvc_uid,
         &microvm.spec.image,
     )?;
-    let claim = claim_for(&microvm)?;
+    let allocation = allocation_for(&microvm)?;
     supervisor.install_fence(leadership.fence()?).await?;
     let now = Utc::now();
     if idle_deadline_passed(&microvm, now)
@@ -309,14 +309,26 @@ pub async fn converge(
     }
     let status = supervisor.status().await?;
     ensure!(
-        matches!(status.state, SlotState::Vacant { .. }) || status.state.claim() == Some(&claim),
+        matches!(status.state, SlotState::Vacant { .. })
+            || status
+                .state
+                .claim()
+                .is_some_and(|claim| claim.allocation() == allocation),
         "slot owner or epoch changed"
     );
     let state = match microvm.spec.desired_state {
         MicroVMDesiredState::Running => {
+            let claim = claim_for(&microvm)?;
             if status.state.serves(&claim) {
                 status
             } else {
+                if let SlotState::Awake { claim: previous }
+                | SlotState::Saving { claim: previous } = &status.state
+                {
+                    supervisor
+                        .lifecycle("sleep", previous, leadership.fence()?)
+                        .await?;
+                }
                 supervisor
                     .restore(&microvm, authorization, leadership)
                     .await?
@@ -327,11 +339,21 @@ pub async fn converge(
                 .remove_agent(&microvm.uid().context("workspace UID required")?)
                 .await?;
             metrics::global().clear_pty_sessions(&microvm.name_any());
-            if matches!(status.state, SlotState::Sleeping { .. }) {
+            if matches!(
+                status.state,
+                SlotState::Sleeping { .. } | SlotState::Vacant { .. }
+            ) {
                 status
             } else {
                 supervisor
-                    .lifecycle("sleep", &claim, leadership.fence()?)
+                    .lifecycle(
+                        "sleep",
+                        status
+                            .state
+                            .claim()
+                            .context("missing current runtime claim")?,
+                        leadership.fence()?,
+                    )
                     .await?
             }
         }
@@ -397,6 +419,9 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
     let phase = match state {
         SlotState::Awake { .. } => MicroVMPhase::Ready,
         SlotState::Sleeping { .. } => MicroVMPhase::Sleeping,
+        SlotState::Vacant { .. } if microvm.spec.desired_state == MicroVMDesiredState::Sleeping => {
+            MicroVMPhase::Sleeping
+        }
         SlotState::Failed { .. } | SlotState::Stopped { .. } => MicroVMPhase::Failed,
         _ => MicroVMPhase::Booting,
     };
@@ -410,6 +435,12 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
             "GuestStopped",
             "Guest process is stopped and snapshot pages are evicted",
         ),
+        SlotState::Vacant { .. } if microvm.spec.desired_state == MicroVMDesiredState::Sleeping => {
+            (
+                "GuestNotStarted",
+                "Prepared snapshot is stopped; no runtime has been authorized",
+            )
+        }
         SlotState::Failed { message, .. } => ("SnapshotLifecycleFailed", message.as_str()),
         SlotState::Stopped { .. } => ("GuestTerminated", "Guest process termination is proven"),
         _ => (
@@ -505,9 +536,9 @@ pub async fn ensure_slot(
         );
         if let Some(binding) = &current.spec.slot {
             let mut lease = leases.get(&binding.name).await?;
-            let expected = claim_for(&current)?;
+            let expected = allocation_for(&current)?;
             if let Some(holder) = lease.spec.as_ref().and_then(|s| s.holder_identity.as_ref()) {
-                let holder: Claim = serde_json::from_str(holder)?;
+                let holder: Allocation = serde_json::from_str(holder)?;
                 if holder != expected {
                     // This candidate lost the Lease CAS before any guest could be started.
                     let pod = pods.get(&binding.name).await?;
@@ -521,7 +552,10 @@ pub async fn ensure_slot(
                     .status()
                     .await?;
                     ensure!(
-                        status.state.claim() != Some(&expected),
+                        status
+                            .state
+                            .claim()
+                            .is_none_or(|claim| claim.allocation() != expected),
                         "slot claim changed after execution; retain disks for fenced recovery"
                     );
                     ensure!(
@@ -580,7 +614,7 @@ pub async fn ensure_slot(
                     .as_ref()
                     .and_then(|s| s.holder_identity.as_ref())
                     .is_some_and(|holder| {
-                        serde_json::from_str::<Claim>(holder).is_ok_and(|claim| {
+                        serde_json::from_str::<Allocation>(holder).is_ok_and(|claim| {
                             claim.microvm_id == current.name_any()
                                 && Some(claim.microvm_uid) == current.uid()
                         })
@@ -721,7 +755,7 @@ async fn bind_microvm(
     lease: &Lease,
     leadership: &crate::leadership::Guard,
 ) -> anyhow::Result<MicroVM> {
-    let claim: Claim = serde_json::from_str(
+    let claim: Allocation = serde_json::from_str(
         lease
             .spec
             .as_ref()
@@ -760,7 +794,7 @@ async fn bind_microvm(
     Ok(bound)
 }
 
-fn binding_for(lease: &Lease, claim: &Claim) -> anyhow::Result<MicroVMSlot> {
+fn binding_for(lease: &Lease, claim: &Allocation) -> anyhow::Result<MicroVMSlot> {
     claim.validate()?;
     let annotations = lease.annotations();
     Ok(MicroVMSlot {
@@ -835,7 +869,7 @@ async fn bound_pod(client: &Client, namespace: &str, microvm: &MicroVM) -> anyho
     let lease = Api::<Lease>::namespaced(client.clone(), namespace)
         .get(&slot.name)
         .await?;
-    let claim: Claim = serde_json::from_str(
+    let claim: Allocation = serde_json::from_str(
         lease
             .spec
             .as_ref()
@@ -843,7 +877,7 @@ async fn bound_pod(client: &Client, namespace: &str, microvm: &MicroVM) -> anyho
             .context("slot owner is missing")?,
     )?;
     ensure!(
-        claim == claim_for(microvm)?,
+        claim == allocation_for(microvm)?,
         "slot Lease owner or epoch changed"
     );
     let pod = Api::<Pod>::namespaced(client.clone(), namespace)
@@ -901,7 +935,7 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
                 &microvm.spec.image,
             )?;
             let status = supervisor
-                .lifecycle("stop", &claim_for(microvm)?, context.leader()?.fence()?)
+                .stop(&allocation_for(microvm)?, context.leader()?.fence()?)
                 .await?;
             ensure!(
                 matches!(status.state, SlotState::Stopped { .. }),
@@ -922,7 +956,7 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
         delete_slot_assets(client, namespace, slot, Some(microvm), context.leader()?).await?;
         let leases = Api::<Lease>::namespaced(client.clone(), namespace);
         if let Some(lease) = leases.get_opt(&slot.name).await? {
-            let claim: Claim = serde_json::from_str(
+            let claim: Allocation = serde_json::from_str(
                 lease
                     .spec
                     .as_ref()
@@ -930,7 +964,7 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
                     .context("missing deletion claim")?,
             )?;
             ensure!(
-                claim == claim_for(microvm)?,
+                claim == allocation_for(microvm)?,
                 "slot owner changed during deletion"
             );
             context.leader()?;
@@ -955,7 +989,7 @@ async fn cleanup(context: &ControllerContext, microvm: &MicroVM) -> anyhow::Resu
                 .spec
                 .as_ref()
                 .and_then(|s| s.holder_identity.as_ref())
-                .is_some_and(|holder| serde_json::from_str::<Claim>(holder)
+                .is_some_and(|holder| serde_json::from_str::<Allocation>(holder)
                     .is_ok_and(|c| Some(c.microvm_uid) == microvm.uid()))),
             "interrupted slot claim must be recovered before deleting the agent"
         );
@@ -1010,9 +1044,9 @@ async fn release_unclaimed_slot(
         .spec
         .as_ref()
         .and_then(|spec| spec.holder_identity.as_deref())
-        .map(serde_json::from_str::<Claim>)
+        .map(serde_json::from_str::<Allocation>)
         .transpose()?;
-    let expected = claim_for(microvm)?;
+    let expected = allocation_for(microvm)?;
     if holder.as_ref() == Some(&expected) {
         return Ok(false);
     }
@@ -1221,7 +1255,7 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
                 || matches!(status.state, SlotState::Failed { .. }))
         {
             ensure_asset_owner(&pod.metadata, None)?;
-            let claim = Claim {
+            let claim = Allocation {
                 microvm_id: lease.name_any(),
                 microvm_uid: lease.uid().context("Lease has no UID")?,
                 epoch: u64::try_from(
@@ -1253,7 +1287,7 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
 
 async fn retire_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Result<()> {
     let leases = Api::<Lease>::namespaced(context.client.clone(), &context.namespace);
-    let claim: Claim = serde_json::from_str(
+    let claim: Allocation = serde_json::from_str(
         lease
             .spec
             .as_ref()
@@ -1286,7 +1320,7 @@ async fn retire_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Resu
                 .get(IMAGE_ANNOTATION)
                 .context("retiring slot has no image")?,
         )?
-        .lifecycle("stop", &claim, context.leader()?.fence()?)
+        .stop(&claim, context.leader()?.fence()?)
         .await?;
         ensure!(
             matches!(status.state, SlotState::Stopped { .. }),
@@ -1437,6 +1471,7 @@ async fn prepare_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Res
 mod tests {
     use super::*;
     use crate::crd::{MicroVMResources, MicroVMSpec};
+    use crate::slot::Claim;
     use http::{Method, Request, Response};
     use kube::client::Body;
     use std::{collections::VecDeque, sync::Mutex};
@@ -1509,6 +1544,40 @@ mod tests {
         microvm.metadata.generation = Some(2);
         microvm.metadata.finalizers = Some(vec![FINALIZER_NAME.into()]);
         microvm
+    }
+
+    #[test]
+    fn a_new_runtime_epoch_cannot_reuse_an_awake_runtime_claim() {
+        let mut microvm = agent();
+        let original = claim_for(&microvm).unwrap();
+        let awake = SlotState::Awake { claim: original };
+        microvm.spec.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
+        assert!(
+            !awake.serves(&claim_for(&microvm).unwrap()),
+            "an earlier runtime epoch must not serve the newly authorized incarnation"
+        );
+    }
+
+    #[test]
+    fn a_never_started_workspace_retains_its_home_without_a_runtime_claim() {
+        let mut microvm = agent();
+        microvm.spec.desired_state = MicroVMDesiredState::Sleeping;
+        microvm.spec.runtime_epoch.clear();
+        assert!(allocation_for(&microvm).is_ok());
+        assert!(claim_for(&microvm).is_err());
+        let pod: Pod = serde_json::from_value(json!({
+            "metadata":{"name":"slot-test", "uid":"original-pod"},
+            "status":{"podIP":"127.0.0.1"}
+        }))
+        .unwrap();
+        let state = SlotState::Vacant {
+            snapshot: crate::slot::Snapshot { generation: 1 },
+        };
+        assert_eq!(
+            status_for(&microvm, &pod, &state).phase,
+            MicroVMPhase::Sleeping
+        );
+        assert!(state.claim().is_none());
     }
 
     fn context(client: Client) -> ControllerContext {
@@ -1610,15 +1679,21 @@ mod tests {
         };
         use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-        for after_status in [7, 8, 9, 6] {
+        for (after_status, old_awake) in [(7, false), (8, false), (9, false), (6, false), (6, true)]
+        {
             let mode = Arc::new(AtomicU8::new(6));
             let restores = Arc::new(AtomicUsize::new(0));
+            let sleeps = Arc::new(AtomicUsize::new(0));
             let mut microvm = agent();
             microvm.status = Some(MicroVMStatus {
                 pod_uid: Some("original-pod".into()),
                 ..Default::default()
             });
             let claim = claim_for(&microvm).unwrap();
+            let mut previous = claim.clone();
+            if old_awake {
+                previous.runtime_epoch = "33333333-3333-4333-8333-333333333333".into();
+            }
             let status = SlotStatus {
                 identity: crate::slot::SlotIdentity {
                     pod_uid: "original-pod".into(),
@@ -1628,12 +1703,24 @@ mod tests {
                     firecracker_version: crate::slot::FIRECRACKER_VERSION.into(),
                     cpu: "fixture-cpu".into(),
                 },
-                state: SlotState::Sleeping {
-                    claim: claim.clone(),
-                    snapshot: crate::slot::Snapshot { generation: 1 },
+                state: if old_awake {
+                    SlotState::Awake {
+                        claim: previous.clone(),
+                    }
+                } else {
+                    SlotState::Sleeping {
+                        claim: previous.clone(),
+                        snapshot: crate::slot::Snapshot { generation: 1 },
+                    }
                 },
             };
             let before_restore = status.clone();
+            let mut stopped = status.clone();
+            stopped.state = SlotState::Sleeping {
+                claim: previous.clone(),
+                snapshot: crate::slot::Snapshot { generation: 2 },
+            };
+            let sleep_calls = sleeps.clone();
             let changed = mode.clone();
             let mut restored = status;
             restored.state = SlotState::Awake {
@@ -1655,6 +1742,15 @@ mod tests {
                     }),
                 )
                 .route(
+                    "/slot/sleep",
+                    post(move |Json(requested): Json<Claim>| {
+                        assert_eq!(requested, previous);
+                        sleep_calls.fetch_add(1, Ordering::SeqCst);
+                        let status = stopped.clone();
+                        async move { Json(status) }
+                    }),
+                )
+                .route(
                     "/slot/restore",
                     post(move || {
                         calls.fetch_add(1, Ordering::SeqCst);
@@ -1670,7 +1766,7 @@ mod tests {
                 "metadata":{"name":"slot-test", "annotations":{
                     POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-pvc", HOME_NAME_ANNOTATION:"original-home"
                 }},
-                "spec":{"holderIdentity":serde_json::to_string(&claim).unwrap()}
+                "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}
             });
             let (client, pending) = mock(vec![
                 get(
@@ -1717,6 +1813,7 @@ mod tests {
             if after_status == 6 {
                 result.expect("fresh unchanged authority must still restore after the initial decision expires");
                 assert_eq!(restores.load(Ordering::SeqCst), 1);
+                assert_eq!(sleeps.load(Ordering::SeqCst), usize::from(old_awake));
                 assert!(pending.lock().unwrap().is_empty());
             } else {
                 assert_eq!(
@@ -1876,7 +1973,7 @@ mod tests {
         let (client, pending) = mock(vec![get(
             "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
             json!({"metadata":{"name":"slot-test", "uid":"lease-uid", "resourceVersion":"20"}, "spec":{
-                "holderIdentity":serde_json::to_string(&claim_for(&microvm).unwrap()).unwrap(), "leaseTransitions":2
+                "holderIdentity":serde_json::to_string(&allocation_for(&microvm).unwrap()).unwrap(), "leaseTransitions":2
             }}),
         )]);
         let mut context = shared_context(client).await;
@@ -1953,12 +2050,12 @@ mod tests {
         let microvm = agent();
         for holder in [
             None,
-            Some(Claim {
+            Some(Allocation {
                 microvm_id: "winning-agent".into(),
                 microvm_uid: "winning-owner".into(),
                 epoch: 2,
             }),
-            Some(Claim {
+            Some(Allocation {
                 microvm_id: "next-agent".into(),
                 microvm_uid: "next-owner".into(),
                 epoch: 3,
@@ -2008,7 +2105,7 @@ mod tests {
         ] {
             let mut microvm = agent();
             microvm.status = Some(status);
-            let holder = Claim {
+            let holder = Allocation {
                 microvm_id: "another-agent".into(),
                 microvm_uid: "another-owner".into(),
                 epoch: 2,
@@ -2034,11 +2131,11 @@ mod tests {
         let (client, pending) = mock(vec![
             get(
                 "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
-                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&claim_for(&microvm).unwrap()).unwrap()}}),
+                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&allocation_for(&microvm).unwrap()).unwrap()}}),
             ),
             get(
                 "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
-                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&claim_for(&microvm).unwrap()).unwrap()}}),
+                json!({"metadata":{"uid":"lease-uid"}, "spec":{"holderIdentity":serde_json::to_string(&allocation_for(&microvm).unwrap()).unwrap()}}),
             ),
             missing("/api/v1/namespaces/tengri/pods/slot-test"),
         ]);

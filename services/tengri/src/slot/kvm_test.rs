@@ -215,6 +215,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         microvm_id: "fixture-agent".into(),
         microvm_uid: "fixture-owner-uid".into(),
         epoch: 1,
+        runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
     };
     eprintln!(
         "real KVM create CPU before:\n{}",
