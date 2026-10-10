@@ -2,7 +2,7 @@
  * RESEARCH_ONLY crash-below-VWAP bounce scan over one declared session of one-minute bars. Pure: callers decode the
  * input and supply `evaluatedAt`. Definition: docs/bayn/research-candidate-crash-vwap-bounce-v1.md.
  */
-import { Data, Result, Schema } from 'effect'
+import { BigDecimal, Data, Result, Schema } from 'effect'
 
 import {
   IsoDateSchema,
@@ -201,24 +201,51 @@ export const collectCrashVwapBounceCandidates = (
   const flattenMinute = Math.min(params.flattenMinute, sessionCloseMinuteOfDay - params.flattenBeforeCloseMinutes)
   const lastSignalMinute = flattenMinute - params.signalCutoffBeforeFlattenMinutes
   const vwap = sessionVwapSeries(bars)
+  const decimal = BigDecimal.fromNumberUnsafe
+  const basisPoints = BigDecimal.fromBigInt(10_000n)
+  const tripleBasisPoints = BigDecimal.fromBigInt(30_000n)
+  const crashPriceFactor = decimal(10_000 - params.crashBp)
+  const vwapPriceFactor = decimal(10_000 - params.vwapDistBp)
+  let cumulativeVolume = BigDecimal.fromBigInt(0n)
+  let cumulativeTriplePriceVolume = BigDecimal.fromBigInt(0n)
   const candidates: HybridCrashVwapCandidate[] = []
-  for (let index = 1; index < bars.length; index++) {
-    const previous = bars[index - 1]
+  for (let index = 0; index < bars.length; index++) {
     const signal = bars[index]
+    if (signal?.minuteOfDay !== params.rthOpenMinute + index) break
+    // Exact decimal session totals decide both thresholds; the typical-price factor of three stays in the denominator.
+    const volume = decimal(signal.volume)
+    cumulativeVolume = BigDecimal.sum(cumulativeVolume, volume)
+    cumulativeTriplePriceVolume = BigDecimal.sum(
+      cumulativeTriplePriceVolume,
+      BigDecimal.multiply(BigDecimal.sumAll([signal.high, signal.low, signal.close].map(decimal)), volume),
+    )
+    const previous = bars[index - 1]
     const confirmation = bars[index + params.bounceMinutes]
     const entry = bars[index + params.bounceMinutes + 1]
     const sessionVwap = vwap[index]
-    if (previous?.minuteOfDay !== params.rthOpenMinute + index - 1) break
-    if (signal?.minuteOfDay !== params.rthOpenMinute + index) break
+    if (previous === undefined) continue
     if (confirmation === undefined || entry === undefined || sessionVwap === undefined) break
     if (confirmation.minuteOfDay !== signal.minuteOfDay + params.bounceMinutes) continue
     if (entry.minuteOfDay !== confirmation.minuteOfDay + 1 || entry.minuteOfDay >= flattenMinute) continue
     if (signal.minuteOfDay < params.rthOpenMinute + params.minSessionAgeMinutes) continue
     if (signal.minuteOfDay >= lastSignalMinute || !Number.isFinite(sessionVwap)) continue
     if ([previous, signal, confirmation, entry].some((bar) => bar.volume <= 0)) continue
+    const close = decimal(signal.close)
+    if (
+      BigDecimal.isGreaterThan(
+        BigDecimal.multiply(close, basisPoints),
+        BigDecimal.multiply(decimal(previous.close), crashPriceFactor),
+      ) ||
+      BigDecimal.isGreaterThan(
+        BigDecimal.multiply(BigDecimal.multiply(close, cumulativeVolume), tripleBasisPoints),
+        BigDecimal.multiply(cumulativeTriplePriceVolume, vwapPriceFactor),
+      ) ||
+      confirmation.close <= signal.close
+    )
+      continue
+    // Reported basis points are approximate; admission used the exact comparisons above.
     const crashBp = (signal.close / previous.close - 1) * 1e4
     const vwapDistBp = (signal.close / sessionVwap - 1) * 1e4
-    if (crashBp > -params.crashBp || vwapDistBp > -params.vwapDistBp || confirmation.close <= signal.close) continue
     candidates.push({
       symbol: signal.symbol,
       signalMinuteOfDay: signal.minuteOfDay,
