@@ -52,7 +52,9 @@ observation time, next HTTP-budget deadline and trace/span IDs. The child runtim
 Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
-projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
+projection. Each continuous health pass reads and validates one complete projected cut for all six broker components,
+rather than fetching and decoding the full history six times. The next pass revalidates a new read; no successful or
+failed cut is memoized across passes. Unprojected broker health retains its independent endpoint probes. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
