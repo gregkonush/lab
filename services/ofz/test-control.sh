@@ -104,7 +104,7 @@ SQL
         bash ../tengri/test-kvm.sh
       fi
     else
-      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.3 distribution}"
+      : "${KEYCLOAK_FIXTURE_BIN:?Set KEYCLOAK_FIXTURE_BIN to the verified Keycloak 26.7.4 distribution}"
       cargo build --locked
       cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri --no-run
       cd ../../apps/landing

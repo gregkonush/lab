@@ -133,7 +133,13 @@ The shared-runtime checkpoint additionally exercises the real Rust controller cl
 versioned lifecycle intent and receipt recovery, exact retained-home removal completion, and a stream closed after a
 committed stop. Two real Ofz processes share the same control database; killing the serving process and routing new
 connections to its peer preserves the original opaque passkey session. This fixture models service endpoint removal;
-Kubernetes, synchronous database and Keycloak failover require the separate HA qualification.
+Kubernetes and synchronous database failover require the separate HA qualification.
+
+The HA fixture also forms a two-node Keycloak 26.7.4 production cluster with JDBC discovery and transport mTLS.
+Killing its serving process during an in-flight passkey challenge preserves the subject and credential identities,
+completing authentication on the survivor within thirty seconds. The fixture does not prove CNPG or Kubernetes
+node failover. Validate the complete prepared targets with `bash services/ofz/test-ha-manifests.sh`; the PR schema
+job repeats their real Kustomize renders and rejects the critical HA/credential/network regressions.
 
 Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
 They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.

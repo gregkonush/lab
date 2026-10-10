@@ -260,7 +260,7 @@ cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
 bash services/tengri/test-rpc-interop.sh
 cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
-diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/prepared/crd.yaml
+diff -u /tmp/tengri-crd.yaml argocd/prepared/tengri/crd.yaml
 shellcheck services/tengri/network.sh services/tengri/test-kvm*.sh
 ```
 

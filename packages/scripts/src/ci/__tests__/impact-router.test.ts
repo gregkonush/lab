@@ -192,6 +192,13 @@ describe('impact router', () => {
     expect(plan.validationTargets).toEqual(['kubeconform'])
   })
 
+  test.each(['services/ofz/test-ha-manifests.sh', 'services/ofz/tests/ha_manifests.py'])(
+    'routes the HA render checker through schema validation: %s',
+    (file) => {
+      expect(selectImpactPlan([file], map).validationTargets).toContain('kubeconform')
+    },
+  )
+
   test('routes Argo CD application changes through scripts contract tests', () => {
     const plan = selectImpactPlan(['argocd/applications/argocd/overlays/argocd-cm.yaml'], map)
     expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])

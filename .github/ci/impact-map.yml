@@ -160,6 +160,8 @@ targets:
   kubeconform:
     kind: validation
     paths:
+      - services/ofz/test-ha-manifests.sh
+      - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
       - argocd/**/*.yaml
       - argocd/**/*.yml
