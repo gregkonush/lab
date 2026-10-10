@@ -124,7 +124,9 @@ fn command_target(command: &Command) -> Result<(Action, Resource, bool), Status>
         }
         Command::SetTargetAccess(c) => (Action::TargetsManage, policy::platform(), !c.enabled),
         Command::SetQuota(_) => (Action::QuotasManage, policy::platform(), false),
-        Command::EnrollWorkspace(_) => (Action::WorkspaceEnroll, policy::platform(), false),
+        Command::BeginWorkspaceEnrollment(_) | Command::EnrollWorkspace(_) => {
+            (Action::WorkspaceEnroll, policy::platform(), false)
+        }
         Command::RemoveWorkspace(c) => (
             Action::WorkspaceDelete,
             policy::workspace(&c.workspace_uid),
@@ -133,6 +135,7 @@ fn command_target(command: &Command) -> Result<(Action, Resource, bool), Status>
         Command::EmergencyAccess(_) => (Action::MembersManage, policy::platform(), false),
         Command::ReserveWorkspace(_) => (Action::WorkspaceCreate, policy::platform(), false),
         Command::ReleaseReservation(_) => (Action::WorkspaceEnroll, policy::platform(), true),
+        Command::CompleteWorkspaceRemoval(_) => (Action::WorkspaceEnroll, policy::platform(), true),
         Command::SetWorkspaceRuntime(c) => (
             if c.running {
                 Action::WorkspaceResume
@@ -269,10 +272,14 @@ pub(crate) async fn prepare(
     } else {
         command_target(command)?
     };
-    let controller_command = matches!(
-        command,
-        Command::EnrollWorkspace(_) | Command::ReleaseReservation(_)
-    ) || matches!(command, Command::SetWorkspaceRuntime(c) if !c.running);
+    let controller_command = peer == CONTROLLER_ID
+        && (matches!(
+            command,
+            Command::BeginWorkspaceEnrollment(_)
+                | Command::EnrollWorkspace(_)
+                | Command::ReleaseReservation(_)
+                | Command::CompleteWorkspaceRemoval(_)
+        ) || matches!(command, Command::SetWorkspaceRuntime(c) if !c.running));
     if controller_command {
         if peer != CONTROLLER_ID || context.actor != Some(decision::workload_actor(peer)) {
             return Err(Status::permission_denied("controller command required"));
@@ -656,13 +663,29 @@ pub(crate) async fn prepare(
                 return Err(Status::already_exists("reservation ID already used"));
             }
         }
+        Command::BeginWorkspaceEnrollment(c) => {
+            let uid = parse_uuid(&c.workspace_uid)?;
+            active_member(client, &c.owner_id).await?;
+            let row = client.query_opt(
+                "SELECT owner_id,state,created_at_ms+300000>ofz.now_ms() FROM ofz.reservations WHERE id=$1",
+                &[&parse_uuid(&c.reservation_id)?],
+            ).await.map_err(sql_error)?.ok_or_else(|| Status::failed_precondition("capacity reservation required before enrollment"))?;
+            if row.get::<_, String>(0) != c.owner_id || row.get::<_, String>(1) != "reserved" {
+                return Err(Status::failed_precondition("reservation binding mismatch"));
+            }
+            if !row.get::<_, bool>(2) {
+                return Err(Status::failed_precondition("workspace reservation expired"));
+            }
+            if client.query_opt("SELECT 1 WHERE EXISTS(SELECT 1 FROM ofz.reservations WHERE workspace_uid=$1) OR EXISTS(SELECT 1 FROM ofz.workspaces WHERE uid=$1)", &[&uid]).await.map_err(sql_error)?.is_some() {
+                return Err(Status::already_exists("workspace UID already bound"));
+            }
+        }
         Command::EnrollWorkspace(c) => {
             parse_uuid(&c.workspace_uid)?;
             parse_uuid(&c.home_uid)?;
-            active_member(client, &c.owner_id).await?;
             let row = client
                 .query_opt(
-                    "SELECT owner_id,home_bytes,state FROM ofz.reservations WHERE id=$1",
+                    "SELECT owner_id,home_bytes,state,workspace_uid FROM ofz.reservations WHERE id=$1",
                     &[&parse_uuid(&c.reservation_id)?],
                 )
                 .await
@@ -672,7 +695,8 @@ pub(crate) async fn prepare(
                 })?;
             if row.get::<_, String>(0) != c.owner_id
                 || row.get::<_, i64>(1) != c.home_bytes as i64
-                || row.get::<_, String>(2) != "reserved"
+                || row.get::<_, String>(2) != "enrolling"
+                || row.get::<_, Option<Uuid>>(3) != Some(parse_uuid(&c.workspace_uid)?)
             {
                 return Err(Status::failed_precondition("reservation binding mismatch"));
             }
@@ -709,9 +733,28 @@ pub(crate) async fn prepare(
                 .await
                 .map_err(sql_error)?
                 .ok_or_else(|| Status::not_found("reservation not found"))?;
-            if row.get::<_, String>(0) != "reserved" {
+            if !matches!(row.get::<_, String>(0).as_str(), "reserved" | "enrolling") {
                 return Err(Status::failed_precondition(
                     "enrolled capacity requires confirmed home removal",
+                ));
+            }
+        }
+        Command::CompleteWorkspaceRemoval(c) => {
+            let row = client
+                .query_opt(
+                    "SELECT home_uid,reservation_id,state,running FROM ofz.workspaces WHERE uid=$1",
+                    &[&parse_uuid(&c.workspace_uid)?],
+                )
+                .await
+                .map_err(sql_error)?
+                .ok_or_else(|| Status::not_found("workspace not found"))?;
+            if row.get::<_, Uuid>(0) != parse_uuid(&c.home_uid)?
+                || row.get::<_, Uuid>(1) != parse_uuid(&c.reservation_id)?
+                || row.get::<_, String>(2) != "removing"
+                || row.get::<_, bool>(3)
+            {
+                return Err(Status::failed_precondition(
+                    "approved stopped workspace and exact removed home required",
                 ));
             }
         }
@@ -1193,8 +1236,19 @@ pub(crate) async fn finalize(
         Command::ReserveWorkspace(c) => {
             tx.execute("INSERT INTO ofz.reservations(id,owner_id,home_bytes,state) VALUES($1,$2,$3,'reserved')", &[&parse_uuid(&c.reservation_id)?,&decision::human(context)?,&(c.home_bytes as i64)]).await.map_err(sql_error)?;
         }
+        Command::BeginWorkspaceEnrollment(c) => {
+            tx.execute(
+                "UPDATE ofz.reservations SET state='enrolling',workspace_uid=$2 WHERE id=$1",
+                &[
+                    &parse_uuid(&c.reservation_id)?,
+                    &parse_uuid(&c.workspace_uid)?,
+                ],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
         Command::EnrollWorkspace(c) => {
-            tx.execute("INSERT INTO ofz.workspaces(uid,owner_id,home_uid,home_bytes,reservation_id) VALUES($1,$2,$3,$4,$5)", &[&parse_uuid(&c.workspace_uid)?,&c.owner_id,&parse_uuid(&c.home_uid)?,&(c.home_bytes as i64),&parse_uuid(&c.reservation_id)?]).await.map_err(sql_error)?;
+            tx.execute("INSERT INTO ofz.workspaces(uid,owner_id,home_uid,home_bytes,reservation_id,state) VALUES($1,$2,$3,$4,$5,CASE WHEN EXISTS(SELECT 1 FROM ofz.memberships WHERE human_id=$2 AND role=1) THEN 'active' ELSE 'quarantined' END)", &[&parse_uuid(&c.workspace_uid)?,&c.owner_id,&parse_uuid(&c.home_uid)?,&(c.home_bytes as i64),&parse_uuid(&c.reservation_id)?]).await.map_err(sql_error)?;
             tx.execute(
                 "UPDATE ofz.reservations SET state='enrolled' WHERE id=$1",
                 &[&parse_uuid(&c.reservation_id)?],
@@ -1224,7 +1278,7 @@ pub(crate) async fn finalize(
         }
         Command::RemoveWorkspace(c) => {
             tx.execute(
-                "UPDATE ofz.workspaces SET state='quarantined' WHERE uid=$1",
+                "UPDATE ofz.workspaces SET state='removing' WHERE uid=$1",
                 &[&parse_uuid(&c.workspace_uid)?],
             )
             .await
@@ -1236,6 +1290,20 @@ pub(crate) async fn finalize(
             .await
             .map_err(sql_error)?;
             // Retained homes continue counting against quota until separately confirmed destroyed.
+        }
+        Command::CompleteWorkspaceRemoval(c) => {
+            tx.execute(
+                "UPDATE ofz.workspaces SET state='removed' WHERE uid=$1",
+                &[&parse_uuid(&c.workspace_uid)?],
+            )
+            .await
+            .map_err(sql_error)?;
+            tx.execute(
+                "UPDATE ofz.reservations SET state='released' WHERE id=$1",
+                &[&parse_uuid(&c.reservation_id)?],
+            )
+            .await
+            .map_err(sql_error)?;
         }
         Command::EmergencyAccess(c) => {
             if prepared.emergency_activated {
@@ -1286,6 +1354,10 @@ pub(crate) async fn finalize(
         audit_receipt_id: audit.id,
         agent_credential: String::new(),
         recovered_revision,
+        runtime_intent: match prepared.request.command.as_ref() {
+            Some(Command::SetWorkspaceRuntime(intent)) => Some(intent.clone()),
+            _ => None,
+        },
     };
     let value = store::encode(&receipt)?;
     let updated = tx
