@@ -7,7 +7,9 @@ use std::{
 use kube::{Api, Client, ResourceExt};
 use tokio::sync::{Mutex, OnceCell};
 
-use super::{GUEST_API_PORT, GuestClient, GuestError};
+use super::{
+    GUEST_API_PORT, GuestClient, GuestError, GuestTransport, authorization::GuestAuthorization,
+};
 use crate::{
     crd::{MicroVM, MicroVMPhase},
     identity::WorkloadIdentity,
@@ -39,17 +41,136 @@ mod tests {
     fn agent() -> MicroVM {
         serde_json::from_value(json!({
             "apiVersion":"runtime.proompteng.ai/v1alpha1", "kind":"MicroVM",
-            "metadata":{"name":"agent-a", "uid":"vm-a", "generation":2},
+            "metadata":{"name":"agent-a", "uid":"11111111-1111-4111-8111-111111111111", "generation":2},
             "spec":{
                 "reservationId":"77f8ce6b-18c5-4f7b-950c-b5639b70619e",
                 "runtimeEpoch":"39d272fe-2781-4bc2-886c-a2993865f646", "policyVersion":1,
                 "displayName":"Agent", "ownerHash":"owner", "desiredState":"Running",
                 "image":"test-image", "architecture":"amd64", "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},
                 "createdAt":"2026-10-11T00:00:00Z", "idleDeadline":"2026-10-12T00:00:00Z",
-                "slot":{"name":"slot-a","podUid":"pod-a","pvcName":"home-a","pvcUid":"home-uid","epoch":7}
+                "slot":{"name":"slot-a","podUid":"33333333-3333-4333-8333-333333333333","pvcName":"home-a","pvcUid":"home-uid","epoch":7}
             },
-            "status":{"phase":"Ready", "guestReady":true, "podUid":"pod-a", "podIp":"127.0.0.1", "observedGeneration":2}
+            "status":{"phase":"Ready", "guestReady":true, "podUid":"33333333-3333-4333-8333-333333333333", "podIp":"127.0.0.1", "observedGeneration":2}
         })).unwrap()
+    }
+
+    #[tokio::test]
+    async fn cached_transport_uses_each_actor_and_rechecks_revocation_and_outage() {
+        use crate::{auth::Principal, authz::WorkspaceAuthorization, ofz};
+        use std::sync::atomic::AtomicU8;
+        use tengri::guest_authorization::{
+            CONTEXT_HEADER, GuestActor, GuestProof, GuestSigner, GuestVerifier, SIGNATURE_HEADER,
+        };
+
+        let signer = GuestSigner::from_seed(&std::array::from_fn::<_, 32, _>(|i| i as u8)).unwrap();
+        let verifier = GuestVerifier::from_bytes(signer.public_key()).unwrap();
+        let subjects = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = subjects.clone();
+        let verifications = Arc::new(AtomicUsize::new(0));
+        let probes = verifications.clone();
+        let server = TestServer::start(TestService {
+            get_info: Some(Arc::new(move |_| {
+                probes.fetch_add(1, Ordering::SeqCst);
+                Ok(proto::GuestInfo {
+                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                })
+            })),
+            list_files: Some(Arc::new(move |request| {
+                let proof = GuestProof {
+                    context: request
+                        .metadata()
+                        .get(CONTEXT_HEADER)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .into(),
+                    signature: request
+                        .metadata()
+                        .get(SIGNATURE_HEADER)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .into(),
+                };
+                let context = verifier.verify(&proof, ofz::now_ms().unwrap()).unwrap();
+                let GuestActor::Human { subject, .. } = context.actor else {
+                    panic!("human expected")
+                };
+                assert_eq!(context.target, "/workspace");
+                seen.lock().unwrap().push(subject);
+                Ok(proto::FileList {
+                    path: request.into_inner().path,
+                    entries: vec![],
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let service = tower::service_fn(|_: http::Request<KubeBody>| async {
+            Ok::<_, std::convert::Infallible>(http::Response::builder().body(KubeBody::from(
+                json!({"apiVersion":"v1","kind":"Secret","immutable":true,"data":{"token":"Zml4dHVyZS10b2tlbg=="}}).to_string().into_bytes()
+            )).unwrap())
+        });
+        let pool = GuestPool::new(
+            Client::new(service, "tengri"),
+            "tengri",
+            WorkloadIdentity::Fixture(
+                server
+                    .guest
+                    .base_url()
+                    .strip_prefix("http://")
+                    .unwrap()
+                    .parse::<SocketAddr>()
+                    .unwrap()
+                    .port(),
+            ),
+        );
+        let agent = agent();
+        let mode = Arc::new(AtomicU8::new(0));
+        let authorization = WorkspaceAuthorization::ControlledFixture(mode.clone());
+        let authority = super::super::authorization::GuestAuthority::fixture_with_authorization(
+            authorization.clone(),
+        );
+        let mut clients = Vec::new();
+        for subject in ["a".repeat(64), "b".repeat(64)] {
+            let mut principal = Principal::fixture(
+                &subject,
+                agent.metadata.uid.as_deref().unwrap(),
+                ofz::proto::Action::FilesObserve,
+            );
+            principal.context.runtime_epoch = agent.spec.runtime_epoch.clone();
+            let access = authorization
+                .agent_access(&principal, &agent, "/workspace")
+                .unwrap();
+            let guest = pool
+                .for_microvm(&agent, authority.user(access))
+                .await
+                .unwrap();
+            guest.list_files("/workspace").await.unwrap();
+            clients.push(guest);
+        }
+        assert_eq!(*subjects.lock().unwrap(), ["a".repeat(64), "b".repeat(64)]);
+        assert_eq!(verifications.load(Ordering::SeqCst), 1);
+        for guest in clients {
+            mode.store(1, Ordering::SeqCst);
+            assert!(matches!(
+                guest.list_files("/workspace").await,
+                Err(GuestError::Api {
+                    status: reqwest::StatusCode::FORBIDDEN,
+                    ..
+                })
+            ));
+            mode.store(2, Ordering::SeqCst);
+            assert!(matches!(
+                guest.list_files("/workspace").await,
+                Err(GuestError::Api {
+                    status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                    ..
+                })
+            ));
+        }
+        assert_eq!(subjects.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -76,8 +197,8 @@ mod tests {
                     return Err(tonic::Status::unavailable("transient guest failure"));
                 }
                 Ok(proto::GuestInfo {
-                    microvm_id: "pod-a".into(),
-                    protocol_version: 2,
+                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
                 })
             })),
             ..Default::default()
@@ -111,31 +232,67 @@ mod tests {
             WorkloadIdentity::Fixture(port),
         );
         let mut agent = agent();
-        assert!(pool.for_microvm(&agent).await.is_err());
-        let requests = futures::future::join_all((0..16).map(|_| pool.for_microvm(&agent))).await;
+        assert!(
+            pool.for_microvm(
+                &agent,
+                super::super::authorization::GuestAuthority::fixture_authorization()
+            )
+            .await
+            .is_err()
+        );
+        let requests = futures::future::join_all((0..16).map(|_| {
+            pool.for_microvm(
+                &agent,
+                super::super::authorization::GuestAuthority::fixture_authorization(),
+            )
+        }))
+        .await;
         assert!(requests.iter().all(Result::is_ok));
         assert_eq!(verifications.load(Ordering::SeqCst), 2);
         assert_eq!(secrets.load(Ordering::SeqCst), 2);
 
         agent.spec.slot.as_mut().unwrap().epoch += 1;
-        pool.for_microvm(&agent).await.unwrap();
-        agent.metadata.uid = Some("vm-b".into());
-        pool.for_microvm(&agent).await.unwrap();
+        pool.for_microvm(
+            &agent,
+            super::super::authorization::GuestAuthority::fixture_authorization(),
+        )
+        .await
+        .unwrap();
+        agent.metadata.uid = Some("11111111-1111-4111-8111-222222222222".into());
+        pool.for_microvm(
+            &agent,
+            super::super::authorization::GuestAuthority::fixture_authorization(),
+        )
+        .await
+        .unwrap();
         assert_eq!(verifications.load(Ordering::SeqCst), 4);
 
         pool.bindings.lock().await[0].created -= MAX_AGE;
-        pool.for_microvm(&agent).await.unwrap();
+        pool.for_microvm(
+            &agent,
+            super::super::authorization::GuestAuthority::fixture_authorization(),
+        )
+        .await
+        .unwrap();
         assert_eq!(verifications.load(Ordering::SeqCst), 5);
 
         agent.status.as_mut().unwrap().phase = MicroVMPhase::Sleeping;
         assert!(matches!(
-            pool.for_microvm(&agent).await,
+            pool.for_microvm(
+                &agent,
+                super::super::authorization::GuestAuthority::fixture_authorization()
+            )
+            .await,
             Err(GuestError::NotReady(_))
         ));
         agent.status.as_mut().unwrap().phase = MicroVMPhase::Ready;
         agent.status.as_mut().unwrap().pod_uid = Some("pod-b".into());
         assert!(matches!(
-            pool.for_microvm(&agent).await,
+            pool.for_microvm(
+                &agent,
+                super::super::authorization::GuestAuthority::fixture_authorization()
+            )
+            .await,
             Err(GuestError::NotReady(_))
         ));
         assert_eq!(secrets.load(Ordering::SeqCst), 5);
@@ -196,7 +353,7 @@ struct Binding {
     target: GuestTarget,
     certificate: [u8; 32],
     created: Instant,
-    guest: Arc<OnceCell<GuestClient>>,
+    guest: Arc<OnceCell<GuestTransport>>,
 }
 
 #[derive(Clone)]
@@ -221,6 +378,7 @@ impl GuestPool {
         &self,
         id: &str,
         incarnation: Option<&str>,
+        authorization: GuestAuthorization,
     ) -> Result<GuestClient, GuestError> {
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         let microvm = api.get(id).await?;
@@ -230,11 +388,16 @@ impl GuestPool {
                 message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
             });
         }
-        self.for_microvm(&microvm).await
+        self.for_microvm(&microvm, authorization).await
     }
 
-    pub async fn for_microvm(&self, microvm: &MicroVM) -> Result<GuestClient, GuestError> {
+    pub async fn for_microvm(
+        &self,
+        microvm: &MicroVM,
+        authorization: GuestAuthorization,
+    ) -> Result<GuestClient, GuestError> {
         let target = GuestTarget::from_microvm(microvm, &self.identity)?;
+        let issuer = authorization.bind(microvm).map_err(super::rpc::rpc_error)?;
         let certificate = self.identity.certificate_revision()?;
         let now = Instant::now();
         let guest = {
@@ -267,15 +430,17 @@ impl GuestPool {
             .get_or_try_init(|| async {
                 let _latency =
                     crate::metrics::global().latency_timer(crate::metrics::Latency::GuestConnect);
-                GuestClient::for_target(
+                GuestTransport::connect(
                     self.client.clone(),
                     &self.namespace,
                     target,
                     &self.identity,
+                    issuer.clone(),
                 )
                 .await
             })
-            .await
-            .cloned()
+            .await?
+            .clone()
+            .authorize(issuer)
     }
 }

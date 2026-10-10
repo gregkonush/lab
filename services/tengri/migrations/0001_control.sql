@@ -112,4 +112,5 @@ GRANT EXECUTE ON FUNCTION tengri.begin_oauth(bytea,bytea,text,text,uuid) TO teng
 GRANT SELECT,INSERT,DELETE,UPDATE ON tengri.tickets,tengri.previews TO tengri_controller;
 GRANT SELECT ON tengri.runtime_leader TO tengri_controller,tengri_supervisor;
 GRANT EXECUTE ON FUNCTION tengri.consume_nonce(bytea,bigint),tengri.acquire_leadership(uuid),tengri.renew_leadership(uuid,bigint),tengri.release_leadership(uuid,bigint) TO tengri_controller;
+GRANT EXECUTE ON FUNCTION tengri.consume_nonce(bytea,bigint) TO tengri_supervisor;
 COMMIT;

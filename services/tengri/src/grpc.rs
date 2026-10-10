@@ -78,6 +78,7 @@ pub struct ControlPlane {
     architecture: MicroVMArchitecture,
     auth: Authenticator,
     authorization: WorkspaceAuthorization,
+    guest_authority: crate::guest::authorization::GuestAuthority,
     tickets: TicketStore,
     preview_origin: PreviewOrigin,
     activity: ActivityTracker,
@@ -88,6 +89,7 @@ pub struct ControlPlane {
 pub struct ControlPlaneConfig {
     pub identity: crate::identity::WorkloadIdentity,
     pub authorization: WorkspaceAuthorization,
+    pub guest_authority: crate::guest::authorization::GuestAuthority,
     pub namespace: String,
     pub default_image: String,
     pub architecture: MicroVMArchitecture,
@@ -107,8 +109,12 @@ impl ControlPlane {
         let auth = config.auth;
         let namespace: Arc<str> = config.namespace.into();
         let guests = GuestPool::new(client.clone(), namespace.clone(), config.identity.clone());
-        let provisional_terminal_leases =
-            ProvisionalTerminalLeaseManager::new(client.clone(), namespace.clone(), guests.clone());
+        let provisional_terminal_leases = ProvisionalTerminalLeaseManager::new(
+            client.clone(),
+            namespace.clone(),
+            guests.clone(),
+            config.guest_authority.clone(),
+        );
         Ok(Self {
             guests,
             client,
@@ -117,6 +123,7 @@ impl ControlPlane {
             architecture: config.architecture,
             auth,
             authorization: config.authorization,
+            guest_authority: config.guest_authority,
             tickets: TicketStore::new(config.public_url, config.database)?,
             preview_origin: config.preview_origin,
             activity,
@@ -209,7 +216,7 @@ impl ControlPlane {
         }
         let guest = self
             .guests
-            .for_microvm(&agent)
+            .for_microvm(&agent, self.guest_authority.user(access.clone()))
             .await
             .map_err(map_guest_error)?;
         access.require().await?;
@@ -1044,9 +1051,9 @@ impl MicroVmControlPlane for ControlPlane {
         {
             return Err(Status::invalid_argument("invalid editor window identity"));
         }
-        let agent = self.authorized_agent(&principal, &request.agent_id).await?;
+        let (agent, access) = self.agent_access(&principal, &request.agent_id, "").await?;
         self.guests
-            .for_microvm(&agent)
+            .for_microvm(&agent, self.guest_authority.user(access))
             .await
             .map_err(map_guest_error)?
             .open_editor()
@@ -1789,15 +1796,22 @@ struct ProvisionalTerminalLeaseManager {
     guests: GuestPool,
     namespace: Arc<str>,
     registry: ProvisionalTerminalLeaseRegistry,
+    guest_authority: crate::guest::authorization::GuestAuthority,
 }
 
 impl ProvisionalTerminalLeaseManager {
-    fn new(client: Client, namespace: Arc<str>, guests: GuestPool) -> Self {
+    fn new(
+        client: Client,
+        namespace: Arc<str>,
+        guests: GuestPool,
+        guest_authority: crate::guest::authorization::GuestAuthority,
+    ) -> Self {
         Self {
             client,
             guests,
             namespace,
             registry: ProvisionalTerminalLeaseRegistry::default(),
+            guest_authority,
         }
     }
 
@@ -1852,7 +1866,11 @@ impl ProvisionalTerminalLeaseManager {
     }
 
     async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
-        let guest = match self.guests.for_agent(agent_id, None).await {
+        let guest = match self
+            .guests
+            .for_agent(agent_id, None, self.guest_authority.cleanup(terminal_id))
+            .await
+        {
             Ok(guest) => Some(guest),
             Err(error) if agent_is_absent(&error) => None,
             Err(error) => {
@@ -2535,6 +2553,7 @@ mod tests {
             ControlPlaneConfig {
                 identity: crate::identity::WorkloadIdentity::Fixture(8080),
                 authorization: WorkspaceAuthorization::Fixture,
+                guest_authority: crate::guest::authorization::GuestAuthority::fixture(),
                 namespace: namespace.clone(),
                 default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
@@ -3703,6 +3722,7 @@ mod tests {
                 "tengri",
                 crate::identity::WorkloadIdentity::Fixture(8080),
             ),
+            crate::guest::authorization::GuestAuthority::fixture(),
         );
         let tracking_manager = manager.clone();
         let tracked_after = Utc::now();
@@ -3771,6 +3791,7 @@ mod tests {
                 "tengri",
                 crate::identity::WorkloadIdentity::Fixture(8080),
             ),
+            crate::guest::authorization::GuestAuthority::fixture(),
         );
 
         manager

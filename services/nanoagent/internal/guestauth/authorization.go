@@ -68,6 +68,15 @@ func RPCAction(method string) (Action, error) {
 	}
 }
 
+func RequestAction(method string) (Action, error) {
+	switch method {
+	case "HTTP GET", "HTTP HEAD", "HTTP POST", "HTTP PUT", "HTTP PATCH", "HTTP DELETE", "HTTP OPTIONS":
+		return PreviewAccess, nil
+	default:
+		return RPCAction(method)
+	}
+}
+
 type Actor struct {
 	Kind      string `json:"kind"`
 	Subject   string `json:"subject"`
@@ -192,10 +201,11 @@ func (claim RuntimeClaim) Validate() error {
 }
 
 type RequestBinding struct {
-	Action Action
-	Method string
-	Target string
-	Body   []byte
+	RecoveryGeneration uint64
+	Action             Action
+	Method             string
+	Target             string
+	Body               []byte
 }
 
 type Proof struct {
@@ -227,6 +237,11 @@ func NewAdmission(key []byte, nonceLimit int) (*Admission, error) {
 	return &Admission{verifier: verifier, replay: replay}, nil
 }
 
+// VerifyProof bounds opening reads. AdmitGuest must still bind the actual request and consume its nonce.
+func (a *Admission) VerifyProof(proof Proof, nowMS uint64) (Context, error) {
+	return a.verifier.Verify(proof, nowMS)
+}
+
 func (a *Admission) Admit(proof Proof, binding Binding, nowMS uint64) (Context, error) {
 	c, err := a.verifier.VerifyFor(proof, binding, nowMS)
 	if err != nil {
@@ -245,6 +260,9 @@ func (a *Admission) AdmitGuest(proof Proof, claim RuntimeClaim, request RequestB
 	c, err := a.verifier.Verify(proof, nowMS)
 	if err != nil {
 		return Context{}, err
+	}
+	if request.RecoveryGeneration == 0 || c.RecoveryGeneration != request.RecoveryGeneration {
+		return Context{}, errors.New("guest request belongs to a different recovery generation")
 	}
 	if c.WorkspaceUID != claim.WorkspaceUID || c.RuntimeEpoch != claim.RuntimeEpoch || c.SlotEpoch != claim.SlotEpoch || c.PodUID != claim.PodUID {
 		return Context{}, errors.New("guest request does not match the resumed runtime")
@@ -336,7 +354,7 @@ func (c Context) Validate(nowMS uint64) error {
 		if c.Scope != nil {
 			return errors.New("workload maintenance cannot carry an observation scope")
 		}
-		if !strings.HasPrefix(c.Actor.Subject, "spiffe://") || len(c.Actor.Subject) <= 9 || !boundedText(c.Actor.Subject, 256) || c.Actor.SessionID != "" || c.Actor.GrantID != "" {
+		if c.Actor.Subject != "spiffe://proompteng.ai/ns/tengri/sa/tengri" || c.Actor.SessionID != "" || c.Actor.GrantID != "" {
 			return errors.New("invalid workload authorization binding")
 		}
 		if !(c.Actor.Purpose == "probe" && c.Action == WorkspaceMetadataRead && c.Method == rpcPrefix+"GetInfo" && c.Target == "" || c.Actor.Purpose == "terminalCleanup" && c.Action == TerminalControl && c.Method == rpcPrefix+"TerminateTerminal" && c.Target != "") {
@@ -345,7 +363,7 @@ func (c Context) Validate(nowMS uint64) error {
 	default:
 		return errors.New("unknown guest actor")
 	}
-	expected, err := RPCAction(c.Method)
+	expected, err := RequestAction(c.Method)
 	if err != nil || expected != c.Action {
 		return errors.New("guest RPC does not permit this action")
 	}

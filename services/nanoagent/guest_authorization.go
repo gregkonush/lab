@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,14 +26,18 @@ import (
 )
 
 const guestVerificationKeyPath = "/run/tengri/guest-verify.pub"
+const guestRecoveryGenerationPath = "/run/tengri/recovery-generation"
 const guestRuntimeClaimPath = "/run/tengri/claim.json"
 const guestClaimUIDHeader = "x-tengri-microvm-uid"
 const guestClaimEpochHeader = "x-tengri-claim-epoch"
 const guestRuntimeEpochHeader = "x-tengri-runtime-epoch"
 
-func prepareGuestAuthority(directory string, key []byte) error {
+func prepareGuestAuthority(directory string, key []byte, recoveryGeneration uint64) error {
 	if _, err := guestauth.NewVerifier(key); err != nil {
 		return err
+	}
+	if recoveryGeneration == 0 || recoveryGeneration > 1<<63-1 {
+		return errors.New("positive guest recovery generation required")
 	}
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return err
@@ -51,7 +56,10 @@ func prepareGuestAuthority(directory string, key []byte) error {
 	if err := clearGuestClaim(filepath.Join(directory, "claim.json")); err != nil {
 		return err
 	}
-	return atomicGuestAuthorityFile(filepath.Join(directory, "guest-verify.pub"), key)
+	if err := atomicGuestAuthorityFile(filepath.Join(directory, "guest-verify.pub"), key); err != nil {
+		return err
+	}
+	return atomicGuestAuthorityFile(filepath.Join(directory, "recovery-generation"), []byte(strconv.FormatUint(recoveryGeneration, 10)))
 }
 
 func clearGuestClaim(path string) error {
@@ -98,8 +106,9 @@ func atomicGuestAuthorityFile(path string, contents []byte) error {
 }
 
 type guestRPCAdmission struct {
-	admission *guestauth.Admission
-	claim     func() (guestauth.RuntimeClaim, error)
+	admission          *guestauth.Admission
+	recoveryGeneration uint64
+	claim              func() (guestauth.RuntimeClaim, error)
 }
 
 func readGuestRootFile(path string, limit int64) ([]byte, error) {
@@ -129,17 +138,34 @@ func loadGuestRPCAdmission() (*guestRPCAdmission, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load guest verification key: %w", err)
 	}
+	generationFile, err := readGuestRootFile(guestRecoveryGenerationPath, 20)
+	if err != nil {
+		return nil, fmt.Errorf("load guest recovery generation: %w", err)
+	}
+	generation, err := decodeGuestRecoveryGeneration(generationFile)
+	if err != nil {
+		return nil, err
+	}
 	admission, err := guestauth.NewAdmission(key, 10000)
 	if err != nil {
 		return nil, err
 	}
-	return &guestRPCAdmission{admission: admission, claim: func() (guestauth.RuntimeClaim, error) {
+	return &guestRPCAdmission{admission: admission, recoveryGeneration: generation, claim: func() (guestauth.RuntimeClaim, error) {
 		contents, err := readGuestRootFile(guestRuntimeClaimPath, 1024)
 		if err != nil {
 			return guestauth.RuntimeClaim{}, err
 		}
 		return decodeGuestRuntimeClaim(contents)
 	}}, nil
+}
+
+func decodeGuestRecoveryGeneration(contents []byte) (uint64, error) {
+	value := strings.TrimSuffix(string(contents), "\n")
+	generation, err := strconv.ParseUint(value, 10, 63)
+	if err != nil || generation == 0 || strconv.FormatUint(generation, 10) != value {
+		return 0, errors.New("canonical positive guest recovery generation required")
+	}
+	return generation, nil
 }
 
 func decodeGuestRuntimeClaim(contents []byte) (guestauth.RuntimeClaim, error) {
@@ -233,7 +259,7 @@ func (authorization *guestRPCAdmission) admit(ctx context.Context, method string
 	if err != nil {
 		return claim, deny
 	}
-	verified, err := authorization.admission.AdmitGuest(proof, claim, guestauth.RequestBinding{Action: action, Method: method, Target: target, Body: body}, uint64(time.Now().UnixMilli()))
+	verified, err := authorization.admission.AdmitGuest(proof, claim, guestauth.RequestBinding{RecoveryGeneration: authorization.recoveryGeneration, Action: action, Method: method, Target: target, Body: body}, uint64(time.Now().UnixMilli()))
 	if err != nil {
 		return claim, deny
 	}

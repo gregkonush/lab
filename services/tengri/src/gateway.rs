@@ -132,6 +132,7 @@ pub struct GatewayState {
     pub namespace: String,
     pub tickets: TicketStore,
     authorization: crate::authz::WorkspaceAuthorization,
+    guest_authority: crate::guest::authorization::GuestAuthority,
     activity: ActivityTracker,
     guests: crate::guest::GuestPool,
     preview_origin: PreviewOrigin,
@@ -164,13 +165,14 @@ impl GatewayState {
         activity: ActivityTracker,
         preview_origin: PreviewOrigin,
         guests: crate::guest::GuestPool,
-        authorization: crate::authz::WorkspaceAuthorization,
+        guest_authority: crate::guest::authorization::GuestAuthority,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             client,
             namespace,
             tickets,
-            authorization,
+            authorization: guest_authority.authorization.clone(),
+            guest_authority,
             activity,
             guests,
             preview_origin,
@@ -180,12 +182,15 @@ impl GatewayState {
     async fn preview_access(
         &self,
         session: &PreviewSessionRecord,
+        target: &str,
     ) -> Result<crate::authz::WorkspaceAccess, tonic::Status> {
+        let mut principal = session.principal.clone();
+        principal.action = crate::ofz::proto::Action::PreviewAccess;
         let access = self.authorization.access(
-            &session.principal,
+            &principal,
             &session.incarnation,
             &session.principal.context.runtime_epoch,
-            "",
+            target,
         )?;
         access.require().await?;
         Ok(access)
@@ -401,7 +406,15 @@ async fn terminal_websocket(
         return status_response(error.code(), error.message());
     }
     state.activity.touch(&ticket.agent_id);
-    let guest = match state.guests.for_agent(&ticket.agent_id, None).await {
+    let guest = match state
+        .guests
+        .for_agent(
+            &ticket.agent_id,
+            None,
+            state.guest_authority.user(access.clone()),
+        )
+        .await
+    {
         Ok(guest) => guest,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
     };
@@ -444,7 +457,7 @@ async fn open_preview(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
-    if let Err(error) = state.preview_access(&session).await {
+    if let Err(error) = state.preview_access(&session, "").await {
         return status_response(error.code(), error.message());
     }
     let location = preview_launch_location(
@@ -519,7 +532,7 @@ async fn preview_bootstrap(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
-    if let Err(error) = state.preview_access(&session).await {
+    if let Err(error) = state.preview_access(&session, "").await {
         return status_response(error.code(), error.message());
     }
     state.activity.touch(&session.agent_id);
@@ -651,14 +664,37 @@ async fn preview_host_proxy(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
-    let access = match state.preview_access(&session).await {
+    let guest_uri = match reqwest::Url::parse(&format!(
+        "http://nanoagent/v1/preview/{}{}{}",
+        session.port,
+        request.uri().path(),
+        request
+            .uri()
+            .query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default()
+    )) {
+        Ok(uri) => format!(
+            "{}{}",
+            uri.path(),
+            uri.query()
+                .map(|query| format!("?{query}"))
+                .unwrap_or_default()
+        ),
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let access = match state.preview_access(&session, &guest_uri).await {
         Ok(access) => access,
         Err(error) => return status_response(error.code(), error.message()),
     };
     state.activity.touch(&session.agent_id);
     let guest = match state
         .guests
-        .for_agent(&session.agent_id, Some(&session.incarnation))
+        .for_agent(
+            &session.agent_id,
+            Some(&session.incarnation),
+            state.guest_authority.user(access.clone()),
+        )
         .await
     {
         Ok(guest) => guest,
@@ -667,24 +703,13 @@ async fn preview_host_proxy(
         }
     };
     let path = request.uri().path();
-    let query = request
-        .uri()
-        .query()
-        .map(|value| format!("?{value}"))
-        .unwrap_or_default();
     if session.port == crate::guest::EDITOR_PORT
         && path == "/_tengri/editor-bridge"
         && request.uri().query() != Some(format!("session={}", session.id).as_str())
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let target = format!(
-        "{}/v1/preview/{}{}{}",
-        guest.base_url(),
-        session.port,
-        path,
-        query,
-    );
+    let target = format!("{}{guest_uri}", guest.base_url());
     if let Some(websocket) = websocket {
         let websocket_target = target
             .replacen("https://", "wss://", 1)
@@ -692,12 +717,22 @@ async fn preview_host_proxy(
         let token = guest.token().to_owned();
         let activity = state.activity.clone();
         let agent_id = session.agent_id.clone();
+        let mut admission_headers = guest.claim_headers.clone();
+        let proof = match guest
+            .rpc
+            .preview_headers(&http::Method::GET, &guest_uri, b"")
+            .await
+        {
+            Ok(proof) => proof,
+            Err(error) => return status_response(error.code(), error.message()),
+        };
+        admission_headers.extend(proof);
         let (upstream, selected_protocol) = match connect_upstream_websocket(
             &websocket_target,
             &token,
             Some(request.headers()),
             guest.preview_tls.clone(),
-            &guest.claim_headers,
+            &admission_headers,
         )
         .await
         {
@@ -796,10 +831,31 @@ async fn proxy_http(
                 .into_response();
         }
     };
+    let target_url = match reqwest::Url::parse(&target) {
+        Ok(url) => url,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let guest_uri = format!(
+        "{}{}",
+        target_url.path(),
+        target_url
+            .query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default()
+    );
+    let proof = match guest
+        .rpc
+        .preview_headers(&parts.method, &guest_uri, &body)
+        .await
+    {
+        Ok(proof) => proof,
+        Err(error) => return status_response(error.code(), error.message()),
+    };
     let mut upstream = guest
         .http
         .request(parts.method, target)
-        .bearer_auth(guest.token());
+        .bearer_auth(guest.token())
+        .headers(proof);
     for (name, value) in &parts.headers {
         if forward_request_header(name) || (editor_asset && name == header::ACCEPT_ENCODING) {
             if name == header::COOKIE {
@@ -1368,7 +1424,7 @@ mod tests {
                 "tengri",
                 crate::identity::WorkloadIdentity::Fixture(8080),
             ),
-            crate::authz::WorkspaceAuthorization::Fixture,
+            crate::guest::authorization::GuestAuthority::fixture(),
         )
         .expect("gateway state")
     }

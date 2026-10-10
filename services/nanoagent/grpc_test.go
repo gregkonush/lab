@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/coder/websocket"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -277,7 +278,12 @@ func TestRPCInteropServer(t *testing.T) {
 			t.Error("preview leaked the bootstrap credential to the application")
 		}
 		if r.URL.Path != "/ws" {
-			_, _ = fmt.Fprint(w, "preview-over-mtls")
+			if r.URL.Path == "/submit" {
+				_, _ = fmt.Fprintf(w, "%s:", r.Method)
+				_, _ = io.Copy(w, r.Body)
+			} else {
+				_, _ = fmt.Fprint(w, "preview-over-mtls")
+			}
 			return
 		}
 		connection, err := websocket.Accept(w, r, nil)

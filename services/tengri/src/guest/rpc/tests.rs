@@ -14,10 +14,11 @@ async fn identity_is_verified_over_authenticated_grpc() {
     use super::test_server::{TestServer, TestService};
     use std::sync::Arc;
     for (id, version, expected) in [
-        ("expected", 2, true),
-        ("wrong", 2, false),
+        ("expected", 3, true),
+        ("wrong", 3, false),
         ("expected", 0, false),
         ("expected", 1, false),
+        ("expected", 2, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
@@ -259,7 +260,11 @@ async fn fixture() -> (Fixture, GuestClient) {
     .await
     .unwrap();
     let tls = identity
-        .guest_tls(identity.guest_id("tengri", "interop-agent").unwrap())
+        .guest_tls(
+            identity
+                .guest_id("tengri", "33333333-3333-4333-8333-333333333333")
+                .unwrap(),
+        )
         .unwrap();
     let channel = identity
         .guest_channel(
@@ -275,7 +280,12 @@ async fn fixture() -> (Fixture, GuestClient) {
         .build()
         .unwrap();
     let guest = GuestClient {
-        rpc: RpcClient::new(channel, "test-bootstrap-token").unwrap(),
+        rpc: RpcClient::new(
+            channel,
+            "test-bootstrap-token",
+            super::super::authorization::GuestAuthorization::fixture_issuer(),
+        )
+        .unwrap(),
         base_url: address,
         token: "test-bootstrap-token".into(),
         http,
@@ -312,7 +322,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                     get_info: Some(Arc::new(|_| {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
-                            protocol_version: 2,
+                            protocol_version: 3,
                         })
                     })),
                     ..Default::default()
@@ -343,6 +353,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                 .guest_channel(address, source.guest_tls(peer.clone()).unwrap())
                 .unwrap(),
             "fixture-token",
+            super::super::authorization::GuestAuthorization::fixture_issuer(),
         )
         .unwrap()
     };
@@ -438,21 +449,67 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     let (fixture, guest) = fixture().await;
     guest.rpc.verify_identity("interop-agent").await.unwrap();
     let target = format!("{}/v1/preview/{}/", guest.base_url, fixture.preview_port);
-    let response = guest
+    let denied = guest
         .http
         .get(&target)
         .bearer_auth(&guest.token)
         .send()
         .await
         .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    let proof = guest
+        .rpc
+        .preview_headers(
+            &http::Method::GET,
+            &format!("/v1/preview/{}/", fixture.preview_port),
+            b"",
+        )
+        .await
+        .unwrap();
+    let response = guest
+        .http
+        .get(&target)
+        .headers(proof)
+        .bearer_auth(&guest.token)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.text().await.unwrap(), "preview-over-mtls");
+    let submit_target = format!("/v1/preview/{}/submit", fixture.preview_port);
+    let proof = guest
+        .rpc
+        .preview_headers(&http::Method::POST, &submit_target, b"bound-request")
+        .await
+        .unwrap();
+    let response = guest
+        .http
+        .post(format!("{}{submit_target}", guest.base_url))
+        .bearer_auth(&guest.token)
+        .headers(proof)
+        .body("bound-request")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.text().await.unwrap(), "POST:bound-request");
     let mut request = format!("{}ws", target.replace("https://", "wss://"))
         .into_client_request()
         .unwrap();
     request.headers_mut().insert(
         "authorization",
         format!("Bearer {}", guest.token).parse().unwrap(),
+    );
+    request.headers_mut().extend(
+        guest
+            .rpc
+            .preview_headers(
+                &http::Method::GET,
+                &format!("/v1/preview/{}/ws", fixture.preview_port),
+                b"",
+            )
+            .await
+            .unwrap(),
     );
     let (mut websocket, _) = connect_async_tls_with_config(
         request,

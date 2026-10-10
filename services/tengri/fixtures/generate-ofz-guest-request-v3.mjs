@@ -82,7 +82,7 @@ accepted('scoped agent', (c) => {
 accepted(
   'workload probe',
   (c) => {
-    c.actor = { kind: 'workload', subject: 'spiffe://example/controller', purpose: 'probe' }
+    c.actor = { kind: 'workload', subject: 'spiffe://proompteng.ai/ns/tengri/sa/tengri', purpose: 'probe' }
     c.action = 'ACTION_WORKSPACE_METADATA_READ'
     c.method = '/proompteng.runtime.guest.v1.NanoagentService/GetInfo'
     c.target = ''
@@ -90,7 +90,7 @@ accepted(
   '',
 )
 accepted('workload terminal cleanup', (c) => {
-  c.actor = { kind: 'workload', subject: 'spiffe://example/controller', purpose: 'terminalCleanup' }
+  c.actor = { kind: 'workload', subject: 'spiffe://proompteng.ai/ns/tengri/sa/tengri', purpose: 'terminalCleanup' }
   c.action = 'ACTION_TERMINAL_CONTROL'
   c.method = '/proompteng.runtime.guest.v1.NanoagentService/TerminateTerminal'
   c.target = 'terminal-42'
@@ -111,12 +111,18 @@ mutation('nil audit receipt', (c) => (c.auditReceiptId = '00000000-0000-0000-000
 mutation('unknown RPC', (c) => (c.method += 'Admin'))
 mutation('wrong service', (c) => (c.method = '/Other/WriteFile'))
 mutation('unknown actor', (c) => (c.actor.kind = 'administrator'))
+mutation('unapproved maintenance workload', (c) => {
+  c.actor = { kind: 'workload', subject: 'spiffe://example/controller', purpose: 'probe' }
+  c.action = 'ACTION_WORKSPACE_METADATA_READ'
+  c.method = '/proompteng.runtime.guest.v1.NanoagentService/GetInfo'
+  c.target = ''
+})
 mutation('human missing session', (c) => delete c.actor.sessionId)
 mutation('human extra grant', (c) => (c.actor.grantId = '88888888-8888-4888-8888-888888888888'))
 mutation('human empty extra grant', (c) => (c.actor.grantId = ''))
 mutation(
   'workload general content access',
-  (c) => (c.actor = { kind: 'workload', subject: 'spiffe://example/controller', purpose: 'probe' }),
+  (c) => (c.actor = { kind: 'workload', subject: 'spiffe://proompteng.ai/ns/tengri/sa/tengri', purpose: 'probe' }),
 )
 mutation('agent missing grant', (c) => (c.actor = { kind: 'agent', subject: '88888888-8888-4888-8888-888888888888' }))
 mutation('expired proof', (c) => (c.deadlineUnixMs = now))

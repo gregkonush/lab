@@ -1,16 +1,30 @@
 # Tengri control plane
 
-The signed guest RPC protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
+The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 3 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
-controller fence, RPC action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
+controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
 signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
 cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
 `node services/tengri/fixtures/generate-ofz-guest-request-v3.mjs` from the repository root.
 
-Nanoagent's RPC interceptors now require the proof and the resumed runtime claim from guest root. The slot runner
-requires `TENGRI_GUEST_VERIFICATION_KEY_FILE` and stages only that public key into the guest boot configuration.
-The migration gate remains closed until controller signing, supervisor proof/shared replay checks, preview enforcement
-and the remaining plan gates pass. The current controller does not yet supply signed guest requests.
+Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
+at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
+verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
+then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
+message's storage, so ongoing terminal input does not reserve capacity for later requests.
+
+Nanoagent verifies the proof again against its root-owned runtime claim and recovery generation and consumes a local
+nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
+openings bind the actual verb, escaped path/query and body; preview proof and claim headers are removed before reaching
+the application. Scoped content remains denied until bounded observer handlers exist.
+
+The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
+supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
+bundle contains only the public key and generation. Guest init stages both, clears the old claim before freeze/resume,
+and atomically publishes the resumed claim. A restored authority requires key rotation and trusted slot preparation
+under the new recovery generation before admission resumes. The migration gate remains closed until native KVM,
+independent execution fencing, observers, recovery and the remaining plan gates pass.
 
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
 4 vCPU, 8 GiB RAM, a private 1.5 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
@@ -46,8 +60,8 @@ without creating a runtime claim. Termination observes the current claim under t
 slot receives a deterministic retirement identity solely for stop acknowledgement.
 
 Runtime epochs are mandatory in private lifecycle claims and owned journals. Paired controller/guest artifacts and
-new root disks are required at the coordinated hard cutover; retain the existing home PVCs. Signed per-action guest
-context, scoped observers and the independent host execution deadline remain separate authorization work.
+new root disks are required at the coordinated hard cutover; retain the existing home PVCs. Scoped observers and the
+independent host execution deadline remain separate authorization work.
 
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its

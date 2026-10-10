@@ -309,13 +309,19 @@ pub(super) async fn stage_root_disk(
     let verification_key = tengri::guest_authorization::GuestVerifier::from_file(
         std::path::Path::new(&verification_key_path),
     )?;
+    let recovery_generation =
+        tengri::guest_authorization::recovery_generation_from_file(std::path::Path::new(
+            &env::var("TENGRI_GUEST_RECOVERY_GENERATION_FILE")
+                .context("TENGRI_GUEST_RECOVERY_GENERATION_FILE is required")?,
+        ))?;
     let config_file = directory.join("guest-config.json");
     fs::write(
         &config_file,
         serde_json::to_vec(&json!({
             "podUid": identity.pod_uid, "token": token,
             "initializeHome": initialize_home,
-            "verificationKey": STANDARD.encode(verification_key.public_key())
+            "verificationKey": STANDARD.encode(verification_key.public_key()),
+            "recoveryGeneration": recovery_generation
         }))?,
     )
     .await?;

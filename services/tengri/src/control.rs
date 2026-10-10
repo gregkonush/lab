@@ -223,6 +223,16 @@ impl Database {
         }
         Ok(())
     }
+
+    pub async fn current_fence(&self) -> Result<Fence, Status> {
+        let client = self.connection().await?;
+        let row = client.query_opt("SELECT owner,generation FROM tengri.runtime_leader WHERE singleton AND owner IS NOT NULL AND generation>0 AND expires_at_ms>tengri.now_ms()", &[]).await.map_err(sql_error)?
+            .ok_or_else(|| Status::unavailable("controller leadership is unavailable"))?;
+        Ok(Fence {
+            owner: row.get(0),
+            generation: row.get(1),
+        })
+    }
 }
 
 pub fn sql_error(error: tokio_postgres::Error) -> Status {

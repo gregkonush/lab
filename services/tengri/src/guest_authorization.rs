@@ -22,6 +22,28 @@ pub const MAX_ADMISSION_MS: u64 = 5000;
 const REQUEST_DOMAIN: &[u8] = b"tengri-guest-request-v3\0";
 const RPC_PREFIX: &str = "/proompteng.runtime.guest.v1.NanoagentService/";
 
+pub fn recovery_generation_from_file(path: &Path) -> anyhow::Result<u64> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .context("open guest recovery generation")?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file() && metadata.len() <= 20 && metadata.mode() & 0o022 == 0,
+        "guest recovery generation must be a read-only bounded regular file"
+    );
+    let mut value = String::new();
+    file.take(21).read_to_string(&mut value)?;
+    let value = value.strip_suffix('\n').unwrap_or(&value);
+    let generation: u64 = value.parse().context("invalid guest recovery generation")?;
+    ensure!(
+        generation > 0 && generation <= i64::MAX as u64 && generation.to_string() == value,
+        "canonical positive guest recovery generation required"
+    );
+    Ok(generation)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GuestAction {
     #[serde(rename = "ACTION_WORKSPACE_METADATA_READ")]
@@ -78,6 +100,14 @@ pub fn rpc_action(method: &str) -> Option<GuestAction> {
         }
         _ => return None,
     })
+}
+
+pub fn request_action(method: &str) -> Option<GuestAction> {
+    match method {
+        "HTTP GET" | "HTTP HEAD" | "HTTP POST" | "HTTP PUT" | "HTTP PATCH" | "HTTP DELETE"
+        | "HTTP OPTIONS" => Some(GuestAction::PreviewAccess),
+        _ => rpc_action(method),
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -273,9 +303,7 @@ impl GuestContext {
                     "workload maintenance cannot carry an observation scope"
                 );
                 ensure!(
-                    subject.starts_with("spiffe://")
-                        && bounded_text(subject, 256)
-                        && subject.len() > 9,
+                    subject == "spiffe://proompteng.ai/ns/tengri/sa/tengri",
                     "invalid workload authorization binding"
                 );
                 ensure!(
@@ -294,7 +322,7 @@ impl GuestContext {
             }
         }
         ensure!(
-            rpc_action(&self.method) == Some(self.action),
+            request_action(&self.method) == Some(self.action),
             "guest RPC does not permit this action"
         );
         ensure!(

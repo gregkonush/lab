@@ -7,6 +7,19 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use tengri::guest_authorization::*;
 
+#[test]
+fn every_http_preview_verb_requires_privileged_application_access() {
+    for method in ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+        assert_eq!(
+            request_action(&format!("HTTP {method}")),
+            Some(GuestAction::PreviewAccess)
+        );
+    }
+    for method in ["CONNECT", "TRACE", "PRI", "get", "GET /other"] {
+        assert_eq!(request_action(&format!("HTTP {method}")), None);
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Vector {
@@ -273,7 +286,7 @@ fn workload_proofs_cannot_expand_beyond_exact_maintenance_operations() {
     let verifier = GuestVerifier::from_bytes(signer.public_key()).unwrap();
     let mut context = verifier.verify(&vector.proof, vector.now_unix_ms).unwrap();
     context.actor = GuestActor::Workload {
-        subject: "spiffe://example/controller".into(),
+        subject: "spiffe://proompteng.ai/ns/tengri/sa/tengri".into(),
         purpose: MaintenancePurpose::Probe,
     };
     context.action = GuestAction::WorkspaceMetadataRead;
@@ -283,7 +296,7 @@ fn workload_proofs_cannot_expand_beyond_exact_maintenance_operations() {
     context.method = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile".into();
     assert!(signer.sign(&context, vector.now_unix_ms).is_err());
     context.actor = GuestActor::Workload {
-        subject: "spiffe://example/controller".into(),
+        subject: "spiffe://proompteng.ai/ns/tengri/sa/tengri".into(),
         purpose: MaintenancePurpose::TerminalCleanup,
     };
     context.action = GuestAction::TerminalControl;
@@ -293,6 +306,53 @@ fn workload_proofs_cannot_expand_beyond_exact_maintenance_operations() {
     signer.sign(&context, vector.now_unix_ms).unwrap();
     context.method = "/proompteng.runtime.guest.v1.NanoagentService/CreateTerminal".into();
     assert!(signer.sign(&context, vector.now_unix_ms).is_err());
+}
+
+#[test]
+fn recovery_generation_file_requires_a_canonical_positive_bounded_value() {
+    let directory =
+        std::env::temp_dir().join(format!("ofz-guest-generation-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("generation");
+    assert!(recovery_generation_from_file(&path).is_err());
+    assert!(recovery_generation_from_file(&directory).is_err());
+    for (value, expected) in [
+        ("1", 1),
+        ("1\n", 1),
+        ("9223372036854775807\n", i64::MAX as u64),
+    ] {
+        fs::write(&path, value).unwrap();
+        assert_eq!(recovery_generation_from_file(&path).unwrap(), expected);
+    }
+    for value in [
+        "",
+        "0",
+        "01",
+        "+1",
+        "-1",
+        "1 ",
+        "1\r\n",
+        "1\n\n",
+        "9223372036854775808",
+        "18446744073709551616",
+        "123456789012345678901234567890",
+    ] {
+        fs::write(&path, value).unwrap();
+        assert!(
+            recovery_generation_from_file(&path).is_err(),
+            "accepted {value:?}"
+        );
+    }
+    fs::write(&path, "2").unwrap();
+    for mode in [0o460, 0o402] {
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        assert!(recovery_generation_from_file(&path).is_err());
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o440)).unwrap();
+    let link = directory.join("projected-generation");
+    symlink(&path, &link).unwrap();
+    assert_eq!(recovery_generation_from_file(&link).unwrap(), 2);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

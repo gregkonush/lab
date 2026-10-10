@@ -57,6 +57,32 @@ pub(crate) struct WorkspaceAccess {
 }
 
 impl WorkspaceAuthorization {
+    pub(crate) async fn guest_maintenance(
+        &self,
+        uid: &str,
+        epoch: &str,
+        purpose: ofz::proto::GuestMaintenancePurpose,
+        target: &str,
+    ) -> Result<ofz::proto::CheckResponse, Status> {
+        match self {
+            Self::Ofz(client) => client.guest_maintenance(uid, epoch, purpose, target).await,
+            #[cfg(test)]
+            Self::ControlledFixture(mode)
+                if mode.load(std::sync::atomic::Ordering::SeqCst) != 0 =>
+            {
+                Err(Status::unavailable("Ofz maintenance unavailable"))
+            }
+            #[cfg(test)]
+            _ => Ok(ofz::proto::CheckResponse {
+                allowed: true,
+                revision: "fixture".into(),
+                audit_receipt_id: "66666666-6666-4666-8666-666666666666".into(),
+                valid_until_unix_ms: ofz::now_ms()? + 2000,
+                recovery_generation: 1,
+                effective_scope: None,
+            }),
+        }
+    }
     pub(crate) fn new(client: Client) -> Self {
         Self::Ofz(Arc::new(client))
     }
@@ -81,6 +107,9 @@ impl WorkspaceAuthorization {
         }
         if !ofz::canonical_uuid(uid) {
             return Err(Status::unavailable("workspace UID unavailable"));
+        }
+        if context.runtime_epoch.is_empty() {
+            context.runtime_epoch = epoch.into();
         }
         Ok(WorkspaceAccess {
             authorization: self.clone(),
@@ -398,6 +427,43 @@ impl WorkspaceAuthorization {
 
 impl WorkspaceAccess {
     pub(crate) async fn require(&self) -> Result<(), Status> {
+        self.decision().await.map(|_| ())
+    }
+
+    pub(crate) async fn guest_decision(
+        &self,
+        action: Action,
+        target: &str,
+        uid: &str,
+        epoch: &str,
+    ) -> Result<(RequestContext, ofz::proto::CheckResponse), Status> {
+        if self.action != action
+            || self.target != target
+            || self.context.workspace_uid != uid
+            || self.context.runtime_epoch != epoch
+        {
+            return Err(Status::permission_denied(
+                "guest operation differs from its Ofz authority",
+            ));
+        }
+        Ok((self.context.clone(), self.decision().await?))
+    }
+
+    pub(crate) async fn probe(
+        &self,
+        uid: &str,
+        epoch: &str,
+    ) -> Result<ofz::proto::CheckResponse, Status> {
+        if self.context.workspace_uid != uid || self.context.runtime_epoch != epoch {
+            return Err(Status::permission_denied("guest probe runtime changed"));
+        }
+        self.require().await?;
+        self.authorization
+            .guest_maintenance(uid, epoch, ofz::proto::GuestMaintenancePurpose::Probe, "")
+            .await
+    }
+
+    async fn decision(&self) -> Result<ofz::proto::CheckResponse, Status> {
         match &self.authorization {
             WorkspaceAuthorization::Ofz(client) => {
                 let mut receipt = self.receipt.lock().await;
@@ -421,24 +487,37 @@ impl WorkspaceAccess {
                         self.recovery_generation,
                     )
                     .await?;
-                *receipt = decision.audit_receipt_id;
+                *receipt = decision.audit_receipt_id.clone();
+                Ok(decision)
             }
             #[cfg(test)]
             WorkspaceAuthorization::ControlledFixture(mode) => {
                 match mode.load(std::sync::atomic::Ordering::SeqCst) {
-                    0 => {}
-                    1 => return Err(Status::permission_denied("workspace action denied")),
-                    _ => return Err(Status::unavailable("Ofz authority unavailable")),
+                    0 => self.fixture_decision(),
+                    1 => Err(Status::permission_denied("workspace action denied")),
+                    _ => Err(Status::unavailable("Ofz authority unavailable")),
                 }
             }
             #[cfg(test)]
             WorkspaceAuthorization::SynchronizedFixture(barrier) => {
                 barrier.wait().await;
+                self.fixture_decision()
             }
             #[cfg(test)]
-            WorkspaceAuthorization::Fixture => {}
+            WorkspaceAuthorization::Fixture => self.fixture_decision(),
         }
-        Ok(())
+    }
+
+    #[cfg(test)]
+    fn fixture_decision(&self) -> Result<ofz::proto::CheckResponse, Status> {
+        Ok(ofz::proto::CheckResponse {
+            allowed: true,
+            revision: "fixture".into(),
+            audit_receipt_id: "66666666-6666-4666-8666-666666666666".into(),
+            valid_until_unix_ms: ofz::now_ms()? + 2000,
+            recovery_generation: self.recovery_generation,
+            effective_scope: None,
+        })
     }
 
     pub(crate) async fn revoked(&self) -> Status {

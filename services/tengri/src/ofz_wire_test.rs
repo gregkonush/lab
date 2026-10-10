@@ -64,6 +64,10 @@ async fn controller_metadata_roundtrip(
         client.clone(),
         ControlPlaneConfig {
             identity,
+            guest_authority:
+                crate::guest::authorization::GuestAuthority::fixture_with_authorization(
+                    authorization.clone(),
+                ),
             authorization,
             namespace: "tengri".into(),
             default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
@@ -432,7 +436,9 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
         )
         .unwrap(),
         crate::guest::GuestPool::new(client, "tengri", WorkloadIdentity::Fixture(8080)),
-        authorization.clone(),
+        crate::guest::authorization::GuestAuthority::fixture_with_authorization(
+            authorization.clone(),
+        ),
     )
     .unwrap();
     let watching = gateway.wait_for_preview_revocation(&reloaded, &preview_access);

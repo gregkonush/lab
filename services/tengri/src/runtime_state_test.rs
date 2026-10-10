@@ -459,6 +459,18 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     .unwrap();
     supervisor.verify_schema().await.unwrap();
     assert!(supervisor.require_fence(second).await.is_ok());
+    let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    supervisor
+        .consume_nonce(&nonce, (crate::ofz::now_ms().unwrap() + 2000) as i64)
+        .await
+        .unwrap();
+    assert_eq!(
+        b.consume_nonce(&nonce, (crate::ofz::now_ms().unwrap() + 2000) as i64)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
     assert!(supervisor.acquire(Uuid::new_v4()).await.is_err());
     let client = supervisor.connection().await.unwrap();
     for query in [

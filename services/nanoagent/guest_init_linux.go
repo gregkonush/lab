@@ -25,10 +25,11 @@ import (
 )
 
 type guestSlotConfig struct {
-	PodUID          string `json:"podUid"`
-	Token           string `json:"token"`
-	InitializeHome  bool   `json:"initializeHome"`
-	VerificationKey []byte `json:"verificationKey"`
+	PodUID             string `json:"podUid"`
+	Token              string `json:"token"`
+	InitializeHome     bool   `json:"initializeHome"`
+	VerificationKey    []byte `json:"verificationKey"`
+	RecoveryGeneration uint64 `json:"recoveryGeneration"`
 }
 
 type guestClaim struct {
@@ -96,7 +97,7 @@ func runGuestInit(logger *slog.Logger) error {
 	if config.PodUID == "" || len(config.Token) < 32 {
 		return errors.New("invalid private slot configuration")
 	}
-	if err := prepareGuestAuthority(filepath.Dir(guestVerificationKeyPath), config.VerificationKey); err != nil {
+	if err := prepareGuestAuthority(filepath.Dir(guestVerificationKeyPath), config.VerificationKey, config.RecoveryGeneration); err != nil {
 		return err
 	}
 	if err := mountGuestHome(config.InitializeHome); err != nil {

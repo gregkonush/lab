@@ -51,7 +51,73 @@ func fixtureGuestAuthorization(t *testing.T) *guestRPCAdmission {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &guestRPCAdmission{admission: admission, claim: func() (guestauth.RuntimeClaim, error) { return fixtureGuestClaim, nil }}
+	return &guestRPCAdmission{admission: admission, recoveryGeneration: 1, claim: func() (guestauth.RuntimeClaim, error) { return fixtureGuestClaim, nil }}
+}
+
+func TestGuestRecoveryGenerationRequiresCanonicalPositiveInteger(t *testing.T) {
+	for _, value := range []string{"", "0", "01", " 1", "1 ", "1\n\n", "-1", "+1", "9223372036854775808"} {
+		if _, err := decodeGuestRecoveryGeneration([]byte(value)); err == nil {
+			t.Fatalf("invalid recovery generation %q accepted", value)
+		}
+	}
+	for _, value := range []string{"1", "2\n", "9223372036854775807"} {
+		if _, err := decodeGuestRecoveryGeneration([]byte(value)); err != nil {
+			t.Fatalf("canonical recovery generation %q rejected: %v", value, err)
+		}
+	}
+}
+
+func TestGuestAuthorityStagesOnlyPublicKeyAndRecoveryGeneration(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires guest root; included in the native Linux fixture")
+	}
+	directory := t.TempDir()
+	claimPath := filepath.Join(directory, "claim.json")
+	if err := os.WriteFile(claimPath, []byte("old claim"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	key := fixtureGuestKey().Public().(ed25519.PublicKey)
+	if err := prepareGuestAuthority(directory, key, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(claimPath); !os.IsNotExist(err) {
+		t.Fatalf("old claim survived staging: %v", err)
+	}
+	contents, err := readGuestRootFile(filepath.Join(directory, "guest-verify.pub"), 32)
+	if err != nil || !bytes.Equal(contents, key) {
+		t.Fatalf("staged public key: %v", err)
+	}
+	contents, err = readGuestRootFile(filepath.Join(directory, "recovery-generation"), 20)
+	if err != nil || string(contents) != "7" {
+		t.Fatalf("staged recovery generation %q: %v", contents, err)
+	}
+	if err := prepareGuestAuthority(directory, key, 0); err == nil {
+		t.Fatal("missing recovery generation accepted")
+	}
+}
+
+func TestRPCUsesInstalledRecoveryGenerationBeforeMutation(t *testing.T) {
+	api := testAPIServer(t)
+	api.guestAuthorization.recoveryGeneration = 2
+	client := unsignedRPCTestClient(t, api)
+	request := &pb.FileWrite{Path: "/recovered", ExpectedRevision: "missing", Content: []byte("new generation")}
+	oldContext, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WriteFile_FullMethodName, request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WriteFile(oldContext, request); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("old recovery generation admitted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(api.workspace.root, "recovered")); !os.IsNotExist(err) {
+		t.Fatalf("old recovery generation reached filesystem: %v", err)
+	}
+	currentContext, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WriteFile_FullMethodName, request, func(c *guestauth.Context) { c.RecoveryGeneration = 2 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.WriteFile(currentContext, request); err != nil {
+		t.Fatalf("installed recovery generation denied: %v", err)
+	}
 }
 
 func signedFixtureRPCContext(ctx context.Context, method string, value any, change func(*guestauth.Context)) (context.Context, error) {
@@ -187,6 +253,7 @@ func TestRPCRejectsSignedRequestsForDifferentBindingsBeforeMutation(t *testing.T
 		{"runtime", func(c *guestauth.Context) { c.RuntimeEpoch = "77777777-7777-4777-8777-777777777777" }},
 		{"slot", func(c *guestauth.Context) { c.SlotEpoch++ }},
 		{"pod", func(c *guestauth.Context) { c.PodUID = "77777777-7777-4777-8777-777777777777" }},
+		{"recovery", func(c *guestauth.Context) { c.RecoveryGeneration++ }},
 		{"action", func(c *guestauth.Context) { c.Action = guestauth.TerminalControl }},
 		{"method", func(c *guestauth.Context) { c.Method = pb.NanoagentService_CreateDirectory_FullMethodName }},
 		{"target", func(c *guestauth.Context) { c.Target = "/different" }},

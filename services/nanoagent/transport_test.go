@@ -36,7 +36,7 @@ import (
 const fixtureDomain = "proompteng.ai"
 const controllerID = "spiffe://" + fixtureDomain + "/ns/tengri/sa/tengri"
 const bffID = "spiffe://" + fixtureDomain + "/ns/proompteng/sa/proompteng"
-const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/interop-agent"
+const guestID = "spiffe://" + fixtureDomain + "/ns/tengri/slot/pod/33333333-3333-4333-8333-333333333333"
 
 func TestKVMWorkloadAPI(t *testing.T) {
 	if os.Getenv("NANOAGENT_KVM_INTEROP") != "1" {

@@ -1,3 +1,4 @@
+mod admission;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
