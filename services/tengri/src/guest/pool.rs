@@ -41,6 +41,8 @@ mod tests {
             "apiVersion":"runtime.proompteng.ai/v1alpha1", "kind":"MicroVM",
             "metadata":{"name":"agent-a", "uid":"vm-a", "generation":2},
             "spec":{
+                "reservationId":"77f8ce6b-18c5-4f7b-950c-b5639b70619e",
+                "runtimeEpoch":"39d272fe-2781-4bc2-886c-a2993865f646", "policyVersion":1,
                 "displayName":"Agent", "ownerHash":"owner", "desiredState":"Running",
                 "image":"test-image", "architecture":"amd64", "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},
                 "createdAt":"2026-10-11T00:00:00Z", "idleDeadline":"2026-10-12T00:00:00Z",
