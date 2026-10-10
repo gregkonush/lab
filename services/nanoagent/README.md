@@ -4,7 +4,19 @@
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
 proofs require an explicit scope and cannot carry control actions. Workload proofs permit only an exact metadata probe
 or terminal cleanup. The shared public test vectors are in `services/tengri/fixtures/ofz-guest-request-v3.json`; they
-must never provide deployment keys. RPC interceptor and guest-init key/claim wiring remain part of the open migration.
+must never provide deployment keys.
+
+The RPC receiver requires a signed proof for every unary request and every stream opening message. It checks the
+canonical protobuf bytes, action, target, exactly one copy of each claim header, and the runtime published by guest
+root before admitting a single-use nonce. It rechecks the runtime before returning unary data or sending stream data.
+The bootstrap token alone grants no RPC admission. Scoped content is denied until the bounded observer RPCs exist.
+
+Guest init requires a 32-byte public `verificationKey` in the private slot boot configuration. It publishes the key as
+`/run/tengri/guest-verify.pub` and atomically writes `/run/tengri/claim.json` after binding a resumed runtime. Freeze and
+resume clear the previous claim. Nanoagent reads bounded root-owned regular files and rejects writable files and
+symlinks. The host runner mounts only `tengri-guest-verification`, never the controller's private signing key.
+Controller signing, supervisor proof/shared replay checks, preview authorization, and native KVM acceptance remain
+open migration gates. The current controller does not yet supply these proofs; this checkpoint cannot be deployed.
 
 Nanoagent runs as UID 1000 inside each Tengri Firecracker guest. Tengri owns the VMM outside the guest, in a normal OCI
 slot Pod. The guest has its own Linux kernel, root disk, and retained 32 GiB home. See the

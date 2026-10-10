@@ -130,6 +130,7 @@ pub fn build_slot_pod(
         {"name": "TENGRI_POD_UID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}}},
         {"name": "TENGRI_PVC_UID", "value": pvc_uid},
         {"name": "TENGRI_GUEST_IMAGE", "value": guest_image},
+        {"name": "TENGRI_GUEST_VERIFICATION_KEY_FILE", "value": "/var/run/tengri/guest-verification/key"},
         {"name": "TENGRI_INITIALIZE_HOME", "value": if initialized {"false"} else {"true"}}
     ]);
     let restricted = json!({"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true,
@@ -177,13 +178,16 @@ pub fn build_slot_pod(
                     "limits": {"cpu": "4", "memory": "9Gi", "ephemeral-storage": "26Gi", "runtime.proompteng.ai/kvm-tun": "1"}},
                 "volumeDevices": [{"name": "home", "devicePath": "/dev/tengri-home"}],
                 "volumeMounts": [{"name": "snapshots", "mountPath": "/var/lib/tengri"}, {"name": "sockets", "mountPath": "/run/tengri"},
-                    {"name": "artifacts", "mountPath": "/guest", "readOnly": true}, {"name": "bootstrap", "mountPath": "/run/guest-bootstrap", "readOnly": true}]}
+                    {"name": "artifacts", "mountPath": "/guest", "readOnly": true}, {"name": "bootstrap", "mountPath": "/run/guest-bootstrap", "readOnly": true},
+                    {"name": "guest-verification", "mountPath": "/var/run/tengri/guest-verification", "readOnly": true}]}
         ],
         "volumes": [
             {"name": "home", "persistentVolumeClaim": {"claimName": home.name_any()}},
             {"name": "snapshots", "emptyDir": {"sizeLimit": "24Gi"}}, {"name": "sockets", "emptyDir": {"sizeLimit": "1Mi"}},
             {"name": "artifacts", "emptyDir": {"sizeLimit": "2Gi"}},
             {"name": "bootstrap", "secret": {"secretName": bootstrap_secret_name(name), "defaultMode": 288}},
+            {"name": "guest-verification", "secret": {"secretName": "tengri-guest-verification", "defaultMode": 288,
+                "items": [{"key": "key", "path": "key"}]}},
             {"name": "runtime-database", "secret": {"secretName": "tengri-supervisor-db", "defaultMode": 288}},
             {"name": "database-ca", "secret": {"secretName": "ofz-database-ca", "defaultMode": 288}},
             {"name": "workload-api", "csi": {"driver": "csi.spiffe.io", "readOnly": true}}
@@ -401,6 +405,45 @@ mod tests {
                     .any(|mounted| mounted.name == volume && mounted.secret.is_some())
             );
         }
+        let verification = spec
+            .volumes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|volume| volume.name == "guest-verification")
+            .unwrap()
+            .secret
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            verification.secret_name.as_deref(),
+            Some("tengri-guest-verification")
+        );
+        let keys = verification.items.as_ref().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key, "key");
+        assert!(runner.volume_mounts.as_ref().unwrap().iter().any(|mount| {
+            mount.name == "guest-verification"
+                && mount.mount_path == "/var/run/tengri/guest-verification"
+                && mount.read_only == Some(true)
+        }));
+        assert_eq!(
+            runner
+                .env
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|entry| entry.name == "TENGRI_GUEST_VERIFICATION_KEY_FILE")
+                .and_then(|entry| entry.value.as_deref()),
+            Some("/var/run/tengri/guest-verification/key")
+        );
+        assert!(spec.volumes.as_ref().unwrap().iter().all(|volume| {
+            volume
+                .secret
+                .as_ref()
+                .and_then(|secret| secret.secret_name.as_deref())
+                != Some("tengri-guest-signing")
+        }));
         assert!(
             !supervisor
                 .volume_mounts

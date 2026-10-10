@@ -23,6 +23,7 @@ const (
 )
 
 type apiConfig struct {
+	guestAuthorization  *guestRPCAdmission
 	bootstrapToken      string
 	codexBinary         string
 	codeServerBinary    string
@@ -38,19 +39,20 @@ type apiConfig struct {
 }
 
 type apiServer struct {
-	bootstrapToken   string
-	codex            *codexSupervisor
-	editor           *editorSupervisor
-	browser          *browserSupervisor
-	evidence         evidence
-	fileMutationMu   sync.RWMutex
-	fileWatcher      *fileWatcher
-	previewRequests  *previewRequestTracker
-	previewTransport http.RoundTripper
-	syncDirectories  func(workspace, ...string) error
-	terminals        *terminalManager
-	workspace        workspace
-	rpc              *grpc.Server
+	guestAuthorization *guestRPCAdmission
+	bootstrapToken     string
+	codex              *codexSupervisor
+	editor             *editorSupervisor
+	browser            *browserSupervisor
+	evidence           evidence
+	fileMutationMu     sync.RWMutex
+	fileWatcher        *fileWatcher
+	previewRequests    *previewRequestTracker
+	previewTransport   http.RoundTripper
+	syncDirectories    func(workspace, ...string) error
+	terminals          *terminalManager
+	workspace          workspace
+	rpc                *grpc.Server
 }
 
 type apiError struct {
@@ -58,6 +60,9 @@ type apiError struct {
 }
 
 func newAPIServer(config apiConfig) (*apiServer, error) {
+	if config.guestAuthorization == nil || config.guestAuthorization.admission == nil || config.guestAuthorization.claim == nil {
+		return nil, errors.New("signed guest authorization is required")
+	}
 	if config.bootstrapToken == "" {
 		return nil, errors.New("bootstrap token is required")
 	}
@@ -77,14 +82,15 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	server := &apiServer{
-		bootstrapToken:   config.bootstrapToken,
-		evidence:         config.evidence,
-		fileWatcher:      files,
-		previewRequests:  newPreviewRequestTracker(),
-		previewTransport: transport,
-		syncDirectories:  syncWorkspaceDirectories,
-		terminals:        newTerminalManager(workspace, config.shell, config.homeRoot),
-		workspace:        workspace,
+		guestAuthorization: config.guestAuthorization,
+		bootstrapToken:     config.bootstrapToken,
+		evidence:           config.evidence,
+		fileWatcher:        files,
+		previewRequests:    newPreviewRequestTracker(),
+		previewTransport:   transport,
+		syncDirectories:    syncWorkspaceDirectories,
+		terminals:          newTerminalManager(workspace, config.shell, config.homeRoot),
+		workspace:          workspace,
 	}
 	if config.codeServerBinary != "" {
 		server.editor = newEditorSupervisor(config.codeServerBinary, config.codeServerBootstrap, config.homeRoot, workspace)

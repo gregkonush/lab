@@ -7,8 +7,10 @@ signing key belongs only in the controller; supervisors and guests receive the p
 cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
 `node services/tengri/fixtures/generate-ofz-guest-request-v3.mjs` from the repository root.
 
-This library checkpoint is not yet connected to RPC admission. The migration gate remains closed until controller
-signing, supervisor shared replay checks, Nanoagent admission, preview enforcement and the remaining plan gates pass.
+Nanoagent's RPC interceptors now require the proof and the resumed runtime claim from guest root. The slot runner
+requires `TENGRI_GUEST_VERIFICATION_KEY_FILE` and stages only that public key into the guest boot configuration.
+The migration gate remains closed until controller signing, supervisor proof/shared replay checks, preview enforcement
+and the remaining plan gates pass. The current controller does not yet supply signed guest requests.
 
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
 4 vCPU, 8 GiB RAM, a private 1.5 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;

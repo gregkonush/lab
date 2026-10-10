@@ -30,7 +30,7 @@ func rpcTestClient(t *testing.T, api *apiServer) (pb.NanoagentServiceClient, str
 	server.Config.Protocols = fixtureHTTPProtocols()
 	server.Start()
 	t.Cleanup(server.Close)
-	connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxGuestRPCBytes)))
+	connection, err := grpc.NewClient(server.Listener.Addr().String(), append(fixtureRPCDialOptions(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxGuestRPCBytes)))...)
 	if err != nil {
 		t.Fatal(err)
 	}

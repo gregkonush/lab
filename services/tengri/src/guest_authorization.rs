@@ -454,6 +454,10 @@ impl GuestVerifier {
         })?))
     }
 
+    pub fn public_key(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     pub fn verify(&self, proof: &GuestProof, now_ms: u64) -> anyhow::Result<GuestContext> {
         ensure!(
             proof.context.len() <= MAX_CONTEXT_BYTES * 4 / 3 + 4 && proof.signature.len() == 86,

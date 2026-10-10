@@ -14,18 +14,21 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"syscall"
 	"time"
 
 	"github.com/mdlayher/vsock"
+	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 	"golang.org/x/sys/unix"
 )
 
 type guestSlotConfig struct {
-	PodUID         string `json:"podUid"`
-	Token          string `json:"token"`
-	InitializeHome bool   `json:"initializeHome"`
+	PodUID          string `json:"podUid"`
+	Token           string `json:"token"`
+	InitializeHome  bool   `json:"initializeHome"`
+	VerificationKey []byte `json:"verificationKey"`
 }
 
 type guestClaim struct {
@@ -70,6 +73,8 @@ type guestLifecycle struct {
 	claim      *guestClaim
 	frozen     bool
 	terminal   *guestReadinessTerminal
+	podUID     string
+	claimPath  string
 }
 
 const fsFreeze = 0xC0045877
@@ -91,6 +96,9 @@ func runGuestInit(logger *slog.Logger) error {
 	if config.PodUID == "" || len(config.Token) < 32 {
 		return errors.New("invalid private slot configuration")
 	}
+	if err := prepareGuestAuthority(filepath.Dir(guestVerificationKeyPath), config.VerificationKey); err != nil {
+		return err
+	}
 	if err := mountGuestHome(config.InitializeHome); err != nil {
 		return err
 	}
@@ -109,7 +117,7 @@ func runGuestInit(logger *slog.Logger) error {
 		return err
 	}
 	defer terminal.close()
-	lifecycle := &guestLifecycle{root: root, home: home, terminal: terminal}
+	lifecycle := &guestLifecycle{root: root, home: home, terminal: terminal, podUID: config.PodUID, claimPath: guestRuntimeClaimPath}
 	listener, err := vsock.Listen(1025, nil)
 	if err != nil {
 		return err
@@ -283,6 +291,9 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		if guest.frozen {
 			return errors.New("guest is already frozen")
 		}
+		if err := clearGuestClaim(guest.claimPath); err != nil {
+			return err
+		}
 		unix.Sync()
 		if err := unix.IoctlSetInt(int(guest.home.Fd()), fsFreeze, 0); err != nil {
 			return err
@@ -300,6 +311,9 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		if request.UnixTimeNanos <= 0 {
 			return errors.New("resume requires the host clock")
 		}
+		if err := clearGuestClaim(guest.claimPath); err != nil {
+			return err
+		}
 		if guest.frozen {
 			if err := unix.IoctlSetInt(int(guest.root.Fd()), fsThaw, 0); err != nil {
 				return err
@@ -311,6 +325,12 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		}
 		clock := unix.NsecToTimespec(request.UnixTimeNanos)
 		if err := unix.ClockSettime(unix.CLOCK_REALTIME, &clock); err != nil {
+			return err
+		}
+		if err := publishGuestClaim(guest.claimPath, guestauth.RuntimeClaim{
+			WorkspaceUID: request.Claim.MicroVMUID, RuntimeEpoch: request.Claim.RuntimeEpoch,
+			SlotEpoch: request.Claim.Epoch, PodUID: guest.podUID,
+		}); err != nil {
 			return err
 		}
 		guest.claim = &request.Claim

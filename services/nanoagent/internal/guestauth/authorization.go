@@ -175,6 +175,29 @@ type Binding struct {
 	Body               []byte
 }
 
+// Leadership and recovery freshness are enforced by the host supervisor against
+// shared SQL. Guest root publishes only the runtime that it has actually resumed.
+type RuntimeClaim struct {
+	WorkspaceUID string `json:"workspaceUid"`
+	RuntimeEpoch string `json:"runtimeEpoch"`
+	SlotEpoch    uint64 `json:"slotEpoch"`
+	PodUID       string `json:"podUid"`
+}
+
+func (claim RuntimeClaim) Validate() error {
+	if !canonicalUUID(claim.WorkspaceUID) || !canonicalUUID(claim.RuntimeEpoch) || !canonicalUUID(claim.PodUID) || claim.SlotEpoch == 0 {
+		return errors.New("guest root has not published a valid runtime claim")
+	}
+	return nil
+}
+
+type RequestBinding struct {
+	Action Action
+	Method string
+	Target string
+	Body   []byte
+}
+
 type Proof struct {
 	Context   string `json:"context"`
 	Signature string `json:"signature"`
@@ -208,6 +231,26 @@ func (a *Admission) Admit(proof Proof, binding Binding, nowMS uint64) (Context, 
 	c, err := a.verifier.VerifyFor(proof, binding, nowMS)
 	if err != nil {
 		return Context{}, err
+	}
+	if err := a.replay.Consume(c, nowMS); err != nil {
+		return Context{}, err
+	}
+	return c, nil
+}
+
+func (a *Admission) AdmitGuest(proof Proof, claim RuntimeClaim, request RequestBinding, nowMS uint64) (Context, error) {
+	if err := claim.Validate(); err != nil {
+		return Context{}, err
+	}
+	c, err := a.verifier.Verify(proof, nowMS)
+	if err != nil {
+		return Context{}, err
+	}
+	if c.WorkspaceUID != claim.WorkspaceUID || c.RuntimeEpoch != claim.RuntimeEpoch || c.SlotEpoch != claim.SlotEpoch || c.PodUID != claim.PodUID {
+		return Context{}, errors.New("guest request does not match the resumed runtime")
+	}
+	if c.Action != request.Action || c.Method != request.Method || c.Target != request.Target || c.BodySHA256 != BodySHA256(request.Body) {
+		return Context{}, errors.New("guest request differs from its authorization")
 	}
 	if err := a.replay.Consume(c, nowMS); err != nil {
 		return Context{}, err
