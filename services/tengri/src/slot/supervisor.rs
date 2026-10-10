@@ -905,6 +905,7 @@ mod tests {
                 microvm_id: "agent-a".into(),
                 microvm_uid: "owner-a".into(),
                 epoch: 7,
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
             };
             let awake = SlotState::Awake {
                 claim: claim.clone(),
