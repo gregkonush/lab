@@ -12,6 +12,15 @@ const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dock
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
 describe('Tengri image workflow', () => {
+  it('regenerates the prepared CRD when only that deployment contract changes', () => {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+      on: { pull_request: { paths: string[] }; push: { paths: string[] } }
+    }
+    for (const event of [workflow.on.pull_request, workflow.on.push]) {
+      expect(event.paths).toContain('argocd/prepared/tengri/crd.yaml')
+    }
+  })
+
   it('validates Nanoagent once without losing protobuf or guest checks', () => {
     const validation = readFileSync(imagesPath, 'utf8').match(/validate-nanoagent:\n[\s\S]*?\n  build:/)?.[0]
 
