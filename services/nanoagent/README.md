@@ -1,5 +1,11 @@
 # Nanoagent guest API
 
+`internal/guestauth` implements the mandatory protocol 3 signature contract for the Ofz migration. Its admission helper
+verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
+proofs require an explicit scope and cannot carry control actions. Workload proofs permit only an exact metadata probe
+or terminal cleanup. The shared public test vectors are in `services/tengri/fixtures/ofz-guest-request-v3.json`; they
+must never provide deployment keys. RPC interceptor and guest-init key/claim wiring remain part of the open migration.
+
 Nanoagent runs as UID 1000 inside each Tengri Firecracker guest. Tengri owns the VMM outside the guest, in a normal OCI
 slot Pod. The guest has its own Linux kernel, root disk, and retained 32 GiB home. See the
 [runtime lifecycle](../tengri/README.md) for the host boundary and snapshot protocol.

@@ -22,6 +22,7 @@ COPY --from=ofz-proto / /ofz/proto/
 COPY --from=ofz-catalog /operations.json /ofz/operations.json
 ENV OFZ_PROTO_ROOT=/ofz/proto OFZ_CATALOG_PATH=/ofz/operations.json
 COPY src ./src
+COPY tests ./tests
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
     (CARGO_BUILD_JOBS=2 cargo test --locked --release --all-targets > /tmp/tengri-build.log 2>&1 || \
       { cat /tmp/tengri-build.log; exit 1; }) && \

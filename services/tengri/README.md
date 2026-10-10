@@ -1,5 +1,15 @@
 # Tengri control plane
 
+The signed guest RPC protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
+`internal/guestauth` package. Protocol 3 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
+controller fence, RPC action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
+signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
+cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
+`node services/tengri/fixtures/generate-ofz-guest-request-v3.mjs` from the repository root.
+
+This library checkpoint is not yet connected to RPC admission. The migration gate remains closed until controller
+signing, supervisor shared replay checks, Nanoagent admission, preview enforcement and the remaining plan gates pass.
+
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
 4 vCPU, 8 GiB RAM, a private 1.5 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
