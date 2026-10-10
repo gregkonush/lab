@@ -178,3 +178,12 @@ not to deleted users; pool retirement remains the controller's responsibility du
 
 This removes the retained-data migration blocker. The new Ofz API is not yet deployed, and the image publication hold
 remains false. This deletion does not establish deployment or acceptance of the new authorization contract.
+The isolated physical-promotion fixture passes against pinned PostgreSQL 18.6 and SpiceDB. A physical base backup
+includes the native datastore, Ofz control tables and shared runtime state. The fixture requires synchronous streaming,
+kills the original primary, and promotes the standby at the same service address. Existing clients recover in 2.92 seconds
+and deny a consumed nonce before its original five-second expiry. Atomic pending/spent tickets, live/revoked previews,
+session/workspace/runtime bindings, unique leader acquisition and stale-fence denial all pass. Owner access stays allowed
+and a revoked viewer stays denied; every Ofz control table has the same hash before and after promotion. The initial run
+exposed Docker's requirement for an explicit subnet when reassigning an IP, which the fixture now provisions. The test
+runs in Ofz CI. This two-node fixture does not prove three-node CNPG or Kubernetes recovery, independent backups, or
+post-failure synchronous write availability. Those deployed/recovery gates remain open.
