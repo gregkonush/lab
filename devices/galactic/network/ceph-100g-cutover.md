@@ -7,6 +7,9 @@ exception as the normal procedure for future maintenance. Normal maintenance req
 Keep OSD IDs, disks, pools, replica counts, PVCs, management addresses, and the public Flannel network intact.
 Only OSD replication, recovery, and cluster heartbeats move to `10.100.0.0/24`.
 
+The subsequent [pod routing change](pod-100g-routing.md) also carries Altra–Turin application and public Ceph client
+traffic over 100G. It preserves the public endpoint addresses and keeps Ryzen on the LAN.
+
 ## Ordered rollout
 
 1. Merge the host/CNI prerequisites. Render the exact merged Omni template with fresh private secrets; validate,
