@@ -1,10 +1,10 @@
 # Galactic hardware and network upgrade plan
 
-Status: Both ConnectX-5 Ex cards have reported 100G carrier. Altra has also crossed its 105 C thermal warning threshold;
-resolve physical cooling before sustained traffic or Ceph cutover. The Omni template defines the two `storage0`
-interfaces and host addresses. Follow the [interface setup](../network/README.md#configure-the-storage-interfaces)
-and [Multus installation](../../../argocd/applications/multus/README.md). Ceph still uses Flannel until the migration
-gate below passes. Receipt evidence checked 2026-10-06.
+Status: The Ceph cluster-network cutover and cross-node data checks passed on 2026-10-11 UTC. The `storage0` host
+interfaces, Multus, Whereabouts, and cluster-only Multus configuration are applied. Public/client traffic remains on
+Flannel. Altra's NIC cooling remains unresolved. The
+[ordered cutover](../network/ceph-100g-cutover.md) records the operator's explicit exception to the cooling and clean-PG
+gates, the temporary override, and its removal. Receipt evidence checked 2026-10-06.
 
 ## Parts received
 
@@ -43,39 +43,29 @@ Use one 100G link per host. Leave the second NIC ports and two remaining switch 
 - Keep workloads on shared Ceph. The first target moves OSD replication, recovery, and heartbeat traffic to 100G.
   Ceph's public/client network stays on Flannel. Ryzen has no purchased 100G NIC, so its client path remains a limit.
 
-## Installation order
+## Installation status
 
-1. [ ] Capture a fresh baseline. Check etcd quorum, application backups, workload maintenance controls, disk identities,
-       `ceph health detail`, `ceph osd tree`, pool replica settings, OSD latency, and existing link speed.
-       Require six OSDs up/in and no degraded, undersized, or inconsistent PGs. Review every remaining warning.
-       The October 6 readback had slow BlueStore operations and overdue scrubs; it was not `HEALTH_OK`.
-2. [x] Prepare the switch using the [saved RouterOS configuration](../network/README.md).
-       RouterOS and RouterBOARD firmware both report `7.23.8` after reboot. The two whole 100G ports retain hardware
-       offload at MTU 1500. Management remains separate on `ether1` at `192.168.88.1/24`.
-       Port 1 reports 100G with RS-FEC; port 2 has no carrier. Host identity and traffic acceptance remain in step 7.
-3. [ ] Install Turin's NIC during an agreed downtime window. Pause all Ceph writers, account for local workloads,
-       cordon/drain through the [storage maintenance procedure](../../../docs/runbooks/galactic-storage-and-workload-recovery.md),
-       and shut down cleanly. Preserve disks and existing OSD identities.
-       All live pools were `size=2`, `min_size=1`; losing one of the two OSD hosts permits writes with one surviving copy.
-4. [ ] Bring Turin back. Verify boot and NVMe inventory, all three OSDs, etcd, GPU, and affected applications.
-       Confirm the NIC's `mlx5_core` driver, exact firmware, PCIe link width/speed, and persistent management NIC selection.
-       Wait for Ceph to regain full replication before resuming writers or opening Altra.
-5. [ ] Repeat the same maintenance and recovery checks for Altra. Never maintain both OSD hosts together.
-6. [ ] Add the storage interface configuration through the [Omni template workflow](../omni/README.md).
-       Match the verified NIC identity, preserve complete management addressing, and render/validate/dry-run each host change.
-       Both MAC-selected ports feed real single-port `storage0` bonds for a consistent macvlan CNI master name.
-       Do not apply retained per-device patches directly.
-7. [ ] Verify 100,000 Mb/s on both NICs and switch ports, matching FEC, stable carrier, and clean error counters.
-       Run interface-bound TCP `iperf3` tests in both directions with parallel streams for 60 seconds.
-       Save measured throughput, retransmits, CPU use, and negotiated PCIe capacity. Explain any ceiling before Ceph cutover.
-       Keep MTU 1500 for the first cutover; test MTU 9000 separately after the whole storage path passes.
+- [x] Configure the switch with the [saved RouterOS script](../network/README.md). RouterOS and RouterBOARD are
+      `7.23.8`; the storage bridge uses hardware offload and MTU 1500. Management remains `ether1`, `192.168.88.1/24`.
+- [x] Install both cards and recover both Talos nodes. Each reports ConnectX-5 Ex, `mlx5_core`, firmware `16.35.1012`,
+      PSID `MT_0000000013`, and 100,000 Mb/s carrier. Existing disks and OSD identities remain in use.
+- [x] Apply the reviewed [Omni template](../omni/cluster-template.yaml), after render, validation, and dry-run.
+      MAC-selected ports feed real single-port `storage0` bonds: Altra `10.100.0.11/24`, Turin `10.100.0.12/24`.
+      MTU is 1500; neither has DHCP or a default gateway. Management addresses remain reachable.
+- [x] Install Multus and Whereabouts on all three nodes, including the IP-allocation reconciler and macvlan binary.
+      Diagnostic pod transfers over the storage subnet passed bidirectional 1 MiB checksum checks.
+- [ ] Complete hardware acceptance: Altra cooling, PCIe capacity under load, switch peer-port identities and FEC
+      counters, then bidirectional 60-second `iperf3` tests. Altra has reported PCIe 2.5 GT/s ×16; Turin 16 GT/s ×16.
+      A 100G carrier does not establish 100 Gb/s throughput. Test MTU 9000 separately after MTU 1500 acceptance.
+- [ ] Complete full-replication, scrub, GPU/NVMe, and application acceptance. Do not interpret node readiness as all
+      these checks passing. Future node maintenance follows the [storage recovery procedure](../../../docs/runbooks/galactic-storage-and-workload-recovery.md).
 
 ## Move Ceph traffic only after the migration gate
 
-The live cluster uses Rook `v1.20.7`, Ceph `20.2.4`, and the default pod network. Both OSD public and cluster addresses
-are still `10.244.*`. Installing NICs or setting host IPs does not move that traffic.
+Pre-cutover baseline: Rook `v1.20.7`, Ceph `20.2.4`, default pod network, with both OSD public and cluster addresses
+on `10.244.*`. That is the historical baseline, not the desired configuration or a current runtime claim.
 
-- [ ] Prepare one reviewed migration procedure for cluster-only Multus, with macvlan on the new NIC and Whereabouts
+- [x] Prepare one reviewed migration procedure for cluster-only Multus, with macvlan on the new NIC and Whereabouts
       addresses from the reserved range. Leave the public selector unset. Verify Talos CNI paths, plugin installation,
       persistent interface naming, and OSD-to-OSD connectivity before selecting the network in Rook.
 - [ ] Resolve the upstream support constraint before production. Rook's [v1.20 CRD reference](https://rook.io/docs/rook/v1.20/CRDs/Cluster/ceph-cluster-crd/#network-configuration)
@@ -83,15 +73,17 @@ are still `10.244.*`. Installing NICs or setting host IPs does not move that tra
       describes careful network changes. Do not treat that guide as approval for an in-place provider conversion.
       Establish an upstream-supported route and rehearse it with the same versions, including mixed old/new pod connectivity
       and recovery. If none exists, stop at tested hardware; a data-preserving replacement needs a separate capacity and restore plan.
-- [ ] Merge and validate the selected GitOps changes before an authorized cutover. Preserve pools, PVCs, CRUSH placement,
+- [x] Merge and validate the selected GitOps changes before an authorized cutover. Preserve pools, PVCs, CRUSH placement,
       OSD IDs, and disks. No CephCluster deletion, OSD purge, or disk zap belongs to this plan.
-- [ ] Prove every OSD advertises a `10.100.0.*` cluster address and its existing public path still works.
-      Verify traffic counters on the 100G ports during real writes, then CephFS/RBD write, fsync, and readback from every node.
-      Compare latency and throughput with the same baseline workload. A 100G carrier does not prove a 100G Ceph path.
+- [x] Prove every OSD advertises a `10.100.0.*` cluster address and its existing public path still works.
+      All six returned up/in with `10.244.*` public addresses. Established OSD TCP connections use the storage subnet.
+      Recovery and test I/O increased both hosts' storage-interface counters, with zero reported errors or drops.
+- [x] Exercise CephFS/RBD write, fsync, and readback from every node. Each node wrote an 8 MiB CephFS file; all three
+      verified all three files. An 8 MiB RBD write on Altra passed checksum checks after fresh mounts on Turin and Ryzen.
+- [ ] Compare latency and throughput with the same baseline workload after cooling is fixed.
 
-The intended network block in `argocd/applications/rook-ceph/cluster-values.yaml` is below. Keep the existing
-`connections` settings. This is the cutover target, not an applied configuration; the checked-in values retain the
-default provider until the migration gates pass.
+The network block in `argocd/applications/rook-ceph/cluster-values.yaml` is below. The existing `connections`
+settings remain configured. Runtime acceptance requires the address, traffic, and data readback checks above.
 
 ```yaml
 cephClusterSpec:
@@ -115,8 +107,8 @@ cephClusterSpec:
       return the affected host to its original management path and verify disks, quorum, and Ceph before resuming writes.
       The Ceph migration procedure must prove its own recovery path; reverting one network field is not a recovery plan.
 
-Remaining: resolve Altra's cooling, sync the reviewed host and CNI configuration, and test the full storage path.
-Record PCIe capacity and switch peer identities, and resolve the Ceph migration gate before changing the provider.
+Remaining: finish the unchecked acceptance items. DNS from Turin's ordinary pod network timed out during installation;
+Altra and Ryzen answered the same Service DNS query. Investigate that primary-network issue separately.
 Check off a step only after its stated proof passes. Keep credentials, raw email, order numbers, and tracking IDs out of Git.
 
 Hardware references: [CRS504](https://mikrotik.com/product/crs504_4xq_in),
