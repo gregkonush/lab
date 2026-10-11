@@ -132,10 +132,21 @@ cephClusterSpec:
     # ampone/talos-192-168-1-203 control-plane slot.
     allowMultiplePerNode: false
 
-  # Keep talos-192-168-1-194 as control-plane only (mon node, no OSDs).
+  # Ceph's own services retain Ryzen as the third monitor failure domain.
+  # Application pods consuming Ceph PVCs do not receive this toleration.
   placement:
+    all:
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
     mon:
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule

@@ -14,6 +14,11 @@ spec:
         sidecar.istio.io/inject: "false"
     spec:
       automountServiceAccountToken: false
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       nodeSelector:
         runtime.proompteng.ai/kata-fc: ready
       containers:
