@@ -914,6 +914,7 @@ data:
               severity: critical
               service: ceph-storage
               team: platform
+              notify: email
             annotations:
               summary: Ceph cluster reports HEALTH_ERR
               description: Ceph has reported HEALTH_ERR continuously for 5 minutes.
@@ -925,6 +926,7 @@ data:
               severity: critical
               service: ceph-storage
               team: platform
+              notify: email
             annotations:
               summary: Ceph reports slow operations
               description: Ceph has reported one or more slow operations continuously for 5 minutes.
@@ -947,6 +949,7 @@ data:
               severity: critical
               service: ceph-storage
               team: platform
+              notify: email
             annotations:
               summary: Ceph OSD commit latency exceeds 150 ms
               description: The slowest Ceph OSD has sustained commit latency above 150 ms for 5 minutes.
