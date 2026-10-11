@@ -25,6 +25,7 @@ They are not current cluster instructions; follow `docs/repository-cleanup-todo.
 
 Runbooks:
 
+- [Hardware and network upgrade plan](docs/hardware-network-upgrade-plan.md) (received 100G parts, installation order, and Ceph migration gate)
 - `devices/galactic/releases/README.md` (Talos 1.14 and Kubernetes 1.37 rollout)
 - `devices/galactic/docs/add-control-plane-node.md`
 - `devices/galactic/docs/bootstrap-argocd.md`
