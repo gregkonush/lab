@@ -3,8 +3,10 @@
 Status: Both ConnectX-5 Ex cards have reported 100G carrier. Altra has also crossed its 105 C thermal warning threshold;
 resolve physical cooling before sustained traffic or Ceph cutover. The Omni template defines the two `storage0`
 interfaces and host addresses. Follow the [interface setup](../network/README.md#configure-the-storage-interfaces)
-and [Multus installation](../../../argocd/applications/multus/README.md). Ceph still uses Flannel until the migration
-gate below passes. Receipt evidence checked 2026-10-06.
+and [Multus installation](../../../argocd/applications/multus/README.md). The desired Ceph configuration selects the
+100G cluster network and retains the public Flannel network. The [ordered cutover](../network/ceph-100g-cutover.md)
+records the operator's explicit exception to the cooling and clean-PG gates, the temporary override, and its removal.
+Receipt evidence checked 2026-10-06.
 
 ## Parts received
 
@@ -89,9 +91,8 @@ are still `10.244.*`. Installing NICs or setting host IPs does not move that tra
       Verify traffic counters on the 100G ports during real writes, then CephFS/RBD write, fsync, and readback from every node.
       Compare latency and throughput with the same baseline workload. A 100G carrier does not prove a 100G Ceph path.
 
-The intended network block in `argocd/applications/rook-ceph/cluster-values.yaml` is below. Keep the existing
-`connections` settings. This is the cutover target, not an applied configuration; the checked-in values retain the
-default provider until the migration gates pass.
+The network block in `argocd/applications/rook-ceph/cluster-values.yaml` is below. The existing `connections`
+settings remain configured. Runtime acceptance requires the address, traffic, and data readback checks above.
 
 ```yaml
 cephClusterSpec:
@@ -115,8 +116,8 @@ cephClusterSpec:
       return the affected host to its original management path and verify disks, quorum, and Ceph before resuming writes.
       The Ceph migration procedure must prove its own recovery path; reverting one network field is not a recovery plan.
 
-Remaining: resolve Altra's cooling, sync the reviewed host and CNI configuration, and test the full storage path.
-Record PCIe capacity and switch peer identities, and resolve the Ceph migration gate before changing the provider.
+Remaining: resolve Altra's cooling and finish traffic and data acceptance. Record PCIe capacity, switch peer
+identities, measured throughput, and latency. Use the ordered cutover for any resumed migration.
 Check off a step only after its stated proof passes. Keep credentials, raw email, order numbers, and tracking IDs out of Git.
 
 Hardware references: [CRS504](https://mikrotik.com/product/crs504_4xq_in),
