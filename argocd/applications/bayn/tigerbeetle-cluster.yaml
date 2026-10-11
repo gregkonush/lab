@@ -15,6 +15,11 @@ spec:
   storage:
     className: local-path
     size: 100Gi
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   resources:
     requests:
       cpu: "2"

@@ -54,6 +54,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              authzed.com/cluster: ofz
+              authzed.com/cluster-component: spicedb
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: istio-system
           podSelector:
             matchLabels:
@@ -92,8 +103,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: nanoagent
-              app.kubernetes.io/component: microvm
+              app.kubernetes.io/name: tengri-slot
       ports:
         - protocol: TCP
           port: 8443
@@ -101,14 +111,13 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: tengri-microvm-guests
+  name: tengri-slots
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: nanoagent
-      app.kubernetes.io/component: microvm
+      app.kubernetes.io/name: tengri-slot
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -120,17 +129,6 @@ spec:
         - protocol: TCP
           port: 8443
   egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: spire-server
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: server
-              app.kubernetes.io/instance: spire
-      ports:
-        - protocol: TCP
-          port: 8081
     - to:
         - namespaceSelector:
             matchLabels:

@@ -37,12 +37,11 @@ spec:
         kubernetes.io/arch: amd64
       affinity:
         nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              preference:
-                matchExpressions:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
                   - key: kubernetes.io/hostname
-                    operator: In
+                    operator: NotIn
                     values:
                       - talos-192-168-1-194
       securityContext:
@@ -557,7 +556,7 @@ spec:
             pullPolicy: IfNotPresent
         - name: lab-toolchain-image
           image:
-            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:291dd5ab329b6814a77d20282fcbe5d9ea0c9d6f0b4933adb749c85795c3744c
+            reference: registry.ide-newton.ts.net/lab/hermes-toolchain@sha256:c097cab032c03df3d5c8560771bbc062435ff941d06b194155205646fe848861
             pullPolicy: IfNotPresent
         - name: tools
           emptyDir:

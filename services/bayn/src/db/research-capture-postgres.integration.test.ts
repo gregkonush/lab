@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Exit, Redacted, Result, Schema, type Scope } from 'effect'
+import { Clock, Effect, Exit, Redacted, Result, Schema, type Scope } from 'effect'
 
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
@@ -31,8 +31,13 @@ import {
   marketEvent,
   recoverCaptureFromStoredObjects,
 } from '../research-capture/capture.test-support'
-import { researchCaptureObjectKey, type ResearchCaptureObject } from '../research-capture/export'
+import {
+  decodeResearchCaptureExportChunk,
+  researchCaptureObjectKey,
+  type ResearchCaptureObject,
+} from '../research-capture/export'
 import { makeResearchCaptureRecorder } from '../research-capture/recorder'
+import { sessionConfig } from '../research-capture/session.test-support'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
 const fixture = Effect.gen(function* () {
@@ -84,6 +89,55 @@ const run = <A, E>(program: Effect.Effect<A, E, Effect.Services<typeof fixture> 
     ),
   )
 }
+
+postgresTest('a session claim commits before objects and a fresh attempt cannot reuse the fixed capture identity', () =>
+  run(
+    Effect.gen(function* () {
+      const { sql, store, chunk } = yield* fixture
+      const { captureId: _captureId, calendar: _calendar, sessionDate: _sessionDate, ...session } = sessionConfig
+      const now = yield* Clock.currentTimeMillis
+      const options = {
+        captureId: chunk.captureId,
+        sourceRevision: chunk.sourceRevision,
+        maximumQueuedReceipts: 1024,
+        maximumQueuedBytes: 4 * 1024 * 1024,
+        maximumReceiptBytes: 64 * 1024,
+        flushIntervalMs: 50,
+        writeTimeoutMs: 1000,
+        maximumObjectBytes: session.maximumObjectBytes,
+        maximumSqlBytes: session.maximumSqlBytes,
+        session: {
+          ...session,
+          startAtMs: now,
+          bootstrapDeadlineMs: now + 10_000,
+          coverageStartMs: now + 20_000,
+          coverageEndMs: now + 30_000,
+          stopAtMs: now + 31_000,
+        },
+      }
+      let objects = 0
+      const first = yield* makeResearchCaptureRecorder(store, options, {
+        putVerified: (object) =>
+          Effect.gen(function* () {
+            const claim = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
+            expect(claim.payload).toContain('session-attempt')
+            if (objects === 0)
+              expect(Result.getOrThrow(decodeResearchCaptureExportChunk(object)).metadata).toEqual(claim)
+            objects++
+          }),
+      })
+      const claimed = yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)
+      expect(objects).toBe(1)
+      const second = yield* makeResearchCaptureRecorder(store, options, {
+        putVerified: () => Effect.die('a reused claim must not write objects'),
+      })
+      expect((yield* second.status).invalidations).toContain(CaptureInvalidation.Persistence)
+      expect(yield* second.finish).toBeUndefined()
+      expect(yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)).toEqual(claimed)
+      expect((yield* first.finish)?.qualification).toBe(CaptureQualification.Unqualified)
+    }),
+  ),
+)
 
 postgresTest('SQL capture reads bound UTF8 payloads before returning and preserve exact hashes and text', () =>
   run(
@@ -263,7 +317,7 @@ postgresTest('durable SQL seal recovers raw objects after process state and seal
           return bucket.get(key)
         }),
       )
-      expect(reads).toHaveLength(4)
+      expect(reads).toHaveLength(3)
       expect(recovered.seal.exportRoot?.exportedChunks).toBe(1)
       expect(recovered.exportVerified).toBe(true)
       expect(recovered.structurallyClosed).toBe(true)

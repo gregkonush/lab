@@ -17,6 +17,7 @@ import { ControlExit, ControlPolicy } from './control-portfolio'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { residualShockDefinition } from './residual-shock'
 import { makeControlJevJournal } from './control-jev-journal'
+import { ControlInputCoverage, runControlPreflight } from './control-preflight'
 import {
   ControlManagementMode,
   ControlStudyInputSchema,
@@ -41,6 +42,7 @@ const simulate = (
     sessionDurationMs?: number
     routingLatencyMs?: number
     managedLatencyMs?: number
+    managedCleanupLatencyMs?: number
     residualShock?: boolean
     entrySize?: number
     canceledEntries?: boolean
@@ -181,7 +183,7 @@ const simulate = (
                         new Date(yield* providerClock.currentTimeMillis).toISOString(),
                         'hold',
                       )
-                    }),
+                    }).pipe(Effect.ensuring(providerClock.adjust(options.managedCleanupLatencyMs ?? 0))),
                 },
               },
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -220,10 +222,11 @@ const simulate = (
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
-test('scheduled accounting covers management work beyond close without inventing controller evidence', async () => {
+test('scheduled accounting covers canceled management cleanup beyond close without inventing controller evidence', async () => {
   const { report } = await simulate({
     accountScheduledOpportunities: true,
-    managedLatencyMs: 8 * 60_000,
+    managedLatencyMs: fixture.protocol.inferenceValidityMs,
+    managedCleanupLatencyMs: 8 * 60_000,
     sessionDurationMs: 37 * 60_000 + 45_000,
   })
   expect(report.simulatedOpportunityAccounting).toMatchObject({
@@ -675,10 +678,17 @@ test('a canceled residual-shock entry consumes the minute and unknown exit quote
   expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
 })
 
-test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+const compressedControlFixture = (body: string) => {
+  const compressed = gzipSync(body)
+  compressed[9] = 3
+  return compressed
+}
+
+const frozenControlFixture = () => {
   const retained = retainedReplayFixture()
   const source = {
     ...retained.manifest,
+    dataSha256: sha256(compressedControlFixture(retained.body)),
     coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
     coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
   }
@@ -729,12 +739,17 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
     },
   }
   const receipt = retainedReplayCaptureFixture(source)
+  return { retained, source, input, receipt }
+}
+
+test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+  const { retained, source, input, receipt } = frozenControlFixture()
   await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
       const arrivals = `${directory}/arrivals.ndjson.gz`
-      yield* fs.writeFile(arrivals, gzipSync(retained.body))
+      yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       const legacyV3 = yield* runControlStudy(
         {
@@ -746,11 +761,12 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         receipt,
         { mode: ControlManagementMode.Mechanical },
       )
+      // These synthetic reports bind config.build's active strategy identity, not historical v1 batches.
       expect([report.runId, report.reportHash, legacyV3.runId, legacyV3.reportHash]).toEqual([
-        '4bf32cd85cced9fef200083d643a3a837c9968f84712041e407f4b6705afc1be',
-        '459e3a6a045311f6e83f7a97296feb3c4da65ec5f98e043cf433f1dc28aaed3e',
-        '85229c530965ae8502eda1419fba41bc4217e45b14bb220cf1a959260da7203c',
-        '563aad78ecb75ab371da1bc903b24cb2653299314cb7859efb9f4e9f13bd25d1',
+        '20d7d1aa8054ce83de0a4011fa84755000efcd7b420b032e0dcbee234618355d',
+        '67eabe4e498f7f35471e5d12348b295a27e392b506cc9ec4ea21e13206fa2377',
+        '5113c1bb50e370a650d4eac6a5323ed3baf4db2bd82f9907cf0672f049edf65c',
+        'f5cbd605574c6931bdc43f2e1c11eaf067e50282d34d94aba925d0f25209982e',
       ])
       expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
       expect(report.sessions).toHaveLength(6)
@@ -786,8 +802,8 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         mode: ControlManagementMode.Mechanical,
       })
       expect([falsification.runId, falsification.reportHash]).toEqual([
-        '978cc19244679d09ed1c588b2ab7702cc032f28b6aae937ae238277b6f24e98c',
-        'bc5a34cf3a1968ccf9a707df8c146cc9b4fa083a85c880a6b7fcb9d3b6cc99af',
+        'a4a3ae2f30bf2f5e72eb074404888742e1142bc5b41fcefea0b11fc4b7c3e64f',
+        'ab0abf356884995e632e72bd49d5a7e74b64140977d3a8d409a27c2ff872632e',
       ])
       expect(falsification.sessions).toHaveLength(8)
       expect(falsification.sessions.filter((session) => session.policy === ControlPolicy.ResidualShock)).toHaveLength(2)
@@ -869,6 +885,13 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
       }
       const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
+      expect(managed.definition.schemaVersion).toBe('bayn.control-study-definition.v9')
+      expect(managed.runId).not.toBe(report.runId)
+      const registration = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(Schema.Struct({ definition: Schema.Unknown, runId: Schema.String })),
+      )(yield* fs.readFileString(`${evidenceDirectory}/registration.json`))
+      expect(registration.definition).toEqual(managed.definition)
+      expect(registration.runId).toBe(managed.runId)
       expect(managed.sessions).toHaveLength(6)
       expect(managed.sessions.every((session) => session.modelCallCount === 0)).toBeTrue()
       for (const session of managed.sessions)
@@ -904,7 +927,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
       const args = [
         'bun',
-        new URL('../../tools/control-study.ts', import.meta.url).pathname,
+        new URL('../control-study-command.ts', import.meta.url).pathname,
         '--input',
         `${directory}/input.json`,
         '--input-sha256',
@@ -923,18 +946,97 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
         (process) =>
           Effect.sync(() => {
             process.kill()
-          }),
+          }).pipe(Effect.andThen(Effect.promise(() => process.exited))),
       )
       const status = yield* Effect.promise(() => child.exited)
       const error = yield* Effect.promise(() => new Response(child.stderr).text())
       expect({ status, error }).toEqual({ status: 0, error: '' })
       const written = yield* fs.readFileString(`${directory}/report.json`)
       expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
-      yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+      yield* fs.writeFile(arrivals, compressedControlFixture(`${retained.body} `))
       const corrupt = yield* Effect.result(
         runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
       )
       expect(Result.isFailure(corrupt)).toBeTrue()
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())),
+      Effect.timeout('60 seconds'),
+    ),
   )
-}, 30_000)
+}, 70_000)
+
+test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
+  'offline %s preflight verifies source coverage and writes a diagnostic without provider configuration',
+  async (management) => {
+    const { retained, source, input: base, receipt } = frozenControlFixture()
+    const input = { ...base, management }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        const arrivals = `${directory}/arrivals.ndjson.gz`
+        yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
+        const preflight = yield* runControlPreflight(input, arrivals, receipt)
+        expect(preflight.classification).toBe('INPUT_COMPATIBILITY_ONLY')
+        expect(preflight.coverage).toBe(ControlInputCoverage.Incomplete)
+        expect(preflight.sourceReceipt).toEqual(receipt.value)
+        expect(preflight.sessions).toHaveLength(2)
+        expect(preflight.sessions.every((session) => session.scheduledPollCount === 780)).toBeTrue()
+        expect(
+          preflight.sessions.every(
+            (session) =>
+              session.scheduledPollCount ===
+              session.warmupPollCount + session.entryCutoffPollCount + session.eligiblePollCount,
+          ),
+        ).toBeTrue()
+        expect(preflight).not.toHaveProperty('orders')
+        expect(preflight.reportHash).toBe((yield* runControlPreflight(input, arrivals, receipt)).reportHash)
+        const inputText = JSON.stringify(input)
+        const receiptText = JSON.stringify({
+          schemaVersion: 'bayn.replay-source-capture.v1',
+          capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
+          origin: 'Independently frozen deterministic capture fixture',
+          coverageStartMs: source.coverageStartMs,
+          coverageEndMs: source.coverageEndMs,
+          universe: source.universe,
+          positions: source.positions,
+        })
+        yield* fs.writeFileString(`${directory}/input.json`, inputText)
+        yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
+        const preflightArgs = [
+          'bun',
+          new URL('../control-study-command.ts', import.meta.url).pathname,
+          '--input',
+          `${directory}/input.json`,
+          '--input-sha256',
+          sha256(inputText),
+          '--arrivals',
+          arrivals,
+          '--source-receipt',
+          `${directory}/receipt.json`,
+          '--source-receipt-sha256',
+          sha256(receiptText),
+          '--output',
+          `${directory}/preflight.json`,
+          '--mode',
+          'preflight',
+        ]
+        const preflightChild = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            Bun.spawn(preflightArgs, { stdout: 'pipe', stderr: 'pipe', env: { PATH: process.env['PATH'] } }),
+          ),
+          (process) => Effect.sync(() => process.kill()).pipe(Effect.andThen(Effect.promise(() => process.exited))),
+        )
+        const preflightStatus = yield* Effect.promise(() => preflightChild.exited)
+        const preflightError = yield* Effect.promise(() => new Response(preflightChild.stderr).text())
+        expect(preflightStatus).toBe(1)
+        expect(preflightError).toContain('Preflight input coverage is INCOMPLETE')
+        expect(yield* fs.readFileString(`${directory}/preflight.json`)).toBe(`${JSON.stringify(preflight, null, 2)}\n`)
+        yield* fs.writeFile(arrivals, compressedControlFixture(`${retained.body} `))
+        expect(Result.isFailure(yield* Effect.result(runControlPreflight(input, arrivals, receipt)))).toBeTrue()
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.timeout('25 seconds')),
+    )
+  },
+  30_000,
+)

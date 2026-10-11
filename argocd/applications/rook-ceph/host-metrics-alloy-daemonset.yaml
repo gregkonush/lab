@@ -25,6 +25,10 @@ spec:
       nodeSelector:
         kubernetes.io/os: linux
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule

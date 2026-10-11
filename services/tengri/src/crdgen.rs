@@ -44,12 +44,12 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
             {"rule": "self.spec.ownerHash == oldSelf.spec.ownerHash", "message": "ownerHash is immutable"},
             {"rule": "self.spec.architecture == oldSelf.spec.architecture", "message": "the server-selected architecture is immutable"},
             {
-                "rule": "self.spec.resources.workspaceGib == oldSelf.spec.resources.workspaceGib",
-                "message": "workspace size is immutable"
+                "rule": "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib",
+                "message": "workspace size cannot shrink"
             },
             {
-                "rule": "self.spec.createdAt == oldSelf.spec.createdAt && self.spec.expiresAt == oldSelf.spec.expiresAt",
-                "message": "creation and legacy expiry fields are immutable"
+                "rule": "self.spec.createdAt == oldSelf.spec.createdAt",
+                "message": "creation time is immutable"
             }
         ]),
     )?;
@@ -89,7 +89,32 @@ fn production_crd() -> anyhow::Result<CustomResourceDefinition> {
         json!(r"^[a-f0-9]{64}$"),
     )?;
 
+    let slot = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/slot/properties";
+    for field in ["name", "podUid", "pvcName", "pvcUid"] {
+        insert(&mut crd, &format!("{slot}/{field}"), "minLength", json!(1))?;
+        insert(&mut crd, &format!("{slot}/{field}"), "maxLength", json!(63))?;
+        insert(
+            &mut crd,
+            &format!("{slot}/{field}"),
+            "pattern",
+            json!(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"),
+        )?;
+    }
+    insert(&mut crd, &format!("{slot}/epoch"), "minimum", json!(1))?;
+    insert(
+        &mut crd,
+        &format!("{slot}/epoch"),
+        "maximum",
+        json!(i32::MAX),
+    )?;
+
     let resources = "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources";
+    insert(
+        &mut crd,
+        "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/power/properties/idleTimeoutMinutes",
+        "maximum",
+        json!(1440),
+    )?;
     for (field, allowed) in [
         ("cpuMillis", json!([crd::CPU_MILLIS])),
         ("memoryMib", json!([crd::MEMORY_MIB])),
@@ -136,6 +161,18 @@ mod tests {
         );
         assert_eq!(
             crd.pointer(
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/properties/workspaceGib/enum"
+            ),
+            Some(&json!([32]))
+        );
+        assert_eq!(
+            crd.pointer("/spec/versions/0/schema/openAPIV3Schema/x-kubernetes-validations/2/rule"),
+            Some(&json!(
+                "self.spec.resources.workspaceGib >= oldSelf.spec.resources.workspaceGib"
+            ))
+        );
+        assert_eq!(
+            crd.pointer(
                 "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/resources/additionalProperties"
             ),
             None,
@@ -160,10 +197,10 @@ mod tests {
         );
         assert_eq!(
             crd.pointer(
-                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt/default"
+                "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/expiresAt"
             ),
-            Some(&json!("")),
-            "legacy expiry defaults to an empty retained-workspace value"
+            None,
+            "the single snapshot runtime has no legacy expiry field"
         );
         assert!(
             !crd.pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec/required")

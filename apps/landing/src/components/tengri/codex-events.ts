@@ -49,6 +49,34 @@ type CodexTextSegment = {
 }
 export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
 
+export type SubmittedPrompt = { id: string; threadId: string; text: string; previousItemIds: ReadonlySet<string> }
+
+export function reconcileSubmittedPrompts(
+  items: readonly { id: string; kind: TengriCodexEventKind; text: string }[],
+  submitted: readonly SubmittedPrompt[],
+) {
+  const acknowledged = new Set<string>()
+  const matchedItems = new Set<string>()
+  const pending: { prompt: SubmittedPrompt; beforeItemId: string | undefined }[] = []
+  const normalize = (text: string) => text.replace(/\[Local image: [^\]]*\]/g, '[Image]').trim()
+  for (const prompt of submitted) {
+    const match = items.find(
+      (item) =>
+        item.kind === 'user-message' &&
+        !prompt.previousItemIds.has(item.id) &&
+        !matchedItems.has(item.id) &&
+        normalize(item.text) === normalize(prompt.text),
+    )
+    if (match) {
+      acknowledged.add(prompt.id)
+      matchedItems.add(match.id)
+    } else {
+      pending.push({ prompt, beforeItemId: items.find((item) => !prompt.previousItemIds.has(item.id))?.id })
+    }
+  }
+  return { acknowledged, matchedItemIds: matchedItems, pending }
+}
+
 export function appendCodexEvent(
   current: CodexBufferedEvent[],
   event: CodexBufferedEvent,
@@ -58,6 +86,12 @@ export function appendCodexEvent(
   if (resolvedApprovalId) {
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
     return next.length === current.length ? current : next
+  }
+  if (event.method === 'turn/completed' && event.turnId) {
+    current = current.filter(
+      (candidate) =>
+        candidate.kind !== 'approval' || candidate.threadId !== event.threadId || candidate.turnId !== event.turnId,
+    )
   }
   if (isRawReasoningDelta(event)) return current
   const key = codexEventKey(event)
@@ -112,7 +146,9 @@ export function appendCodexEvent(
   }
 
   return [
-    ...current.slice(-(MAX_CODEX_EVENTS - 1)),
+    ...current.filter(
+      (candidate, index) => index >= current.length - MAX_CODEX_EVENTS + 1 || candidate.kind === 'approval',
+    ),
     isDeltaEvent(event)
       ? {
           ...event,
@@ -200,7 +236,12 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   const params = record(raw.params)
   const item = record(params.item)
 
-  if (event.kind === 'approval') return approvalDisplayText(params, event.text)
+  if (event.kind === 'approval') {
+    const text = approvalDisplayText(params, event.text)
+    return raw.rawOmitted === true && event.method === 'mcpServer/elicitation/request'
+      ? `${text}\nArguments were omitted because the request is too large to display.`
+      : text
+  }
   if (event.kind === 'usage') return usageDisplayText(params) || event.text
 
   const eventText =
@@ -215,9 +256,26 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   return ''
 }
 
+export function codexApprovalTitle(event: TengriCodexEvent): string | undefined {
+  if (event.kind !== 'approval' || event.method !== 'mcpServer/elicitation/request') return undefined
+  const params = record(parseRawEvent(event.rawJson).params)
+  const meta = record(params._meta)
+  return params.serverName === 'tengri_browser' && meta.codex_approval_kind === 'mcp_tool_call'
+    ? 'Allow browser control?'
+    : undefined
+}
+
 export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDecision[] {
   if (event.kind !== 'approval') return []
   const params = record(parseRawEvent(event.rawJson).params)
+  if (event.method === 'mcpServer/elicitation/request') {
+    const meta = record(params._meta)
+    if (meta.codex_approval_kind !== 'mcp_tool_call') return []
+    const persist = meta.persist
+    return persist === 'session' || (Array.isArray(persist) && persist.includes('session'))
+      ? ['approve-once', 'approve-session', 'deny']
+      : ['approve-once', 'deny']
+  }
   const available = params.availableDecisions
   if (event.method.toLowerCase() !== 'item/commandexecution/requestapproval' || available == null) {
     return [...DEFAULT_CODEX_APPROVAL_DECISIONS]
@@ -245,7 +303,7 @@ export function codexEventMatchesThread(event: TengriCodexEvent, threadId: strin
   return !event.threadId || event.threadId === threadId
 }
 
-function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
+export function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent) {
   return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
 }
 
@@ -347,20 +405,6 @@ export function codexResumeCommitIsCurrent(
   currentThreadId: string,
 ) {
   return requestGeneration === currentGeneration && requestedThreadId === currentThreadId
-}
-
-export function codexCanStartNewConversation({
-  activeTurnId,
-  recovering,
-  submitting,
-  threadReady,
-}: {
-  activeTurnId: string
-  recovering: boolean
-  submitting: boolean
-  threadReady: boolean
-}) {
-  return !recovering && !submitting && (!activeTurnId || !threadReady)
 }
 
 export function codexActiveTurnIdFromThread(rawJson: string) {
@@ -518,6 +562,22 @@ function userInputText(value: unknown) {
 }
 
 function approvalDisplayText(params: Record<string, unknown>, eventText: string) {
+  const meta = record(params._meta)
+  if (meta.codex_approval_kind === 'mcp_tool_call') {
+    const argumentsText = prettyJson(meta.tool_params)
+    const persist = meta.persist
+    const sessionScope = persist === 'session' || (Array.isArray(persist) && persist.includes('session'))
+    return truncateEventText(
+      [
+        string(params.message) || eventText,
+        string(meta.tool_description),
+        argumentsText && `Arguments:\n${argumentsText}`,
+        sessionScope && 'Session approval applies to this tool for the current session.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+  }
   const command = commandText(params.command)
   const reason = string(params.reason) || (!command ? eventText : '')
   const cwd = string(params.cwd)
@@ -1038,11 +1098,11 @@ function isRawReasoningDelta(event: TengriCodexEvent) {
   return event.method.toLowerCase() === 'item/reasoning/textdelta'
 }
 
-function codexEventKey(event: TengriCodexEvent) {
+export function codexEventKey(event: TengriCodexEvent) {
   return `${event.sequence}:${event.method}:${event.threadId}:${event.turnId}:${event.itemId}:${event.approvalId}`
 }
 
-function codexResolvedApprovalId(event: TengriCodexEvent) {
+export function codexResolvedApprovalId(event: TengriCodexEvent) {
   if (event.method.toLowerCase() !== 'serverrequest/resolved') return ''
   const requestId = record(parseRawEvent(event.rawJson).params).requestId
   if (typeof requestId === 'string') return boundedIdentifier(requestId, 256)

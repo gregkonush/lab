@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { ExecutionControllerTickSchema } from '../execution/controller'
+import { JevObservationReferencesSchema } from '../cycle/runner/pass-observation'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import { sha256 } from '../hash'
 import {
@@ -38,6 +39,11 @@ export enum CaptureInvalidation {
   ClockReversed = 'CLOCK_REVERSED',
   ControllerReplay = 'CONTROLLER_REPLAY_AMBIGUITY',
   Finalization = 'FINALIZATION_FAILED_OR_UNKNOWN',
+  ByteLimit = 'SESSION_BYTE_LIMIT',
+  MissedBootstrap = 'SESSION_BOOTSTRAP_MISSED',
+  Deadline = 'SESSION_DEADLINE_WITHOUT_CUT',
+  WorkerReplaced = 'SESSION_WORKER_REPLACED',
+  OutsideWindow = 'SESSION_START_OUTSIDE_WINDOW',
 }
 
 const PositionSchema = Schema.Struct({
@@ -59,6 +65,18 @@ export const CaptureIntervalRequestSchema = Schema.Struct({
   ).check(Schema.isMinLength(1), Schema.isMaxLength(128)),
 })
 export type CaptureIntervalRequest = typeof CaptureIntervalRequestSchema.Type
+
+export const CaptureSessionDeclarationSchema = Schema.Struct({
+  ...CaptureIntervalRequestSchema.fields,
+  startAtMs: NonNegativeIntegerSchema,
+  bootstrapDeadlineMs: NonNegativeIntegerSchema,
+  stopAtMs: NonNegativeIntegerSchema,
+  calendarSnapshotId: Sha256Schema,
+  calendarObservedAt: UtcInstantSchema,
+  calendarHash: Sha256Schema,
+  maximumObjectBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(24 * 1024 ** 3)),
+  maximumSqlBytes: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10 * 1024 ** 3)),
+})
 
 export const CaptureIntervalCutSchema = Schema.Struct({
   kind: Schema.Literal('consumer-interval-cut'),
@@ -149,6 +167,11 @@ export const restoreKafkaTransportTimestamp = (
 export const ResearchCaptureEventSchema = Schema.Union([
   CaptureIntervalCutSchema,
   Schema.Struct({
+    kind: Schema.Literal('session-attempt'),
+    attemptId: StrictNonEmptyStringSchema,
+    session: CaptureSessionDeclarationSchema,
+  }),
+  Schema.Struct({
     kind: Schema.Literal('market-record'),
     consumerEpoch: StrictNonEmptyStringSchema,
     consumerSequence: PositiveIntegerSchema,
@@ -201,6 +224,7 @@ export const ResearchCaptureEventSchema = Schema.Union([
     delayMs: Schema.optionalKey(NonNegativeIntegerSchema),
     completedAt: Schema.optionalKey(UtcInstantSchema),
     receiptHash: Schema.optionalKey(Sha256Schema),
+    jevObservationReferences: Schema.optionalKey(JevObservationReferencesSchema),
     runtimeAttempted: Schema.optionalKey(Schema.Boolean),
     reason: Schema.optionalKey(StrictNonEmptyStringSchema),
   }),
@@ -225,8 +249,8 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
 const ResearchCaptureExportRootSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v1'),
-  lastIndexHash: Schema.NullOr(Sha256Schema),
+  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v2'),
+  lastChunkHash: Schema.NullOr(Sha256Schema),
   exportedChunks: NonNegativeIntegerSchema,
 })
 
@@ -285,7 +309,7 @@ export const decodeResearchCaptureSeal = (input: ResearchCaptureBytes) =>
     if (
       seal.exportRoot !== undefined &&
       (seal.exportRoot.exportedChunks !== seal.persistedChunks ||
-        (seal.persistedChunks === 0 ? seal.exportRoot.lastIndexHash !== null : seal.exportRoot.lastIndexHash === null))
+        (seal.persistedChunks === 0 ? seal.exportRoot.lastChunkHash !== null : seal.exportRoot.lastChunkHash === null))
     )
       return yield* Result.fail(fail('Export root differs from the exact persisted chunk frontier'))
     return seal
@@ -305,6 +329,7 @@ export const verifyResearchCapturePrefix = (
     let completeSequence = true
     const consumers = new Map<string, number>()
     let activeEpoch: string | undefined
+    let declaredSession: typeof CaptureSessionDeclarationSchema.Type | undefined
     for (const [ordinal, bytes] of chunks.entries()) {
       const chunk = yield* decodeResearchCaptureChunk(bytes)
       if (
@@ -321,7 +346,31 @@ export const verifyResearchCapturePrefix = (
         sequence = receipt.sequence
         lastAtMs = receipt.observedAtMs
         const event = receipt.event
-        if (event.kind === 'consumer-boundary') {
+        if (event.kind === 'session-attempt') {
+          if (
+            ordinal !== 0 ||
+            receipt.sequence !== 1 ||
+            chunk.receipts.length !== 1 ||
+            receipt.observedAtMs < event.session.startAtMs ||
+            event.session.startAtMs >= event.session.bootstrapDeadlineMs ||
+            receipt.observedAtMs >= event.session.bootstrapDeadlineMs ||
+            event.session.bootstrapDeadlineMs >= event.session.coverageStartMs ||
+            event.session.coverageStartMs >= event.session.coverageEndMs ||
+            event.session.coverageEndMs >= event.session.stopAtMs
+          )
+            return yield* Result.fail(fail('A session attempt must be the sole first receipt in its claim chunk'))
+          declaredSession = event.session
+        } else if (event.kind === 'consumer-interval-cut' && declaredSession !== undefined) {
+          if (
+            event.intervalId !== declaredSession.intervalId ||
+            event.coverageStartMs !== declaredSession.coverageStartMs ||
+            event.coverageEndMs !== declaredSession.coverageEndMs ||
+            event.universeHash !== declaredSession.universeHash ||
+            JSON.stringify(event.expectedPartitions) !== JSON.stringify(declaredSession.expectedPartitions) ||
+            receipt.observedAtMs >= declaredSession.stopAtMs
+          )
+            return yield* Result.fail(fail('Capture cut differs from its fixed session declaration or stop deadline'))
+        } else if (event.kind === 'consumer-boundary') {
           if (event.phase === 'STARTED') {
             if (activeEpoch !== undefined || consumers.has(event.consumerEpoch))
               return yield* Result.fail(fail('Capture consumer epochs overlap or restart without a new identity'))

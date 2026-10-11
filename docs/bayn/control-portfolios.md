@@ -1,15 +1,47 @@
 # Full-session development control portfolios
 
-`services/bayn/tools/control-study.ts` evaluates deterministic controls over complete retained sessions. Each
+`bayn-control-study` evaluates deterministic controls over complete retained sessions. Each
 portfolio owns cash, inventory, execution fees, daily turnover, exit triggers, and completed position episodes.
 It evaluates opportunities from its own position state, including periods when the original Jev replay held a
 position. It never synthesizes Jev responses or supplies production trading authority.
+
+The Bayn image installs this command and its compiled Node entry point. For local work, build the component and run
+`node services/bayn/dist/control-study-command.js` with the same flags. The former source-tree tool is removed.
+`--help` requires no credentials. `--mode preflight` verifies the supplied source and writes coverage diagnostics
+without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
+Installing the command does not schedule a capture, run a study, or qualify the input.
 
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). Management must be selected explicitly: `MECHANICAL`
 removes model decisions, while `JEV` gives each repeated control its own native Jev management. The retained close
 control always uses its original close lifecycle. The full acceptance experiment still needs frozen control
 definitions, calibrated timing and execution assumptions, and untouched prospective sessions.
+
+## Offline input preflight
+
+Run the command with `--mode preflight` and the same pinned input, arrivals and source receipt before an economic
+study. It writes `bayn.control-input-preflight.v1` to the new `--output` path without selecting signals, constructing
+a portfolio, computing returns, calling Jev or opening a broker or database connection. This also works for a `JEV`
+study input without an API key. Do not supply `--evidence-directory` in preflight mode.
+
+The checker uses one source cursor across sessions and retains the source reader's whole-file verification and
+replay checks. It uses the control runner's entry query and native snapshot constructor for every session-anchored
+entry-eligible poll across the complete candidate universe. It
+does not skip a repeated minute window after a successful observation or model a held position. Warmup and cutoff
+polls remain in the denominator. Per-session counts distinguish unavailable snapshots from candidate-local
+exclusions, and retain the first native failure message and observation time for each failure reason.
+
+`COMPLETE` requires at least one eligible poll per session and no missing snapshot or candidate exclusion.
+`INCOMPLETE` and `NO_ELIGIBLE_POLLS` write the diagnostic report and then exit nonzero. A malformed or corrupt source
+fails before a report is written, including corruption after the last inspected poll. Output files are never
+overwritten. This is a strict input-coverage screen, not a replacement for production candidate-local admission.
+An available benchmark with every candidate excluded cannot pass it. Partial coverage is not a zero-return result.
+
+The original source receipt is retained unchanged. A complete screen does not establish original stream
+availability, prospective completeness, executable liquidity, calibrated latency, costs or profitability. Keep the
+input and diagnostic output private, outside Git and CI artifacts. Omitting `--mode`, or using `--mode study`, retains
+the existing study behavior, input versions, report definitions and identities. Preflight never starts that study
+automatically.
 
 ## Fixed policies
 
@@ -145,6 +177,19 @@ The management pass advances its deadline clock without reading historical sourc
 the source and equity marks catch up to that clock, including on failure. Replay parsing time never becomes model
 latency or changes the management deadline.
 
+Jev management definition `bayn.control-study-definition.v9` bounds the complete observation, inference and journal
+pass using the independent provider clock. Its deadline is the earlier of model validity and the first-fill maximum
+hold. Cancellation waits for cleanup and retains its elapsed time. A hold or model exit cannot commit at or after
+that deadline; the session then rechecks its mechanical exit. Received usage stays priced even when receipt
+persistence crosses the deadline; interrupted calls without usage remain unknown. Existing Jev reports retain
+their original bytes and identities. Run a new registered study with the corrected executable and definition for
+comparisons. Mechanical definitions and reports are unchanged by this correction.
+Journal operations retain their serial permit and scoped file cleanup without masking the complete operation from
+cancellation. Interruption can leave an uncertain durable prefix, so it permanently invalidates that journal and
+forbids further observation, batch or request work. Preserve the interrupted directory and start a new registered
+experiment; never resume it or infer a successful write from an existing file. Received-call retention and file
+finalizers still drain before management returns, and their elapsed time remains measured.
+
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
 mark records broker equity and net equity after cumulative external expenses separately. Broker equity and its
@@ -232,7 +277,7 @@ The empty object above is a placeholder for the validated native document. Freez
 scenarios before viewing their outcomes. Preserve negative and incomplete results.
 
 ```sh
-bun services/bayn/tools/control-study.ts \
+bayn-control-study \
   --input /absolute/path/control-input.json \
   --input-sha256 <sha256-of-input-bytes> \
   --arrivals /absolute/path/arrivals.ndjson.gz \

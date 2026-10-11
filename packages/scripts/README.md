@@ -7,6 +7,8 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 - Bun 1.4.2 (matches repo toolchain)
 - Prometheus `promtool` 3.5.0 on `PATH` (or `PROMTOOL` set to its executable) for real Bayn alert-rule evaluation;
   CI installs the checksum-pinned standalone release tool
+- Grafana Alloy 1.19.2 on `PATH` (or `ALLOY` set to its executable) for native Bayn RGW receipt filtering;
+  CI installs the checksum-pinned release matching the deployed collector
 - Required CLIs noted per script available on `PATH`
 - Authenticated GitHub CLI (`gh auth status`) for GitHub integrations
 - Kubernetes/Argo credentials when triggering infrastructure workflows
@@ -49,6 +51,21 @@ Application in `argocd`. Kargo writes the exact digest and build/provenance meta
 syncs that branch; no script, SHA bump, deployment PR, release branch, Image Updater, or manual `kubectl apply` is part
 of the normal path. See
 [`docs/release-automation.md`](../../docs/release-automation.md) for enrollment, evidence, and recovery.
+
+## PR input selection
+
+`src/ci/affected-inputs.ts` runs through `.github/actions/affected-inputs` before expensive Bun service and image jobs.
+Each target declares its installed workspaces and source paths. The planner compares PR merge-base and head lockfiles,
+following dependencies, optional dependencies, peers, and linked workspaces. An unrelated workspace manifest or lockfile
+change skips the target. Changes to its resolved packages, integrity, shared source, or build configuration still run it.
+Unsupported lockfiles and unresolved required dependencies fail the planner instead of silently skipping validation.
+
+Push events retain path-based selection because Kargo requires groups of published images at one source revision.
+Manual selection retains each workflow's existing controls. Native Tengri images watch their Go and Rust build inputs
+and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
+use the root Bun lockfile.
+
+Run the planner regressions with `bun test packages/scripts/src/ci/__tests__/affected-inputs.test.ts`.
 
 ## Testing & linting
 

@@ -59,6 +59,7 @@ import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeRecoveryClockFixture } from './recovery-clock.test-support'
 import { BrokerRead } from '../broker/alpaca'
 import {
   AuthorityGenerationStore,
@@ -97,6 +98,7 @@ durableTest.each(
       'fallback',
       'missing-benchmark',
       'no-trade',
+      'no-signal-missing-source',
       'no-trade-finalization',
       'missing-calendar',
       'failed-model-response',
@@ -140,7 +142,10 @@ durableTest.each(
     const clockDelay = scenario === 'measured-clock-delay-reentry'
     const slippedExit = scenario === 'measured-slipped-exit-reentry'
     const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || clockDelay || slippedExit
-    const noTrade = scenario === 'no-trade' || scenario === 'no-trade-finalization'
+    const noTrade =
+      scenario === 'no-trade' || scenario === 'no-trade-finalization' || scenario === 'no-signal-missing-source'
+    // Only these two symbols have positive own and benchmark-relative fixture momentum.
+    const eligibleEntrySymbols = ['AAPL', 'AMZN']
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
@@ -186,9 +191,11 @@ durableTest.each(
                 ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
                 : []),
             ]
-          : scenario === 'no-trade-finalization'
-            ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
-            : []
+          : scenario === 'no-trade'
+            ? [{ at: initialAtMs + 1, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0 }]
+            : scenario === 'no-trade-finalization'
+              ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+              : []
     const lifecycleArrivals = lifecycleObservations
       .flatMap(({ at, fullWindow, offset, bidSize, premium }) => {
         const windowEnd = Math.floor(at / 60_000) * 60_000
@@ -204,7 +211,7 @@ durableTest.each(
         const original = makeIntradayMomentumTestSnapshot(
           protocol,
           { ...query, archiveWatermarks: [] },
-          { AAPL: premium, AMZN: 0.01 },
+          noTrade ? {} : { AAPL: premium, AMZN: 0.01 },
           100,
           { AAPL: bidSize },
         )
@@ -397,7 +404,7 @@ durableTest.each(
               retain: (call) =>
                 Effect.gen(function* () {
                   measuredCalls.push(call)
-                  if (scenario === 'measured-entry-expired' && measuredCalls.length === 15)
+                  if (scenario === 'measured-entry-expired' && measuredCalls.length === eligibleEntrySymbols.length)
                     yield* providerClock.adjust(11_000)
                 }),
             })
@@ -758,7 +765,7 @@ durableTest.each(
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
           }
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
-          expect(measuredCalls).toHaveLength(30)
+          expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length * 2)
           expect(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
@@ -817,7 +824,13 @@ durableTest.each(
           ).toEqual({ completion: 'COMPLETE', issues: [] })
           return { _tag: 'Coverage' as const }
         }
-        if (scenario === 'missing-benchmark' || scenario === 'no-trade' || scenario === 'failed-model-response') {
+        if (
+          scenario === 'missing-benchmark' ||
+          scenario === 'no-trade' ||
+          scenario === 'no-signal-missing-source' ||
+          scenario === 'failed-model-response'
+        ) {
+          if (scenario === 'no-trade') yield* advanceMarketTo(initialMs + 1)
           const schedule = yield* driveReplaySession(
             runtime,
             (at) =>
@@ -847,7 +860,7 @@ durableTest.each(
           if (scenario !== 'no-trade') {
             expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
             expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
-            if (scenario === 'failed-model-response') {
+            if (scenario === 'failed-model-response' || scenario === 'no-signal-missing-source') {
               expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
               expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
             }
@@ -855,6 +868,10 @@ durableTest.each(
             expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeGreaterThan(0)
             expect(schedule.unavailableDecisionPassCount).toBe(0)
             expect(assessment).toEqual({ completion: 'COMPLETE', issues: [] })
+          }
+          if (scenario === 'no-trade' || scenario === 'no-signal-missing-source') {
+            expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([{ calls: 0 }])
+            expect(yield* sql`SELECT count(*)::int AS batches FROM jev_batch_results`).toEqual([{ batches: 1 }])
           }
           return { _tag: 'Coverage' as const }
         }
@@ -897,19 +914,41 @@ durableTest.each(
               message: 'Recovery proof operation failed',
               cause,
             })
-          const reconcile = advanceBy(1).pipe(
-            Effect.andThen(runtime.reconcile),
-            Effect.andThen(advanceBy(1)),
-            Effect.asVoid,
-            Effect.mapError(asOperational),
-          )
+          const recoveryClock = yield* makeRecoveryClockFixture(advanceBy(1))
+          const reconcile = recoveryClock.reconcile(runtime.reconcile).pipe(Effect.mapError(asOperational))
           const settle = recoverTerminalGenerationToObserve({
             accountId,
             blockedIntents,
-            authorityStore: store.authorityGeneration,
+            authorityStore: {
+              ...store.authorityGeneration,
+              ensureAuthorityGeneration: (request) =>
+                recoveryClock.authority(store.authorityGeneration.ensureAuthorityGeneration(request)),
+            },
             writerFence: fence,
             reconcileAfterSettlement: reconcile,
-          })
+          }).pipe(
+            Effect.tapError((error) =>
+              error.message !== 'terminal generation OBSERVE rollover failed'
+                ? Effect.void
+                : sql`SELECT
+                to_char(${clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS database_clock,
+                to_char(state.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS authority_updated_at,
+                to_char(reconciliation.reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS reconciled_at
+              FROM authority_state AS state
+              LEFT JOIN LATERAL (
+                SELECT reconciled_at FROM reconciliations WHERE account_id = ${accountId}
+                ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1
+              ) AS reconciliation ON true
+              WHERE state.singleton`.pipe(
+                    Effect.flatMap((timestamps) =>
+                      Effect.logWarning('Recovery fixture clock evidence sampled after failure').pipe(
+                        Effect.annotateLogs({ scenario, timestamps }),
+                      ),
+                    ),
+                    Effect.ignoreCause,
+                  ),
+            ),
+          )
           let lostResponses = 0
           const openOwner = (generationHash: string, mode: 'Mutation' | 'CloseOnly', loseResponse = false) =>
             Effect.gen(function* () {
@@ -927,6 +966,7 @@ durableTest.each(
               )
               const engine = yield* makeTradingEngine({
                 authority,
+                riskPolicyHash: generation.riskPolicyHash,
                 executionMode: mode,
                 cycle: {
                   accountId,
@@ -1144,7 +1184,7 @@ durableTest.each(
         yield* runtime.reconcile
         if (scenario === 'measured-entry-expired') {
           const state = yield* broker.snapshot
-          expect(measuredCalls).toHaveLength(15)
+          expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length)
           expect(measuredCalls.every((call) => call.outcome.status === 'RECEIVED')).toBe(true)
           expect(state.orders).toHaveLength(0)
           expect(state.fills).toHaveLength(0)
@@ -1154,7 +1194,7 @@ durableTest.each(
             yield* sql`SELECT (SELECT count(*)::int FROM intents) AS intents,
               (SELECT count(*)::int FROM jev_evaluation_requests) AS requests,
               (SELECT count(*)::int FROM jev_batch_results) AS batches`,
-          ).toEqual([{ intents: 0, requests: 15, batches: 1 }])
+          ).toEqual([{ intents: 0, requests: eligibleEntrySymbols.length, batches: 1 }])
           return { _tag: 'Expired' as const }
         }
         if (
@@ -1211,12 +1251,12 @@ durableTest.each(
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
-            expect(measuredCalls).toHaveLength(16)
+            expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length + 1)
             const entryCalls = measuredCalls.filter((call) => {
               const action = call.request.questions['action']
               return action?.type === 'choice' && 'enter' in action.criteria
             })
-            expect(entryCalls).toHaveLength(15)
+            expect(entryCalls).toHaveLength(eligibleEntrySymbols.length)
             for (const call of measuredCalls) {
               expect(call.outcome.status).toBe('RECEIVED')
               expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBeGreaterThanOrEqual(
@@ -1352,6 +1392,7 @@ durableTest.each(
           ).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
           return { _tag: 'ManagementUnavailable' as const }
         }
+        let managementStartedAt = yield* currentUtcInstant
         let waiting = yield* runtime.advance
         for (
           let attempt = 0;
@@ -1361,13 +1402,27 @@ durableTest.each(
           const nextMs = (yield* Clock.currentTimeMillis) + 1000
           yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
           yield* TestClock.setTime(nextMs)
+          managementStartedAt = yield* currentUtcInstant
           waiting = yield* runtime.advance
         }
+        const entryFill = (yield* broker.snapshot).fills.find((fill) => fill.side === OrderSide.Buy)
+        if (entryFill === undefined) throw new Error('Held-position wait requires its actual entry fill')
         expect(waiting.result).toMatchObject({
           outcome: 'RECOVERED',
           action: 'WAITING',
           waitReason: 'JEV_POSITION_HELD',
+          maximumHoldDueAt: utcInstantFromEpochMillis(
+            Date.parse(entryFill.transactionTime) + protocol.maximumHoldingMinutes * 60_000,
+          ),
         })
+        if (waiting.result?.outcome !== 'RECOVERED' || waiting.result.action !== 'WAITING')
+          throw new Error('Expected the full execution cycle to forward its held-position wait')
+        expect(typeof waiting.result.maximumHoldEvaluatedAt).toBe('string')
+        const evaluatedMs = Date.parse(waiting.result.maximumHoldEvaluatedAt ?? '')
+        expect(evaluatedMs).toBeGreaterThanOrEqual(Date.parse(managementStartedAt))
+        expect(evaluatedMs).toBeLessThanOrEqual(Date.parse(waiting.result.observedAt))
+        expect(waiting.nextWakeAt).toBe(waiting.result.maximumHoldDueAt)
+        expect(waiting.nextDelayMs).toBeGreaterThan(0)
         const recreated = yield* createRuntime
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
         const frozenAt = yield* Clock.currentTimeMillis

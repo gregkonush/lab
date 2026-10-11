@@ -7,6 +7,24 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
+  test('power settings enforce integer idle limits and reject modes that retain RAM', () => {
+    const action = { action: 'update-power-settings', agentId: 'agent-test' }
+    for (const idleTimeoutMinutes of [0, 5, 60, 1440]) {
+      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(true)
+    }
+    for (const idleTimeoutMinutes of [-1, 0.5, 1441, '60', null]) {
+      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(false)
+    }
+    expect(
+      tengriActionSchema.safeParse({ ...action, power: { sleepMode: 'hibernate', idleTimeoutMinutes: 60 } }).success,
+    ).toBe(false)
+    expect(
+      tengriActionSchema.safeParse({
+        ...action,
+        power: { idleTimeoutMinutes: 60, ownerHash: 'other' },
+      }).success,
+    ).toBe(false)
+  })
   test('accepts model options on conversation operations and rejects invalid choices', () => {
     for (const action of [
       { action: 'create-thread', agentId: 'agent-test' },
@@ -29,12 +47,13 @@ describe('Tengri BFF action schema', () => {
   })
 
   test('validates editor window identity and rejects editor ports in ordinary previews', () => {
+    expect(tengriActionSchema.safeParse({ action: 'browser-session', agentId: 'agent-test' }).success).toBe(true)
     const editor = { action: 'editor-session', agentId: 'agent-test', windowId: 'desktop-stable-code-window' }
     expect(tengriActionSchema.safeParse(editor).success).toBe(true)
     for (const windowId of ['short', '../arbitrary-window-path', 'a'.repeat(129)]) {
       expect(tengriActionSchema.safeParse({ ...editor, windowId }).success).toBe(false)
     }
-    for (const port of [13337, 13338]) {
+    for (const port of [13337, 13338, 13339]) {
       expect(
         tengriActionSchema.safeParse({
           action: 'preview-session',

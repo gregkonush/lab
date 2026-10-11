@@ -25,7 +25,7 @@ import {
   type MatchedTerms,
 } from './matched-entry-lifecycle'
 import { prepareSignalStudyBatch, SignalScreenRule, SignalStudyFailure, SignalStudyInputSchema } from './signal-study'
-import { openBacktestSource, type BacktestSourceReceipt } from './source'
+import { openBacktestSource, type BacktestSourceManifest, type BacktestSourceReceipt } from './source'
 
 export enum MatchedDataRole {
   Development = 'DEVELOPMENT',
@@ -39,7 +39,8 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v1',
+  schemaVersion: 'bayn.matched-entry-definition.v2',
+  sourceComparison: 'bayn.matched-model-input-material.v2',
   sessions: 5,
   minimumDifferentSelections: 20,
   budgetMicros: '10000000000',
@@ -264,6 +265,24 @@ export const summarizeMatchedPairs = (
 // Native receipt sequencing differs from a capture cursor. Compare exact selected market payloads
 // and feature source coordinates, while preserving native provenance in the original observation.
 export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => ({
+  context: {
+    observedAt: String(intradayInstantNanos(snapshot.manifest.observedAt)),
+    rangeStartAt: String(intradayInstantNanos(snapshot.manifest.rangeStartAt)),
+    rangeEndAt: String(intradayInstantNanos(snapshot.manifest.rangeEndAt)),
+    sessionDate: snapshot.manifest.sessionDate,
+    feed: snapshot.manifest.feed,
+    delayClass: snapshot.manifest.delayClass,
+    maximumQuoteAgeMs: snapshot.manifest.maximumQuoteAgeMs,
+    candidateSymbols: snapshot.manifest.candidateSymbols ?? [],
+    candidateEvidencePolicy: snapshot.manifest.candidateEvidencePolicy ?? null,
+    session: snapshot.manifest.calendar.sessions
+      .filter((session) => session.date === snapshot.manifest.sessionDate)
+      .map((session) => ({
+        date: session.date,
+        openAt: String(intradayInstantNanos(session.openAt)),
+        closeAt: String(intradayInstantNanos(session.closeAt)),
+      })),
+  },
   bars: snapshot.bars.map((row) => ({
     ...row,
     eventAt: String(intradayInstantNanos(row.eventAt)),
@@ -287,7 +306,27 @@ export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => 
     offset,
     value,
   })),
+  technical:
+    snapshot.manifest.streaming.technical === undefined
+      ? null
+      : {
+          topic: snapshot.manifest.streaming.technical.topic,
+          features: snapshot.manifest.streaming.technical.features.map(({ topic, partition, offset, value }) => ({
+            topic,
+            partition,
+            offset,
+            value,
+          })),
+        },
 })
+
+export const matchedSourceCompletenessProblems = (source: BacktestSourceManifest): string[] => {
+  const problems: string[] = []
+  if (source.transport !== 'captured-kafka' && source.transport !== 'original-capture')
+    problems.push('original-stream-arrivals-not-observed')
+  if ((source.archiveUnobservedPartitions?.length ?? 0) > 0) problems.push('unobserved-source-partitions')
+  return problems
+}
 
 export const runMatchedEntryStudy = (
   raw: unknown,
@@ -318,9 +357,7 @@ export const runMatchedEntryStudy = (
     const dates = registration.sessionDates
     const sourceHash = yield* Effect.fromResult(canonicalHashV1Result(input.study.source))
     const batches = yield* Effect.forEach(input.study.batches, (b) => Effect.fromResult(prepareSignalStudyBatch(b)))
-    const problems: string[] = []
-    if (input.study.source.transport !== 'captured-kafka') problems.push('original-stream-arrivals-not-observed')
-    if ((input.study.source.archiveUnobservedPartitions?.length ?? 0) > 0) problems.push('unobserved-source-partitions')
+    const problems = matchedSourceCompletenessProblems(input.study.source)
     const ids = new Set<string>()
     for (const batch of batches) {
       const manifest = batch.snapshot.manifest
@@ -494,7 +531,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v1',
+      schemaVersion: 'bayn.matched-entry-study.v2',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,

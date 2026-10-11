@@ -32,7 +32,11 @@ import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { currentUtcInstant } from '../time'
 import { CandidateObservationStore } from './candidate-observation'
-import { checkAdvancedMarketProjection, closeQuoteContinuationDelayMs } from './recovery-driver'
+import {
+  checkAdvancedMarketProjection,
+  closeQuoteContinuationDelayMs,
+  reconciliationForPreparation,
+} from './recovery-driver'
 import { advanceExecutionOnce } from '../execution/advance'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import {
@@ -50,7 +54,10 @@ import {
 import { prepareObserveStartup } from './startup'
 
 const generationHash = 'b'.repeat(64)
-const native = nativeJevFixture()
+// This suite exercises the active startup path; historical v1 fixtures stay v1 elsewhere.
+const activeNativeFixture = (purpose: JevPurpose = JevPurpose.Entry) =>
+  nativeJevFixture(purpose, undefined, 'jev-native-test', fixtureRuntime.definition.parameters)
+const native = activeNativeFixture()
 const accountId = native.portfolio.brokerState.account.accountId
 const at = native.query.observedAt
 const activeCycle = Effect.runSync(
@@ -65,7 +72,7 @@ const activeCycle = Effect.runSync(
 )
 
 const factsAt = (observedAt: string, held = false): ReconciliationPassResult => {
-  const source = held ? nativeJevFixture(JevPurpose.Manage).portfolio.brokerState : native.portfolio.brokerState
+  const source = held ? activeNativeFixture(JevPurpose.Manage).portfolio.brokerState : native.portfolio.brokerState
   const state = {
     ...source,
     account: { ...source.account, observedAt },
@@ -240,10 +247,15 @@ const fixture = async () => {
 describe('closing market-data fallback boundaries', () => {
   test.each([
     'filled',
+    'filled reuses preflight',
+    'filled refreshes older preflight',
+    'filled refreshes unknown preflight',
+    'filled refreshes inexact preflight',
     'denied',
     'unknown',
     'inexact-accounting',
     'failed-refresh',
+    'pending-refresh',
     'invalid-refresh',
     'older-cut',
     'fallback-flat',
@@ -290,7 +302,7 @@ describe('closing market-data fallback boundaries', () => {
                   sessionDate: request.cycle.identity.executionSessionDate,
                   protocol: native.protocol,
                   portfolio: {
-                    ...nativeJevFixture(JevPurpose.Manage).portfolio,
+                    ...activeNativeFixture(JevPurpose.Manage).portfolio,
                     entryDecisionHash: request.entryDocument.contentHash,
                     brokerState: factsAt(before, true).brokerState,
                   },
@@ -371,14 +383,18 @@ describe('closing market-data fallback boundaries', () => {
         const refreshReconciliation = Effect.suspend(() => {
           freshReads += 1
           if (fallbackFlat && freshReads <= 4 && freshReads % 2 === 1) return Effect.succeed(factsAt(terminalAt, true))
-          if (scenario === 'failed-refresh' || scenario === 'invalid-refresh')
+          if (scenario === 'failed-refresh' || scenario === 'pending-refresh' || scenario === 'invalid-refresh')
             return Effect.fail(
               new BrokerReadError({
                 operation: 'preflight',
                 kind:
-                  scenario === 'failed-refresh' ? BrokerReadErrorKind.Transport : BrokerReadErrorKind.InvalidResponse,
+                  scenario === 'pending-refresh'
+                    ? BrokerReadErrorKind.ObservationPending
+                    : scenario === 'failed-refresh'
+                      ? BrokerReadErrorKind.Transport
+                      : BrokerReadErrorKind.InvalidResponse,
                 message: 'synthetic terminal-close refresh unavailable',
-                retryable: scenario === 'failed-refresh',
+                retryable: scenario !== 'invalid-refresh',
               }),
             )
           return Effect.succeed(
@@ -389,6 +405,23 @@ describe('closing market-data fallback boundaries', () => {
                 : fresh,
           )
         })
+        const preflight =
+          scenario === 'filled refreshes older preflight'
+            ? factsAt(before)
+            : scenario === 'filled refreshes unknown preflight'
+              ? { ...fresh, riskContext: { ...fresh.riskContext, unknownMutationCount: 1 } }
+              : scenario === 'filled refreshes inexact preflight'
+                ? {
+                    ...fresh,
+                    report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } },
+                  }
+                : fresh
+        const terminalReconciliation = yield* reconciliationForPreparation(
+          preflight,
+          refreshReconciliation,
+          Effect.succeed(fresh.riskContext.authority ?? undefined),
+          30_000,
+        )
         const recoverClose = ensureExecutionCycleClosure({
           ...request,
           input: {
@@ -399,8 +432,10 @@ describe('closing market-data fallback boundaries', () => {
               : {}),
           },
           closeWindow,
-          reconcile: Effect.succeed(factsAt(before, true)),
-          refreshReconciliation,
+          reconcile: scenario.startsWith('filled ') ? terminalReconciliation.read : refreshReconciliation,
+          refreshReconciliation: scenario.startsWith('filled ')
+            ? terminalReconciliation.refresh
+            : refreshReconciliation,
           existing: closure,
         })
         for (let pass = 0; pass < (fallbackFlat ? 3 : 2); pass++) {
@@ -409,10 +444,42 @@ describe('closing market-data fallback boundaries', () => {
           else {
             if (Exit.isFailure(result)) throw new Error('terminal close fixture unexpectedly failed')
             expect(result.value._tag).toBe(
-              scenario === 'filled' || scenario === 'denied' || (fallbackFlat && pass === 2) ? 'Complete' : 'Wait',
+              scenario.startsWith('filled') || scenario === 'denied' || (fallbackFlat && pass === 2)
+                ? 'Complete'
+                : 'Wait',
             )
+            if (result.value._tag === 'Wait' && !fallbackFlat) {
+              if (result.value.waitReason === undefined) throw new Error('Expected a lifecycle publication wait')
+              const pending = scenario === 'pending-refresh' || scenario === 'older-cut'
+              expect(result.value.waitReason).toBe(
+                pending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
+              )
+              expect(
+                closeQuoteContinuationDelayMs(
+                  {
+                    outcome: 'RECOVERED',
+                    action: 'WAITING',
+                    cycle: request.cycle,
+                    observedAt: result.value.observedAt,
+                    waitReason: result.value.waitReason,
+                  },
+                  30_000,
+                  result.value.observedAt,
+                ),
+              ).toBe(pending ? 1_000 : undefined)
+            }
           }
-          expect(freshReads).toBe(fallbackFlat ? Math.min((pass + 1) * 2, 5) : pass + 1)
+          expect(freshReads).toBe(
+            scenario === 'filled reuses preflight'
+              ? 0
+              : scenario.startsWith('filled refreshes')
+                ? 1
+                : fallbackFlat
+                  ? Math.min((pass + 1) * 2, 5)
+                  : scenario === 'unknown' || scenario === 'inexact-accounting' || scenario === 'older-cut'
+                    ? (pass + 1) * 2
+                    : pass + 1,
+          )
           expect(residualBinds).toBe(0)
           expect(records.size).toBe(expectedIntentCount)
         }
@@ -431,6 +498,8 @@ describe('closing market-data fallback boundaries', () => {
   test.each([
     'expiry',
     'partial fill',
+    'partial fill reuses preflight',
+    'cached residual refreshes after archive failure',
     'partial fill without archive',
     'fallback becomes unknown',
     'fallback loses accounting',
@@ -440,7 +509,8 @@ describe('closing market-data fallback boundaries', () => {
     'fallback read is invalid',
   ] as const)('residual close uses fresh remaining exposure after %s', async (scenario) => {
     const terminalOutcome = scenario === 'expiry' ? TerminalOutcome.Expired : TerminalOutcome.Canceled
-    const unavailableArchive = scenario !== 'expiry' && scenario !== 'partial fill'
+    const unavailableArchive =
+      scenario !== 'expiry' && scenario !== 'partial fill' && scenario !== 'partial fill reuses preflight'
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
@@ -455,6 +525,7 @@ describe('closing market-data fallback boundaries', () => {
     let closeCommits = 0
     let restrictions = 0
     let closeSettled = false
+    let positionDivisor = 2n
     const store: ExecutionCycleClosureStoreShape = {
       read: () => Effect.sync(() => Option.fromUndefinedOr(closure)),
       readLatestReplan: () => Effect.sync(() => Option.fromUndefinedOr(replan)),
@@ -481,11 +552,12 @@ describe('closing market-data fallback boundaries', () => {
           if (!closeSettled || terminalOutcome !== TerminalOutcome.Canceled) return facts
           const positions = facts.brokerState.positions.map((position) => ({
             ...position,
-            quantityMicros: (BigInt(position.quantityMicros) / 2n).toString(),
-            marketValueMicros: (BigInt(position.marketValueMicros) / 2n).toString(),
+            quantityMicros: (BigInt(position.quantityMicros) / positionDivisor).toString(),
+            marketValueMicros: (BigInt(position.marketValueMicros) / positionDivisor).toString(),
           }))
           const releasedValue = facts.brokerState.positions.reduce(
-            (sum, position) => sum + BigInt(position.marketValueMicros) / 2n,
+            (sum, position) =>
+              sum + BigInt(position.marketValueMicros) - BigInt(position.marketValueMicros) / positionDivisor,
             0n,
           )
           const state = {
@@ -608,17 +680,35 @@ describe('closing market-data fallback boundaries', () => {
             )
           }),
         )
+        const residualReconciliation = yield* reconciliationForPreparation(
+          yield* reconcile,
+          refreshResidual,
+          Effect.suspend(() => reconcile.pipe(Effect.map((facts) => facts.riskContext.authority ?? undefined))),
+          30_000,
+        )
         const recoverResidual = ensureExecutionCycleClosure({
           ...request,
           input: {
             ...request.input,
             executionCycleClosureStore: store,
             ...(unavailableArchive
-              ? { intradayMarketData: { ...freshMarket, loadSnapshot: () => Effect.fail(marketFailure) } }
+              ? {
+                  intradayMarketData: {
+                    ...freshMarket,
+                    loadSnapshot: () =>
+                      Effect.sync(() => {
+                        if (scenario === 'cached residual refreshes after archive failure') positionDivisor = 4n
+                      }).pipe(Effect.andThen(Effect.fail(marketFailure))),
+                  },
+                }
               : {}),
           },
           closeWindow,
-          reconcile: Effect.succeed(factsAt(first.document.createdAt, unavailableArchive)),
+          reconcile:
+            scenario === 'partial fill reuses preflight' ||
+            scenario === 'cached residual refreshes after archive failure'
+              ? residualReconciliation.read
+              : refreshResidual,
           refreshReconciliation: refreshResidual,
           existing: closure,
         })
@@ -630,7 +720,7 @@ describe('closing market-data fallback boundaries', () => {
         }
         let next = yield* recoverResidual
         if (unstableFallback) {
-          expect(next._tag).toBe('Wait')
+          expect(next).toMatchObject({ _tag: 'Wait', waitReason: 'COMPLETION_EVIDENCE_PENDING' })
           expect(replan).toBeUndefined()
           expect(closeCommits).toBe(1)
           expect((yield* recoverResidual)._tag).toBe('Wait')
@@ -653,7 +743,9 @@ describe('closing market-data fallback boundaries', () => {
             symbol,
             side,
             quantityMicros:
-              terminalOutcome === TerminalOutcome.Canceled ? (BigInt(quantityMicros) / 2n).toString() : quantityMicros,
+              terminalOutcome === TerminalOutcome.Canceled
+                ? (BigInt(quantityMicros) / positionDivisor).toString()
+                : quantityMicros,
           })),
         )
         expect(yield* prepare(next.document)).toMatchObject({
@@ -663,6 +755,8 @@ describe('closing market-data fallback boundaries', () => {
         })
         expect(closeCommits).toBe(2)
         expect(restrictions).toBe(1)
+        if (scenario === 'partial fill reuses preflight') expect(residualReads).toBe(0)
+        if (scenario === 'cached residual refreshes after archive failure') expect(residualReads).toBe(1)
         yield* TestClock.setTime(Date.parse(closeWindow.expiresAt))
         expect(yield* prepare(next.document)).toMatchObject({
           _tag: 'Block',
@@ -963,6 +1057,24 @@ describe('closing market-data fallback boundaries', () => {
     ).toBeUndefined()
     expect(closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'JEV_POSITION_HELD' }, 30_000, at)).toBeUndefined()
     expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+  })
+
+  test('nested broker observation waits use the durable short continuation without relaxing the close deadline', () => {
+    const waiting = {
+      outcome: 'RECOVERED',
+      action: 'WAITING',
+      waitReason: 'BROKER_OBSERVATION_PENDING',
+      observedAt: at,
+      cycle: activeCycle,
+    } as const
+    expect(closeQuoteContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
+    expect(closeQuoteContinuationDelayMs(waiting, 500, at)).toBe(500)
+    const close = Date.parse(activeCycle.window.executionCloseAt)
+    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+    expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+    expect(
+      closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
+    ).toBeUndefined()
   })
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
