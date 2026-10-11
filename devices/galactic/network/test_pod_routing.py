@@ -63,6 +63,31 @@ class TopologyGateTest(unittest.TestCase):
             self.assertNotEqual(device, "storage0")
             self.assertNotIn(gateway, routing.STORAGE.values())
 
+    def test_both_halves_of_each_peer_cidr_are_checked(self):
+        for node, expected in (
+            ("talos-192-168-1-85", {"10.244.0.10", "10.244.1.10"}),
+            ("turin", {"10.244.4.10", "10.244.5.10"}),
+        ):
+            targets = {
+                route[0]
+                for _, route, device, _ in routing.route_cases(node)
+                if device == "storage0"
+            }
+            self.assertTrue(expected.issubset(targets))
+
+    def test_upper_half_sources_exercise_return_policy(self):
+        for node, source, peer in (
+            ("talos-192-168-1-85", "10.244.5.10", "100.100.244.190"),
+            ("turin", "10.244.1.10", "100.100.244.142"),
+        ):
+            self.assertTrue(
+                any(
+                    route == [peer, "from", source, "iif", "cni0"]
+                    and device == "storage0"
+                    for _, route, device, _ in routing.route_cases(node)
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

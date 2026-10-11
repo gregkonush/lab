@@ -50,13 +50,14 @@ def validate_nodes(nodes):
     return failures
 
 
-def pod_address(node):
-    return str(ipaddress.ip_network(NODES[node][0]).network_address + 10)
+def pod_addresses(node):
+    network = ipaddress.ip_network(NODES[node][0])
+    blocks = network.subnets(new_prefix=24) if network.prefixlen < 24 else [network]
+    return [str(block.network_address + 10) for block in blocks]
 
 
 def route_cases(node):
     _, host, lan = NODES[node]
-    local_pod = pod_address(node)
     for peer, (_, peer_host, _) in NODES.items():
         if peer == node:
             continue
@@ -67,19 +68,22 @@ def route_cases(node):
             if direct
             else str(ipaddress.ip_network(NODES[peer][0]).network_address)
         )
-        yield f"host to {peer} pod", [pod_address(peer), "from", host], device, gateway
-        yield (
-            f"pod to {peer} pod",
-            [pod_address(peer), "from", local_pod, "iif", "cni0"],
-            device,
-            gateway,
-        )
-        yield (
-            f"pod to {peer} host",
-            [peer_host, "from", local_pod, "iif", "cni0"],
-            "storage0" if direct else lan,
-            STORAGE[peer] if direct else None,
-        )
+        for target in pod_addresses(peer):
+            yield f"host to {target}", [target, "from", host], device, gateway
+            for source in pod_addresses(node):
+                yield (
+                    f"{source} to {target}",
+                    [target, "from", source, "iif", "cni0"],
+                    device,
+                    gateway,
+                )
+        for source in pod_addresses(node):
+            yield (
+                f"{source} to {peer} host",
+                [peer_host, "from", source, "iif", "cni0"],
+                "storage0" if direct else lan,
+                STORAGE[peer] if direct else None,
+            )
         yield f"host to {peer} host", [peer_host, "from", host], lan, None
 
 

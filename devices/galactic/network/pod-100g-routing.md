@@ -38,7 +38,7 @@ underlying Flannel routes provide a recovery path after removal, not automatic f
    Inspect the Omni sync dry run. It must update only the two `30-<machine-uuid>-storage-network` patches.
    It must not change Ryzen, installers, extensions, node addresses, or Flannel's advertised endpoints.
 4. Sync the merged template through Omni. No reboot, drain, OSD rollout, or new application attachment is required.
-5. Run the route verifier. Exit `0` requires all 24 host and forwarded-pod lookups to use the expected interfaces
+5. Run the route verifier. Exit `0` requires all 42 host and forwarded-pod lookups to use the expected interfaces
    and gateways. Exit `1` means a failed check. Exit `2` means evidence is unavailable.
 
    ```bash
@@ -84,7 +84,7 @@ for address in sys.argv[1].split():
         assert response.status == 200
         print("HTTP", address, response.status)
 for node in ("talos-192-168-1-85", "turin", "talos-192-168-1-194"):
-    with urllib.request.urlopen(f"http://pod-routing-probe-{node}:8080/", timeout=10) as response:
+    with urllib.request.urlopen(f"http://pod-routing-probe-{node}.rook-ceph.svc.cluster.local.:8080/", timeout=10) as response:
         assert response.status == 200
         print("Service", node, response.status)
 PY
