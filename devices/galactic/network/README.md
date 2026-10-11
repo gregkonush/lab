@@ -129,6 +129,9 @@ The [pod routing procedure](pod-100g-routing.md) moves Altra and Turin's pod and
 `storage0`. Ryzen keeps its existing Flannel path over the LAN. The Omni template owns the native routes and narrow
 return-path rules. Run the committed topology check before syncing, then verify routes and actual I/O afterward.
 
+For neighbor-table overflow and intermittent DNS, follow the [neighbor-cache recovery checks](neighbor-cache.md).
+The committed verifier checks the live limits and new overflow events on every host.
+
 ## Read NIC temperature
 
 Read the NIC's Linux `hwmon` sensor through the existing RBD CSI node pod. This requires cluster access and Python 3
