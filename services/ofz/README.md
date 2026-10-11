@@ -88,6 +88,10 @@ against both the outbox and the durable sequence checkpoint. A live exporter hea
 permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
 fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
 
+Controller runtime reads compare workspace authority and global policy/fence state from one SQL snapshot immediately
+before disclosure. Restrictive intent can quarantine a workspace before native policy finalization advances the global
+version; an in-flight read must abort if that workspace authority changes, even when the policy version stays the same.
+
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
 stream receipt binding, audit/archive failure and transfer quarantine before receipt recovery. Set

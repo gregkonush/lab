@@ -2738,6 +2738,35 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
     )
     .await
     .unwrap();
+    let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+    let resume = std::sync::Arc::new(tokio::sync::Notify::new());
+    let paused = service
+        .clone()
+        .with_read_barrier(entered.clone(), resume.clone());
+    let mut runtime_context = controller_request(
+        database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    runtime_context.workspace_uid = uid.clone();
+    let runtime_uid = uid.clone();
+    let in_flight = tokio::spawn(async move {
+        paused
+            .get_workspace_state(rpc_as(
+                GetWorkspaceStateRequest {
+                    context: Some(runtime_context),
+                    workspace_uid: runtime_uid,
+                },
+                CONTROLLER_ID,
+            ))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
     persist(
         &mut connection.client,
         BFF_ID,
@@ -2746,6 +2775,17 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
     )
     .await
     .unwrap();
+    assert_eq!(
+        database.state().await.unwrap().version,
+        transfer.expected_version,
+        "restrictive intent is durable before policy version advances"
+    );
+    resume.notify_one();
+    assert_eq!(
+        in_flight.await.unwrap().unwrap_err().code(),
+        Code::Aborted,
+        "a workspace read cannot disclose cached authority after restrictive intent commits"
+    );
     assert!(
         !read(database, native, owner, &uid, Action::FilesObserve)
             .await
