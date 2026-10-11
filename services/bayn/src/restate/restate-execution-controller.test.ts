@@ -14,6 +14,7 @@ import {
   type ExecutionControllerState,
 } from '../execution/controller'
 import { TransientExecutionFailure } from '../execution/advance'
+import { sha256 } from '../hash'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { CycleRunnerError } from '../cycle/runner/model'
 import { OperationalError } from '../errors'
@@ -459,12 +460,6 @@ describe('native Restate execution controller', () => {
       parameter: { epoch: 1, sequence: 4, attempt: 0 },
     })
 
-    await object.activate(context, activation)
-    expect(projectedStates).toHaveLength(2)
-    expect(projectedStates[1]).toEqual(projectedStates[0])
-    expect(deliveries).toHaveLength(1)
-    expect(events).toEqual(['activation-projected', 'state-committed', 'first-pass-scheduled', 'activation-projected'])
-
     const firstTick = deliveries.shift()
     if (firstTick === undefined) throw new Error('activation did not schedule the first tick')
     await object.tick(context, firstTick.parameter)
@@ -510,8 +505,8 @@ describe('native Restate execution controller', () => {
       sourceRevision,
     })
     expect(state).toMatchObject({ active: false, epoch: 2 })
-    expect(projectedStates).toHaveLength(3)
-    expect(projectedStates[2]).toMatchObject({ active: false, epoch: 2, nextSequence: 5 })
+    expect(projectedStates).toHaveLength(2)
+    expect(projectedStates[1]).toMatchObject({ active: false, epoch: 2, nextSequence: 5 })
     const pending = deliveries.shift()
     if (pending === undefined) throw new Error('completed tick did not schedule its successor')
     await object.tick(context, pending.parameter)
@@ -519,7 +514,7 @@ describe('native Restate execution controller', () => {
     expect(deliveries).toHaveLength(0)
   })
 
-  test('replayed activation schedules the missing catch-up pass for a newer worker revision', async () => {
+  test('explicit reactivation deduplicates replay but can retry an exhausted revision-bound probe', async () => {
     const previousSourceRevision = 'd'.repeat(40)
     const state: ExecutionControllerState = {
       schemaVersion: 1,
@@ -532,7 +527,11 @@ describe('native Restate execution controller', () => {
     }
     const deliveries: Delivery[] = []
     const normalKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, 0)
-    const acceptedKeys = new Set([normalKey])
+    const acceptedKeys = new Set([
+      normalKey,
+      executionControllerSourceCatchUpTickIdempotencyKey(state.epoch, state.nextSequence, 0, sourceRevision),
+    ])
+    let invocationId = 'source-catch-up'
     let committed = false
     const context = {
       key: controllerKey,
@@ -546,7 +545,7 @@ describe('native Restate execution controller', () => {
         deliveries.push(delivery)
       },
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      request: () => ({ id: 'source-catch-up', attemptCompletedSignal: new AbortController().signal }),
+      request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
     } as unknown as TestContext
     const object = handlers(
       makeBaynExecutionController(config, {
@@ -562,11 +561,11 @@ describe('native Restate execution controller', () => {
     expect(deliveries).toEqual([
       expect.objectContaining({
         delay: executionControllerInitialTickDelayMs,
-        idempotencyKey: executionControllerSourceCatchUpTickIdempotencyKey(
+        idempotencyKey: executionControllerRecoveryTickIdempotencyKey(
           state.epoch,
           state.nextSequence,
           0,
-          sourceRevision,
+          sha256(invocationId),
         ),
         parameter: expect.objectContaining({
           epoch: state.epoch,
@@ -577,6 +576,15 @@ describe('native Restate execution controller', () => {
       }),
     ])
     expect(deliveries[0]?.idempotencyKey).not.toBe(normalKey)
+    invocationId = 'new-explicit-recovery'
+    expect(await object.activate(context, activation)).toEqual(state)
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[1]?.idempotencyKey).not.toBe(deliveries[0]?.idempotencyKey)
+    expect(deliveries[1]?.parameter).toMatchObject({
+      epoch: state.epoch,
+      sequence: state.nextSequence,
+      sourceCatchUpRevision: sourceRevision,
+    })
   })
 
   test('quiesces a source catch-up routed to a different immutable worker', async () => {
@@ -1224,12 +1232,6 @@ describe('native Restate execution controller', () => {
     expect(sleeps).toBe(2)
     expect(genericCalls).toBe(1)
 
-    await start(context, request)
-    expect(projectedStates).toHaveLength(3)
-    expect(projectedStates[2]).toEqual(state)
-    expect(deliveries).toHaveLength(1)
-    expect(genericCalls).toBe(2)
-
     await object.tick(controllerContext, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
       epoch: 4,
@@ -1260,7 +1262,7 @@ describe('native Restate execution controller', () => {
       idempotencyKey: executionControllerTickIdempotencyKey(5, 14, 0),
       parameter: { epoch: 5, sequence: 14, attempt: 0 },
     })
-    expect(events.at(-1)).toBe('activation-projected')
+    expect(events.at(-1)).toBe('successor-scheduled')
   })
 
   test('fails native rotation before controller calls when prior provenance is missing or mismatched', async () => {

@@ -845,8 +845,12 @@ They do not require a snapshot before the first full rolling window exists. `INP
 `EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
 `ABSTAINING`; it is distinct from a blocked session. The authenticated shared
 `BaynExecutionController/<account-key>/activateDeployment` handler verifies deployment ownership and handoff, warms
-the private broker-observation owner, and waits for a completed native successor pass. Its verified result remains
-available for seven days, and the activation Job logs the invocation ID. The journal is removed at completion so the
+the private broker-observation owner, and waits for a fresh completed native pass and its successor after the
+sequence observed at request entry. Reactivation wakes a deferred controller even on the same revision. Its immediate
+probe is bound to the activation invocation and worker revision; retries retain that identity, and a new explicit
+activation can retry an exhausted probe. Delayed deliveries remain subject to the existing exclusive sequence checks.
+Its verified result remains available for seven days, and the activation Job logs the invocation ID. The journal is
+removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
