@@ -174,4 +174,4 @@ patches:
         value:
           name: alertmanager-fallback-config
           secret:
-            secretName: observability-alertmanager-email
+            secretName: observability-alertmanager-email-brevo
