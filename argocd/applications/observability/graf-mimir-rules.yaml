@@ -6,6 +6,33 @@ metadata:
 data:
   graf-rules.yaml: |
     groups:
+      - name: bayn-model.rules
+        rules:
+          - alert: BaynModelUnavailable
+            expr: |
+              (up{job="bayn-model"} == 0 or absent(up{job="bayn-model"}))
+              and on()
+              (kube_deployment_spec_replicas{namespace="bayn-model",deployment="bayn-model"} > 0)
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: bayn-model
+            annotations:
+              summary: Bayn research model is unavailable
+              description: The private Alpha-R1 metrics endpoint has been unavailable for fifteen minutes. Research is paused; execution has no dependency on this endpoint.
+              runbook_url: services/bayn-model/README.md
+          - alert: BaynModelRequestsExpiring
+            expr: sum(increase(bayn_model_requests_total{namespace="bayn-model",outcome="expired"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: bayn-model
+            annotations:
+              summary: Bayn research inference is reaching its deadline
+              description: At least two research requests reached the server deadline in fifteen minutes. Inspect queue, prefill, decode and shared GPU pressure before retrying.
+              runbook_url: services/bayn-model/README.md
       - name: buzz-production.rules
         rules:
           - record: buzz_rollout_enabled

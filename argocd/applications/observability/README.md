@@ -105,7 +105,7 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics, plus
   CloudNativePG backup and scheduled-backup timestamps.
 - `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, the Ceph
-  manager, Bayn's bounded service metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
+  manager, Bayn's bounded service and financial-model metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
   including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
 - `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
@@ -182,3 +182,13 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   --data-urlencode 'query=topk(10, ceph_storage:rbd_pod_write_bytes_per_second:rate5m)' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 ```
+
+## Bayn research model
+
+The private `bayn-model` application replaces Rune with a locked Alpha-R1 checkpoint. The central Alloy scrapes
+vLLM metrics and admission metrics every fifteen seconds and retains both provisioning and serving logs with
+namespace, pod, container and service identity. `bayn-model-performance` shows readiness, queue time, TTFT,
+prefill/decode latency, throughput, token volume, KV occupancy and bounded-admission failures. Request logs contain
+generated request IDs, validated trace IDs and durations; request/response bodies are disabled in vLLM.
+Research-model unavailability and repeated deadline expiry are warnings without email paging. A model outage does
+not change Bayn execution readiness. See [the model runbook](../../../services/bayn-model/README.md).
