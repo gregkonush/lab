@@ -679,8 +679,189 @@ async fn control_integration_durability_authority_and_quota() {
         ),
     ))
     .await;
+    Box::pin(verify_offboarding_preserves_removal(&fixture)).await;
     Box::pin(verify_offboarding_during_enrollment(&fixture)).await;
     Box::pin(verify_journal_loss(&fixture, &workspace)).await;
+}
+
+async fn verify_offboarding_preserves_removal(fixture: &ControlFixture) {
+    let ControlFixture {
+        admin,
+        database,
+        native,
+        identities,
+        service,
+    } = fixture;
+    acknowledge_fixture_archive(admin).await;
+    let humans: Vec<String> = ["7", "8", "9"]
+        .iter()
+        .map(|number| policy::github_human_id(number).unwrap())
+        .collect();
+    for (human, github_id) in humans.iter().zip(["7", "8", "9"]) {
+        execute(
+            database,
+            native,
+            &identities[0],
+            Command::SetMembership(SetMembership {
+                human_id: human.clone(),
+                github_id: github_id.into(),
+                role: PlatformRole::Member as i32,
+                enabled: true,
+            }),
+        )
+        .await;
+    }
+    let session = Uuid::new_v4();
+    let now = admin.state().await.unwrap().now_ms as i64;
+    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
+    admin.pool.get().await.unwrap().execute(
+        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'7',$2)",
+        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&humans[0],&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
+    ).await.unwrap();
+    let owner = (humans[0].clone(), session.to_string());
+    let reservation_id = Uuid::new_v4().to_string();
+    let workspace_uid = Uuid::new_v4().to_string();
+    let home_uid = Uuid::new_v4().to_string();
+    execute(
+        database,
+        native,
+        &owner,
+        Command::ReserveWorkspace(ReserveWorkspace {
+            reservation_id: reservation_id.clone(),
+            home_bytes: HOME_BYTES,
+        }),
+    )
+    .await;
+    for command in [
+        Command::BeginWorkspaceEnrollment(BeginWorkspaceEnrollment {
+            reservation_id: reservation_id.clone(),
+            workspace_uid: workspace_uid.clone(),
+            owner_id: owner.0.clone(),
+        }),
+        Command::EnrollWorkspace(EnrollWorkspace {
+            reservation_id: reservation_id.clone(),
+            workspace_uid: workspace_uid.clone(),
+            home_uid: home_uid.clone(),
+            owner_id: owner.0.clone(),
+            home_bytes: HOME_BYTES,
+        }),
+    ] {
+        let request = controller_request(database, &owner, command).await;
+        commands::execute(database, native, CONTROLLER_ID, request)
+            .await
+            .unwrap();
+    }
+    execute(
+        database,
+        native,
+        &owner,
+        Command::SetWorkspaceRole(SetWorkspaceRole {
+            workspace_uid: workspace_uid.clone(),
+            human_id: humans[1].clone(),
+            role: WorkspaceRole::Developer as i32,
+            enabled: true,
+        }),
+    )
+    .await;
+    let mut emergency = EmergencyAccess {
+        workspace_uid: workspace_uid.clone(),
+        human_id: humans[2].clone(),
+        incident_id: "INC-REMOVAL-OFFBOARDING".into(),
+        custodian_approval_id: String::new(),
+        expires_at_unix_ms: database.state().await.unwrap().now_ms + 600_000,
+    };
+    emergency.custodian_approval_id = execute(
+        database,
+        native,
+        &identities[0],
+        Command::EmergencyAccess(emergency.clone()),
+    )
+    .await
+    .operation_id;
+    execute(
+        database,
+        native,
+        &identities[1],
+        Command::EmergencyAccess(emergency),
+    )
+    .await;
+    execute(
+        database,
+        native,
+        &owner,
+        Command::RemoveWorkspace(RemoveWorkspace {
+            workspace_uid: workspace_uid.clone(),
+        }),
+    )
+    .await;
+    for (human, github_id) in [&humans[1], &humans[2], &humans[0]]
+        .into_iter()
+        .zip(["8", "9", "7"])
+    {
+        execute(
+            database,
+            native,
+            &identities[0],
+            Command::SetMembership(SetMembership {
+                human_id: human.clone(),
+                github_id: github_id.into(),
+                role: PlatformRole::Member as i32,
+                enabled: false,
+            }),
+        )
+        .await;
+        let projection = runtime_state(service, database, &owner, &workspace_uid).await;
+        assert_eq!(
+            projection.state, "removing",
+            "offboarding {github_id} must preserve approved removal"
+        );
+        assert!(!projection.running && !projection.runtime_allowed);
+        let usage = admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .query_one(
+                "SELECT used_workspaces,used_bytes FROM ofz.quota_usage WHERE owner_id=$1",
+                &[&owner.0],
+            )
+            .await
+            .unwrap();
+        assert_eq!(usage.get::<_, i64>(0), 1);
+        assert_eq!(usage.get::<_, i64>(1), HOME_BYTES as i64);
+    }
+    let complete = controller_request(
+        database,
+        &owner,
+        Command::CompleteWorkspaceRemoval(CompleteWorkspaceRemoval {
+            workspace_uid: workspace_uid.clone(),
+            home_uid,
+            reservation_id: reservation_id.clone(),
+        }),
+    )
+    .await;
+    let receipt = commands::execute(database, native, CONTROLLER_ID, complete.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        commands::execute(database, native, CONTROLLER_ID, complete)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        runtime_state(service, database, &owner, &workspace_uid)
+            .await
+            .state,
+        "removed"
+    );
+    let released = admin.pool.get().await.unwrap().query_one(
+        "SELECT r.state,COALESCE(q.used_workspaces,0),COALESCE(q.used_bytes,0) FROM ofz.reservations r LEFT JOIN ofz.quota_usage q ON q.owner_id=r.owner_id WHERE r.id=$1",
+        &[&Uuid::parse_str(&reservation_id).unwrap()],
+    ).await.unwrap();
+    assert_eq!(released.get::<_, String>(0), "released");
+    assert_eq!(released.get::<_, i64>(1), 0);
+    assert_eq!(released.get::<_, i64>(2), 0);
 }
 
 async fn verify_offboarding_during_enrollment(fixture: &ControlFixture) {

@@ -51,6 +51,9 @@ native version/command-marker write; SQL effects, immutable audit, outbox and re
 Retries return the original receipt without returning an agent credential again. Ownership transfer, Developer removal,
 membership offboarding and grant revocation restrict SQL access in the intent transaction, so a crash after native policy
 changes cannot expose an uncleansed guest. Retained homes still count against quota while quarantined.
+Offboarding preserves an already approved `removing` state, including when the affected human is the owner,
+a Developer or an emergency user. Only exact controller confirmation of home removal releases its quota;
+offboarding cannot prevent that confirmation or release storage capacity early.
 
 Unbound creation reservations expire after five minutes on the database clock. Expired reservations no longer
 consume quota and cannot be enrolled or reused. Their IDs remain recorded so an old retry cannot allocate new capacity.

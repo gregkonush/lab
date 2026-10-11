@@ -1018,7 +1018,7 @@ pub(crate) async fn persist(
             )
             .await
             .map_err(sql_error)?;
-            tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state<>'removed' AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2) OR uid IN (SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1 AND expires_at_ms>ofz.now_ms()))", &[&c.human_id]).await.map_err(sql_error)?;
+            tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state NOT IN ('removed','removing') AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2) OR uid IN (SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1 AND expires_at_ms>ofz.now_ms()))", &[&c.human_id]).await.map_err(sql_error)?;
             tx.execute("UPDATE ofz.grants SET revoked=true WHERE workspace_uid IN (SELECT uid FROM ofz.workspaces WHERE state='quarantined')", &[]).await.map_err(sql_error)?;
             tx.execute(
                 "DELETE FROM ofz.emergency_access WHERE human_id=$1",
@@ -1160,7 +1160,7 @@ pub(crate) async fn finalize(
                 )
                 .await
                 .map_err(sql_error)?;
-                tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state<>'removed' AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2) OR uid IN (SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1 AND expires_at_ms>ofz.now_ms()))", &[&c.human_id]).await.map_err(sql_error)?;
+                tx.execute("UPDATE ofz.workspaces SET state='quarantined' WHERE state NOT IN ('removed','removing') AND (owner_id=$1 OR uid IN (SELECT workspace_uid FROM ofz.collaborators WHERE human_id=$1 AND role=2) OR uid IN (SELECT workspace_uid FROM ofz.emergency_access WHERE human_id=$1 AND expires_at_ms>ofz.now_ms()))", &[&c.human_id]).await.map_err(sql_error)?;
             }
         }
         Command::SetWorkspaceRole(c) => {
