@@ -21,10 +21,13 @@ This installs the secondary network; it does not change Ceph's network provider 
    Namespace objects.
 2. Merge the reviewed changes. Sync the affected `bootstrap` ApplicationSet through the root Application, then
    sync `multus` to that exact merge commit if automatic reconciliation has not completed.
-3. Require both DaemonSets to be ready on all three nodes. Check for CNI errors before proceeding:
+3. Require both DaemonSets to be ready on all three nodes and the single Whereabouts reconciler to be available.
+   The reconciler reclaims leases left behind when CNI DEL cannot run after pod or node loss.
+   Check for CNI errors before proceeding:
 
    ```bash
    kubectl --context galactic-lan -n kube-system get daemonsets kube-multus-ds whereabouts
+   kubectl --context galactic-lan -n kube-system get deployment whereabouts-reconciler
    kubectl --context galactic-lan -n kube-system logs daemonset/kube-multus-ds -c kube-multus --tail=50
    talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142,100.100.244.190 ls /opt/cni/bin
    ```

@@ -8,6 +8,7 @@ resources:
   - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/whereabouts.cni.cncf.io_overlappingrangeipreservations.yaml
   - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/whereabouts.cni.cncf.io_nodeslicepools.yaml
   - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/daemonset-install.yaml
+  - https://raw.githubusercontent.com/k8snetworkplumbingwg/whereabouts/v0.9.4/doc/crds/reconciler-deployment.yaml
 
 images:
   - name: ghcr.io/k8snetworkplumbingwg/multus-cni
