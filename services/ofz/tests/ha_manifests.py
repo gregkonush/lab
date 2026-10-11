@@ -191,6 +191,23 @@ def validate(targets):
         ),
         "tengri: supervisor database egress is blocked",
     )
+    traefik = {
+        "namespaceSelector": {
+            "matchLabels": {"kubernetes.io/metadata.name": "traefik"}
+        },
+        "podSelector": {"matchLabels": {"app.kubernetes.io/name": "traefik"}},
+    }
+    bff_egress = resource(targets, "proompteng", "NetworkPolicy", "proompteng-web")[
+        "spec"
+    ]["egress"]
+    require(
+        any(
+            traefik in rule.get("to", [])
+            and {"protocol": "TCP", "port": 8443} in rule.get("ports", [])
+            for rule in bff_egress
+        ),
+        "proompteng: post-DNAT identity-provider egress is blocked",
+    )
     crd = resource(
         targets, "tengri", "CustomResourceDefinition", "microvms.runtime.proompteng.ai"
     )
@@ -309,6 +326,26 @@ def main():
             "spec"
         ]["ingress"][-1].update({"from": [{"ipBlock": {"cidr": "0.0.0.0/0"}}]}),
     ]
+    mutations.extend(
+        [
+            lambda data: resource(
+                data, "proompteng", "NetworkPolicy", "proompteng-web"
+            )["spec"].update(
+                egress=[
+                    rule
+                    for rule in resource(
+                        data, "proompteng", "NetworkPolicy", "proompteng-web"
+                    )["spec"]["egress"]
+                    if {"protocol": "TCP", "port": 8443} not in rule.get("ports", [])
+                ]
+            ),
+            lambda data: resource(
+                data, "proompteng", "NetworkPolicy", "proompteng-web"
+            )["spec"]["egress"][-1]["to"][0]["podSelector"]["matchLabels"].update(
+                {"app.kubernetes.io/name": "wrong-identity-provider"}
+            ),
+        ]
+    )
     for index, mutate in enumerate(mutations):
         invalid = copy.deepcopy(targets)
         mutate(invalid)
