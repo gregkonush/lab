@@ -33,6 +33,9 @@ test('signal pipeline alerts detect missing telemetry and failed jobs without du
     'TorghutSignalPipelineNotRunning',
     'TorghutSignalPipelineCheckpointsStalled',
   ])
+  for (const rule of rules) {
+    expect(rule.labels).toEqual({ severity: 'critical', team: 'trading', notify: 'email' })
+  }
   const services = ['torghut-ta-metrics', 'market-data-archive-metrics']
   const series = (service: string, up: string | null, running: string | null, checkpoint: string | null) => {
     const scope = `job="torghut",namespace="torghut",service="${service}",instance="a"`
