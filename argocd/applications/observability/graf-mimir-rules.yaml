@@ -3532,6 +3532,50 @@ data:
               summary: Tengri control-plane metrics are unavailable
               description: The Tengri control plane has not produced a healthy metrics scrape for five minutes.
               runbook_url: docs/tengri/operations.md
+          - alert: TengriSlotPodsMissing
+            expr: |
+              (
+                (
+                  count(count by (pod) (
+                    kube_pod_info{namespace="tengri",pod=~"tengri-slot-.+"}
+                  )) or vector(0)
+                ) < 6
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri slot Pods are missing
+              description: Fewer than the six required Tengri slot Pods have existed for five minutes. Missing Pods retain their home disks and claims until an operator proves the former VMM and storage writer are fenced.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriSlotPoolUnavailable
+            expr: |
+              (
+                (
+                  max(kube_pod_status_ready{
+                    namespace="tengri",
+                    pod=~"tengri-slot-.+",
+                    condition="true"
+                  }) or vector(0)
+                ) < 1
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri has no ready slot Pods
+              description: No Tengri slot Pod has been Ready for five minutes. Check slot scheduling, container failures, retained home attachment, and the existing failed-agent alert before declaring the desktop available.
+              runbook_url: docs/tengri/operations.md
           - alert: TengriAgentFailed
             expr: |
               max(
