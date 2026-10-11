@@ -31,7 +31,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
           ],
         },
       },
-      podAntiAffinityType: 'required',
+      podAntiAffinityType: 'preferred',
       topologyKey: 'kubernetes.io/hostname',
     },
     storage: {

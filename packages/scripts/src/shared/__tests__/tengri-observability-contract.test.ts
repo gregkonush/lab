@@ -42,6 +42,7 @@ test('cluster Alloy collects only bounded Tengri control-plane metrics', () => {
   expect(alloy).toContain('job_name = "tengri"')
   expect(alloy).toContain('regex         = "up|tengri_.*"')
   expect(alloy).toContain('forward_to      = [prometheus.relabel.tengri_metrics.receiver]')
+  expect(alloy).toContain('|kube_pod_status_ready|')
   expect(alloy).not.toMatch(/owner_hash|agent_id|terminal_id|session_id/)
   expect(deployment.spec.template.metadata.annotations['observability.proompteng.ai/config-sha256']).toBe(
     createHash('sha256').update(alloy).digest('hex'),
@@ -69,6 +70,8 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
     'tengri_rollout_enabled',
     'TengriArgoApplicationDegraded',
     'TengriMetricsUnavailable',
+    'TengriSlotPodsMissing',
+    'TengriSlotPoolUnavailable',
     'TengriAgentFailed',
     'TengriGuestFailureBurst',
     'TengriBootLatencyHigh',
@@ -83,6 +86,8 @@ test('Mimir alerts on Tengri availability, failed guests, latency, and quota pre
   const expressions = Object.fromEntries(alerts.map((rule) => [rule.alert, rule.expr]))
   expect(expressions.TengriArgoApplicationDegraded).toContain('argocd_app_info')
   expect(expressions.TengriMetricsUnavailable).toContain('tengri_rollout_enabled == 1')
+  expect(expressions.TengriSlotPodsMissing).toContain('kube_pod_info')
+  expect(expressions.TengriSlotPoolUnavailable).toContain('kube_pod_status_ready')
   expect(expressions.TengriAgentFailed).toContain('state="failed"')
   expect(expressions.TengriGuestFailureBurst).toContain('tengri_guest_failures_total')
   expect(expressions.TengriBootLatencyHigh).toContain('tengri_agent_boot_latency_seconds_count')

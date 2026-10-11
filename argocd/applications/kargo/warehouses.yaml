@@ -1117,7 +1117,7 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
-  name: rune
+  name: bayn-model
   namespace: lab-delivery
   labels:
     delivery.proompteng.ai/managed-by: kargo
@@ -1126,18 +1126,18 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] != nil &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] != '' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Tag == 'kargo-sha-' +
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['org.opencontainers.image.revision'] + '-run-' +
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id']
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Tag == 'kargo-sha-' +
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.revision'] + '-run-' +
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - image:
-        repoURL: registry.ide-newton.ts.net/lab/rune
+        repoURL: registry.ide-newton.ts.net/lab/bayn-model
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
         strictSemvers: true

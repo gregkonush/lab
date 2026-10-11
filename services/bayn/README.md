@@ -52,7 +52,9 @@ observation time, next HTTP-budget deadline and trace/span IDs. The child runtim
 Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
-projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
+projection. Each continuous health pass reads and validates one complete projected cut for all six broker components,
+rather than fetching and decoding the full history six times. The next pass revalidates a new read; no successful or
+failed cut is memoized across passes. Unprojected broker health retains its independent endpoint probes. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
@@ -843,8 +845,12 @@ They do not require a snapshot before the first full rolling window exists. `INP
 `EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
 `ABSTAINING`; it is distinct from a blocked session. The authenticated shared
 `BaynExecutionController/<account-key>/activateDeployment` handler verifies deployment ownership and handoff, warms
-the private broker-observation owner, and waits for a completed native successor pass. Its verified result remains
-available for seven days, and the activation Job logs the invocation ID. The journal is removed at completion so the
+the private broker-observation owner, and waits for a fresh completed native pass and its successor after the
+sequence observed at request entry. Reactivation wakes a deferred controller even on the same revision. Its immediate
+probe is bound to the activation invocation and worker revision; retries retain that identity, and a new explicit
+activation can retry an exhausted probe. Delayed deliveries remain subject to the existing exclusive sequence checks.
+Its verified result remains available for seven days, and the activation Job logs the invocation ID. The journal is
+removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
