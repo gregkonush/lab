@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bayn-model
+resources:
+- deployment.yaml
+- service.yaml
+- pvc.yaml
+- network-policy.yaml
+- log-reader.yaml
+images:
+- name: registry.ide-newton.ts.net/lab/bayn-model
+  newName: registry.ide-newton.ts.net/lab/bayn-model
+  digest: sha256:6f24a0b32f517efed73b3fb6a51b232bb4edfb2106ab36bda55e12b92a8951f2
