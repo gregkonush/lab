@@ -122,3 +122,55 @@ then complete bidirectional throughput testing, switch error-counter acceptance,
 
 To undo this interface setup, remove only its dedicated patch from the template, merge, render, and sync through Omni.
 Verify that the storage address and route disappear and management remains reachable. Delete private exports and renders after use.
+
+## Read NIC temperature
+
+Read the NIC's Linux `hwmon` sensor through the existing RBD CSI node pod. This requires cluster access and Python 3
+in the `csi-rbdplugin` container, without a BMC login or a new diagnostic pod. Select Altra below, or set `node=turin`.
+The command finds the current pod and follows the physical member of `storage0`, so pod names, PCI slots, and
+`hwmon` numbers are not hard-coded.
+
+```bash
+node=talos-192-168-1-85
+pod=$(kubectl --context galactic-lan -n rook-ceph get pods \
+	-l app=rook-ceph.rbd.csi.ceph.com-nodeplugin \
+	--field-selector "spec.nodeName=$node,status.phase=Running" \
+	-o jsonpath='{.items[0].metadata.name}')
+kubectl --context galactic-lan -n rook-ceph exec -i "${pod:?No running RBD CSI node pod on selected node}" \
+	-c csi-rbdplugin -- python3 - "$node" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+members = Path("/sys/class/net/storage0/bonding/slaves").read_text().split()
+if len(members) != 1:
+    raise SystemExit("UNKNOWN: expected one physical member of storage0")
+device = (Path("/sys/class/net") / members[0] / "device").resolve(strict=True)
+sensors = list(device.glob("hwmon/hwmon*/temp1_input"))
+if len(sensors) != 1:
+    raise SystemExit("UNKNOWN: expected one NIC temperature sensor")
+sensor = sensors[0].parent
+values = {
+    name: int((sensor / name).read_text().strip()) / 1000
+    for name in ("temp1_input", "temp1_highest", "temp1_crit")
+}
+print(json.dumps({
+    "node": sys.argv[1],
+    "sampled_at_utc": datetime.now(timezone.utc).isoformat(),
+    "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+    "pci": device.name,
+    "celsius": values,
+}, indent=2))
+PY
+```
+
+The sysfs files contain millidegrees Celsius; the command converts them to degrees Celsius. `temp1_input` is the
+current NIC temperature, `temp1_highest` is the device's recorded peak, and `temp1_crit` is the driver-exposed limit.
+Compare fresh samples and boot IDs. A peak is not the current reading. Missing files, a failed exec, or an unreadable
+sensor mean **UNKNOWN**, not zero or evidence that the card cooled down.
+
+The installed cards expose `temp1_crit` as 105 C. This differs from the firmware shutdown threshold:
+[NVIDIA specifies](https://networking-docs.nvidia.com/connectx5enhw/monitoring) a 105 C warning, 115 C firmware
+shutdown, and 130 C emergency hardware shutdown. Use the NIC sensor for card temperature; CPU or BMC chassis
+temperature does not substitute for it.
