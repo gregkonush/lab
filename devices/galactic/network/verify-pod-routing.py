@@ -69,6 +69,7 @@ def route_cases(node):
             else str(ipaddress.ip_network(NODES[peer][0]).network_address)
         )
         for target in pod_addresses(peer):
+            yield f"host source to {target}", [target], device, gateway
             yield f"host to {target}", [target, "from", host], device, gateway
             for source in pod_addresses(node):
                 yield (
@@ -85,6 +86,18 @@ def route_cases(node):
                 STORAGE[peer] if direct else None,
             )
         yield f"host to {peer} host", [peer_host, "from", host], lan, None
+
+
+def route_matches(node, route, device, gateway, result):
+    return (
+        result.get("dev") == device
+        and result.get("gateway") == gateway
+        and (
+            len(route) != 1
+            or result.get("prefsrc")
+            == str(ipaddress.ip_network(NODES[node][0]).network_address)
+        )
+    )
 
 
 def main():
@@ -126,9 +139,9 @@ def main():
                     ]
                 )[0]
                 observations.append({"node": node, "path": label, "route": result})
-                if result.get("dev") != device or result.get("gateway") != gateway:
+                if not route_matches(node, route, device, gateway, result):
                     failures.append(
-                        f"{node}: {label}: expected dev {device}, gateway {gateway}"
+                        f"{node}: {label}: incorrect interface, gateway, or host source"
                     )
     print(json.dumps({"failures": failures, "routes": observations}, indent=2))
     return 1 if failures else 0
