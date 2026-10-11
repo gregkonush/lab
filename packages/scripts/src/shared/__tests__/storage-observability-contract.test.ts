@@ -232,6 +232,16 @@ test('alert email uses Brevo SMTP credentials from the existing secret store', (
   const externalSecret = YAML.parse(
     readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
   )
+  const kustomization = YAML.parse(readRepoFile('argocd/applications/observability/kustomization.yaml'))
+  const alertmanagerPatch = kustomization.patches.find(
+    (entry: { target?: { name?: string } }) => entry.target?.name === 'observability-mimir-alertmanager',
+  )
+  const volume = YAML.parse(alertmanagerPatch.patch).find(
+    (entry: { value?: { name?: string } }) => entry.value?.name === 'alertmanager-fallback-config',
+  ).value
+  expect(externalSecret.spec.target.name).toBe('observability-alertmanager-email-brevo')
+  expect(volume.secret.secretName).toBe(externalSecret.spec.target.name)
+  expect(volume.secret.optional).not.toBe(true)
   const template = externalSecret.spec.target.template.data
   const alertmanager = YAML.parse(template['alertmanager_fallback_config.yaml'])
   expect(externalSecret.spec.secretStoreRef).toEqual({ kind: 'ClusterSecretStore', name: 'onepassword-infra' })

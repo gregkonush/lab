@@ -13,7 +13,8 @@ GitOps source:
 
 ## Secret Contract
 
-The Kubernetes Secret is `observability/observability-alertmanager-email`, created by External Secrets from `ClusterSecretStore/onepassword-infra`.
+The Kubernetes Secret is `observability/observability-alertmanager-email-brevo`, created by
+`ExternalSecret/observability-alertmanager-email` from `ClusterSecretStore/onepassword-infra`.
 The same ExternalSecret renders `alertmanager_fallback_config.yaml`, which is mounted into Mimir Alertmanager at `/configs/alertmanager_fallback_config.yaml`.
 Do not put `${...}` placeholders in `alertmanager.fallbackConfig`; Mimir expands environment variables in its main config, not in the mounted fallback Alertmanager config file.
 
@@ -45,6 +46,10 @@ Do not commit SMTP credentials or recipient addresses.
 The Free plan allows 300 emails per day. Unused allowance does not roll over.
 At the daily limit, Brevo queues up to 1,000 additional transactional emails; messages beyond that queue are not delivered.
 Check Brevo's transactional logs when alerts are delayed or sending fails.
+
+The `lab-alertmanager` SMTP key expires on October 11, 2027. Brevo also expires SMTP keys after
+90 days without use. Record replacement keys' expiry in the 1Password item and test delivery regularly.
+When rotating the key, wait for the target Secret to contain the new credential before rolling Alertmanager.
 
 ### Sending-domain DNS
 
@@ -97,8 +102,15 @@ argocd app sync observability
 argocd app wait observability --health --sync --timeout 900
 ```
 
-The Alertmanager pod's `observability.proompteng.ai/alertmanager-fallback-config-revision` annotation
-forces a rollout when the SMTP provider changes. Bump it for changes to the Secret-rendered fallback config.
+The Brevo migration changes the mounted Secret to `observability-alertmanager-email-brevo`.
+This starts a new pod that cannot mount its fallback config until External Secrets creates the Brevo Secret;
+the existing Resend Secret cannot satisfy the mount. Sync waves alone do not provide this guarantee because
+an updated ExternalSecret can still report its previous `Ready=True` condition.
+
+Mimir reads the fallback config at startup. For later changes to the same Secret, first sync the
+ExternalSecret change and verify its rendered data. Then bump the pod's
+`observability.proompteng.ai/alertmanager-fallback-config-revision` annotation in a separate reviewed change.
+An annotation bump in the same sync as a Secret update can start Mimir with the previous configuration.
 
 ## Validation
 
@@ -106,7 +118,7 @@ Confirm the ExternalSecret and target Secret:
 
 ```bash
 kubectl --context galactic-tailscale -n observability get externalsecret observability-alertmanager-email
-kubectl --context galactic-tailscale -n observability get secret observability-alertmanager-email
+kubectl --context galactic-tailscale -n observability get secret observability-alertmanager-email-brevo
 ```
 
 Confirm the Secret-rendered Alertmanager fallback config contains the email receiver. Keep the SMTP login,
@@ -114,7 +126,7 @@ password, sender, and recipient out of validation output.
 
 ```bash
 kubectl --context galactic-tailscale -n observability get secret \
-  observability-alertmanager-email \
+  observability-alertmanager-email-brevo \
   -o json | python3 -c '
 import base64, json, sys
 secret = json.load(sys.stdin)["data"]
@@ -174,7 +186,7 @@ After delivery is confirmed, silence or let the synthetic alert resolve by not r
 
 ## Troubleshooting
 
-1. If `observability-alertmanager-email` is missing, verify the `observability` namespace has label `external-secrets.proompteng.ai/enabled: "true"` and the 1Password item fields exist.
+1. If `observability-alertmanager-email-brevo` is missing, inspect `ExternalSecret/observability-alertmanager-email`, verify the `observability` namespace has label `external-secrets.proompteng.ai/enabled: "true"`, and confirm the 1Password item fields exist.
 2. If Alertmanager returns `406 Not initializing the Alertmanager`, check `observability-mimir-alertmanager-0` logs for fallback config parse errors. Mimir tenant configs reject `smtp_auth_password_file`; the password must be rendered into the Secret-backed config file as `smtp_auth_password`.
 3. If rule upload fails, inspect the PostSync Job logs and verify the Mimir gateway service exists.
 4. If alerts evaluate but email does not send, check `observability-mimir-alertmanager-0` logs for SMTP authentication or recipient errors.

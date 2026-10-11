@@ -150,7 +150,7 @@ alertmanager:
     enabled: false
   fallbackConfig: |
     # Real fallback config is rendered by External Secrets into the
-    # observability-alertmanager-email Secret and mounted over this file.
+    # observability-alertmanager-email-brevo Secret and mounted over this file.
     route:
       receiver: default-receiver
     receivers:
