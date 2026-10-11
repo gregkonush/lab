@@ -211,6 +211,8 @@ for osd in 0 1 2 3 4 5; do
 done
 ```
 
+Require `true` from all six running OSDs before accepting activation. The monitor config store alone is insufficient.
+
 Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
 affected application latency before and after an authorized rollout. Allowing scrubs during recovery adds HDD contention;
 an active scrub alone does not prove that debt is shrinking. If application latency deteriorates, revert this setting
