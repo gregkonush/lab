@@ -68,10 +68,6 @@ pub fn sockets_directory() -> PathBuf {
     PathBuf::from("/run/tengri/slot")
 }
 
-pub async fn command(request: &CommandRequest) -> anyhow::Result<SlotStatus> {
-    command_at(&sockets_directory().join("control.sock"), request).await
-}
-
 pub(super) async fn command_at(
     socket: &std::path::Path,
     request: &CommandRequest,

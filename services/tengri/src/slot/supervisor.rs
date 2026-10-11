@@ -202,6 +202,7 @@ pub async fn run() -> anyhow::Result<()> {
     let tls = identity.slot_server_tls(&namespace)?;
     let database = Arc::new(crate::control::Database::from_environment("tengri_supervisor").await?);
     database.verify_schema().await?;
+    let readiness_database = database.clone();
     let health = Router::new()
         .route(
             "/metrics",
@@ -218,19 +219,10 @@ pub async fn run() -> anyhow::Result<()> {
         .route("/livez", get(|| async { StatusCode::OK }))
         .route(
             "/readyz",
-            get(|| async {
-                match runner::command(&CommandRequest::Status).await {
-                    Ok(status)
-                        if matches!(
-                            status.state,
-                            SlotState::Vacant { .. }
-                                | SlotState::Awake { .. }
-                                | SlotState::Sleeping { .. }
-                        ) =>
-                    {
-                        StatusCode::OK
-                    }
-                    _ => StatusCode::SERVICE_UNAVAILABLE,
+            get(move || {
+                let database = readiness_database.clone();
+                async move {
+                    readiness(&database, &runner::sockets_directory().join("control.sock")).await
                 }
             }),
         );
@@ -240,6 +232,28 @@ pub async fn run() -> anyhow::Result<()> {
     tokio::select! {
         result = serve(listener, tls, database) => result,
         result = health_task => { result??; anyhow::bail!("supervisor health listener stopped") },
+    }
+}
+
+async fn readiness(
+    database: &crate::control::Database,
+    runner_socket: &std::path::Path,
+) -> StatusCode {
+    let check = async {
+        database.verify_schema().await?;
+        let status = runner::command_at(runner_socket, &CommandRequest::Status).await?;
+        anyhow::ensure!(
+            matches!(
+                status.state,
+                SlotState::Vacant { .. } | SlotState::Awake { .. } | SlotState::Sleeping { .. }
+            ),
+            "slot runner is unavailable"
+        );
+        Ok::<(), anyhow::Error>(())
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(2), check).await {
+        Ok(Ok(())) => StatusCode::OK,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
 
@@ -1098,6 +1112,30 @@ mod tests {
             .unwrap();
         assert!(matches!(response, Err((StatusCode::CONFLICT, _))));
         database.release(fence).await.unwrap();
+        let dsn = std::env::var("TENGRI_DATABASE_DSN")
+            .unwrap()
+            .replace("user=tengri_controller", "user=tengri_supervisor");
+        let readiness_database = crate::control::Database::connect(
+            &dsn,
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE").unwrap()),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE").unwrap()),
+            "tengri_supervisor",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            readiness(&readiness_database, &supervisor.runner_socket).await,
+            StatusCode::OK
+        );
+        readiness_database.pool.close();
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            readiness(&readiness_database, &supervisor.runner_socket).await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a healthy sleeping runner cannot make a disconnected supervisor ready"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        database.verify_schema().await.unwrap();
         runner.abort();
         let _ = runner.await;
         tokio::fs::remove_dir_all(directory).await.unwrap();

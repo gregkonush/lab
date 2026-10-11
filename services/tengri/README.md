@@ -185,6 +185,9 @@ Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the
 only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,
 role `tengri_supervisor`. The runner and guest receive neither credential. Provision both reviewed Secrets before
 enabling slot creation during cutover.
+Supervisor readiness checks the shared database schema and runner state together under a two-second deadline.
+A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
+unavailable. Process liveness remains independent of that dependency.
 
 The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
 are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks
