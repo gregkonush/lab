@@ -2,7 +2,7 @@
 
 ## Overview
 
-The observability stack uses Grafana Mimir Ruler for alert evaluation and Mimir Alertmanager for routing. Critical infrastructure alerts are routed to email through Resend SMTP.
+The observability stack uses Grafana Mimir Ruler for alert evaluation and Mimir Alertmanager for routing. Critical infrastructure alerts are routed to email through Brevo SMTP.
 
 GitOps source:
 
@@ -17,17 +17,34 @@ The Kubernetes Secret is `observability/observability-alertmanager-email`, creat
 The same ExternalSecret renders `alertmanager_fallback_config.yaml`, which is mounted into Mimir Alertmanager at `/configs/alertmanager_fallback_config.yaml`.
 Do not put `${...}` placeholders in `alertmanager.fallbackConfig`; Mimir expands environment variables in its main config, not in the mounted fallback Alertmanager config file.
 
-Required 1Password fields in item `infra/resend`:
+Required 1Password fields in item `infra/brevo`:
 
 | 1Password field | Kubernetes key  |
 | --------------- | --------------- |
+| `username`      | `smtp-username` |
 | `password`      | `smtp-password` |
 | `from`          | `smtp-from`     |
 | `to`            | `email-to`      |
 
-The Resend SMTP username is always `resend` and is set directly in Mimir Alertmanager config.
+Use the SMTP login shown on Brevo's SMTP settings page for `username`.
+Use a Brevo SMTP key for `password`, not an API key or account password.
+The relay is `smtp-relay.brevo.com:587` with STARTTLS required.
 
 Do not commit SMTP credentials or recipient addresses.
+
+## Brevo Setup
+
+1. Create a Brevo account and select the Free plan. Complete the required organization details and transactional-email activation.
+2. Authenticate the existing sender domain in Brevo. Add the exact verification and DKIM records Brevo supplies to DNS.
+   Preserve existing mail records and the domain's DMARC policy.
+3. Add the existing alert sender in Brevo and confirm that it is verified.
+4. Store the SMTP login and key in `infra/brevo`. Copy `from` and `to` from the existing alert configuration.
+5. Test SMTP delivery before merging the provider change. Keep Resend active until the Brevo email arrives.
+6. Sync the reviewed observability revision, verify the ExternalSecret is ready, and run the synthetic alert test below.
+
+The Free plan allows 300 emails per day. Unused allowance does not roll over.
+At the daily limit, Brevo queues up to 1,000 additional transactional emails; messages beyond that queue are not delivered.
+Check Brevo's transactional logs when alerts are delayed or sending fails.
 
 ## Routing Contract
 
@@ -57,11 +74,14 @@ The loader also deletes stale groups from the `lab` namespace when it can read c
 ## Deployment
 
 ```bash
-mise exec helm@3 -- kustomize build --enable-helm /Users/gregkonush/github.com/lab/argocd/applications/observability
+nix develop -c kustomize build --enable-helm argocd/applications/observability
 
 argocd app sync observability
 argocd app wait observability --health --sync --timeout 900
 ```
+
+The Alertmanager pod's `observability.proompteng.ai/alertmanager-fallback-config-revision` annotation
+forces a rollout when the SMTP provider changes. Bump it for changes to the Secret-rendered fallback config.
 
 ## Validation
 
@@ -139,4 +159,5 @@ After delivery is confirmed, silence or let the synthetic alert resolve by not r
 - [Grafana Mimir distributed Helm chart configuration](https://grafana.com/docs/helm-charts/mimir-distributed/latest/run-production-environment-with-helm/configuration-with-helm/)
 - [Prometheus Alertmanager configuration](https://prometheus.io/docs/alerting/latest/configuration/)
 - [External Secrets templating](https://external-secrets.io/latest/guides/templating/)
-- [Resend SMTP integration](https://resend.com/docs/send-with-smtp)
+- [Brevo SMTP integration](https://help.brevo.com/hc/en-us/articles/7924908994450-Send-transactional-emails-using-Brevo-SMTP)
+- [Brevo Free plan limits](https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan)

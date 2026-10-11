@@ -228,6 +228,33 @@ test('critical Ceph alerts opt into the configured email route', () => {
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
 })
 
+test('alert email uses Brevo SMTP credentials from the existing secret store', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const template = externalSecret.spec.target.template.data
+  const alertmanager = YAML.parse(template['alertmanager_fallback_config.yaml'])
+  expect(externalSecret.spec.secretStoreRef).toEqual({ kind: 'ClusterSecretStore', name: 'onepassword-infra' })
+  expect(alertmanager.global).toMatchObject({
+    smtp_smarthost: 'smtp-relay.brevo.com:587',
+    smtp_auth_username: '{{ .smtp_username }}',
+    smtp_auth_password: '{{ .smtp_password }}',
+    smtp_require_tls: true,
+  })
+  expect(template['smtp-username']).toBe('{{ .smtp_username }}')
+  expect(
+    externalSecret.spec.data.map((entry: { secretKey: string; remoteRef: { key: string } }) => [
+      entry.secretKey,
+      entry.remoteRef.key,
+    ]),
+  ).toEqual([
+    ['smtp_username', 'brevo/username'],
+    ['smtp_password', 'brevo/password'],
+    ['smtp_from', 'brevo/from'],
+    ['email_to', 'brevo/to'],
+  ])
+})
+
 test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
