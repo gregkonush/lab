@@ -185,6 +185,12 @@ cephClusterSpec:
     ssl: false
 
   network:
+    provider: multus
+    selectors:
+      cluster: rook-ceph/ceph-cluster-100g
+    addressRanges:
+      cluster:
+        - 10.100.0.0/24
     connections:
       encryption:
         enabled: false
