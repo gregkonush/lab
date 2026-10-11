@@ -104,8 +104,23 @@ unknown. These small requests establish connectivity, not 100G throughput or sto
 ## Recover stalled CSI operations
 
 If an earlier route selected a storage source and left a CSI operation stuck, correct the preferred source and pass
-all 52 checks first. Restart only the affected node's CSI plugin to release its old connections and volume-operation
-lock. For Altra's CephFS driver:
+all 52 checks first. Before restarting a CephFS plugin, identify every PVC consumer on the affected node. For Altra:
+
+```bash
+kubectl --context galactic-lan -n rook-ceph get pods --all-namespaces \
+	--field-selector spec.nodeName=talos-192-168-1-85 -o json \
+	| jq -r '.items[] | .metadata as $pod | .spec.volumes[]? | select(.persistentVolumeClaim) | [$pod.namespace, $pod.name, .persistentVolumeClaim.claimName] | @tsv'
+```
+
+Resolve each claim's PV and mounter, and inspect the actual filesystem type in its workload as described in the
+[CephFS runbook](../../../docs/runbooks/cephfs-fuse-on-talos.md#validation). Include `rook-cephfs-fuse` claims and any
+PV or mounted filesystem using FUSE. Deleting the plugin kills its `ceph-fuse` processes; existing FUSE mounts then
+fail with `Transport endpoint is not connected`. If FUSE consumers exist, arrange their maintenance window and
+recovery before deleting the plugin. Recover the affected node-local FUSE mounts and recreate every affected
+workload afterward; require I/O on each existing claim, not just a new mount canary. Do not delete data-bearing PVCs.
+
+After that preflight, restart only the affected node's CSI plugin to release its old connections and
+volume-operation lock. For Altra's CephFS driver:
 
 ```bash
 kubectl --context galactic-lan -n rook-ceph delete pod \
