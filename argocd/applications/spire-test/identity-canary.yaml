@@ -19,6 +19,11 @@ spec:
     spec:
       serviceAccountName: identity-canary
       automountServiceAccountToken: false
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       nodeSelector:
         kubernetes.io/os: linux
       securityContext:

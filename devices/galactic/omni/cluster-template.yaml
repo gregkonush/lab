@@ -61,6 +61,13 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - idOverride: 35-12345678-9abc-deff-1234-56789abcdeff-workload-placement
+    annotations:
+      name: Advertise 100G workload capacity
+    inline: |
+      machine:
+        nodeLabels:
+          network.proompteng.ai/100g: "true"
   - idOverride: 10-12345678-9abc-deff-1234-56789abcdeff
     annotations:
       description: Config patch imported from existing Talos node
@@ -269,6 +276,13 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - idOverride: 35-8bf7ec00-171c-11f1-8000-7cc255f16774-workload-placement
+    annotations:
+      name: Advertise 100G workload capacity
+    inline: |
+      machine:
+        nodeLabels:
+          network.proompteng.ai/100g: "true"
   - idOverride: 10-8bf7ec00-171c-11f1-8000-7cc255f16774
     annotations:
       description: Config patch imported from existing Talos node
@@ -443,6 +457,16 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - idOverride: 35-ff115a00-c307-11f0-a28f-648eab3e4100-workload-placement
+    annotations:
+      name: Reserve Ryzen for compute and local storage
+    inline: |
+      machine:
+        nodeLabels:
+          network.proompteng.ai/100g: "false"
+          workload.proompteng.ai/compute-local: "true"
+        nodeTaints:
+          workload.proompteng.ai/compute-local: "true:NoSchedule"
   - idOverride: 10-ff115a00-c307-11f0-a28f-648eab3e4100
     annotations:
       description: Config patch imported from existing Talos node

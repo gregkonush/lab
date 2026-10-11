@@ -19,11 +19,11 @@ Do not put `${...}` placeholders in `alertmanager.fallbackConfig`; Mimir expands
 
 Required 1Password fields in item `infra/resend`:
 
-| 1Password field | Kubernetes key |
-| --- | --- |
-| `password` | `smtp-password` |
-| `from` | `smtp-from` |
-| `to` | `email-to` |
+| 1Password field | Kubernetes key  |
+| --------------- | --------------- |
+| `password`      | `smtp-password` |
+| `from`          | `smtp-from`     |
+| `to`            | `email-to`      |
 
 The Resend SMTP username is always `resend` and is set directly in Mimir Alertmanager config.
 
@@ -39,6 +39,10 @@ notify: email
 ```
 
 Warning alerts are evaluated and visible in Mimir/Grafana, but they do not send email by default.
+
+Ceph opts `CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` into this route with
+`notify: email`. The route repeats firing notifications every hour and sends a resolved notification.
+Ceph health warnings, scrub debt, and warning-level latency alerts remain visible without sending email.
 
 ## Rule Delivery
 
