@@ -9,6 +9,15 @@ features:
     interval: 24h
 patches:
   - file: image-factory-registry.yaml
+  - idOverride: 30-galactic-neighbor-cache
+    annotations:
+      name: Size the IPv4 neighbor cache for dense pod networks
+    inline: |
+      machine:
+        sysctls:
+          net.ipv4.neigh.default.gc_thresh1: "4096"
+          net.ipv4.neigh.default.gc_thresh2: "8192"
+          net.ipv4.neigh.default.gc_thresh3: "16384"
   - idOverride: 25-galactic-split-dns
     annotations:
       name: Resolve public and tailnet names through NUC DNS
