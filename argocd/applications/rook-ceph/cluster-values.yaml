@@ -30,6 +30,12 @@ toolbox:
 cephClusterSpec:
   # Stop the major-version OSD rollout before it starts if any PG is not clean.
   upgradeOSDRequiresHealthyPGs: true
+  # Temporary, explicitly authorized network cutover while PG recovery is active.
+  # Rook processes one OSD at a time when this is true. Restore after cutover.
+  skipUpgradeChecks: true
+  annotations:
+    osd:
+      k8s.v1.cni.cncf.io/networks: rook-ceph/ceph-cluster-100g
   security:
     cephx:
       # All daemon and client identities use AES256K after CSI key retirement.
