@@ -57,6 +57,8 @@ Use one 100G link per host. Leave the second NIC ports and two remaining switch 
 - [ ] Complete hardware acceptance: Altra cooling, PCIe capacity under load, switch peer-port identities and FEC
       counters, then bidirectional 60-second `iperf3` tests. Altra has reported PCIe 2.5 GT/s ×16; Turin 16 GT/s ×16.
       A 100G carrier does not establish 100 Gb/s throughput. Test MTU 9000 separately after MTU 1500 acceptance.
+      Use the [NIC temperature command](../network/README.md#read-nic-temperature) to read current and peak values
+      from either host before and during these checks.
 - [ ] Complete full-replication, scrub, GPU/NVMe, and application acceptance. Do not interpret node readiness as all
       these checks passing. Future node maintenance follows the [storage recovery procedure](../../../docs/runbooks/galactic-storage-and-workload-recovery.md).
 
