@@ -55,17 +55,22 @@ underlying Flannel routes provide a recovery path after removal, not automatic f
 ## Check ordinary pod connectivity
 
 These temporary pods use the deployed CSI image's Python interpreter. They have no host networking, volumes, or
-service-account token. Run from the repository root with access to `galactic-lan`.
+service-account token. Each Service selects one node's probe. Run with access to `galactic-lan`.
 
 ```bash
 for node in talos-192-168-1-85 turin talos-192-168-1-194; do
 	kubectl --context galactic-lan -n rook-ceph run "pod-routing-probe-$node" \
-		--image=quay.io/cephcsi/cephcsi:v3.17.1 --labels=lab-network-probe=pod-routing \
+		--image=quay.io/cephcsi/cephcsi:v3.17.1 \
+		--labels="lab-network-probe=pod-routing,lab-network-probe-node=$node" \
 		--restart=Never \
 		--overrides="{\"spec\":{\"nodeName\":\"$node\",\"automountServiceAccountToken\":false}}" \
 		--command -- python3 -m http.server 8080 --directory /tmp
 done
 kubectl --context galactic-lan -n rook-ceph wait pod -l lab-network-probe=pod-routing --for=condition=Ready --timeout=120s
+for node in talos-192-168-1-85 turin talos-192-168-1-194; do
+	kubectl --context galactic-lan -n rook-ceph expose pod "pod-routing-probe-$node" \
+		--port=8080 --target-port=8080 --selector="lab-network-probe-node=$node" --labels=lab-network-probe=pod-routing
+done
 targets=$(kubectl --context galactic-lan -n rook-ceph get pods -l lab-network-probe=pod-routing -o jsonpath='{.items[*].status.podIP}')
 for node in talos-192-168-1-85 turin talos-192-168-1-194; do
 	kubectl --context galactic-lan -n rook-ceph exec -i "pod-routing-probe-$node" -- python3 - "$targets" <<'PY'
@@ -78,9 +83,13 @@ for address in sys.argv[1].split():
     with urllib.request.urlopen(f"http://{address}:8080/", timeout=10) as response:
         assert response.status == 200
         print("HTTP", address, response.status)
+for node in ("talos-192-168-1-85", "turin", "talos-192-168-1-194"):
+    with urllib.request.urlopen(f"http://pod-routing-probe-{node}:8080/", timeout=10) as response:
+        assert response.status == 200
+        print("Service", node, response.status)
 PY
 done
-kubectl --context galactic-lan -n rook-ceph delete pod -l lab-network-probe=pod-routing
+kubectl --context galactic-lan -n rook-ceph delete pod,service -l lab-network-probe=pod-routing
 ```
 
 If a check fails, retain the failure evidence, then delete the probes before investigating. Missing telemetry is
