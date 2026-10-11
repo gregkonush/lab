@@ -15,7 +15,7 @@ SCOPE = {
 
 
 async def empty_receive():
-    return {"type": "http.request", "body": b"{}"}
+    return {"type": "http.request", "body": b'{"stream":true}'}
 
 
 class AdmissionTest(unittest.IsolatedAsyncioTestCase):
@@ -164,12 +164,15 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
         import json
 
         for payload in [
-            {"n": 2},
-            {"n": True},
-            {"logprobs": True},
-            {"prompt_logprobs": 1},
-            {"max_tokens": 4097},
-            {"max_completion_tokens": 4097},
+            {},
+            {"stream": False},
+            {"stream": 1},
+            {"stream": True, "n": 2},
+            {"stream": True, "n": True},
+            {"stream": True, "logprobs": True},
+            {"stream": True, "prompt_logprobs": 1},
+            {"stream": True, "max_tokens": 4097},
+            {"stream": True, "max_completion_tokens": 4097},
             [],
             "invalid",
         ]:

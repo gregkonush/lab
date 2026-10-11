@@ -138,7 +138,9 @@ class AdmissionMiddleware:
                 invalid = not isinstance(payload, dict)
                 if not invalid:
                     invalid = (
-                        type(payload.get("n", 1)) is not int or payload.get("n", 1) != 1
+                        payload.get("stream") is not True
+                        or type(payload.get("n", 1)) is not int
+                        or payload.get("n", 1) != 1
                     )
                     invalid = invalid or payload.get("logprobs", False) not in (
                         False,
@@ -159,7 +161,7 @@ class AdmissionMiddleware:
                     await respond(
                         send,
                         status,
-                        b'{"error":"expected one choice, no logprobs and at most 4096 output tokens"}',
+                        b'{"error":"expected streaming, one choice, no logprobs and at most 4096 output tokens"}',
                     )
                     return
                 buffered_body = bytes(buffered_body)

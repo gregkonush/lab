@@ -21,7 +21,10 @@ advantage for Bayn's fifteen-minute holding horizon. No live strategy admission 
 - Generation: greedy by default; server-wide output ceiling 4,096 tokens, Qwen3 reasoning parser, prefix cache enabled.
 - HTTP admission: two in-flight requests, at most one waiting behind the active sequence, 262,144 request-body bytes,
   180-second total request deadline including body input, queue and generation. Excess work receives HTTP 429 immediately.
-  Multi-choice generation, logprob requests and output budgets above the ceiling are rejected before engine admission.
+  Requests must set `stream: true`; multi-choice generation, logprob requests and output budgets above the ceiling
+  are rejected before engine admission. Streaming gives the worker token timing and uses the framework's cancellable
+  response generator. The pinned vLLM non-streaming handler leaves detached tasks on parent cancellation, so that
+  path is closed rather than wrapped in another serving layer.
 
 Alpha-R1 is trained to select allowed factor identifiers in `<alpha_list>...</alpha_list>`. Preserve that trained
 format and validate every returned identifier against the experiment's candidate pool. Do not execute generated

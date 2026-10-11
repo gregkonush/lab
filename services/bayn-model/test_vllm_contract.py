@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI, Request
 from starlette.responses import StreamingResponse
 from pathlib import Path
+from unittest.mock import patch
 
 from vllm.entrypoints.cli.serve import ServeSubcommand
 from vllm.entrypoints.serve.utils.api_utils import with_cancellation
@@ -62,7 +63,11 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
             nonlocal delivered
             if not delivered:
                 delivered = True
-                return {"type": "http.request", "body": b"{}", "more_body": False}
+                return {
+                    "type": "http.request",
+                    "body": b'{"stream":true}',
+                    "more_body": False,
+                }
             await entered.wait()
             return {"type": "http.disconnect"}
 
@@ -91,6 +96,12 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(middleware.counts["completed"], 0)
 
     async def test_stream_disconnect_records_cancellation_after_backend_cleanup(self):
+        await self.assert_stream_stops(disconnect=True)
+
+    async def test_stream_deadline_cancels_native_framework_generation(self):
+        await self.assert_stream_stops(disconnect=False)
+
+    async def assert_stream_stops(self, disconnect):
         app = FastAPI()
         streamed = asyncio.Event()
         stopped = asyncio.Event()
@@ -104,23 +115,33 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
                 stopped.set()
 
         @app.post("/v1/chat/completions")
-        async def chat():
+        @with_cancellation
+        async def chat(payload: dict, raw_request: Request):
             return StreamingResponse(chunks())
 
         async def receive():
             nonlocal delivered
             if not delivered:
                 delivered = True
-                return {"type": "http.request", "body": b"{}", "more_body": False}
-            await streamed.wait()
-            return {"type": "http.disconnect"}
+                return {
+                    "type": "http.request",
+                    "body": b'{"stream":true}',
+                    "more_body": False,
+                }
+            if disconnect:
+                await streamed.wait()
+                return {"type": "http.disconnect"}
+            await asyncio.Event().wait()
 
         async def send(message):
             if message["type"] == "http.response.body":
                 streamed.set()
 
         middleware = AdmissionMiddleware(app)
-        with redirect_stdout(io.StringIO()):
+        with (
+            redirect_stdout(io.StringIO()),
+            patch("admission.REQUEST_TIMEOUT_SECONDS", 180 if disconnect else 0.02),
+        ):
             await middleware(
                 {
                     "type": "http",
@@ -129,14 +150,14 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
                     "method": "POST",
                     "path": "/v1/chat/completions",
                     "query_string": b"",
-                    "headers": [],
+                    "headers": [(b"content-type", b"application/json")],
                 },
                 receive,
                 send,
             )
-        self.assertTrue(stopped.is_set())
+            await asyncio.wait_for(stopped.wait(), timeout=1)
         self.assertEqual(middleware.inflight, 0)
-        self.assertEqual(middleware.counts["cancelled"], 1)
+        self.assertEqual(middleware.counts["cancelled" if disconnect else "expired"], 1)
         self.assertEqual(middleware.counts["completed"], 0)
 
     async def test_real_framework_enforces_budgets_before_route_handling(self):
@@ -155,12 +176,14 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 for body, status in [
                     (b"x" * 262145, 413),
-                    (b'{"n":2}', 400),
-                    (b"{}", 200),
+                    (b'{"stream":true,"n":2}', 400),
+                    (b"{}", 400),
+                    (b'{"stream":false}', 400),
+                    (b'{"stream":true}', 200),
                 ]:
                     response = await client.post("/v1/chat/completions", content=body)
                     self.assertEqual(response.status_code, status)
-        self.assertEqual(seen, [{}])
+        self.assertEqual(seen, [{"stream": True}])
 
 
 if __name__ == "__main__":
