@@ -29,8 +29,10 @@ This uses the existing Stash application's resolver on Turin, including its conf
 behavior. It stops on the first failure or lookup slower than one second. Select the current running Stash pod:
 
 ```bash
+set -euo pipefail
 pod=$(kubectl --context galactic-lan -n stash get pods -l app.kubernetes.io/name=stash \
-	--field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+	--field-selector=spec.nodeName=turin,status.phase=Running -o json \
+	| jq -er '[.items[] | select(.metadata.deletionTimestamp == null)] | if length == 1 then .[0].metadata.name else error("Expected exactly one running Stash pod on Turin") end')
 kubectl --context galactic-lan -n stash exec -i "$pod" -c app -- python3 - <<'PY'
 import signal
 import socket
