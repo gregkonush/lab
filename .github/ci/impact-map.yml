@@ -160,6 +160,7 @@ targets:
   kubeconform:
     kind: validation
     paths:
+      - .github/workflows/pull-request.yml
       - services/ofz/test-ha-manifests.sh
       - services/ofz/tests/ha_manifests.py
       - scripts/cluster-upgrades/temporal_*.py
