@@ -161,7 +161,7 @@ spec:
           scaleSetLabels:
             - arc-amd64
           minRunners: 1
-          maxRunners: 5
+          maxRunners: 2
           listenerTemplate:
             spec:
               nodeSelector:
@@ -175,7 +175,12 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
-                kubernetes.io/hostname: turin
+                kubernetes.io/hostname: talos-192-168-1-194
+              tolerations:
+                - key: workload.proompteng.ai/compute-local
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -204,7 +209,7 @@ spec:
                       [[ "$scratch_device" && "$scratch_fstype" ]] ||
                         fail "scratch volume is not mounted"
                       [[ "$scratch_fstype" == xfs ]] ||
-                        fail "expected the Turin local scratch XFS volume, got filesystem $scratch_fstype"
+                        fail "expected the Ryzen local scratch XFS volume, got filesystem $scratch_fstype"
                       [[ "$scratch_device" != overlay && "$scratch_device" != "$root_device" ]] ||
                         fail "scratch path resolves to the runner root filesystem ($scratch_device)"
 
@@ -411,7 +416,7 @@ spec:
                       spec:
                         accessModes:
                           - ReadWriteOnce
-                        storageClassName: local-path-turin-nvme-transcend
+                        storageClassName: local-path-ryzen
                         volumeMode: Filesystem
                         resources:
                           requests:

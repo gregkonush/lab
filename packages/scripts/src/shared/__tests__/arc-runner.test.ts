@@ -63,7 +63,10 @@ describe('ARC Nix runner toolchain', () => {
 
     const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
     expect(pod.toJSON()).toMatchObject({
-      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' },
+      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
+      tolerations: expect.arrayContaining([
+        { key: 'workload.proompteng.ai/compute-local', operator: 'Equal', value: 'true', effect: 'NoSchedule' },
+      ]),
       initContainers: expect.arrayContaining([
         expect.objectContaining({
           volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
@@ -95,7 +98,7 @@ describe('ARC Nix runner toolchain', () => {
             volumeClaimTemplate: expect.objectContaining({
               spec: {
                 accessModes: ['ReadWriteOnce'],
-                storageClassName: 'local-path-turin-nvme-transcend',
+                storageClassName: 'local-path-ryzen',
                 volumeMode: 'Filesystem',
                 resources: { requests: { storage: '45Gi' } },
               },
@@ -109,7 +112,7 @@ describe('ARC Nix runner toolchain', () => {
   it('keeps lab ARC runner concurrency capped', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 2')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
