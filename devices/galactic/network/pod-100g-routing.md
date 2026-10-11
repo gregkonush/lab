@@ -13,6 +13,12 @@ Each storage bond routes the peer's two `/24` pod blocks through the peer's stor
 precedence over Flannel's `/23` routes. Ordinary pod traffic, cross-node Service endpoints, and Ceph public traffic
 between Altra and Turin use this path. Same-node traffic stays local. Ryzen traffic uses the existing LAN.
 
+Both native pod routes specify the host's existing Flannel `/32` as their preferred source. Altra uses `10.244.4.0`;
+Turin uses `10.244.0.0`. Unbound host clients must retain these addresses when the outbound interface changes to
+`storage0`. Selecting `10.100.0.11` or `.12` for Ceph public requests caused fresh CSI mounts to stall during rollout.
+The storage subnet also exists on each OSD's secondary interface. Keeping public client sources in the pod subnet
+preserves the public reply path. This source setting does not rewrite forwarded application packets.
+
 Policy rule `5000` matches the local PodCIDR as source and only the peer's node `/32` as destination. It selects table
 `100`, whose sole route uses `storage0`. This carries replies to existing kernel Ceph clients that retain their old
 node source address. Host-originated management, etcd, and Flannel VXLAN packets retain their LAN route. Pod IPs,
@@ -38,8 +44,8 @@ underlying Flannel routes provide a recovery path after removal, not automatic f
    Inspect the Omni sync dry run. It must update only the two `30-<machine-uuid>-storage-network` patches.
    It must not change Ryzen, installers, extensions, node addresses, or Flannel's advertised endpoints.
 4. Sync the merged template through Omni. No reboot, drain, OSD rollout, or new application attachment is required.
-5. Run the route verifier. Exit `0` requires all 42 host and forwarded-pod lookups to use the expected interfaces
-   and gateways. Exit `1` means a failed check. Exit `2` means evidence is unavailable.
+5. Run the route verifier. Exit `0` requires all 52 host and forwarded-pod lookups to use the expected interfaces,
+   gateways, and unbound host source addresses. Exit `1` means a failed check. Exit `2` means evidence is unavailable.
 
    ```bash
    python3 devices/galactic/network/verify-pod-routing.py
