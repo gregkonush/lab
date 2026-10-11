@@ -998,6 +998,105 @@ describe('native Restate execution controller', () => {
     expect(activations).toBe(0)
   })
 
+  test.each([sourceRevision, 'd'.repeat(40)])(
+    'reactivation wakes a deferred controller and proves a fresh successor from revision %s',
+    async (previousSourceRevision) => {
+      let state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: 1,
+        planHash,
+        sourceRevision: previousSourceRevision,
+        initialSequence: 4,
+        nextSequence: 10,
+        lastCompletion: {
+          sequence: 9,
+          outcome: ExecutionControllerOutcome.Blocked,
+          receiptHash: 'f'.repeat(64),
+          completedAt: '2026-08-12T18:00:00.000Z',
+        },
+      }
+      const deferred: Delivery = {
+        delay: 8 * 60 * 60 * 1_000,
+        idempotencyKey: executionControllerTickIdempotencyKey(1, 10, 0),
+        parameter: { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 10, attempt: 0 },
+      }
+      const deliveries = [deferred]
+      const calls: number[] = []
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          advance: async (command) => {
+            calls.push(command.sequence)
+            return {
+              completedAt: '2026-08-13T18:00:01.000Z',
+              outcome: {
+                _tag: ExecutionControllerOutcome.Blocked,
+                receiptHash: 'e'.repeat(64),
+                nextDelayMs: 30_000,
+              },
+            }
+          },
+          log: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        }),
+      )
+      const controllerContext = {
+        key: controllerKey,
+        get: async () => state,
+        set: (_key: string, next: ExecutionControllerState) => {
+          state = next
+        },
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({ id: 'fresh-recovery-controller', attemptCompletedSignal: new AbortController().signal }),
+      } as unknown as TestContext
+      const context = {
+        key: controllerKey,
+        request: () => ({
+          id: 'fresh-recovery-deployment',
+          headers: new Map([['authorization', `Bearer ${Buffer.alloc(32, 7).toString('base64url')}`]]),
+          attemptCompletedSignal: new AbortController().signal,
+        }),
+        objectClient: () => ({
+          status: async () => state,
+          activate: (request: unknown) => object.activate(controllerContext, request),
+        }),
+        genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) }),
+        sleep: async () => {
+          const index = deliveries.findIndex((delivery) => delivery !== deferred)
+          if (index === -1) throw new Error('reactivation did not wake the deferred controller')
+          const delivery = deliveries.splice(index, 1)[0]
+          if (delivery === undefined) throw new Error('missing recovery delivery')
+          await object.tick(controllerContext, delivery.parameter)
+        },
+      } as unknown as ObjectSharedContext
+
+      expect(
+        await object.activateDeployment(context, {
+          schemaVersion: 'bayn.execution-deployment-activation.v1',
+          controllerKey,
+          planHash,
+          sourceRevision,
+        }),
+      ).toMatchObject({
+        active: true,
+        epoch: 1,
+        initialSequence: 4,
+        sourceRevision,
+        nextSequence: 12,
+        lastCompletion: { sequence: 11 },
+      })
+      expect(calls).toEqual([10, 11])
+      expect(deliveries).toHaveLength(2)
+      expect(deliveries[1]).toMatchObject({ delay: 30_000, parameter: { epoch: 1, sequence: 12 } })
+
+      await object.tick(controllerContext, deferred.parameter)
+      expect(calls).toEqual([10, 11])
+      expect(deliveries).toHaveLength(2)
+    },
+  )
+
   test('rotates the exact previous binding into one immediate pass and ignores its stale tick', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
