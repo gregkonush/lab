@@ -9,9 +9,6 @@ import subprocess
 import time
 import uuid
 
-import yaml
-
-
 RYZEN = "talos-192-168-1-194"
 KEY = "workload.proompteng.ai/compute-local"
 TOLERATION = {"key": KEY, "operator": "Equal", "value": "true", "effect": "NoSchedule"}
@@ -181,6 +178,8 @@ def inventory(context, verify):
 
 def probe_admission(context):
     """Create only UUID-scoped policy objects; every test Pod uses server dry-run."""
+    import yaml
+
     token = uuid.uuid4().hex[:12]
     name = f"compute-local-probe-{token}"
     label = "test.proompteng.ai/placement"
