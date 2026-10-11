@@ -19,6 +19,7 @@ advantage for Bayn's fifteen-minute holding horizon. No live strategy admission 
 - GPU: one time-sliced slot on Turin's single RTX PRO 6000 Blackwell Max-Q. Slots do not isolate GPU memory or compute.
 - Launch budget: 24% of physical VRAM, 16,384 total context tokens, 2,048 batched prefill tokens, one active sequence.
 - Generation: greedy by default; server-wide output ceiling 4,096 tokens, Qwen3 reasoning parser, prefix cache enabled.
+- Every completed stream includes actual token usage, forced server-side even when the caller omits stream options.
 - HTTP admission: two in-flight requests, at most one waiting behind the active sequence, 262,144 request-body bytes,
   180-second total request deadline including body input, queue and generation. Excess work receives HTTP 429 immediately.
   Requests must set `stream: true`; multi-choice generation, logprob requests and output budgets above the ceiling

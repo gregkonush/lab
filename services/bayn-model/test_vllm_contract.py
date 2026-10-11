@@ -39,6 +39,7 @@ class ServingContractTest(unittest.TestCase):
         self.assertFalse(args.enable_log_requests)
         self.assertFalse(args.enable_log_outputs)
         self.assertTrue(args.disable_uvicorn_access_log)
+        self.assertTrue(args.enable_force_include_usage)
         self.assertEqual(AdmissionMiddleware.__name__, "AdmissionMiddleware")
 
 
