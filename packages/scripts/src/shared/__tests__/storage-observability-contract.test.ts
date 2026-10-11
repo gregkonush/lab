@@ -213,7 +213,7 @@ test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub 
   expect(config.osd.osd_mclock_profile).toBe('custom')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
-  expect(config.osd.osd_max_scrubs).toBe('1')
+  expect(config.osd.osd_max_scrubs).toBe('3')
   expect([0, 1, 2, 3, 4, 5].map((id) => config[`osd.${id}`].osd_mclock_max_capacity_iops_hdd)).toEqual([
     '210',
     '250',
