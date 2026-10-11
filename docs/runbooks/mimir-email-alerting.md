@@ -46,6 +46,23 @@ The Free plan allows 300 emails per day. Unused allowance does not roll over.
 At the daily limit, Brevo queues up to 1,000 additional transactional emails; messages beyond that queue are not delivered.
 Check Brevo's transactional logs when alerts are delayed or sending fails.
 
+### Sending-domain DNS
+
+These records authenticate `updates.proompteng.ai` for the current Brevo account in the Cloudflare
+`proompteng.ai` zone. Use a 300-second TTL and DNS-only CNAMEs. The verification code is public DNS data;
+if recreating the Brevo account, use the new code and DKIM targets supplied by that account.
+
+| Type  | Name relative to `proompteng.ai` | Content                                       |
+| ----- | -------------------------------- | --------------------------------------------- |
+| TXT   | `updates`                        | `brevo-code:2efb1930274f21fc7ecdcc42d6ce1e8e` |
+| CNAME | `brevo1._domainkey.updates`      | `b1.updates-proompteng-ai.dkim.brevo.com`     |
+| CNAME | `brevo2._domainkey.updates`      | `b2.updates-proompteng-ai.dkim.brevo.com`     |
+| TXT   | `_dmarc.updates`                 | `v=DMARC1; p=reject; adkim=s; aspf=s;`        |
+
+The sending subdomain has its own strict DMARC policy. Keep existing Resend DKIM and `send.updates`
+records while other users may still depend on them. Brevo authentication does not require replacing
+MX records, delegating nameservers, enabling link tracking, or forwarding DMARC reports to Brevo.
+
 ## Routing Contract
 
 Only alerts with both labels are emailed:
@@ -92,14 +109,24 @@ kubectl --context galactic-tailscale -n observability get externalsecret observa
 kubectl --context galactic-tailscale -n observability get secret observability-alertmanager-email
 ```
 
-Confirm the Secret-rendered Alertmanager fallback config contains the email receiver. Do not print the SMTP
-password value in normal operations.
+Confirm the Secret-rendered Alertmanager fallback config contains the email receiver. Keep the SMTP login,
+password, sender, and recipient out of validation output.
 
 ```bash
 kubectl --context galactic-tailscale -n observability get secret \
   observability-alertmanager-email \
-  -o go-template='{{ index .data "alertmanager_fallback_config.yaml" | base64decode }}' | \
-  grep -E 'critical-email|smtp_smarthost|smtp_auth_username'
+  -o json | python3 -c '
+import base64, json, sys
+secret = json.load(sys.stdin)["data"]
+config = base64.b64decode(secret["alertmanager_fallback_config.yaml"]).decode()
+for key in ("smtp-username", "smtp-password", "smtp-from", "email-to"):
+    assert base64.b64decode(secret[key]), f"Missing {key}"
+assert "smtp_smarthost: smtp-relay.brevo.com:587" in config
+assert "smtp_require_tls: true" in config
+assert "smtp_auth_username:" in config and "smtp_auth_password:" in config
+assert "critical-email" in config
+print("Brevo SMTP, TLS, credentials, and email receiver verified")
+'
 ```
 
 Confirm rule groups were uploaded:
