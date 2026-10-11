@@ -2209,7 +2209,7 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
-  name: rune
+  name: bayn-model
   namespace: lab-delivery
   labels:
     delivery.proompteng.ai/managed-by: kargo
@@ -2218,17 +2218,17 @@ spec:
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
-      value: kargo/rune
+      value: kargo/bayn-model
     - name: srcPath
       value: ./src
     - name: outPath
       value: ./out
     - name: imageRepo
-      value: registry.ide-newton.ts.net/lab/rune
+      value: registry.ide-newton.ts.net/lab/bayn-model
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: rune
+        name: bayn-model
       sources:
         direct: true
         autoPromotionOptions:
@@ -2257,7 +2257,7 @@ spec:
             outPath: ${{ vars.outPath }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/rune
+            path: ./out/argocd/applications/bayn-model
             images:
               - image: ${{ vars.imageRepo }}
                 newName: ${{ vars.imageRepo }}
@@ -2267,7 +2267,7 @@ spec:
           config:
             path: ${{ vars.outPath }}
             message: |
-              kargo(rune): promote ${{ ctx.targetFreight.name }}
+              kargo(bayn-model): promote ${{ ctx.targetFreight.name }}
 
               Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
               Build run: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
@@ -2283,7 +2283,7 @@ spec:
             errorThreshold: 3
           config:
             apps:
-              - name: rune
+              - name: bayn-model
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git
