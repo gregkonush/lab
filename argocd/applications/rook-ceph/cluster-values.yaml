@@ -99,6 +99,8 @@ cephClusterSpec:
       osd_scrub_auto_repair_num_errors: "5"
       # Keep concurrent HDD seeks bounded while the profile gives scrubs more capacity.
       osd_max_scrubs: "1"
+      # Recurring backfill must not indefinitely postpone integrity checks.
+      osd_scrub_during_recovery: "true"
       # Equal endpoints allow scrubs all day and overwrite the former 08:00-12:00
       # restriction in Ceph's config store. Keep scrub intervals and debt alerts enabled.
       osd_scrub_begin_hour: "0"
