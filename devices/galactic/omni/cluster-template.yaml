@@ -217,14 +217,17 @@ patches:
     inline: |
       apiVersion: v1alpha1
       kind: LinkAliasConfig
-      name: storage0
+      name: storage-port
       selector:
         match: mac(link.permanent_addr) == "c0:01:22:34:8c:85"
       ---
       apiVersion: v1alpha1
-      kind: LinkConfig
+      kind: BondConfig
       name: storage0
-      up: true
+      links:
+        - storage-port
+      bondMode: active-backup
+      miimon: 100
       mtu: 1500
       addresses:
         - address: 10.100.0.11/24
@@ -363,6 +366,28 @@ patches:
       auto: 'off'
       hostname: turin
       kind: HostnameConfig
+  - idOverride: 30-8bf7ec00-171c-11f1-8000-7cc255f16774-storage-network
+    annotations:
+      description: Turin ConnectX-5 Ex storage interface
+      name: Turin 100G storage network
+    inline: |
+      apiVersion: v1alpha1
+      kind: LinkAliasConfig
+      name: storage-port
+      selector:
+        match: mac(link.permanent_addr) == "c0:01:22:dc:2c:b7"
+      ---
+      apiVersion: v1alpha1
+      kind: BondConfig
+      name: storage0
+      links:
+        - storage-port
+      bondMode: active-backup
+      miimon: 100
+      mtu: 1500
+      addresses:
+        - address: 10.100.0.12/24
+          routePriority: 1024
 ---
 kind: Machine
 name: ff115a00-c307-11f0-a28f-648eab3e4100

@@ -73,40 +73,51 @@ These counters stayed unchanged across two samples with almost no traffic. Reche
 Complete the plan's host identification, error-counter and throughput tests before accepting the storage network.
 The switch clock was unsynchronized on the bench. Configure NTP when management routing is available.
 
-## Configure Altra's storage interface
+## Configure the storage interfaces
 
-The [Omni cluster template](../omni/cluster-template.yaml) owns Altra's storage address.
-Patch `30-12345678-9abc-deff-1234-56789abcdeff-storage-network` selects permanent MAC `c0:01:22:34:8c:85`
-as Talos alias `storage0` and assigns `10.100.0.11/24`, MTU 1500, and connected-route metric 1024.
-It adds no DHCP client or gateway. The existing management interface, Node IP, and etcd subnet stay configured separately.
-The alias uses [Talos LinkAliasConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/linkaliasconfig);
-the address uses [LinkConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/linkconfig).
+The [Omni cluster template](../omni/cluster-template.yaml) owns both storage addresses.
+Each host's dedicated `30-<machine-uuid>-storage-network` patch selects its connected physical port by permanent MAC
+as Talos alias `storage-port`, then creates a single-port active-backup bond named `storage0`.
+This creates the same real Linux interface name on both hosts, as required by macvlan CNI. A Talos alias alone does
+not rename the physical interface. One member provides a stable name, not link redundancy, and requires no LACP
+configuration on the switch.
+
+| Host  | Physical port MAC   | Current kernel name | Storage address  |
+| ----- | ------------------- | ------------------- | ---------------- |
+| Altra | `c0:01:22:34:8c:85` | `enp1s0f1np1`       | `10.100.0.11/24` |
+| Turin | `c0:01:22:dc:2c:b7` | `ens1f1np1`         | `10.100.0.12/24` |
+
+Both bonds use MTU 1500, connected-route metric 1024, and 100 ms carrier monitoring, with no DHCP or gateway.
+Management addressing, Node IPs, and etcd subnet selection remain separate. Configuration references:
+[LinkAliasConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/linkaliasconfig) and
+[BondConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/bondconfig).
 
 The installed card reports Mellanox ConnectX-5 Ex, PCI ID `15b3:1019`, driver `mlx5_core`,
-and firmware `16.35.1012`, PSID `MT_0000000013`. Its connected port is `enP12p1s0f1np1` at PCI `000c:01:00.1`.
-The other port, `enP12p1s0f0np0`, has no carrier. Readback on 2026-10-10 confirmed 100,000 Mb/s, full duplex,
-and no existing route overlapping `10.100.0.0/24` on any of the three nodes.
-The Talos alias does not change the kernel interface name used by future Multus configuration.
+and firmware `16.35.1012`, PSID `MT_0000000013`. After Altra's slot move, both hosts' connected ports are at
+PCI `0000:01:00.1`; the other ports have no carrier. Readback on 2026-10-10 confirmed 100,000 Mb/s on both hosts.
+Altra subsequently exceeded the 105 C NIC warning threshold. Carrier alone does not establish cooling or traffic
+acceptance. Resolve cooling before sustained throughput tests or Ceph cutover.
 
 1. Export fresh live credentials privately, then render and validate the template using the [Omni workflow](../omni/README.md).
 2. Inspect `omnictl cluster template sync --file <rendered-template> --dry-run --verbose`.
-   The initial rollout must only create the Altra storage patch. A repeat rollout must have no changes.
+   The initial rollout updates only Altra's dedicated storage patch and creates Turin's. A repeat rollout must have no changes.
 3. Sync the reviewed, merged template through Omni. This is a network configuration update, with no installer or reboot.
 4. Verify the address and route through the existing management endpoint:
 
 ```bash
-talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142 get links enP12p1s0f1np1 -o yaml
-talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142 get addresses -o yaml
-talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142 get routes -o yaml
-kubectl --context galactic-lan -n kube-system get node talos-192-168-1-85 -o wide
+talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142,100.100.244.190 get links storage0 -o yaml
+talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142,100.100.244.190 get addresses -o yaml
+talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142,100.100.244.190 get routes -o yaml
+kubectl --context galactic-lan -n kube-system get nodes talos-192-168-1-85 turin -o wide
 kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
 ```
 
-Require `10.100.0.11/24` on the connected port, the `10.100.0.0/24` route through that port,
-no default route or DHCP lease on it, and the existing management address `100.100.244.142` still reachable.
+Require each storage address and the `10.100.0.0/24` route on its `storage0` bond,
+no storage default route or DHCP lease, and both existing management endpoints still reachable.
 Compare node readiness, etcd quorum, OSD identities, and PG availability with the pre-change sample.
-This address alone does not move Ceph traffic. Turin addressing, bidirectional throughput testing,
-switch error-counter acceptance, and the [Ceph migration gate](../docs/hardware-network-upgrade-plan.md#move-ceph-traffic-only-after-the-migration-gate) remain separate steps.
+These addresses alone do not move Ceph traffic. Install [Multus and Whereabouts](../../../argocd/applications/multus/README.md),
+then complete bidirectional throughput testing, switch error-counter acceptance, and the
+[Ceph migration gate](../docs/hardware-network-upgrade-plan.md#move-ceph-traffic-only-after-the-migration-gate).
 
 To undo this interface setup, remove only its dedicated patch from the template, merge, render, and sync through Omni.
 Verify that the storage address and route disappear and management remains reachable. Delete private exports and renders after use.
