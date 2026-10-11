@@ -79,7 +79,7 @@ jobs:
           set -euo pipefail
           docker run --rm --entrypoint python3 \
             -v "$PWD/services/bayn-model:/opt/bayn-model:ro" -w /opt/bayn-model \
-            -e PYTHONPATH=/opt/bayn-model -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPATH=/opt/bayn-model -e PYTHONDONTWRITEBYTECODE=1 -e VLLM_TARGET_DEVICE=cpu \
             "$VLLM_IMAGE" -m unittest -v test_vllm_contract.py \
             2>&1 | tee .artifacts/bayn-model/vllm-contract.log
       - uses: actions/upload-artifact@v4

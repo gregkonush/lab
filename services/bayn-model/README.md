@@ -39,7 +39,7 @@ The provisioner image contains the lock, launch profile and small admission midd
 the reviewed Deployment pins the upstream vLLM runtime. This avoids rebuilding CUDA or duplicating its roughly
 9.8 GiB compressed base in the internal registry. Init completion copies the versioned launch code into an emptyDir
 mounted read-only by the serving container. Both containers run as non-root with a read-only root filesystem and no
-service-account token. NetworkPolicy admits only Bayn, observability and this application's pods. There is no public
+service-account token. NetworkPolicy admits only `bayn-research` pods in Bayn, the central observability collector and this application's pods. There is no public
 Ingress, Rune API alias, old model fallback or local execution poller.
 
 ## Execution and research boundary
@@ -121,7 +121,7 @@ bash scripts/kubeconform.sh argocd/applications/bayn-model argocd/applications/k
 ```
 
 CI tests the provisioner on both published architectures and runs `test_vllm_contract.py` inside the exact pinned
-vLLM image without GPU allocation. That test parses the actual launch arguments and verifies the middleware import,
+vLLM image with its supported `VLLM_TARGET_DEVICE=cpu` platform selection and without GPU allocation. That test parses the actual launch arguments and verifies the middleware import,
 model identity, concurrency, output limit and logging controls. It does not establish GPU startup or inference.
 
 ## Delivery, acceptance and recovery
@@ -131,8 +131,9 @@ and Argo Application. The Stage reads the tested image's source revision and bui
 paths does not rebuild CUDA or manufacture an image alias. The upstream server digest and provisioner remain one
 reviewed source contract. Do not release a local image or manually bump the selected digest.
 
-The ApplicationSet retires Rune's Deployment, Service and NetworkPolicy. Rune's namespace and `rune/rune-models`
-claim retain their existing `Prune=false,Delete=false` protections. The new application uses a separate claim and
+The ApplicationSet retires Rune's Deployment, Service and NetworkPolicy. The existing Rune namespace has no owner or Argo tracking and is not an Application-managed resource. It remains
+after Application removal. The `rune/rune-models` claim retains `Prune=false,Delete=false`. Verify namespace ownership
+and claim retention before retiring the Application; never delete the retained namespace. The new application uses a separate claim and
 namespace; it does not adopt or delete the previous cache. Research availability may have a gap during first image
 publication and model download. Neither service is a dependency of the active Jev trading path. vLLM checks free
 physical VRAM before loading; if old Rune still holds its allocation, the new process must wait/restart rather than

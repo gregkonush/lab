@@ -65,6 +65,10 @@ spec:
               value: bayn-model
             - name: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
               value: http/protobuf
+            - name: VLLM_NO_USAGE_STATS
+              value: "1"
+            - name: DO_NOT_TRACK
+              value: "1"
             - name: HF_HOME
               value: /models/cache/huggingface
             - name: HF_HUB_OFFLINE

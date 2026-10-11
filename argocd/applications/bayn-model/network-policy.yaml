@@ -12,9 +12,15 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: bayn
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-research
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-model
