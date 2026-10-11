@@ -29,6 +29,7 @@ Docs:
 
 - `devices/turin/docs/cluster-join-plan.md` (join + Ceph OSD migration plan)
 - `devices/turin/docs/bmc-fan-bringup.md` (BMC and fan alert notes)
+- [Restore the Talos boot default](docs/talos-boot-default.md) (ORICO UEFI entry and persistent image verification)
 - `docs/runbooks/galactic-storage-and-workload-recovery.md` (BMC, NVMe, Ceph, filesystem, and workload recovery)
 - `devices/turin/docs/nvidia-gpu-on-talos.md` (NVIDIA driver/runtime plan)
 - `devices/turin/docs/kubevirt-on-turin.md` (KubeVirt runtime and canary checks)
