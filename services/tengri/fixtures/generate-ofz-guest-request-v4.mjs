@@ -10,7 +10,7 @@ const key = createPrivateKey({
 const publicKey = createPublicKey(key).export({ format: 'der', type: 'spki' }).subarray(-32)
 const now = 1800000000000
 const context = {
-  protocolVersion: 3,
+  protocolVersion: 4,
   actor: { kind: 'human', subject: 'a'.repeat(64), sessionId: '11111111-1111-4111-8111-111111111111' },
   action: 'ACTION_FILES_WRITE',
   workspaceUid: '22222222-2222-4222-8222-222222222222',
@@ -33,7 +33,7 @@ function proof(payload) {
     context: Buffer.from(payload).toString('base64url'),
     signature: sign(
       null,
-      Buffer.concat([Buffer.from('tengri-guest-request-v3\0'), Buffer.from(payload)]),
+      Buffer.concat([Buffer.from('tengri-guest-request-v4\0'), Buffer.from(payload)]),
       key,
     ).toString('base64url'),
   }
@@ -48,11 +48,7 @@ function accepted(name, change, body = 'fixed request bytes') {
   const payload = JSON.stringify(altered)
   valid.push({ name, body, payload, proof: proof(payload) })
 }
-const fileScope = {
-  fileRoots: ['/workspace/reports'],
-  threadIds: [],
-  terminalIds: [],
-  browserScreenshot: false,
+const observationBudget = {
   maxBytes: 512,
   maxItems: 10,
 }
@@ -60,13 +56,13 @@ function scoped(c) {
   c.action = 'ACTION_FILES_OBSERVE'
   c.method = '/proompteng.runtime.guest.v1.NanoagentService/ReadFile'
   c.target = '/workspace/reports/report.txt'
-  c.scope = structuredClone(fileScope)
+  c.observation = structuredClone(observationBudget)
 }
 accepted('scoped human', (c) => {
   c.action = 'ACTION_FILES_OBSERVE'
   c.method = '/proompteng.runtime.guest.v1.NanoagentService/ReadFile'
   c.target = '/workspace/reports/report.txt'
-  c.scope = fileScope
+  c.observation = observationBudget
 })
 accepted('scoped agent', (c) => {
   c.actor = {
@@ -77,7 +73,19 @@ accepted('scoped agent', (c) => {
   c.action = 'ACTION_FILES_OBSERVE'
   c.method = '/proompteng.runtime.guest.v1.NanoagentService/ReadFile'
   c.target = '/workspace/reports/report.txt'
-  c.scope = fileScope
+  c.observation = observationBudget
+})
+accepted('maximum canonical scoped target', (c) => {
+  scoped(c)
+  c.target = '/workspace/' + 'a'.repeat(4096 - '/workspace/'.length)
+})
+accepted('maximum JSON-escaped scoped target', (c) => {
+  scoped(c)
+  c.target = '/workspace/' + '"'.repeat(4096 - '/workspace/'.length)
+})
+accepted('maximum UTF-8 scoped target', (c) => {
+  scoped(c)
+  c.target = '/workspace/' + '界'.repeat(1361) + 'aa'
 })
 accepted(
   'workload probe',
@@ -102,6 +110,7 @@ function mutation(name, change) {
 }
 mutation('unknown action', (c) => (c.action = 'ACTION_FUTURE_ADMIN'))
 mutation('retired protocol', (c) => (c.protocolVersion = 2))
+mutation('retired full-policy protocol', (c) => (c.protocolVersion = 3))
 mutation('nil workspace', (c) => (c.workspaceUid = '00000000-0000-0000-0000-000000000000'))
 mutation('uppercase UUID', (c) => (c.workspaceUid = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'))
 mutation('zero slot epoch', (c) => (c.slotEpoch = 0))
@@ -140,26 +149,55 @@ mutation('case-insensitive field alias', (c) => {
   c.ProtocolVersion = c.protocolVersion
   delete c.protocolVersion
 })
-mutation('oversized scope', (c) => {
+mutation('oversized observation bytes', (c) => {
   scoped(c)
-  c.scope.maxBytes = 1048577
+  c.observation.maxBytes = 1048577
 })
-mutation('unknown scope field', (c) => {
+mutation('oversized observation items', (c) => {
   scoped(c)
-  c.scope.extra = true
+  c.observation.maxItems = 201
 })
-mutation('null scope array', (c) => {
+mutation('unknown observation field', (c) => {
   scoped(c)
-  c.scope.fileRoots = null
+  c.observation.extra = true
+})
+mutation('retired full-policy scope', (c) => {
+  scoped(c)
+  c.scope = {
+    ...observationBudget,
+    fileRoots: ['/workspace/reports'],
+    threadIds: [],
+    terminalIds: [],
+    browserScreenshot: false,
+  }
+})
+for (const field of ['maxBytes', 'maxItems']) {
+  mutation(`null observation ${field}`, (c) => {
+    scoped(c)
+    c.observation[field] = null
+  })
+  mutation(`missing observation ${field}`, (c) => {
+    scoped(c)
+    delete c.observation[field]
+  })
+  mutation(`zero observation ${field}`, (c) => {
+    scoped(c)
+    c.observation[field] = 0
+  })
+}
+mutation('workload observation budget', (c) => {
+  c.actor = { kind: 'workload', subject: 'spiffe://proompteng.ai/ns/tengri/sa/tengri', purpose: 'probe' }
+  c.action = 'ACTION_WORKSPACE_METADATA_READ'
+  c.method = '/proompteng.runtime.guest.v1.NanoagentService/GetInfo'
+  c.target = ''
+  c.observation = observationBudget
 })
 mutation('oversized payload', (c) => {
   scoped(c)
-  c.scope.fileRoots = Array(3).fill('/workspace/' + 'a'.repeat(3000))
-  c.target = c.scope.fileRoots[0]
+  c.target = '/workspace/' + '"'.repeat(16384)
 })
 for (const [name, target] of [
-  ['outside selected root', '/workspace/other/report.txt'],
-  ['root prefix confusion', '/workspace/reports-extra/report.txt'],
+  ['outside workspace', '/home/nanoagent/report.txt'],
   ['path traversal', '/workspace/reports/../private'],
   ['credential file', '/workspace/reports/.env'],
   ['credential directory', '/workspace/reports/.ssh/key'],
@@ -175,9 +213,9 @@ mutation('agent control action', (c) => {
     subject: '88888888-8888-4888-8888-888888888888',
     grantId: '99999999-9999-4999-8999-999999999999',
   }
-  c.scope = fileScope
+  c.observation = observationBudget
 })
-mutation('agent missing scope', (c) => {
+mutation('agent missing observation budget', (c) => {
   c.actor = {
     kind: 'agent',
     subject: '88888888-8888-4888-8888-888888888888',
@@ -195,12 +233,23 @@ mutation('observer action on browser startup', (c) => {
   c.target = 'status'
 })
 for (const [name, changed] of [
-  ['duplicate context field', payload.replace('"protocolVersion":3', '"protocolVersion":3,"protocolVersion":3')],
+  ['duplicate context field', payload.replace('"protocolVersion":4', '"protocolVersion":4,"protocolVersion":4')],
   ['duplicate actor field', payload.replace('"kind":"human"', '"kind":"human","kind":"human"')],
   ['trailing JSON', payload + '{}'],
   ['lone surrogate', payload.replace('/workspace/report.txt', '/workspace/\\ud800')],
 ])
   invalid.push({ name, proof: proof(changed) })
+invalid.push({
+  name: 'retired request signing domain',
+  proof: {
+    context: Buffer.from(payload).toString('base64url'),
+    signature: sign(
+      null,
+      Buffer.concat([Buffer.from('tengri-guest-request-v3\0'), Buffer.from(payload)]),
+      key,
+    ).toString('base64url'),
+  },
+})
 invalid.push({
   name: 'wrong signing domain',
   proof: {
@@ -230,7 +279,7 @@ const fixture = {
   invalid,
 }
 const serialized = JSON.stringify(fixture, null, 2) + '\n'
-writeFileSync(new URL('./ofz-guest-request-v3.json', import.meta.url), serialized)
+writeFileSync(new URL('./ofz-guest-request-v4.json', import.meta.url), serialized)
 const guestTestdata = new URL('../../nanoagent/internal/guestauth/testdata/', import.meta.url)
 mkdirSync(guestTestdata, { recursive: true })
-writeFileSync(new URL('ofz-guest-request-v3.json', guestTestdata), serialized)
+writeFileSync(new URL('ofz-guest-request-v4.json', guestTestdata), serialized)

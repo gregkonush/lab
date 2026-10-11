@@ -18,10 +18,10 @@ import (
 
 const ContextHeader = "x-tengri-guest-authorization"
 const SignatureHeader = "x-tengri-guest-signature"
-const ProtocolVersion = 3
-const MaxContextBytes = 8192
+const ProtocolVersion = 4
+const MaxContextBytes = 16 << 10
 const MaxAdmissionMS = 5000
-const requestDomain = "tengri-guest-request-v3\x00"
+const requestDomain = "tengri-guest-request-v4\x00"
 const rpcPrefix = "/proompteng.runtime.guest.v1.NanoagentService/"
 
 type Action string
@@ -85,13 +85,11 @@ type Actor struct {
 	Purpose   string `json:"purpose,omitempty"`
 }
 
-type ObservationScope struct {
-	FileRoots         []string `json:"fileRoots"`
-	ThreadIDs         []string `json:"threadIds"`
-	TerminalIDs       []string `json:"terminalIds"`
-	BrowserScreenshot bool     `json:"browserScreenshot"`
-	MaxBytes          uint32   `json:"maxBytes"`
-	MaxItems          uint32   `json:"maxItems"`
+// Ofz checks the full policy before the controller signs one exact target. The
+// guest receives only the output limits for that request, never a reusable policy.
+type ObservationBudget struct {
+	MaxBytes uint32 `json:"maxBytes"`
+	MaxItems uint32 `json:"maxItems"`
 }
 
 func (a Action) observer() bool {
@@ -118,56 +116,39 @@ func cleanFilePath(path string) bool {
 	return true
 }
 
-func (s ObservationScope) allows(action Action, target string) bool {
+func observationTarget(action Action, target string) bool {
 	switch action {
 	case WorkspaceMetadataRead, PreviewObserve:
 		return target == ""
 	case FilesObserve:
-		if !cleanFilePath(target) {
-			return false
-		}
-		for _, root := range s.FileRoots {
-			if target == root || strings.HasPrefix(target, root+"/") {
-				return true
-			}
-		}
-	case TerminalObserve:
-		for _, id := range s.TerminalIDs {
-			if id == target {
-				return true
-			}
-		}
-	case CodexObserve:
-		for _, id := range s.ThreadIDs {
-			if id == target {
-				return true
-			}
-		}
+		return cleanFilePath(target)
+	case TerminalObserve, CodexObserve:
+		return target != "" && boundedText(target, 128) && !strings.ContainsAny(target, "/\\")
 	case BrowserObserve:
-		return target == "status" || s.BrowserScreenshot && target == "screenshot"
+		return target == "status" || target == "screenshot"
 	}
 	return false
 }
 
 type Context struct {
-	ProtocolVersion    uint32            `json:"protocolVersion"`
-	Actor              Actor             `json:"actor"`
-	Action             Action            `json:"action"`
-	WorkspaceUID       string            `json:"workspaceUid"`
-	RuntimeEpoch       string            `json:"runtimeEpoch"`
-	SlotEpoch          uint64            `json:"slotEpoch"`
-	PodUID             string            `json:"podUid"`
-	LeaderOwner        string            `json:"leaderOwner"`
-	LeaderGeneration   uint64            `json:"leaderGeneration"`
-	RecoveryGeneration uint64            `json:"recoveryGeneration"`
-	AuditReceiptID     string            `json:"auditReceiptId"`
-	Method             string            `json:"method"`
-	Target             string            `json:"target"`
-	BodySHA256         string            `json:"bodySha256"`
-	IssuedAtUnixMS     uint64            `json:"issuedAtUnixMs"`
-	DeadlineUnixMS     uint64            `json:"deadlineUnixMs"`
-	Nonce              string            `json:"nonce"`
-	Scope              *ObservationScope `json:"scope,omitempty"`
+	ProtocolVersion    uint32             `json:"protocolVersion"`
+	Actor              Actor              `json:"actor"`
+	Action             Action             `json:"action"`
+	WorkspaceUID       string             `json:"workspaceUid"`
+	RuntimeEpoch       string             `json:"runtimeEpoch"`
+	SlotEpoch          uint64             `json:"slotEpoch"`
+	PodUID             string             `json:"podUid"`
+	LeaderOwner        string             `json:"leaderOwner"`
+	LeaderGeneration   uint64             `json:"leaderGeneration"`
+	RecoveryGeneration uint64             `json:"recoveryGeneration"`
+	AuditReceiptID     string             `json:"auditReceiptId"`
+	Method             string             `json:"method"`
+	Target             string             `json:"target"`
+	BodySHA256         string             `json:"bodySha256"`
+	IssuedAtUnixMS     uint64             `json:"issuedAtUnixMs"`
+	DeadlineUnixMS     uint64             `json:"deadlineUnixMs"`
+	Nonce              string             `json:"nonce"`
+	Observation        *ObservationBudget `json:"observation,omitempty"`
 }
 
 type Binding struct {
@@ -347,12 +328,12 @@ func (c Context) Validate(nowMS uint64) error {
 		if !canonicalUUID(c.Actor.Subject) || !canonicalUUID(c.Actor.GrantID) || c.Actor.SessionID != "" || c.Actor.Purpose != "" {
 			return errors.New("invalid agent authorization binding")
 		}
-		if !c.Action.observer() || c.Scope == nil {
+		if !c.Action.observer() || c.Observation == nil {
 			return errors.New("agent authorization requires a bounded diagnostic action")
 		}
 	case "workload":
-		if c.Scope != nil {
-			return errors.New("workload maintenance cannot carry an observation scope")
+		if c.Observation != nil {
+			return errors.New("workload maintenance cannot carry an observation budget")
 		}
 		if c.Actor.Subject != "spiffe://proompteng.ai/ns/tengri/sa/tengri" || c.Actor.SessionID != "" || c.Actor.GrantID != "" {
 			return errors.New("invalid workload authorization binding")
@@ -377,31 +358,12 @@ func (c Context) Validate(nowMS uint64) error {
 	if c.IssuedAtUnixMS == 0 || c.IssuedAtUnixMS > maxIssued || c.DeadlineUnixMS <= nowMS || c.DeadlineUnixMS <= c.IssuedAtUnixMS || c.DeadlineUnixMS-c.IssuedAtUnixMS > MaxAdmissionMS {
 		return errors.New("guest authorization expired or outside its deadline")
 	}
-	if s := c.Scope; s != nil {
-		if !c.Action.observer() || !s.allows(c.Action, c.Target) {
-			return errors.New("guest target is outside its observation scope")
+	if budget := c.Observation; budget != nil {
+		if !observationTarget(c.Action, c.Target) {
+			return errors.New("invalid guest observation target")
 		}
-		if len(s.FileRoots) > 16 || len(s.ThreadIDs) > 32 || len(s.TerminalIDs) > 16 || s.MaxBytes == 0 || s.MaxBytes > 1<<20 || s.MaxItems == 0 || s.MaxItems > 200 {
+		if budget.MaxBytes == 0 || budget.MaxBytes > 1<<20 || budget.MaxItems == 0 || budget.MaxItems > 200 {
 			return errors.New("invalid guest observation bounds")
-		}
-		for _, targets := range [][]string{s.FileRoots, s.ThreadIDs, s.TerminalIDs} {
-			for _, target := range targets {
-				if target == "" || !boundedText(target, 4096) {
-					return errors.New("invalid guest observation target")
-				}
-			}
-		}
-		for _, root := range s.FileRoots {
-			if !cleanFilePath(root) {
-				return errors.New("invalid guest observation selection")
-			}
-		}
-		for _, targets := range [][]string{s.ThreadIDs, s.TerminalIDs} {
-			for _, id := range targets {
-				if len(id) > 128 || strings.ContainsAny(id, "/\\") {
-					return errors.New("invalid guest observation selection")
-				}
-			}
 		}
 	}
 	return nil
@@ -470,7 +432,7 @@ func requireWireShape(payload []byte) error {
 		return err
 	}
 	required := []string{"protocolVersion", "actor", "action", "workspaceUid", "runtimeEpoch", "slotEpoch", "podUid", "leaderOwner", "leaderGeneration", "recoveryGeneration", "auditReceiptId", "method", "target", "bodySha256", "issuedAtUnixMs", "deadlineUnixMs", "nonce"}
-	if err := exactFields(fields, required, "scope"); err != nil {
+	if err := exactFields(fields, required, "observation"); err != nil {
 		return err
 	}
 	var actor map[string]json.RawMessage
@@ -495,17 +457,17 @@ func requireWireShape(payload []byte) error {
 	if err := exactFields(actor, []string{"kind", "subject", identityField}, ""); err != nil {
 		return err
 	}
-	if scope, found := fields["scope"]; found && !bytes.Equal(bytes.TrimSpace(scope), []byte("null")) {
+	if budget, found := fields["observation"]; found && !bytes.Equal(bytes.TrimSpace(budget), []byte("null")) {
 		var values map[string]json.RawMessage
-		if err := json.Unmarshal(scope, &values); err != nil {
+		if err := json.Unmarshal(budget, &values); err != nil {
 			return err
 		}
-		if err := exactFields(values, []string{"fileRoots", "threadIds", "terminalIds", "browserScreenshot", "maxBytes", "maxItems"}, ""); err != nil {
+		if err := exactFields(values, []string{"maxBytes", "maxItems"}, ""); err != nil {
 			return err
 		}
-		for _, field := range []string{"fileRoots", "threadIds", "terminalIds", "browserScreenshot", "maxBytes", "maxItems"} {
+		for _, field := range []string{"maxBytes", "maxItems"} {
 			if bytes.Equal(bytes.TrimSpace(values[field]), []byte("null")) {
-				return errors.New("null guest scope field")
+				return errors.New("null guest observation budget field")
 			}
 		}
 	}

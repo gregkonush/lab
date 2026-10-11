@@ -16,10 +16,10 @@ use zeroize::Zeroizing;
 
 pub const CONTEXT_HEADER: &str = "x-tengri-guest-authorization";
 pub const SIGNATURE_HEADER: &str = "x-tengri-guest-signature";
-pub const PROTOCOL_VERSION: u32 = 3;
-pub const MAX_CONTEXT_BYTES: usize = 8192;
+pub const PROTOCOL_VERSION: u32 = 4;
+pub const MAX_CONTEXT_BYTES: usize = 16 << 10;
 pub const MAX_ADMISSION_MS: u64 = 5000;
-const REQUEST_DOMAIN: &[u8] = b"tengri-guest-request-v3\0";
+const REQUEST_DOMAIN: &[u8] = b"tengri-guest-request-v4\0";
 const RPC_PREFIX: &str = "/proompteng.runtime.guest.v1.NanoagentService/";
 
 pub fn recovery_generation_from_file(path: &Path) -> anyhow::Result<u64> {
@@ -141,35 +141,22 @@ pub enum MaintenancePurpose {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ObservationScope {
-    pub file_roots: Vec<String>,
-    pub thread_ids: Vec<String>,
-    pub terminal_ids: Vec<String>,
-    pub browser_screenshot: bool,
+// Ofz checks the full policy before the controller signs one exact target. The
+// guest receives only the output limits for that request, never a reusable policy.
+pub struct ObservationBudget {
     pub max_bytes: u32,
     pub max_items: u32,
 }
 
-impl ObservationScope {
-    fn allows(&self, action: GuestAction, target: &str) -> bool {
-        match action {
-            GuestAction::WorkspaceMetadataRead | GuestAction::PreviewObserve => target.is_empty(),
-            GuestAction::FilesObserve => {
-                clean_file_path(target)
-                    && self.file_roots.iter().any(|root| {
-                        target == root
-                            || target
-                                .strip_prefix(root)
-                                .is_some_and(|tail| tail.starts_with('/'))
-                    })
-            }
-            GuestAction::TerminalObserve => self.terminal_ids.iter().any(|id| id == target),
-            GuestAction::CodexObserve => self.thread_ids.iter().any(|id| id == target),
-            GuestAction::BrowserObserve => {
-                target == "status" || self.browser_screenshot && target == "screenshot"
-            }
-            _ => false,
+fn observation_target(action: GuestAction, target: &str) -> bool {
+    match action {
+        GuestAction::WorkspaceMetadataRead | GuestAction::PreviewObserve => target.is_empty(),
+        GuestAction::FilesObserve => clean_file_path(target),
+        GuestAction::TerminalObserve | GuestAction::CodexObserve => {
+            !target.is_empty() && bounded_text(target, 128) && !target.contains(['/', '\\'])
         }
+        GuestAction::BrowserObserve => matches!(target, "status" | "screenshot"),
+        _ => false,
     }
 }
 
@@ -221,7 +208,7 @@ pub struct GuestContext {
     pub deadline_unix_ms: u64,
     pub nonce: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<ObservationScope>,
+    pub observation: Option<ObservationBudget>,
 }
 
 pub struct GuestBinding<'a> {
@@ -293,14 +280,14 @@ impl GuestContext {
                     "invalid agent authorization binding"
                 );
                 ensure!(
-                    self.action.observer() && self.scope.is_some(),
+                    self.action.observer() && self.observation.is_some(),
                     "agent authorization requires a bounded diagnostic action"
                 );
             }
             GuestActor::Workload { subject, purpose } => {
                 ensure!(
-                    self.scope.is_none(),
-                    "workload maintenance cannot carry an observation scope"
+                    self.observation.is_none(),
+                    "workload maintenance cannot carry an observation budget"
                 );
                 ensure!(
                     subject == "spiffe://proompteng.ai/ns/tengri/sa/tengri",
@@ -345,37 +332,16 @@ impl GuestContext {
                 && self.deadline_unix_ms - self.issued_at_unix_ms <= MAX_ADMISSION_MS,
             "guest authorization expired or outside its deadline"
         );
-        if let Some(scope) = &self.scope {
+        if let Some(budget) = &self.observation {
             ensure!(
-                scope.file_roots.len() <= 16
-                    && scope.thread_ids.len() <= 32
-                    && scope.terminal_ids.len() <= 16
-                    && scope.max_bytes > 0
-                    && scope.max_bytes <= 1 << 20
-                    && scope.max_items > 0
-                    && scope.max_items <= 200,
+                budget.max_bytes > 0
+                    && budget.max_bytes <= 1 << 20
+                    && budget.max_items > 0
+                    && budget.max_items <= 200,
                 "invalid guest observation bounds"
             );
             ensure!(
-                self.action.observer() && scope.allows(self.action, &self.target),
-                "guest target is outside its observation scope"
-            );
-            ensure!(
-                scope.file_roots.iter().all(|root| clean_file_path(root))
-                    && scope
-                        .thread_ids
-                        .iter()
-                        .chain(&scope.terminal_ids)
-                        .all(|id| id.len() <= 128 && !id.contains(['/', '\\'])),
-                "invalid guest observation selection"
-            );
-            ensure!(
-                scope
-                    .file_roots
-                    .iter()
-                    .chain(&scope.thread_ids)
-                    .chain(&scope.terminal_ids)
-                    .all(|value| !value.is_empty() && bounded_text(value, 4096)),
+                observation_target(self.action, &self.target),
                 "invalid guest observation target"
             );
         }

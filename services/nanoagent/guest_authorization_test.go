@@ -158,7 +158,7 @@ func signedFixtureRPCContext(ctx context.Context, method string, value any, chan
 	if err != nil {
 		return nil, err
 	}
-	signature := ed25519.Sign(fixtureGuestKey(), append([]byte("tengri-guest-request-v3\x00"), payload...))
+	signature := ed25519.Sign(fixtureGuestKey(), append([]byte("tengri-guest-request-v4\x00"), payload...))
 	values, _ := metadata.FromOutgoingContext(ctx)
 	values = values.Copy()
 	values.Set(guestauth.ContextHeader, base64.RawURLEncoding.EncodeToString(payload))
@@ -259,7 +259,8 @@ func TestRPCRejectsSignedRequestsForDifferentBindingsBeforeMutation(t *testing.T
 		{"target", func(c *guestauth.Context) { c.Target = "/different" }},
 		{"body", func(c *guestauth.Context) { c.BodySHA256 = strings.Repeat("0", 64) }},
 		{"expired", func(c *guestauth.Context) { c.IssuedAtUnixMS -= 10000; c.DeadlineUnixMS -= 10000 }},
-		{"protocol", func(c *guestauth.Context) { c.ProtocolVersion = 2 }},
+		{"retired protocol", func(c *guestauth.Context) { c.ProtocolVersion = 3 }},
+		{"future protocol", func(c *guestauth.Context) { c.ProtocolVersion = guestauth.ProtocolVersion + 1 }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WriteFile_FullMethodName, request, test.change)
@@ -350,16 +351,26 @@ func TestRPCConcurrentReplayAdmitsExactlyOneMutation(t *testing.T) {
 func TestRPCScopedContentCannotEnterUnboundedHandlers(t *testing.T) {
 	api := testAPIServer(t)
 	client := unsignedRPCTestClient(t, api)
-	request := &pb.Path{Path: "/workspace/docs"}
-	ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_ListFiles_FullMethodName, request, func(c *guestauth.Context) {
-		c.Actor = guestauth.Actor{Kind: "agent", Subject: "77777777-7777-4777-8777-777777777777", GrantID: "88888888-8888-4888-8888-888888888888"}
-		c.Scope = &guestauth.ObservationScope{FileRoots: []string{"/workspace/docs"}, ThreadIDs: []string{}, TerminalIDs: []string{}, MaxBytes: 1024, MaxItems: 2}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.ListFiles(ctx, request); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("scoped observer reached an unbounded handler: %v", err)
+	for _, test := range []struct{ name, path string }{
+		{"selected directory", "/workspace/docs"},
+		{"maximum target", "/workspace/" + strings.Repeat("a", 4096-len("/workspace/"))},
+		{"maximum escaped target", "/workspace/" + strings.Repeat("\"", 4096-len("/workspace/"))},
+		{"maximum UTF-8 target", "/workspace/" + strings.Repeat("界", 1361) + "aa"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := &pb.Path{Path: test.path}
+			ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_ListFiles_FullMethodName, request, func(c *guestauth.Context) {
+				c.Actor = guestauth.Actor{Kind: "agent", Subject: "77777777-7777-4777-8777-777777777777", GrantID: "88888888-8888-4888-8888-888888888888"}
+				c.Observation = &guestauth.ObservationBudget{MaxBytes: 1024, MaxItems: 2}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.ListFiles(ctx, request)
+			if status.Code(err) != codes.PermissionDenied || status.Convert(err).Message() != "scoped content requires a bounded observer RPC" {
+				t.Fatalf("valid proof did not reach the scoped-handler gate: %v", err)
+			}
+		})
 	}
 }
 

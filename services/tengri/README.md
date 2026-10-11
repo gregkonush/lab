@@ -1,11 +1,16 @@
 # Tengri control plane
 
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
-`internal/guestauth` package. Protocol 3 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
+`internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
 signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
 cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
-`node services/tengri/fixtures/generate-ofz-guest-request-v3.mjs` from the repository root.
+`node services/tengri/fixtures/generate-ofz-guest-request-v4.mjs` from the repository root.
+
+Ofz checks the complete observation policy before the controller signs the exact request. Scoped proofs carry only
+the per-request byte/item budget, with no reusable root or ID lists. The decoded proof remains bounded at 16 KiB,
+including JSON escaping of a maximum 4096-byte target. Protocol 3, its full-policy scope and its signing domain are
+rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.

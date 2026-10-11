@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use kube::ResourceExt;
 use tengri::guest_authorization::{
-    GuestActor, GuestContext, GuestProof, GuestSigner, MaintenancePurpose, ObservationScope,
+    GuestActor, GuestContext, GuestProof, GuestSigner, MaintenancePurpose, ObservationBudget,
     PROTOCOL_VERSION, body_sha256, request_action,
 };
 use tonic::Status;
@@ -317,11 +317,7 @@ impl GuestRequestIssuer {
             issued_at_unix_ms: now,
             deadline_unix_ms: decision.valid_until_unix_ms.min(now + 5000),
             nonce: Uuid::new_v4().to_string(),
-            scope: decision.effective_scope.map(|scope| ObservationScope {
-                file_roots: scope.file_roots,
-                thread_ids: scope.thread_ids,
-                terminal_ids: scope.terminal_ids,
-                browser_screenshot: scope.browser_screenshot,
+            observation: decision.effective_scope.map(|scope| ObservationBudget {
                 max_bytes: scope.max_bytes,
                 max_items: scope.max_items,
             }),

@@ -263,7 +263,7 @@ func (authorization *guestRPCAdmission) admit(ctx context.Context, method string
 	if err != nil {
 		return claim, deny
 	}
-	if verified.Scope != nil && action != guestauth.WorkspaceMetadataRead {
+	if verified.Observation != nil && action != guestauth.WorkspaceMetadataRead {
 		return claim, status.Error(codes.PermissionDenied, "scoped content requires a bounded observer RPC")
 	}
 	return claim, nil
