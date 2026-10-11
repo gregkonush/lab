@@ -84,6 +84,7 @@ class AdmissionMiddleware:
             False,
         )
         body_bytes = 0
+        disconnected = False
         request_hash = None
         traceparent = dict(scope.get("headers", [])).get(b"traceparent", b"")
         trace = re.fullmatch(
@@ -165,7 +166,7 @@ class AdmissionMiddleware:
                 delivered = False
 
                 async def buffered_receive():
-                    nonlocal delivered
+                    nonlocal delivered, disconnected
                     if not delivered:
                         delivered = True
                         return {
@@ -173,10 +174,18 @@ class AdmissionMiddleware:
                             "body": buffered_body,
                             "more_body": False,
                         }
-                    return await receive()
+                    message = await receive()
+                    if message["type"] == "http.disconnect":
+                        disconnected = True
+                    return message
 
                 await self.app(scope, buffered_receive, observed_send)
-            outcome = "completed" if status < 400 else "failed"
+            if disconnected and not response_finished:
+                outcome = "cancelled"
+                if not response_started:
+                    status = 499
+            else:
+                outcome = "completed" if status < 400 else "failed"
         except (TimeoutError, BodyTooLarge) as error:
             outcome, error_status = (
                 ("expired", 504)
