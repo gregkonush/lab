@@ -101,6 +101,20 @@ kubectl --context galactic-lan -n rook-ceph delete pod,service -l lab-network-pr
 If a check fails, retain the failure evidence, then delete the probes before investigating. Missing telemetry is
 unknown. These small requests establish connectivity, not 100G throughput or storage latency improvement.
 
+## Recover stalled CSI operations
+
+If an earlier route selected a storage source and left a CSI operation stuck, correct the preferred source and pass
+all 52 checks first. Restart only the affected node's CSI plugin to release its old connections and volume-operation
+lock. For Altra's CephFS driver:
+
+```bash
+kubectl --context galactic-lan -n rook-ceph delete pod \
+	-l app=rook-ceph.cephfs.csi.ceph.com-nodeplugin --field-selector spec.nodeName=talos-192-168-1-85
+```
+
+For RBD, select `app=rook-ceph.rbd.csi.ceph.com-nodeplugin` instead. Require the replacement on that node to become
+Ready and a fresh volume mount to pass I/O. Existing kernel mounts remain mounted. This needs no node reboot.
+
 ## Recover the LAN path
 
 Through the existing management endpoint, remove only the three added `routes` entries and the `RoutingRuleConfig`
@@ -110,6 +124,22 @@ addresses, Multus, and Ceph cluster-network configuration. Do not remove the ent
 Require peer pod routes to resolve through `flannel.1` and pod-to-peer-host routes through the LAN again. Repeat the
 connectivity and storage checks. Removing these routes does not return Ceph replication to the LAN; that has its
 own [recovery procedure](ceph-100g-cutover.md#recovery).
+
+## Cutover acceptance, 2026-10-11 UTC
+
+The configurations from [#14931](https://github.com/proompteng/lab/pull/14931) and
+[#14933](https://github.com/proompteng/lab/pull/14933) were applied through Omni. All 52 lookups passed. A repeat sync
+dry run reported zero changes. Both host boot IDs stayed unchanged. Packet captures confirmed bidirectional native
+pod traffic and existing Ceph client traffic on both `storage0` interfaces, with no added link errors or drops.
+
+Fresh CephFS mounts on all three nodes passed 8 MiB writes, fsyncs, and checksums of every node's file. RBD passed
+an 8 MiB write and fsync on Altra, then checksum readback on fresh Turin and Ryzen mounts. Restarting Altra's CephFS
+plugin cleared the operation stalled by the earlier source-address error. Three nodes were Ready, three monitors
+held quorum, and all six OSDs were up/in with 601 active PGs.
+
+The final pod, DNS, and Service matrix passed on all three nodes. Intermittent Turin client DNS failures also
+occurred before and after the route change and remain unresolved. Scrub debt, the previous RGW crash warning,
+cooling stability, and peak-bandwidth acceptance remain separate work.
 
 Schema references are Talos v1.14 [BondConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/bondconfig)
 and the pinned [RoutingRuleConfig implementation](https://github.com/siderolabs/talos/blob/v1.14.0/pkg/machinery/config/types/network/routing_rule.go).
