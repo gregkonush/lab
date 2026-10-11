@@ -232,6 +232,21 @@ patches:
       addresses:
         - address: 10.100.0.11/24
           routePriority: 1024
+      routes:
+        - destination: 10.244.0.0/24
+          gateway: 10.100.0.12
+        - destination: 10.244.1.0/24
+          gateway: 10.100.0.12
+        - destination: 100.100.244.190/32
+          gateway: 10.100.0.12
+          table: "100"
+      ---
+      apiVersion: v1alpha1
+      kind: RoutingRuleConfig
+      name: "5000"
+      src: 10.244.4.0/23
+      dst: 100.100.244.190/32
+      table: "100"
 ---
 kind: Machine
 name: 8bf7ec00-171c-11f1-8000-7cc255f16774
@@ -388,6 +403,21 @@ patches:
       addresses:
         - address: 10.100.0.12/24
           routePriority: 1024
+      routes:
+        - destination: 10.244.4.0/24
+          gateway: 10.100.0.11
+        - destination: 10.244.5.0/24
+          gateway: 10.100.0.11
+        - destination: 100.100.244.142/32
+          gateway: 10.100.0.11
+          table: "100"
+      ---
+      apiVersion: v1alpha1
+      kind: RoutingRuleConfig
+      name: "5000"
+      src: 10.244.0.0/23
+      dst: 100.100.244.142/32
+      table: "100"
 ---
 kind: Machine
 name: ff115a00-c307-11f0-a28f-648eab3e4100

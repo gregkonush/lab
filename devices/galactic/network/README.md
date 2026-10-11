@@ -123,6 +123,12 @@ then complete bidirectional throughput testing, switch error-counter acceptance,
 To undo this interface setup, remove only its dedicated patch from the template, merge, render, and sync through Omni.
 Verify that the storage address and route disappear and management remains reachable. Delete private exports and renders after use.
 
+## Route application traffic over 100G
+
+The [pod routing procedure](pod-100g-routing.md) moves Altra and Turin's pod and Ceph client traffic through
+`storage0`. Ryzen keeps its existing Flannel path over the LAN. The Omni template owns the native routes and narrow
+return-path rules. Run the committed topology check before syncing, then verify routes and actual I/O afterward.
+
 ## Read NIC temperature
 
 Read the NIC's Linux `hwmon` sensor through the existing RBD CSI node pod. This requires cluster access and Python 3
