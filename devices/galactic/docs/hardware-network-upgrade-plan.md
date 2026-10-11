@@ -1,7 +1,8 @@
 # Galactic hardware and network upgrade plan
 
-Status: Switch bench configuration applied on 2026-10-10. Turin shut down gracefully for NIC installation.
-Host NIC installation, throughput tests, and Ceph network migration remain unverified. Receipt evidence checked 2026-10-06.
+Status: Switch bench configuration applied on 2026-10-10. Altra's installed ConnectX-5 Ex has a 100G link.
+The Omni template defines Altra's `10.100.0.11/24` storage interface. Follow the [interface setup](../network/README.md#configure-altras-storage-interface)
+for rollout and readback. Throughput tests and Ceph network migration remain unverified. Receipt evidence checked 2026-10-06.
 
 ## Parts received
 
@@ -60,6 +61,7 @@ Use one 100G link per host. Leave the second NIC ports and two remaining switch 
 5. [ ] Repeat the same maintenance and recovery checks for Altra. Never maintain both OSD hosts together.
 6. [ ] Add the storage interface configuration through the [Omni template workflow](../omni/README.md).
        Match the verified NIC identity, preserve complete management addressing, and render/validate/dry-run each host change.
+       Altra's MAC-selected configuration is in the template; Turin's configuration remains pending.
        Do not apply retained per-device patches directly.
 7. [ ] Verify 100,000 Mb/s on both NICs and switch ports, matching FEC, stable carrier, and clean error counters.
        Run interface-bound TCP `iperf3` tests in both directions with parallel streams for 60 seconds.
@@ -96,8 +98,8 @@ are still `10.244.*`. Installing NICs or setting host IPs does not move that tra
       return the affected host to its original management path and verify disks, quorum, and Ceph before resuming writes.
       The Ceph migration procedure must prove its own recovery path; reverting one network field is not a recovery plan.
 
-Next session: confirm Turin's physical NIC installation and recover the host before maintaining Altra.
-Inspect the exact NIC labels and slots, refresh maintenance readiness, and resolve the Ceph migration gate.
+Next session: complete host recovery, verify Turin's NIC and addressing, then test the full storage path.
+Record PCIe capacity and switch peer identities, and resolve the Ceph migration gate.
 Check off a step only after its stated proof passes. Keep credentials, raw email, order numbers, and tracking IDs out of Git.
 
 Hardware references: [CRS504](https://mikrotik.com/product/crs504_4xq_in),

@@ -72,3 +72,41 @@ Port 1 recorded 332 corrected FEC errors, one uncorrected error, and two symbol 
 These counters stayed unchanged across two samples with almost no traffic. Recheck them under host traffic before acceptance.
 Complete the plan's host identification, error-counter and throughput tests before accepting the storage network.
 The switch clock was unsynchronized on the bench. Configure NTP when management routing is available.
+
+## Configure Altra's storage interface
+
+The [Omni cluster template](../omni/cluster-template.yaml) owns Altra's storage address.
+Patch `30-12345678-9abc-deff-1234-56789abcdeff-storage-network` selects permanent MAC `c0:01:22:34:8c:85`
+as Talos alias `storage0` and assigns `10.100.0.11/24`, MTU 1500, and connected-route metric 1024.
+It adds no DHCP client or gateway. The existing management interface, Node IP, and etcd subnet stay configured separately.
+The alias uses [Talos LinkAliasConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/linkaliasconfig);
+the address uses [LinkConfig](https://docs.siderolabs.com/talos/v1.14/reference/configuration/network/linkconfig).
+
+The installed card reports Mellanox ConnectX-5 Ex, PCI ID `15b3:1019`, driver `mlx5_core`,
+and firmware `16.35.1012`, PSID `MT_0000000013`. Its connected port is `enP12p1s0f1np1` at PCI `000c:01:00.1`.
+The other port, `enP12p1s0f0np0`, has no carrier. Readback on 2026-10-10 confirmed 100,000 Mb/s, full duplex,
+and no existing route overlapping `10.100.0.0/24` on any of the three nodes.
+The Talos alias does not change the kernel interface name used by future Multus configuration.
+
+1. Export fresh live credentials privately, then render and validate the template using the [Omni workflow](../omni/README.md).
+2. Inspect `omnictl cluster template sync --file <rendered-template> --dry-run --verbose`.
+   The initial rollout must only create the Altra storage patch. A repeat rollout must have no changes.
+3. Sync the reviewed, merged template through Omni. This is a network configuration update, with no installer or reboot.
+4. Verify the address and route through the existing management endpoint:
+
+```bash
+talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142 get links enP12p1s0f1np1 -o yaml
+talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142 get addresses -o yaml
+talosctl --context ryzen --endpoints 100.100.244.141 --nodes 100.100.244.142 get routes -o yaml
+kubectl --context galactic-lan -n kube-system get node talos-192-168-1-85 -o wide
+kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph status
+```
+
+Require `10.100.0.11/24` on the connected port, the `10.100.0.0/24` route through that port,
+no default route or DHCP lease on it, and the existing management address `100.100.244.142` still reachable.
+Compare node readiness, etcd quorum, OSD identities, and PG availability with the pre-change sample.
+This address alone does not move Ceph traffic. Turin addressing, bidirectional throughput testing,
+switch error-counter acceptance, and the [Ceph migration gate](../docs/hardware-network-upgrade-plan.md#move-ceph-traffic-only-after-the-migration-gate) remain separate steps.
+
+To undo this interface setup, remove only its dedicated patch from the template, merge, render, and sync through Omni.
+Verify that the storage address and route disappear and management remains reachable. Delete private exports and renders after use.

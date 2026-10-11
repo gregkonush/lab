@@ -210,6 +210,25 @@ patches:
           - ryzen.ide-newton.ts.net
           - altra
       version: v1alpha1
+  - idOverride: 30-12345678-9abc-deff-1234-56789abcdeff-storage-network
+    annotations:
+      description: Altra ConnectX-5 Ex storage interface
+      name: Altra 100G storage network
+    inline: |
+      apiVersion: v1alpha1
+      kind: LinkAliasConfig
+      name: storage0
+      selector:
+        match: mac(link.permanent_addr) == "c0:01:22:34:8c:85"
+      ---
+      apiVersion: v1alpha1
+      kind: LinkConfig
+      name: storage0
+      up: true
+      mtu: 1500
+      addresses:
+        - address: 10.100.0.11/24
+          routePriority: 1024
 ---
 kind: Machine
 name: 8bf7ec00-171c-11f1-8000-7cc255f16774
