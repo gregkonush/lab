@@ -96,7 +96,8 @@ The installed card reports Mellanox ConnectX-5 Ex, PCI ID `15b3:1019`, driver `m
 and firmware `16.35.1012`, PSID `MT_0000000013`. After Altra's slot move, both hosts' connected ports are at
 PCI `0000:01:00.1`; the other ports have no carrier. Readback on 2026-10-10 confirmed 100,000 Mb/s on both hosts.
 Altra subsequently exceeded the 105 C NIC warning threshold. Carrier alone does not establish cooling or traffic
-acceptance. Resolve cooling before sustained throughput tests or Ceph cutover.
+acceptance. Resolve cooling before sustained throughput tests. The [cutover procedure](ceph-100g-cutover.md) records
+the operator's explicit exception for this installation; it is not a normal maintenance prerequisite waiver.
 
 1. Export fresh live credentials privately, then render and validate the template using the [Omni workflow](../omni/README.md).
 2. Inspect `omnictl cluster template sync --file <rendered-template> --dry-run --verbose`.

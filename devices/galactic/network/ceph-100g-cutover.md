@@ -59,6 +59,7 @@ kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph 
 After the restoration phase, remove the freeze labels from all six Deployments. Useful readback:
 
 ```bash
+kubectl --context galactic-lan -n rook-ceph label deployment -l app=rook-ceph-osd ceph.rook.io/do-not-reconcile-
 kubectl --context galactic-lan -n kube-system get ds kube-multus-ds whereabouts
 kubectl --context galactic-lan -n kube-system get deploy whereabouts-reconciler
 kubectl --context galactic-lan -n rook-ceph get network-attachment-definition ceph-cluster-100g
@@ -76,6 +77,15 @@ before resuming. Never delete the CephCluster, purge an OSD, or zap a disk to fi
 To return cluster traffic to Flannel, retain both interfaces on every OSD while changing Ceph's cluster binding back
 through a reviewed GitOps change. Roll OSDs one at a time, verify all advertised cluster addresses and client I/O,
 then remove the secondary attachment. A field revert without mixed-network reachability is insufficient.
+
+## Cutover acceptance, 2026-10-11 UTC
+
+All six OSDs returned active/up/in with `10.244.*` public and `10.100.0.*` cluster addresses. Established OSD TCP
+connections use the storage subnet; both hosts' `storage0` counters increased during recovery and test I/O with zero
+reported errors or drops. CephFS 8 MiB writes and fsync passed on all three nodes, followed by checksums of every
+file from every node. RBD 8 MiB write and fsync on Altra passed checksum readback on fresh Turin and Ryzen mounts.
+These are connectivity and data checks, not a peak-bandwidth benchmark. Cooling, PCIe capacity, switch counters,
+ordinary Turin pod DNS, full replication, and scrub completion remain separate acceptance items in the hardware plan.
 
 Rook's [network guide](https://github.com/rook/rook/blob/v1.20.7/Documentation/CRDs/Cluster/network-providers.md)
 requires old and restarted pods to remain mutually reachable. Its CRD reference carries a conflicting support
