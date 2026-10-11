@@ -25,10 +25,12 @@ Only OSD replication, recovery, and cluster heartbeats move to `10.100.0.0/24`.
    advertises its old cluster addresses in this phase. This supplies cross-network reachability during conversion.
 5. Freeze all six again, then merge and sync the provider phase: `network.provider: multus`, cluster selector
    `rook-ceph/ceph-cluster-100g`, and cluster address range `10.100.0.0/24`. Leave the public selector unset and retain
-   existing messenger settings. Rook generates the OSD network annotation. Release and verify one OSD at a time again.
+   existing messenger settings. Remove the temporary manual attachment annotation in this same phase so it cannot
+   override Rook's generated annotation. This changes the pod template and makes Rook restart each selected OSD with
+   the new cluster binding. Release and verify one OSD at a time again.
    Verify six OSDs return up/in and all
    cluster addresses move to `10.100.0.*`; public addresses must remain `10.244.*`.
-6. Merge and sync the restoration phase: remove `skipUpgradeChecks` and the manual attachment annotation.
+6. Merge and sync the restoration phase: remove `skipUpgradeChecks`.
    Keep `upgradeOSDRequiresHealthyPGs: true`, then remove the temporary Deployment freeze labels. The provider now
    owns the same attachment; no compatibility path remains.
 7. Verify replication/recovery increments counters on the 100G links. Exercise an RBD/CephFS write, fsync, and
