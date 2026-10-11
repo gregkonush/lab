@@ -192,6 +192,33 @@ Required availability gate before restoring clients:
 latency, and recovery direction. Do not turn `Synced/Degraded` into `Healthy` by clearing a warning or increasing its
 lifetime.
 
+### Scrub progress during recovery
+
+[`cluster-values.yaml`](../../argocd/applications/rook-ceph/cluster-values.yaml) allows new scrubs during recovery with
+`osd_scrub_during_recovery: "true"`. The custom mClock profile reserves 60% for clients, 10% for recovery, and 30% for
+background best effort. Scrub shares the last class with backfill, snap trimming, and PG deletion. Scrubs remain
+limited to one per OSD and can start throughout the day and week.
+
+Roll out a reviewed, merged values change through the existing Rook Argo application. This option updates at runtime;
+do not restart OSDs or change the OSD rollout annotation for it. Check the effective value on every OSD:
+
+```bash
+set -euo pipefail
+for osd in 0 1 2 3 4 5; do
+  kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph config show-with-defaults "osd.$osd" -f json \
+    | jq -er '.[] | select(.name == "osd_scrub_during_recovery") | .value'
+done
+```
+
+Require `true` from all six running OSDs before accepting activation. The monitor config store alone is insufficient.
+
+Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
+affected application latency before and after an authorized rollout. Allowing scrubs during recovery adds HDD contention;
+an active scrub alone does not prove that debt is shrinking. If application latency deteriorates, revert this setting
+to `"false"` through GitOps. Existing scrubs finish, while recovery blocks new periodic scrubs. Keep scrub intervals and warnings
+enabled. See [Ceph's scrub configuration](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#osd-scrub-during-recovery).
+
 ## Phase 4: Repair An Exact RBD Filesystem
 
 Use this only when Ceph is serving the image but kubelet reports ext4 errors or the volume will not mount. Substitute the
