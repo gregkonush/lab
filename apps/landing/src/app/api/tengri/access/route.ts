@@ -173,6 +173,7 @@ export async function POST(request: Request) {
             humanId: human.humanId,
             role: parsed.role === 'developer' ? WorkspaceRole.DEVELOPER : WorkspaceRole.VIEWER,
             enabled: parsed.enabled,
+            ...(parsed.enabled && parsed.role === 'viewer' ? { scope: parsed.scope } : {}),
           },
         }
         break

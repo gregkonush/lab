@@ -390,14 +390,14 @@ identityTest(
       try {
         const url = new URL(request.url || '/', process.env.TENGRI_DESKTOP_ORIGIN)
         if (url.pathname === '/') {
-          response.setHeader('Content-Type', 'text/html')
+          response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
             '<!doctype html><html><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
           )
           return
         }
         if (url.pathname === '/fixture.js') {
-          response.setHeader('Content-Type', 'text/javascript')
+          response.setHeader('Content-Type', 'text/javascript; charset=utf-8')
           response.end(javascript)
           return
         }
@@ -928,6 +928,108 @@ identityTest(
       page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
     ).toBeVisible()
     await browserExpect(page.getByText('GitHub #3', { exact: true })).toBeVisible()
+
+    // Seed a stopped, enrolled workspace; creation and enrollment are exercised by the controller wire fixture above.
+    const scopedWorkspace = randomUUID()
+    const scopedHome = randomUUID()
+    await control.query(
+      "WITH enrolled AS (INSERT INTO ofz.reservations(id,owner_id,home_bytes,workspace_uid,state) VALUES($1,$2,34359738368,$3,'enrolled') RETURNING id) INSERT INTO ofz.workspaces(uid,owner_id,home_uid,reservation_id,home_bytes) SELECT $3,$2,$4,id,34359738368 FROM enrolled",
+      [randomUUID(), inspected.session.humanId, scopedWorkspace, scopedHome],
+    )
+    await nativeCall('/v1/relationships/write', {
+      updates: [
+        relation('workspace', scopedWorkspace, 'platform', 'platform', 'lab'),
+        relation('workspace', scopedWorkspace, 'owner', 'human', inspected.session.humanId),
+      ],
+    })
+    await page.goto(base + '/?workspace=' + scopedWorkspace)
+    const contentOptIn = page.getByLabel('Approve bounded Viewer content access', { exact: true })
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
+    await page.getByLabel('Reason', { exact: true }).fill('Grant metadata-only Viewer access')
+    await applyChange(200)
+    const viewerRow = page.getByRole('row').filter({ has: page.getByText('GitHub #3', { exact: true }) })
+    await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    const viewerId = createHash('sha256').update('github:3').digest('hex')
+    const storedViewer = async () =>
+      (
+        await control.query('SELECT role,scope FROM ofz.collaborators WHERE workspace_uid=$1 AND human_id=$2', [
+          scopedWorkspace,
+          viewerId,
+        ])
+      ).rows[0]
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+
+    await contentOptIn.check()
+    const roots = page.getByLabel('File roots under /workspace', { exact: true })
+    await roots.fill('/workspace/../private')
+    const lookupsBeforeInvalidScope = identityLookups
+    const versionBeforeInvalidScope = (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version
+    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await browserExpect(roots).toHaveAttribute('aria-invalid', 'true')
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'canonical path under /workspace' })).toBeVisible()
+    expect(identityLookups).toBe(lookupsBeforeInvalidScope)
+    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
+      versionBeforeInvalidScope,
+    )
+    await roots.fill('/workspace/src')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill('thread-approved')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill('terminal-approved')
+    await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
+    await page.getByLabel('Maximum items', { exact: true }).fill('20')
+    await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText('/workspace/src')).toBeVisible()
+    const approvedScope = {
+      file_roots: ['/workspace/src'],
+      thread_ids: ['thread-approved'],
+      terminal_ids: ['terminal-approved'],
+      browser_screenshot: false,
+      max_bytes: 4096,
+      max_items: 20,
+    }
+    expect(await storedViewer()).toEqual({ role: 3, scope: approvedScope })
+    await browserExpect(viewerRow.getByText(/Browser status · up to 4096 bytes \/ 20 items/)).toBeVisible()
+
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await contentOptIn.check()
+    await roots.fill('/workspace/narrow')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill('')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill('')
+    await page.getByLabel('Allow browser screenshots', { exact: true }).check()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText('/workspace/narrow', { exact: true })).toBeVisible()
+    await browserExpect(viewerRow.getByText(/Browser status and screenshots/)).toBeVisible()
+    expect(await storedViewer()).toEqual({
+      role: 3,
+      scope: {
+        ...approvedScope,
+        file_roots: ['/workspace/narrow'],
+        thread_ids: [],
+        terminal_ids: [],
+        browser_screenshot: true,
+      },
+    })
+    await contentOptIn.uncheck()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    expect(
+      (await control.query('SELECT home_uid,state,running FROM ofz.workspaces WHERE uid=$1', [scopedWorkspace]))
+        .rows[0],
+    ).toEqual({
+      home_uid: scopedHome,
+      state: 'active',
+      running: false,
+    })
+    console.log(
+      'PASS: real Access UI and BFF preserve metadata-only Viewers, reject invalid scope inline before identity lookup, commit exact bounded scopes, require a new subject opt-in, narrow targets and remove content without starting the retained workspace',
+    )
+    await page.goto(base)
+    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
 
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])
     await page.getByLabel('Change', { exact: true }).selectOption('quota')
