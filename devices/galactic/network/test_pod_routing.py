@@ -88,6 +88,20 @@ class TopologyGateTest(unittest.TestCase):
                 )
             )
 
+    def test_storage_source_is_rejected_for_new_host_connections(self):
+        result = {"dev": "storage0", "gateway": "10.100.0.11", "prefsrc": "10.100.0.12"}
+        self.assertFalse(
+            routing.route_matches(
+                "turin", ["10.244.5.10"], "storage0", "10.100.0.11", result
+            )
+        )
+        result["prefsrc"] = "10.244.0.0"
+        self.assertTrue(
+            routing.route_matches(
+                "turin", ["10.244.5.10"], "storage0", "10.100.0.11", result
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

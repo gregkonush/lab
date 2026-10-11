@@ -1,13 +1,10 @@
 import argparse
 import hashlib
 import json
-import os
 import re
-import sys
+import shutil
 from pathlib import Path
 from urllib.request import urlopen
-
-ENGINE_REVISION = "4888528abcfdcd36e2f4a6a1ffa0262b67683c66"
 
 
 def read_lock(path):
@@ -67,11 +64,50 @@ def prepare(lock, cache, fetch=urlopen):
                 ) from None
             finally:
                 temporary.unlink(missing_ok=True)
-        verify_file(path, item)
+        else:
+            verify_file(path, item)
         print(
             json.dumps({"verified": item["name"], "sha256": item["sha256"]}), flush=True
         )
     return model
+
+
+def server_args(lock, cache):
+    return [
+        "serve",
+        str(cache / lock["revision"]),
+        "--served-model-name",
+        lock["servedModel"],
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--dtype",
+        "bfloat16",
+        "--max-model-len",
+        "16384",
+        "--gpu-memory-utilization",
+        "0.24",
+        "--max-num-seqs",
+        "1",
+        "--max-num-batched-tokens",
+        "2048",
+        "--api-server-count",
+        "1",
+        "--enable-prefix-caching",
+        "--enable-chunked-prefill",
+        "--reasoning-parser",
+        "qwen3",
+        "--override-generation-config",
+        '{"temperature":0,"max_new_tokens":4096}',
+        "--otlp-traces-endpoint",
+        "http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces",
+        "--middleware",
+        "admission.AdmissionMiddleware",
+        "--enable-request-id-headers",
+        "--disable-uvicorn-access-log",
+        "--disable-fastapi-docs",
+    ]
 
 
 def main():
@@ -80,46 +116,14 @@ def main():
         "--lock", type=Path, default=Path(__file__).with_name("model-lock.json")
     )
     parser.add_argument("--cache", type=Path, default=Path("/models"))
+    parser.add_argument("--runtime", type=Path, default=Path("/runtime"))
     args = parser.parse_args()
     lock = read_lock(args.lock)
-    model = prepare(lock, args.cache)
-    os.environ["SUROGATE_CONVERT_DEVICE"] = "cpu"
-    os.environ["SUROGATE_SERVE_CACHE"] = str(args.cache / "prepared" / ENGINE_REVISION)
-    os.execv(
-        sys.executable,
-        [
-            sys.executable,
-            "-m",
-            "surogate.cli.serve",
-            str(model),
-            "--served-model-name",
-            lock["servedModel"],
-            "--host",
-            "0.0.0.0",
-            "--port",
-            "8080",
-            "--device",
-            "0",
-            "--max-model-len",
-            "32768",
-            "--kv-capacity",
-            "32768",
-            "--kv-cache-dtype",
-            "bf16",
-            "--max-num-seqs",
-            "8",
-            "--max-pending-requests",
-            "8",
-            "--pending-timeout-ms",
-            "5000",
-            "--gpu-memory-limit-mib",
-            "85000",
-            "--decision-temperature",
-            "2",
-            "--decision-attempts",
-            "1",
-        ],
-    )
+    prepare(lock, args.cache)
+    args.runtime.mkdir(parents=True, exist_ok=True)
+    for name in ["runtime.py", "serve.py", "admission.py"]:
+        shutil.copyfile(Path(__file__).with_name(name), args.runtime / name)
+    shutil.copyfile(args.lock, args.runtime / "model-lock.json")
 
 
 if __name__ == "__main__":

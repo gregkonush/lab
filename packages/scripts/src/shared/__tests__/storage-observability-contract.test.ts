@@ -199,6 +199,35 @@ test('Ceph performance rules preserve missing-data semantics and inventory cover
   )
 })
 
+test('critical Ceph alerts opt into the configured email route', () => {
+  const manifest = YAML.parse(readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml'))
+  const groups = YAML.parse(manifest.data['graf-rules.yaml']).groups
+  const storageRules: Array<{ alert: string; labels: Record<string, string> }> =
+    groups.find((group: { name: string }) => group.name === 'torghut-storage-alerts.rules')?.rules ?? []
+  const criticalRules = storageRules.filter(
+    (rule) => rule.labels.service === 'ceph-storage' && rule.labels.severity === 'critical',
+  )
+  expect(criticalRules.map((rule) => rule.alert)).toEqual([
+    'CephClusterHealthError',
+    'CephSlowOps',
+    'CephOsdCommitLatencyCritical',
+  ])
+
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  const emailRoute = alertmanager.route.routes.find(
+    (route: { receiver: string }) => route.receiver === 'critical-email',
+  )
+  expect(emailRoute.matchers).toEqual(['severity = "critical"', 'notify = "email"'])
+  const emailReceiver = alertmanager.receivers.find(
+    (receiver: { name: string }) => receiver.name === emailRoute.receiver,
+  )
+  expect(emailReceiver.email_configs).toHaveLength(1)
+  for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
+})
+
 test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
@@ -213,7 +242,7 @@ test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub 
   expect(config.osd.osd_mclock_profile).toBe('custom')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
-  expect(config.osd.osd_max_scrubs).toBe('1')
+  expect(config.osd.osd_max_scrubs).toBe('3')
   expect([0, 1, 2, 3, 4, 5].map((id) => config[`osd.${id}`].osd_mclock_max_capacity_iops_hdd)).toEqual([
     '210',
     '250',

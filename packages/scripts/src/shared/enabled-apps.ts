@@ -116,7 +116,7 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
-  ['rune', ['.github/workflows/rune-images.yml', 'argocd/applications/kargo']],
+  ['bayn-model', ['.github/workflows/bayn-model-images.yml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
@@ -159,13 +159,13 @@ type KargoImageContract = {
 
 const kargoImageApps = new Map<string, KargoImageContract>([
   [
-    'rune',
+    'bayn-model',
     {
       kind: 'promotion-template',
-      bootstrapReferences: ['registry.ide-newton.ts.net/lab/rune:unpromoted'],
-      reason: 'The pinned Rune serving engine is built and signed in CI, then promoted by Kargo',
-      repositories: ['registry.ide-newton.ts.net/lab/rune'],
-      workflowPaths: ['.github/workflows/rune-images.yml', 'argocd/applications/kargo'],
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/bayn-model:unpromoted'],
+      reason: 'The locked financial model provisioner is built and signed in CI, then promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/bayn-model'],
+      workflowPaths: ['.github/workflows/bayn-model-images.yml', 'argocd/applications/kargo'],
     },
   ],
   [

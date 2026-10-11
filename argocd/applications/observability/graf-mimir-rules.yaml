@@ -6,6 +6,33 @@ metadata:
 data:
   graf-rules.yaml: |
     groups:
+      - name: bayn-model.rules
+        rules:
+          - alert: BaynModelUnavailable
+            expr: |
+              (up{job="bayn-model"} == 0 or absent(up{job="bayn-model"}))
+              and on()
+              (kube_deployment_spec_replicas{namespace="bayn-model",deployment="bayn-model"} > 0)
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: bayn-model
+            annotations:
+              summary: Bayn research model is unavailable
+              description: The private Alpha-R1 metrics endpoint has been unavailable for fifteen minutes. Research is paused; execution has no dependency on this endpoint.
+              runbook_url: services/bayn-model/README.md
+          - alert: BaynModelRequestsExpiring
+            expr: sum(increase(bayn_model_requests_total{namespace="bayn-model",outcome="expired"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: bayn-model
+            annotations:
+              summary: Bayn research inference is reaching its deadline
+              description: At least two research requests reached the server deadline in fifteen minutes. Inspect queue, prefill, decode and shared GPU pressure before retrying.
+              runbook_url: services/bayn-model/README.md
       - name: buzz-production.rules
         rules:
           - record: buzz_rollout_enabled
@@ -914,6 +941,7 @@ data:
               severity: critical
               service: ceph-storage
               team: platform
+              notify: email
             annotations:
               summary: Ceph cluster reports HEALTH_ERR
               description: Ceph has reported HEALTH_ERR continuously for 5 minutes.
@@ -925,6 +953,7 @@ data:
               severity: critical
               service: ceph-storage
               team: platform
+              notify: email
             annotations:
               summary: Ceph reports slow operations
               description: Ceph has reported one or more slow operations continuously for 5 minutes.
@@ -947,6 +976,7 @@ data:
               severity: critical
               service: ceph-storage
               team: platform
+              notify: email
             annotations:
               summary: Ceph OSD commit latency exceeds 150 ms
               description: The slowest Ceph OSD has sustained commit latency above 150 ms for 5 minutes.
@@ -1232,39 +1262,77 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
       - name: torghut-ta.rules
         rules:
-          - alert: TorghutTAJobmanagerDown
+          - alert: TorghutSignalPipelineMetricsDown
             expr: |
-              up{
-                job="torghut",
-                namespace="torghut",
-                service="torghut-ta-metrics"
-              } == 0
+              max by (job, namespace, service) (
+                up{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+              ) == 0
+              or absent(up{job="torghut",namespace="torghut",service="torghut-ta-metrics"})
+              or absent(up{job="torghut",namespace="torghut",service="market-data-archive-metrics"})
             for: 5m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
-              summary: Torghut TA jobmanager metrics endpoint is down
-              description: TA jobmanager is not being scraped (up=0) for 5 minutes.
+              summary: Torghut signal pipeline metrics are unavailable
+              description: The {{ $labels.service }} JobManager metrics target is down or absent for five minutes. Check service endpoints, Alloy scraping and the FlinkDeployment.
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
-          - alert: TorghutTACheckpointsStalled
+          - alert: TorghutSignalPipelineNotRunning
             expr: |
               (
-                time()
-                - max(
-                  flink_jobmanager_job_lastCheckpointCompletedTimestamp{
-                    namespace="torghut",
-                    service="torghut-ta-metrics"
-                  }
-                ) / 1000
-              ) > 180
-            for: 10m
+                max by (job, namespace, service) (
+                  flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) < 1
+                or absent(flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service="torghut-ta-metrics"})
+                or absent(flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service="market-data-archive-metrics"})
+              )
+              and on (job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  up{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) == 1
+              )
+            for: 2m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
-              summary: Torghut TA checkpoints appear stalled
-              description: |
-                Flink last checkpoint completed timestamp is older than 3 minutes for 10 minutes.
-                This strongly indicates the TA job is stuck or failing to checkpoint.
+              summary: Torghut signal pipeline has no running job
+              description: The {{ $labels.service }} JobManager is reachable but reports zero running jobs or no job-count metric for two minutes. A Ready Pod does not establish signal production; inspect the Flink job failure and dependency errors.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutSignalPipelineCheckpointsStalled
+            expr: |
+              (
+                (
+                  time() - max by (job, namespace, service) (
+                    flink_jobmanager_job_lastCheckpointCompletedTimestamp{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                  ) / 1000
+                ) > 180
+                or absent(flink_jobmanager_job_lastCheckpointCompletedTimestamp{job="torghut",namespace="torghut",service="torghut-ta-metrics"})
+                or absent(flink_jobmanager_job_lastCheckpointCompletedTimestamp{job="torghut",namespace="torghut",service="market-data-archive-metrics"})
+              )
+              and on (job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) > 0
+              )
+              and on (job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  up{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) == 1
+              )
+            for: 5m
+            labels:
+              severity: critical
+              team: trading
+              notify: email
+            annotations:
+              summary: Torghut signal pipeline checkpoints are stalled
+              description: The {{ $labels.service }} job is running but its last completed checkpoint is over three minutes old, zero or missing for five minutes. Inspect Kafka resolution, task failures, backpressure and checkpoint storage. This check runs outside market hours because an idle streaming job must still checkpoint.
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-trading.rules
         rules:
@@ -3232,6 +3300,7 @@ data:
                 } == 0
               )
             for: 1m
+            keep_firing_for: 5m
             labels:
               severity: critical
               team: trading
@@ -3492,6 +3561,50 @@ data:
             annotations:
               summary: Tengri control-plane metrics are unavailable
               description: The Tengri control plane has not produced a healthy metrics scrape for five minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriSlotPodsMissing
+            expr: |
+              (
+                (
+                  count(count by (pod) (
+                    kube_pod_info{namespace="tengri",pod=~"tengri-slot-.+"}
+                  )) or vector(0)
+                ) < 6
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri slot Pods are missing
+              description: Fewer than the six required Tengri slot Pods have existed for five minutes. Missing Pods retain their home disks and claims until an operator proves the former VMM and storage writer are fenced.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriSlotPoolUnavailable
+            expr: |
+              (
+                (
+                  max(kube_pod_status_ready{
+                    namespace="tengri",
+                    pod=~"tengri-slot-.+",
+                    condition="true"
+                  }) or vector(0)
+                ) < 1
+              )
+              and on()
+              (tengri_rollout_enabled == 1)
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: tengri
+              notify: email
+            annotations:
+              summary: Tengri has no ready slot Pods
+              description: No Tengri slot Pod has been Ready for five minutes. Check slot scheduling, container failures, retained home attachment, and the existing failed-agent alert before declaring the desktop available.
               runbook_url: docs/tengri/operations.md
           - alert: TengriAgentFailed
             expr: |

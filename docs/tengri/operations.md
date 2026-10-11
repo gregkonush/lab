@@ -310,9 +310,17 @@ authoritative equivalent of a ServiceMonitor: it scrapes only `up` and bounded `
 `tengri-gateway.tengri.svc.cluster.local:8080`, then remote-writes them to Mimir. The Tengri NetworkPolicy permits this
 single observability-namespace path and does not expose the preview listener to the collector.
 
-Mimir alerts cover a missing control-plane scrape, failed microVM agents, repeated guest failures, high boot and resume
-latency, and global quota rejection. All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
+Mimir alerts cover a missing control-plane scrape, missing slot Pods, an unavailable slot pool, failed microVM agents,
+repeated guest failures, high boot and resume latency, and global quota rejection. `TengriSlotPodsMissing` fires when
+fewer than the six required slot Pods exist for five minutes. `TengriSlotPoolUnavailable` fires when no slot Pod is Ready
+for five minutes. Both use kube-state-metrics, so a healthy controller scrape or Argo application cannot hide a lost pool.
+An occupied, healthy pool does not fire either alert. The existing quota rejection alert covers exhausted capacity.
+All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
 agent IDs, terminal IDs, prompts, file contents, and ticket material must never appear in metrics.
+
+For a missing slot Pod, inspect its Lease, MicroVM, and original home PVC. Follow the fenced recovery procedure above
+before resetting a binding. Pod absence alone does not prove that its former storage writer stopped. Preserve the
+original MicroVM and PVC UIDs, owner grants, and files. Critical Tengri alerts use the existing `notify: email` route.
 
 After the observability application reconciles, verify collection and rule loading without exposing user data:
 
