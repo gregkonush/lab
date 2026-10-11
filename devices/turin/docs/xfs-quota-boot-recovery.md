@@ -90,12 +90,38 @@ kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph 
 Require Turin readiness, the Kingston disk, the original OSD identities, six OSDs up and in, three monitors
 in quorum, all PGs active, and recovery progress. Follow the
 [storage recovery runbook](../../../docs/runbooks/galactic-storage-and-workload-recovery.md) for acceptance.
-Once recovery and backfill finish, restore the Git-owned profile and verify it:
+Once recovery and backfill finish, restore the Git-owned profile through reviewed GitOps reconciliation.
+The direct rollback below requires explicit authorization for this runtime change or an authorized emergency procedure:
 
 ```bash
 kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile custom
 kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd osd_mclock_profile
 ```
 
-The normal profile is defined in [Rook values](../../../argocd/applications/rook-ceph/cluster-values.yaml).
+The monitor config store alone does not prove restoration. Read the effective profile and all nine scheduler
+values from every running OSD, as required by the
+[scrub catch-up procedure](../../../docs/runbooks/rook-ceph-on-talos.md#scrub-catch-up-posture):
+
+```bash
+set -euo pipefail
+for ceph_osd_id in 0 1 2 3 4 5; do
+  kubectl --context galactic-lan -n rook-ceph exec "deploy/rook-ceph-osd-${ceph_osd_id}" -c osd -- \
+    env -u CEPH_ARGS ceph daemon "osd.${ceph_osd_id}" config show |
+    python3 -c '
+import json, sys
+config = json.load(sys.stdin)
+classes = ("client", "background_recovery", "background_best_effort")
+keys = ["osd_mclock_profile"] + [
+    f"osd_mclock_scheduler_{group}_{field}"
+    for group in classes for field in ("res", "wgt", "lim")
+]
+print(json.dumps({"osd": sys.argv[1], **{key: config[key] for key in keys}}, indent=2))
+' "$ceph_osd_id"
+done
+```
+
+Require `custom` and compare all nine values with the merged
+[Rook values](../../../argocd/applications/rook-ceph/cluster-values.yaml).
+After every OSD uses `custom`, check the monitor store for missing scheduler keys and follow the owning procedure
+for any mismatch. Confirm all effective values again after the last OSD restart before accepting restoration.
 Record residual scrub or slow-operation warnings separately. Do not purge or recreate OSDs to clear them.
