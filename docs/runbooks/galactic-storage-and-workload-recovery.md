@@ -205,18 +205,26 @@ change, require `osd_max_scrubs: 3` and `remote_scrub_reservations.max_allowed: 
 updates at runtime and does not require OSD restarts.
 
 Roll out a reviewed, merged values change through the existing Rook Argo application. This option updates at runtime;
-do not restart OSDs or change the OSD rollout annotation for it. Check the effective value on every OSD:
+do not restart OSDs or change the OSD rollout annotation for it. Check effective settings and reservation limits on every OSD:
 
 ```bash
 set -euo pipefail
 for osd in 0 1 2 3 4 5; do
+  printf 'osd.%s\n' "$osd"
   kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
-    ceph config show-with-defaults "osd.$osd" -f json \
-    | jq -er '.[] | select(.name == "osd_scrub_during_recovery") | .value'
+    ceph tell "osd.$osd" config get osd_scrub_during_recovery -f json \
+    | jq -e '.osd_scrub_during_recovery == "true"'
+  kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph tell "osd.$osd" config get osd_max_scrubs -f json \
+    | jq -e '.osd_max_scrubs == "3"'
+  kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
+    ceph tell "osd.$osd" dump_scrub_reservations -f json \
+    | jq -e '.osd_max_scrubs == 3 and .remote_scrub_reservations.max_allowed == 3'
 done
 ```
 
-Require `true` from all six running OSDs before accepting activation. The monitor config store alone is insufficient.
+Require all three checks to return `true` for each of the six running OSDs before accepting activation. A stale or missing
+value fails the command. The monitor config store alone is insufficient.
 
 Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
 affected application latency before and after an authorized rollout. More scrub concurrency adds HDD contention;
