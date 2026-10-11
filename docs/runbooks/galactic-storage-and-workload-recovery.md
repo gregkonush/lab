@@ -196,8 +196,13 @@ lifetime.
 
 [`cluster-values.yaml`](../../argocd/applications/rook-ceph/cluster-values.yaml) allows new scrubs during recovery with
 `osd_scrub_during_recovery: "true"`. The custom mClock profile reserves 60% for clients, 10% for recovery, and 30% for
-background best effort. Scrub shares the last class with backfill, snap trimming, and PG deletion. Scrubs remain
-limited to one per OSD and can start throughout the day and week.
+background best effort. Scrub shares the last class with backfill, snap trimming, and PG deletion. `osd_max_scrubs`
+allows three local scrub reservations and three remote reservations per OSD. Scrubs can start throughout the day and week.
+
+A PG marked `scrubbing` can still wait for a replica reservation. Inspect `scrub_schedule` in `ceph pg dump pgs -f json`
+and `ceph tell osd.<id> dump_scrub_reservations -f json` to distinguish scans from reservation waits. After a concurrency
+change, require `osd_max_scrubs: 3` and `remote_scrub_reservations.max_allowed: 3` from every running OSD. This setting
+updates at runtime and does not require OSD restarts.
 
 Roll out a reviewed, merged values change through the existing Rook Argo application. This option updates at runtime;
 do not restart OSDs or change the OSD rollout annotation for it. Check the effective value on every OSD:
@@ -214,10 +219,12 @@ done
 Require `true` from all six running OSDs before accepting activation. The monitor config store alone is insufficient.
 
 Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
-affected application latency before and after an authorized rollout. Allowing scrubs during recovery adds HDD contention;
-an active scrub alone does not prove that debt is shrinking. If application latency deteriorates, revert this setting
-to `"false"` through GitOps. Existing scrubs finish, while recovery blocks new periodic scrubs. Keep scrub intervals and warnings
-enabled. See [Ceph's scrub configuration](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#osd-scrub-during-recovery).
+affected application latency before and after an authorized rollout. More scrub concurrency adds HDD contention;
+an active scrub alone does not prove that debt is shrinking. If increased concurrency worsens application latency without
+more completed scrubs, revert `osd_max_scrubs` to `"1"` through GitOps. If scrubs during recovery cause a regression,
+revert `osd_scrub_during_recovery` to `"false"` through GitOps. Existing scrubs finish, while recovery blocks new periodic
+scrubs. Keep scrub intervals and warnings enabled. See
+[Ceph's scrub configuration](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#osd-max-scrubs).
 
 ## Phase 4: Repair An Exact RBD Filesystem
 
