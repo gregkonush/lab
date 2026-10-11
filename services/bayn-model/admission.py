@@ -175,12 +175,12 @@ class AdmissionMiddleware:
                             "more_body": False,
                         }
                     message = await receive()
-                    if message["type"] == "http.disconnect":
+                    if message["type"] == "http.disconnect" and not response_finished:
                         disconnected = True
                     return message
 
                 await self.app(scope, buffered_receive, observed_send)
-            if disconnected and not response_finished:
+            if disconnected:
                 outcome = "cancelled"
                 if not response_started:
                     status = 499

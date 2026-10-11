@@ -11,6 +11,7 @@ from starlette.responses import StreamingResponse
 from pathlib import Path
 
 from vllm.entrypoints.cli.serve import ServeSubcommand
+from vllm.entrypoints.serve.utils.api_utils import with_cancellation
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 from admission import AdmissionMiddleware
@@ -41,6 +42,54 @@ class ServingContractTest(unittest.TestCase):
 
 
 class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
+    async def test_vllm_disconnect_precedes_framework_null_response(self):
+        app = FastAPI()
+        entered = asyncio.Event()
+        stopped = asyncio.Event()
+        delivered = False
+        messages = []
+
+        @app.post("/v1/chat/completions")
+        @with_cancellation
+        async def chat(payload: dict, raw_request: Request):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        async def receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": b"{}", "more_body": False}
+            await entered.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            messages.append(message)
+
+        middleware = AdmissionMiddleware(app)
+        with redirect_stdout(io.StringIO()):
+            await middleware(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "method": "POST",
+                    "path": "/v1/chat/completions",
+                    "query_string": b"",
+                    "headers": [(b"content-type", b"application/json")],
+                },
+                receive,
+                send,
+            )
+            await asyncio.wait_for(stopped.wait(), timeout=1)
+        self.assertEqual(messages[-1]["body"], b"null")
+        self.assertEqual(middleware.inflight, 0)
+        self.assertEqual(middleware.counts["cancelled"], 1)
+        self.assertEqual(middleware.counts["completed"], 0)
+
     async def test_stream_disconnect_records_cancellation_after_backend_cleanup(self):
         app = FastAPI()
         streamed = asyncio.Event()
