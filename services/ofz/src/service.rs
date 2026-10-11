@@ -785,7 +785,7 @@ FROM (
     FROM ofz.workspaces w JOIN ofz.humans h ON h.id=w.owner_id WHERE w.uid=$1
     UNION ALL
     SELECT c.human_id,CASE c.role WHEN 2 THEN 'developer' ELSE 'viewer' END,'',ARRAY[]::integer[],0,
-           'human/'||c.human_id,h.github_id,NULL::jsonb,NULL::jsonb
+           'human/'||c.human_id,h.github_id,c.scope,NULL::jsonb
     FROM ofz.collaborators c JOIN ofz.humans h ON h.id=c.human_id WHERE c.workspace_uid=$1
     UNION ALL
     SELECT agent_id::text,'diagnostic',id::text,actions,expires_at_ms,'grant/'||id::text,'',scope,
