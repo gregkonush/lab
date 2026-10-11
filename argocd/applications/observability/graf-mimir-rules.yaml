@@ -1232,39 +1232,77 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-ws-connection-limit-and-auth.md
       - name: torghut-ta.rules
         rules:
-          - alert: TorghutTAJobmanagerDown
+          - alert: TorghutSignalPipelineMetricsDown
             expr: |
-              up{
-                job="torghut",
-                namespace="torghut",
-                service="torghut-ta-metrics"
-              } == 0
+              max by (job, namespace, service) (
+                up{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+              ) == 0
+              or absent(up{job="torghut",namespace="torghut",service="torghut-ta-metrics"})
+              or absent(up{job="torghut",namespace="torghut",service="market-data-archive-metrics"})
             for: 5m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
-              summary: Torghut TA jobmanager metrics endpoint is down
-              description: TA jobmanager is not being scraped (up=0) for 5 minutes.
+              summary: Torghut signal pipeline metrics are unavailable
+              description: The {{ $labels.service }} JobManager metrics target is down or absent for five minutes. Check service endpoints, Alloy scraping and the FlinkDeployment.
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
-          - alert: TorghutTACheckpointsStalled
+          - alert: TorghutSignalPipelineNotRunning
             expr: |
               (
-                time()
-                - max(
-                  flink_jobmanager_job_lastCheckpointCompletedTimestamp{
-                    namespace="torghut",
-                    service="torghut-ta-metrics"
-                  }
-                ) / 1000
-              ) > 180
-            for: 10m
+                max by (job, namespace, service) (
+                  flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) < 1
+                or absent(flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service="torghut-ta-metrics"})
+                or absent(flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service="market-data-archive-metrics"})
+              )
+              and on (job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  up{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) == 1
+              )
+            for: 2m
             labels:
               severity: critical
+              team: trading
+              notify: email
             annotations:
-              summary: Torghut TA checkpoints appear stalled
-              description: |
-                Flink last checkpoint completed timestamp is older than 3 minutes for 10 minutes.
-                This strongly indicates the TA job is stuck or failing to checkpoint.
+              summary: Torghut signal pipeline has no running job
+              description: The {{ $labels.service }} JobManager is reachable but reports zero running jobs or no job-count metric for two minutes. A Ready Pod does not establish signal production; inspect the Flink job failure and dependency errors.
+              runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+          - alert: TorghutSignalPipelineCheckpointsStalled
+            expr: |
+              (
+                (
+                  time() - max by (job, namespace, service) (
+                    flink_jobmanager_job_lastCheckpointCompletedTimestamp{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                  ) / 1000
+                ) > 180
+                or absent(flink_jobmanager_job_lastCheckpointCompletedTimestamp{job="torghut",namespace="torghut",service="torghut-ta-metrics"})
+                or absent(flink_jobmanager_job_lastCheckpointCompletedTimestamp{job="torghut",namespace="torghut",service="market-data-archive-metrics"})
+              )
+              and on (job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  flink_jobmanager_numRunningJobs{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) > 0
+              )
+              and on (job, namespace, service)
+              (
+                max by (job, namespace, service) (
+                  up{job="torghut",namespace="torghut",service=~"torghut-ta-metrics|market-data-archive-metrics"}
+                ) == 1
+              )
+            for: 5m
+            labels:
+              severity: critical
+              team: trading
+              notify: email
+            annotations:
+              summary: Torghut signal pipeline checkpoints are stalled
+              description: The {{ $labels.service }} job is running but its last completed checkpoint is over three minutes old, zero or missing for five minutes. Inspect Kafka resolution, task failures, backpressure and checkpoint storage. This check runs outside market hours because an idle streaming job must still checkpoint.
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-trading.rules
         rules:
@@ -3232,6 +3270,7 @@ data:
                 } == 0
               )
             for: 1m
+            keep_firing_for: 5m
             labels:
               severity: critical
               team: trading

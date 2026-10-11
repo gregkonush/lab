@@ -167,7 +167,7 @@ patches:
           argocd.argoproj.io/sync-wave: "3"
       - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
-        value: "2026-06-20-1"
+        value: "2026-10-11-1"
       - op: replace
         path: /spec/template/spec/volumes/4
         value:
