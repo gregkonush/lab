@@ -93,6 +93,10 @@ scratch volume and verify completed discards, runner startup, and CI behavior.
 
 ## PodCIDR maintenance checks
 
+The [100G pod routes](../network/pod-100g-routing.md) depend on the exact current PodCIDRs. Before any Node
+re-registration, update those routes and their source rules with the replacement allocation. Run
+`python3 devices/galactic/network/verify-pod-routing.py --preflight` before a network sync.
+
 Turin and Altra have re-registered with distinct `/23` PodCIDRs. The template sets both to `maxPods: 500` and requests
 `/23` allocations for newly registered Nodes. Apply each target's 500-pod cap through the render, validate, dry-run,
 and Omni sync procedure above after its network and storage acceptance. Changing the allocation mask does not resize
