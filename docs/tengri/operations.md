@@ -1,7 +1,7 @@
 # Tengri operations
 
 Tengri uses six prepared Firecracker slots under the normal OCI runtime. Each has a host supervisor, unprivileged VMM
-runner, Pod-local TAP, private snapshot/root disks, and a retained 16 GiB Ceph raw-block home. Source behavior is defined
+runner, Pod-local TAP, private snapshot/root disks, and a retained 32 GiB Ceph raw-block home. Source behavior is defined
 by [the service README](../../services/tengri/README.md) and [slot code](../../services/tengri/src/slot/).
 The [KVM/TAP design](kvm-tap-design.md) records the acceptance contract. A source merge is not a live cutover.
 
@@ -129,7 +129,7 @@ credentials, or guest bootstrap tokens.
 ## Lifecycle behavior
 
 `CreateAgent` derives one deterministic CR name per authenticated GitHub owner and claims a prepared slot. The fixed
-profile is 4 vCPU, 8 GiB RAM, and 16 GiB home. A completed create or resume means the resume hook passed filesystem,
+profile is 4 vCPU, 8 GiB RAM, and 32 GiB home. A completed create or resume means the resume hook passed filesystem,
 PTY, and initialized-Codex checks. Preparing or exhausted capacity returns an explicit error.
 
 Manual sleep and `spec.power.idleTimeoutMinutes` use the same snapshot operation. The default idle timeout is 60
@@ -141,6 +141,36 @@ requests stay reserved; resident guest RAM is released.
 The journal consumes a snapshot before vCPUs run. A failed save can recover only its still-live guest. A failed restore,
 changed disk/image/kernel/CPU identity, lost active runner, or missing Pod retains the claim and home for fenced recovery.
 No Lease expiry or missing Kubernetes object proves that a previous storage writer stopped.
+
+### Growing retained homes to 32 GiB
+
+The only current profile uses a 32 GiB home; the six-home namespace quota is 192 GiB. Existing homes must grow in
+place, preserving the PVC UID, filesystem UUID, MicroVM UID, owner grant, and files. The CRD permits increasing the
+recorded workspace size and rejects shrinking it. It does not admit new 16 GiB profiles.
+
+Use the reviewed image pair through the normal Kargo delivery path. During the authorized maintenance window,
+quiesce lifecycle traffic and controller reconciliation, inventory the original MicroVM/PVC/slot UIDs, and save
+filesystem UUIDs and hashes of representative retained files. Stop and fence each former VMM and storage writer
+before modifying its disk or enrolling a replacement slot. Follow the retained-home enrollment procedure below;
+never delete a retained PVC or initialize it as blank.
+
+After the reviewed quota and CRD have reconciled, increase each original PVC's `spec.resources.requests.storage`
+to `32Gi` using UID and resourceVersion preconditions. Wait for its reported capacity and attached raw block device
+to reach 34,359,738,368 bytes. Update the existing MicroVM's `spec.resources.workspaceGib` to `32` and enroll the
+same PVC with initialization marked `complete` against the reviewed boot image. Cold boot the replacement slot;
+ordinary snapshot resume retains the former guest device geometry and does not execute guest initialization.
+
+Guest initialization requires the full 32 GiB raw device, checks the recognized ext4 filesystem with `e2fsck -p -f`,
+and runs `resize2fs /dev/vdb` before mounting it and starting Nanoagent. Only clean or corrected filesystem checks
+permit growth. A check or resize failure prevents readiness and preserves the home for
+recovery. Verify `/dev/vdb` capacity, `df -B1 /home/nanoagent`, unchanged filesystem UUID and retained-file hashes,
+a synced write, conversation recovery, terminal use, and browser operation before reopening lifecycle traffic.
+Expansion cannot be rolled back by shrinking the PVC. On failure, retain the expanded PVC and fenced claim and
+repair or repeat the cold boot; do not restore an older memory snapshot over the changed filesystem.
+
+[Firecracker's block update documentation](https://github.com/firecracker-microvm/firecracker/blob/v1.16.1/docs/api_requests/patch-block.md)
+requires an unused, unmounted guest device for its supported `PATCH /drives` procedure. Do not use that API to
+change an active home. Kubernetes expands the raw PVC; guest initialization grows its ext4 filesystem.
 
 Deletion first records authenticated VMM stop proof on the MicroVM. Then it deletes the exact Pod incarnation and its
 owned disks/token/Lease with UID and resourceVersion preconditions, and removes the finalizer. The durable stop receipt
@@ -280,9 +310,17 @@ authoritative equivalent of a ServiceMonitor: it scrapes only `up` and bounded `
 `tengri-gateway.tengri.svc.cluster.local:8080`, then remote-writes them to Mimir. The Tengri NetworkPolicy permits this
 single observability-namespace path and does not expose the preview listener to the collector.
 
-Mimir alerts cover a missing control-plane scrape, failed microVM agents, repeated guest failures, high boot and resume
-latency, and global quota rejection. All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
+Mimir alerts cover a missing control-plane scrape, missing slot Pods, an unavailable slot pool, failed microVM agents,
+repeated guest failures, high boot and resume latency, and global quota rejection. `TengriSlotPodsMissing` fires when
+fewer than the six required slot Pods exist for five minutes. `TengriSlotPoolUnavailable` fires when no slot Pod is Ready
+for five minutes. Both use kube-state-metrics, so a healthy controller scrape or Argo application cannot hide a lost pool.
+An occupied, healthy pool does not fire either alert. The existing quota rejection alert covers exhausted capacity.
+All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
 agent IDs, terminal IDs, prompts, file contents, and ticket material must never appear in metrics.
+
+For a missing slot Pod, inspect its Lease, MicroVM, and original home PVC. Follow the fenced recovery procedure above
+before resetting a binding. Pod absence alone does not prove that its former storage writer stopped. Preserve the
+original MicroVM and PVC UIDs, owner grants, and files. Critical Tengri alerts use the existing `notify: email` route.
 
 After the observability application reconciles, verify collection and rule loading without exposing user data:
 
@@ -322,7 +360,11 @@ bun run lint:argocd
 
 The isolated KVM runner preserves JSON timing results, host test logs, and Firecracker logs before removing its own
 private container and volumes. Its real-guest test checks same-shell/file continuity, current owner/epoch, host SVID
-rotation, and snapshot page eviction. This boundary excludes BFF authentication, real Kubernetes latency, raw PVC
+rotation, and snapshot page eviction. Routine image publication gates on three real sleep/resume cycles per
+architecture, with every resume below one second. A three-minute first sleep exercises renewal beyond the previous
+host certificate lifetime. The manual `Tengri images` workflow input `kvm_samples=50` runs the longer performance
+qualification. Smoke receipts have `validationMode: smoke` and a null p95; they do not establish a latency
+distribution. This boundary excludes BFF authentication, real Kubernetes latency, raw PVC
 allocation, fresh-creation distribution, and six concurrent guests. Those exclusions remain acceptance requirements,
 not inferred successes. Measure at least 50 fresh prepared creations and 50 cold-cache resumes through the authenticated
 product path before claiming p95 below one second. Report sleep duration separately.

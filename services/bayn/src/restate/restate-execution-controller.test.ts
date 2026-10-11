@@ -14,6 +14,7 @@ import {
   type ExecutionControllerState,
 } from '../execution/controller'
 import { TransientExecutionFailure } from '../execution/advance'
+import { sha256 } from '../hash'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
 import { CycleRunnerError } from '../cycle/runner/model'
 import { OperationalError } from '../errors'
@@ -277,6 +278,88 @@ test('optional capture preserves synchronous scheduling, supplied command timest
   expect(await exercise('mutating')).toEqual(baseline)
 })
 
+test.each([
+  { replayed: false, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
+  { replayed: true, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
+  { replayed: true, liveAt: '2026-08-13T18:01:00.000Z', delay: 1 },
+])(
+  'absolute wake uses live transport time after worker replay or a pre-send crash (%j)',
+  async ({ replayed, liveAt, delay }) => {
+    let state: ExecutionControllerState = {
+      schemaVersion: 1,
+      active: true,
+      epoch: 1,
+      planHash,
+      sourceRevision,
+      initialSequence: 4,
+      nextSequence: 4,
+    }
+    const deliveries: Delivery[] = []
+    const events: string[] = []
+    const result = {
+      completedAt: '2026-08-13T18:00:03.000Z',
+      outcome: {
+        _tag: ExecutionControllerOutcome.Waiting,
+        receiptHash: 'd'.repeat(64),
+        nextDelayMs: 4_000,
+        nextWakeAt: '2026-08-13T18:00:07.000Z',
+      },
+    }
+    const controller = handlers(
+      makeBaynExecutionController(
+        config,
+        {
+          advance: async () => {
+            events.push('advance')
+            return result
+          },
+          log: async () => undefined,
+          projectState: async () => undefined,
+        },
+        [],
+        {
+          currentTimeMillisUnsafe: () => {
+            events.push('transport-clock')
+            return Date.parse(liveAt)
+          },
+        },
+      ),
+    )
+    const context = {
+      key: controllerKey,
+      get: async () => state,
+      set: (_key: string, value: ExecutionControllerState) => {
+        state = value
+        events.push('set')
+      },
+      run: async (_name: string, action: () => Promise<unknown>) => (replayed ? result : action()),
+      genericSend: (delivery: Delivery) => {
+        deliveries.push(delivery)
+        events.push('send')
+      },
+      date: {
+        toJSON: async () => {
+          events.push('clock')
+          return '2026-08-13T18:00:05.000Z'
+        },
+      },
+      request: () => ({ id: 'absolute-wake-fixture', attemptCompletedSignal: new AbortController().signal }),
+    } as unknown as TestContext
+    await controller.tick(context, {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: 1,
+      sequence: 4,
+      issuedAt: '2026-08-13T18:00:00.000Z',
+    })
+    expect(state.nextDueAt).toBe('2026-08-13T18:00:07.000Z')
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]).toMatchObject({ delay, parameter: { sequence: 5 } })
+    expect(events).toEqual(
+      replayed ? ['set', 'transport-clock', 'send'] : ['advance', 'set', 'transport-clock', 'send'],
+    )
+  },
+)
+
 describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
@@ -377,12 +460,6 @@ describe('native Restate execution controller', () => {
       parameter: { epoch: 1, sequence: 4, attempt: 0 },
     })
 
-    await object.activate(context, activation)
-    expect(projectedStates).toHaveLength(2)
-    expect(projectedStates[1]).toEqual(projectedStates[0])
-    expect(deliveries).toHaveLength(1)
-    expect(events).toEqual(['activation-projected', 'state-committed', 'first-pass-scheduled', 'activation-projected'])
-
     const firstTick = deliveries.shift()
     if (firstTick === undefined) throw new Error('activation did not schedule the first tick')
     await object.tick(context, firstTick.parameter)
@@ -428,8 +505,8 @@ describe('native Restate execution controller', () => {
       sourceRevision,
     })
     expect(state).toMatchObject({ active: false, epoch: 2 })
-    expect(projectedStates).toHaveLength(3)
-    expect(projectedStates[2]).toMatchObject({ active: false, epoch: 2, nextSequence: 5 })
+    expect(projectedStates).toHaveLength(2)
+    expect(projectedStates[1]).toMatchObject({ active: false, epoch: 2, nextSequence: 5 })
     const pending = deliveries.shift()
     if (pending === undefined) throw new Error('completed tick did not schedule its successor')
     await object.tick(context, pending.parameter)
@@ -437,7 +514,7 @@ describe('native Restate execution controller', () => {
     expect(deliveries).toHaveLength(0)
   })
 
-  test('replayed activation schedules the missing catch-up pass for a newer worker revision', async () => {
+  test('explicit reactivation deduplicates replay but can retry an exhausted revision-bound probe', async () => {
     const previousSourceRevision = 'd'.repeat(40)
     const state: ExecutionControllerState = {
       schemaVersion: 1,
@@ -450,7 +527,11 @@ describe('native Restate execution controller', () => {
     }
     const deliveries: Delivery[] = []
     const normalKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, 0)
-    const acceptedKeys = new Set([normalKey])
+    const acceptedKeys = new Set([
+      normalKey,
+      executionControllerSourceCatchUpTickIdempotencyKey(state.epoch, state.nextSequence, 0, sourceRevision),
+    ])
+    let invocationId = 'source-catch-up'
     let committed = false
     const context = {
       key: controllerKey,
@@ -464,7 +545,7 @@ describe('native Restate execution controller', () => {
         deliveries.push(delivery)
       },
       run: async <A>(_name: string, action: () => Promise<A>) => action(),
-      request: () => ({ id: 'source-catch-up', attemptCompletedSignal: new AbortController().signal }),
+      request: () => ({ id: invocationId, attemptCompletedSignal: new AbortController().signal }),
     } as unknown as TestContext
     const object = handlers(
       makeBaynExecutionController(config, {
@@ -480,11 +561,11 @@ describe('native Restate execution controller', () => {
     expect(deliveries).toEqual([
       expect.objectContaining({
         delay: executionControllerInitialTickDelayMs,
-        idempotencyKey: executionControllerSourceCatchUpTickIdempotencyKey(
+        idempotencyKey: executionControllerRecoveryTickIdempotencyKey(
           state.epoch,
           state.nextSequence,
           0,
-          sourceRevision,
+          sha256(invocationId),
         ),
         parameter: expect.objectContaining({
           epoch: state.epoch,
@@ -495,6 +576,15 @@ describe('native Restate execution controller', () => {
       }),
     ])
     expect(deliveries[0]?.idempotencyKey).not.toBe(normalKey)
+    invocationId = 'new-explicit-recovery'
+    expect(await object.activate(context, activation)).toEqual(state)
+    expect(deliveries).toHaveLength(2)
+    expect(deliveries[1]?.idempotencyKey).not.toBe(deliveries[0]?.idempotencyKey)
+    expect(deliveries[1]?.parameter).toMatchObject({
+      epoch: state.epoch,
+      sequence: state.nextSequence,
+      sourceCatchUpRevision: sourceRevision,
+    })
   })
 
   test('quiesces a source catch-up routed to a different immutable worker', async () => {
@@ -916,6 +1006,105 @@ describe('native Restate execution controller', () => {
     expect(activations).toBe(0)
   })
 
+  test.each([sourceRevision, 'd'.repeat(40)])(
+    'reactivation wakes a deferred controller and proves a fresh successor from revision %s',
+    async (previousSourceRevision) => {
+      let state: ExecutionControllerState = {
+        schemaVersion: 1,
+        active: true,
+        epoch: 1,
+        planHash,
+        sourceRevision: previousSourceRevision,
+        initialSequence: 4,
+        nextSequence: 10,
+        lastCompletion: {
+          sequence: 9,
+          outcome: ExecutionControllerOutcome.Blocked,
+          receiptHash: 'f'.repeat(64),
+          completedAt: '2026-08-12T18:00:00.000Z',
+        },
+      }
+      const deferred: Delivery = {
+        delay: 8 * 60 * 60 * 1_000,
+        idempotencyKey: executionControllerTickIdempotencyKey(1, 10, 0),
+        parameter: { schemaVersion: 'bayn.execution-controller-tick.v1', epoch: 1, sequence: 10, attempt: 0 },
+      }
+      const deliveries = [deferred]
+      const calls: number[] = []
+      const object = handlers(
+        makeBaynExecutionController(config, {
+          advance: async (command) => {
+            calls.push(command.sequence)
+            return {
+              completedAt: '2026-08-13T18:00:01.000Z',
+              outcome: {
+                _tag: ExecutionControllerOutcome.Blocked,
+                receiptHash: 'e'.repeat(64),
+                nextDelayMs: 30_000,
+              },
+            }
+          },
+          log: () => Promise.resolve(),
+          projectState: () => Promise.resolve(),
+        }),
+      )
+      const controllerContext = {
+        key: controllerKey,
+        get: async () => state,
+        set: (_key: string, next: ExecutionControllerState) => {
+          state = next
+        },
+        genericSend: (delivery: Delivery) => deliveries.push(delivery),
+        run: async <A>(_name: string, action: () => Promise<A>) => action(),
+        date: { toJSON: async () => '2026-08-13T18:00:00.000Z' },
+        request: () => ({ id: 'fresh-recovery-controller', attemptCompletedSignal: new AbortController().signal }),
+      } as unknown as TestContext
+      const context = {
+        key: controllerKey,
+        request: () => ({
+          id: 'fresh-recovery-deployment',
+          headers: new Map([['authorization', `Bearer ${Buffer.alloc(32, 7).toString('base64url')}`]]),
+          attemptCompletedSignal: new AbortController().signal,
+        }),
+        objectClient: () => ({
+          status: async () => state,
+          activate: (request: unknown) => object.activate(controllerContext, request),
+        }),
+        genericCall: async () => ({ sourceRevision, epoch: 1, sequence: 1, lastSnapshotHash: 'a'.repeat(64) }),
+        sleep: async () => {
+          const index = deliveries.findIndex((delivery) => delivery !== deferred)
+          if (index === -1) throw new Error('reactivation did not wake the deferred controller')
+          const delivery = deliveries.splice(index, 1)[0]
+          if (delivery === undefined) throw new Error('missing recovery delivery')
+          await object.tick(controllerContext, delivery.parameter)
+        },
+      } as unknown as ObjectSharedContext
+
+      expect(
+        await object.activateDeployment(context, {
+          schemaVersion: 'bayn.execution-deployment-activation.v1',
+          controllerKey,
+          planHash,
+          sourceRevision,
+        }),
+      ).toMatchObject({
+        active: true,
+        epoch: 1,
+        initialSequence: 4,
+        sourceRevision,
+        nextSequence: 12,
+        lastCompletion: { sequence: 11 },
+      })
+      expect(calls).toEqual([10, 11])
+      expect(deliveries).toHaveLength(2)
+      expect(deliveries[1]).toMatchObject({ delay: 30_000, parameter: { epoch: 1, sequence: 12 } })
+
+      await object.tick(controllerContext, deferred.parameter)
+      expect(calls).toEqual([10, 11])
+      expect(deliveries).toHaveLength(2)
+    },
+  )
+
   test('rotates the exact previous binding into one immediate pass and ignores its stale tick', async () => {
     const token = Buffer.alloc(32, 7).toString('base64url')
     const previousBinding = { planHash: 'd'.repeat(64), sourceRevision: 'e'.repeat(40) }
@@ -1043,12 +1232,6 @@ describe('native Restate execution controller', () => {
     expect(sleeps).toBe(2)
     expect(genericCalls).toBe(1)
 
-    await start(context, request)
-    expect(projectedStates).toHaveLength(3)
-    expect(projectedStates[2]).toEqual(state)
-    expect(deliveries).toHaveLength(1)
-    expect(genericCalls).toBe(2)
-
     await object.tick(controllerContext, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
       epoch: 4,
@@ -1079,7 +1262,7 @@ describe('native Restate execution controller', () => {
       idempotencyKey: executionControllerTickIdempotencyKey(5, 14, 0),
       parameter: { epoch: 5, sequence: 14, attempt: 0 },
     })
-    expect(events.at(-1)).toBe('activation-projected')
+    expect(events.at(-1)).toBe('successor-scheduled')
   })
 
   test('fails native rotation before controller calls when prior provenance is missing or mismatched', async () => {

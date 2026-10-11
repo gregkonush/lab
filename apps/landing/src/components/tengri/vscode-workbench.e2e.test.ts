@@ -37,7 +37,8 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     architecture: 'amd64',
     cpuMillis: 4000,
     memoryMib: 8192,
-    workspaceGib: 16,
+    workspaceGib: 32,
+    uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
     power: { idleTimeoutMinutes: 60 },
     nodeName: 'local',
     createdAt: '2026-09-08T00:00:00Z',
@@ -51,7 +52,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   page.on('websocket', (socket) => {
     if (new URL(socket.url()).hostname.startsWith('tengri-')) editorSockets.push(socket)
   })
-  await page.route('**/api/auth/sign-out', async (route) => {
+  await page.route('**/api/auth/logout', async (route) => {
     signOutActions.push('sign-out')
     await expect.poll(() => editorSockets.every((socket) => socket.isClosed())).toBe(true)
     authenticated = false
@@ -139,11 +140,11 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   await page.keyboard.press('Enter')
   const trust = workbench.getByRole('button', { name: 'Trust Folder & Continue' })
   const runningTerminal = workbench.getByRole('textbox', { name: /^Terminal [0-9]+, (bash|zsh)/ })
-  await expect(trust.or(runningTerminal)).toBeVisible()
-  if (await trust.isVisible()) await trust.click()
+  await expect(runningTerminal).toBeVisible()
   await expect(workbench.getByRole('textbox', { name: /^Terminal [0-9]/ })).toBeVisible()
   const terminal = workbench.getByRole('textbox', { name: /^Terminal [0-9]/ })
   await expect(trust).not.toBeVisible()
+  await expect(workbench.getByText('Restricted Mode', { exact: true })).not.toBeVisible()
   await expect(runningTerminal).toBeVisible()
   await terminal.focus()
   await terminal.pressSequentially("printf 'VSCODE_TERMINAL_OK' > from-terminal.txt", { delay: 30 })

@@ -114,8 +114,9 @@ Reservations sum to 100% of modeled OSD capacity. Idle capacity can serve any
 class; these are scheduling reservations, not fixed bandwidth partitions.
 The client reservation protects foreground work while the background best-effort
 reservation remains above the built-in profiles' 5%. This is a scheduling tradeoff,
-not a latency guarantee or a limit on other client workloads. Keep
-`osd_max_scrubs=1` to bound concurrent HDD seeks. The seven-day deep-scrub
+not a latency guarantee or a limit on other client workloads. The current
+`osd_max_scrubs=3` target allows three local and three remote scrub reservations
+per OSD, with more concurrent HDD seeks. The seven-day deep-scrub
 interval and overdue health alerts remain enabled.
 
 Rook applies the profile through `cephClusterSpec.cephConfig`. The OSD annotation
@@ -149,7 +150,7 @@ using the explicitly authorized runtime repair procedure above.
 Compare equal-duration before/after windows of client errors and latency, OSD
 operation latency, host disk queues, and I/O pressure. Check per-PG scrub progress
 alongside them; lower client latency must not come from disabled integrity work.
-Preserve the all-day eligibility, one-scrub concurrency, intervals, and alerts.
+Preserve the all-day eligibility, three-scrub concurrency, intervals, and alerts.
 If client impact worsens or scrub progress stalls, revert the two reservation
 values through reviewed GitOps to the prior client `0.4` and best-effort `0.5`,
 again without changing the profile or rollout annotation. Keep incident-specific
@@ -160,7 +161,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `bluestore_cache_autotune: "true"`
 1. `osd_mclock_profile: "custom"` with the reservations, weights, and limits above
 1. `osd_scrub_begin_hour: "0"` and `osd_scrub_end_hour: "0"`
-1. `osd_max_scrubs: "1"`
+1. `osd_max_scrubs: "3"`
 1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
@@ -177,15 +178,14 @@ done. In particular, remove these if they were set for a maintenance window:
 1. `osd_recovery_max_single_start`
 1. `osd_recovery_op_priority`
 1. `osd_recovery_sleep_hdd`
-1. boosted scrub settings such as `osd_max_scrubs`,
-   `osd_scrub_priority`, `osd_requested_scrub_priority`,
+1. boosted scrub settings such as `osd_scrub_priority`, `osd_requested_scrub_priority`,
    `osd_scrub_chunk_min`, `osd_scrub_chunk_max`,
    `osd_deep_scrub_stride`, and `osd_scrub_load_threshold`
 1. boosted recovery scan/chunk settings such as `osd_backfill_scan_min`,
    `osd_backfill_scan_max`, and `osd_recovery_max_chunk`
 
-The nine custom `osd_mclock_scheduler_*` settings are intentional and must remain
-while the scrub profile is active. Recovery/backfill concurrency overrides are
+The committed `osd_max_scrubs=3` target and the nine custom `osd_mclock_scheduler_*`
+settings are intentional and must remain while the scrub profile is active. Recovery/backfill concurrency overrides are
 separate from this profile. If the scrub share causes unacceptable client impact,
 reduce its reservation through reviewed GitOps and keep the reservation sum at
 or below 1.0. A return to a built-in profile requires removing the custom settings
@@ -268,8 +268,12 @@ yet. The overdue count usually drops only after full PG deep-scrubs complete.
 Completion requires `PG_NOT_DEEP_SCRUBBED` to disappear and the previously overdue
 PGs to have newer `last_deep_scrub_stamp` values in `ceph pg dump pgs --format json`.
 An active scrub counter or Argo sync alone does not prove the backlog has cleared.
-Keep `osd_max_scrubs=1` during catch-up; the custom profile and all-day eligibility
-increase scrub capacity without increasing concurrent scrub operations per OSD.
+Keep the committed `osd_max_scrubs=3` target during catch-up. A PG marked
+`scrubbing` may still be waiting for a replica reservation; check `scrub_schedule`
+and each OSD's `dump_scrub_reservations` before counting it as an active scan.
+Use the executable [runtime acceptance checks](galactic-storage-and-workload-recovery.md#scrub-progress-during-recovery)
+to verify both reservation limits on all six OSDs. If the added concurrency worsens
+client latency without improving completions, revert the limit to `1` through reviewed GitOps.
 
 Reference:
 

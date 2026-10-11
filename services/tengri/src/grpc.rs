@@ -1280,6 +1280,7 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
     let resources = &microvm.spec.resources;
     Agent {
         id: microvm.name_any(),
+        uid: microvm.uid().unwrap_or_default(),
         display_name: microvm.spec.display_name.clone(),
         phase: phase_to_proto(agent_phase(microvm)) as i32,
         architecture: architecture_to_proto(microvm.spec.architecture) as i32,
@@ -2900,7 +2901,7 @@ mod tests {
         assert_eq!(request.display_name, "My agent");
         assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
         assert_eq!(MicroVMResources::default().memory_mib, 8_192);
-        assert_eq!(MicroVMResources::default().workspace_gib, 16);
+        assert_eq!(MicroVMResources::default().workspace_gib, 32);
     }
 
     #[test]

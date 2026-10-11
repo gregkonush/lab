@@ -37,8 +37,12 @@ The homepage shows a “convex backend” badge once it can reach the Convex hea
 
 ## Tengri BFF development
 
-The server-only BFF uses stateless Better Auth GitHub OAuth and signed internal gRPC metadata. The browser never
-receives Kubernetes credentials, the internal HMAC secret, or a guest bootstrap token.
+The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and required verified passkeys. Ofz
+verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
+opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
+session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
+`/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+The prepared identity release is held until the controller and every runtime channel complete the hard migration.
 The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
 Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
 The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a
@@ -90,23 +94,27 @@ Failed sends preserve the text and attachments for retry. Images are stored in t
 by saved conversations.
 
 Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
-dock keeps its blurred material stationary while its outline and icons magnify, with labels appearing without an
-opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
+dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
+appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
 blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
 diagrams with images or remote CSS resources keep their copyable source visible; invalid or incomplete diagrams do too.
 Accepted types have explicit pre-layout resource checks. SVG sanitization and the existing CSP remain enforced.
 The conversation follows new events while the reader is at the bottom. Reading earlier messages preserves the scroll
 position until the reader chooses **Jump to latest**.
 
-1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
-   The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
-   origin. HTTPS is required except for the exact `http://localhost` development host.
-2. Register `http://localhost:3000/api/auth/callback/github` as the local GitHub callback.
-3. Start the Rust Tengri service locally or point at an isolated development endpoint.
+1. Set the Ofz endpoint, exact SPIFFE identity, TLS control database files and OIDC client secret file from `.env.example`.
+2. Set `TENGRI_DESKTOP_ORIGIN` to the HTTPS desktop origin and `TENGRI_OIDC_ISSUER` to the dedicated realm. The issuer
+   registers the exact `${TENGRI_DESKTOP_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
+   broker callback documented in [`keycloak/tengri`](../../argocd/applications/keycloak/tengri/README.md).
+3. Keep `TENGRI_PUBLIC_URL` as the separate browser/preview gateway origin. It is not the desktop authentication origin.
+4. Start the Rust Tengri service against the isolated migrated control plane. Direct GitHub/Better Auth cookies and
+   development HTTP authentication have been removed. Native tests use private TLS and Workload API fixtures.
 
-For a zero-downtime HMAC rotation, temporarily set `TENGRI_INTERNAL_HMAC_SECRET` to `new,current`. The BFF emits both
-signatures until the controller has refreshed the same bundle; remove the previous key only after both sides have
-observed it.
+Generate the schema-derived BFF authorization client from the repository root:
+
+```sh
+buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz
+```
 
 Changing `TENGRI_PUBLIC_URL` rolls the landing Deployment through GitOps. One surge Pod keeps a ready web endpoint
 available while the replacement starts; existing streams reconnect when the old Pod terminates.
@@ -134,6 +142,8 @@ proximity-magnifying Dock. Apple’s original Big Sur wallpaper and application 
 is in [`public/tengri/README.md`](public/tengri/README.md). Finder, Chrome, Tengri, Code, Terminal, and Settings operate on the real guest workspace.
 Chrome opens the guest's full Chromium browser. Tengri owns Codex chat and has its own generated Dock icon.
 The agent's computer tool operates the same browser, with a human takeover control.
+Browser approvals use a compact "Allow browser control?" card with request details available on demand. One-use,
+session, and deny choices retain the scopes advertised by the request.
 See [browser architecture and research](../../docs/tengri/browser.md).
 
 Desktop, setup, and confirmation windows share their traffic-light controls: 14 px flat circles with 23 px between centers,
@@ -147,9 +157,11 @@ geometry is measured at gesture boundaries; app content is memoized independentl
 updates its own leaf component. Minimized windows retain their application sessions and finish their animation at the
 corresponding Dock icon. Reduced-motion preferences update while the desktop is open.
 
-Dock magnification reserves space between icons and expands the glass background with transforms, using cached
+Dock magnification reserves space between icons and expands its flat surface with transforms, using cached
 geometry and limiting expansion at narrow viewport edges. Activating a window returns keyboard focus to its last
 control; Terminal is ready for typing when opened. Minimize preserves the window's zoom state and normal bounds.
+Maximized windows fill the desktop below the menu bar with square corners and no margins. The Dock hides until the
+pointer reaches the bottom edge or a Dock control receives keyboard focus. Normal windows remain above the Dock.
 The Window menu lists the active app's individual windows, identifies minimized windows, and marks the active window.
 
 Finder's toolbar, sidebar proportions, row density, action menu, and icon view were compared directly with Finder
@@ -170,6 +182,14 @@ Design references: Apple [windows](https://developer.apple.com/design/human-inte
 `bun run test:e2e` covers toolbar alignment, narrow layouts, all resize corners, drag continuity, Dock magnification,
 minimize targets, reduced motion, idle geometry reads, and guest lifecycle behavior. Visual snapshots are generated
 with the pinned Playwright browser on both macOS and Linux.
+
+The mocked desktop tests run independently with four workers in CI and two locally. CI builds the production desktop
+once and serves it for both the mocked browser suite and real acceptance fixtures, avoiding a second development
+compilation. The real editor fixture restores compiled Rust dependencies from a toolchain and dependency keyed cache.
+PR browser validation uses hosted Ubuntu capacity instead of competing with native image builds on ARC.
+Failure screenshots remain enabled; video and traces are recorded on the first retry instead of encoding discarded
+videos for passing tests. Frontend-only PRs skip the VM image workflow; main still builds and validates the coordinated
+Tengri and Nanoagent release pair.
 
 ```sh
 cd apps/landing
