@@ -1,3 +1,8 @@
+import {
+  makeIntradayPerformanceFixture,
+  makeStreamingPerformanceFixture,
+  makeStreamingPartitionPerformanceFixture,
+} from './intraday-cycle.test-support'
 import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -6,17 +11,21 @@ import { DateTime, Effect, Redacted, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
-import type { LoadedRuntimeConfig } from '../config'
+import type { ForwardPerformanceConfig } from './config'
+import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
+import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
 import { readForwardPerformancePostgres } from './postgres'
 import {
   bindForwardPerformanceTerminalReferencePrices,
   makeForwardPerformanceMarketVolumeEvidence,
+  readForwardPerformanceMarketVolume,
   readForwardPerformanceMarketVolumeWithClient,
   runForwardPerformance,
+  runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
@@ -29,7 +38,7 @@ const identityResult = makeBrokerIdentity({
 })
 if (Result.isFailure(identityResult)) throw new Error('broker identity fixture failed')
 
-const config: LoadedRuntimeConfig = {
+const config: ForwardPerformanceConfig & { readonly historicalSignal: HistoricalSignalSnapshotConfig } = {
   runtimeMode: 'AutonomousService',
   host: '127.0.0.1',
   port: 8080,
@@ -70,6 +79,8 @@ const config: LoadedRuntimeConfig = {
     url: 'http://clickhouse.invalid',
     username: 'bayn',
     password: Redacted.make('unused'),
+  },
+  historicalSignal: {
     snapshotId: '1'.repeat(64),
     publicationAsOf: '2026-07-20',
     calendarVersion: 'fixture-calendar-v1',
@@ -93,12 +104,48 @@ interface SqlObservation {
 interface SqlFixture {
   readonly extraReconciliationDiscrepancy?: boolean
   readonly preWindowCashResidualMicros?: string
+  readonly brokerFeeTimes?: {
+    readonly firstObservedAt: string
+    readonly postedAt: string | null
+  }
 }
 
 const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}): PgClient.PgClient => {
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
+    if (statement.includes('SELECT fee.data, fee.read_evidence')) {
+      const times = fixture.brokerFeeTimes
+      return Effect.succeed(
+        times === undefined
+          ? []
+          : [
+              {
+                data: {
+                  accountId: identityResult.success.accountId,
+                  activityId: 'synthetic-delayed-fee',
+                  date: '2026-07-20',
+                  netAmountMicros: '-100',
+                },
+                read_evidence: {
+                  requestId: 'synthetic-fee-read',
+                  status: 200,
+                  contentHash: hash('1'),
+                  observedAt: times.firstObservedAt,
+                },
+                content_hash: hash('2'),
+                ledger_plan_hash: hash('3'),
+                tigerbeetle_cluster_id: '2001',
+                tigerbeetle_ledger: 7001,
+                posted: times.postedAt !== null,
+                first_observed_at: new Date(times.firstObservedAt),
+                posted_at: times.postedAt === null ? null : new Date(times.postedAt),
+                includes_generation: true,
+                includes_other_generation: false,
+              },
+            ],
+      )
+    }
     if (statement.includes('SELECT reconciliation_id, content_hash, status, discrepancies, reconciled_at')) {
       return Effect.succeed([
         {
@@ -345,8 +392,8 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
 const newerMarketSnapshot = makeMarketSnapshotRevision('104.00000000', '999.00000000', '2026-07-20 21:10:00.000')
 const marketReaderConfig = {
   ...config,
-  clickhouse: {
-    ...config.clickhouse,
+  historicalSignal: {
+    ...config.historicalSignal,
     bounds: {
       schemaVersion: 'bayn.evaluation-bounds.v1' as const,
       dataStart: '2026-07-19' as const,
@@ -359,6 +406,25 @@ const marketReaderConfig = {
 }
 
 describe('forward performance read program', () => {
+  test.each([
+    ['at-cut', '2026-07-20T21:01:00.000Z', '2026-07-20T21:01:00.000Z', 0],
+    ['observed-after-cut', '2026-07-20T21:01:00.001Z', '2026-07-20T21:01:00.001Z', 1],
+    ['posted-after-cut', '2026-07-20T21:00:00.000Z', '2026-07-20T21:01:00.001Z', 1],
+    ['unposted-before-cut', '2026-07-20T21:00:00.000Z', null, 0],
+    ['unposted-after-cut', '2026-07-20T21:01:00.001Z', null, 1],
+  ] as const)('retains delayed fees and detects %s evidence', async (_name, firstObservedAt, postedAt, count) => {
+    const sql = makeReadOnlySql({ statements: [] }, { brokerFeeTimes: { firstObservedAt, postedAt } })
+    const evidence = await Effect.runPromise(readForwardPerformancePostgres(sql, identityResult.success.accountId))
+
+    expect(evidence.postReconciliationActivityCount).toBe(count)
+    expect(evidence.generationBrokerFeeIds).toEqual(['synthetic-delayed-fee'])
+    expect(evidence.brokerFeeRecords).toHaveLength(1)
+    expect(evidence.brokerFeeRecords?.[0]?.data).toMatchObject({ date: '2026-07-20', netAmountMicros: '-100' })
+    expect(evidence.brokerFeeRecords?.[0]?.posted).toBe(postedAt !== null)
+    expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('first_observed_at')
+    expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('posted_at')
+  })
+
   test('constructs exact immutable Signal volume evidence without rounding fractional microshares', () => {
     const first = success(
       makeForwardPerformanceMarketVolumeEvidence(marketVolumeRequest, marketSnapshotRows, marketEvaluationStart),
@@ -472,7 +538,9 @@ describe('forward performance read program', () => {
       closePriceMicros: '103000000',
       quantityMicros: '123456789',
     })
-    expect(evidence[0]?.snapshotId).not.toBe(newerMarketSnapshot.snapshotId)
+    expect(
+      evidence[0]?.schemaVersion === 'bayn.forward-performance-market-volume-evidence.v1' && evidence[0].snapshotId,
+    ).not.toBe(newerMarketSnapshot.snapshotId)
     expect(
       queries.some(
         (query) =>
@@ -603,7 +671,13 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation)
     let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
+    let expenseWriterFence: WriterFenceService | undefined
+    const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: (_config, _sql, _accountId, _generation, fence) => {
+        expenseWriterFence = fence
+        return Effect.succeed([])
+      },
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
@@ -624,9 +698,22 @@ describe('forward performance read program', () => {
       },
     }
 
+    const { historicalSignal: _historicalSignal, ...nativeConfig } = config
     const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+      Effect.scoped(runForwardPerformance(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
+    const report = await Effect.runPromise(
+      Effect.scoped(
+        runForwardPerformanceReport(nativeConfig, readers, { writerFence }).pipe(
+          Effect.provideService(PgClient.PgClient, sql),
+        ),
+      ),
+    )
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
+    expect(expenseWriterFence).toBe(writerFence)
+    expect(report.receipt).toEqual(receipt)
+    expect(report.positionEpisodes.status).toBe('UNDETERMINED')
+    expect(report.receipt).not.toHaveProperty('positionEpisodes')
 
     expect(observation.statements.length).toBeGreaterThan(8)
     expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
@@ -657,9 +744,6 @@ describe('forward performance read program', () => {
           statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
           statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
       ),
-    ).toBe(true)
-    expect(
-      observation.statements.some((statement) => statement.includes('JOIN snapshot_references AS reference')),
     ).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
     expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
@@ -700,6 +784,70 @@ describe('forward performance read program', () => {
       accountedCashDeltaMicros: '0',
       cashYieldMicros: '200',
     })
+  })
+
+  test('keeps performance and expense reads on one cut when new work commits between them', async () => {
+    const sql = makeReadOnlySql({ statements: [] })
+    let committedCut = 1
+    let snapshotCut: number | undefined
+    let performanceCut: number | undefined
+    let expenseCut: number | undefined
+    Object.assign(sql, {
+      withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const previous = snapshotCut
+            snapshotCut = committedCut
+            return previous
+          }),
+          () => effect,
+          (previous) =>
+            Effect.sync(() => {
+              snapshotCut = previous
+            }),
+        ),
+    })
+    const readers: ForwardPerformanceReaders = {
+      postgres: (...args) =>
+        readForwardPerformancePostgres(...args).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              performanceCut = snapshotCut ?? committedCut
+            }),
+          ),
+        ),
+      marketVolume: () =>
+        Effect.sync(() => {
+          committedCut++
+          return []
+        }),
+      inferenceExpenses: () =>
+        Effect.sync(() => {
+          expenseCut = snapshotCut ?? committedCut
+          return []
+        }),
+      ledger: () =>
+        Effect.succeed({
+          totals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: null,
+            cashYieldMicros: '0',
+          },
+          ledgerExact: true,
+          missingLedgerAccountCount: 0,
+          openPositionCount: 0,
+          cashYieldEvidenceRequired: false,
+        }),
+    }
+    await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(committedCut).toBe(2)
+    expect(performanceCut).toBe(1)
+    expect(expenseCut).toBe(performanceCut)
+    expect(snapshotCut).toBeUndefined()
   })
 
   test('scopes forward-performance PostgreSQL evidence to one execution authority generation', async () => {
@@ -796,6 +944,7 @@ describe('forward performance read program', () => {
     const observation: SqlObservation = { statements: [] }
     const sql = makeReadOnlySql(observation, { extraReconciliationDiscrepancy: true })
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: readForwardPerformancePostgres,
       marketVolume: () => Effect.succeed([]),
       ledger: () =>
@@ -861,6 +1010,7 @@ describe('forward performance read program', () => {
     if (marketVolumeEvidence === undefined) throw new Error('market-volume fixture failed')
     let observedMarketVolumeRequests: readonly ForwardPerformanceMarketVolumeRequest[] | undefined
     const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
           cycles: [
@@ -1023,5 +1173,111 @@ describe('forward performance read program', () => {
         decimal: '0.100000000000',
       },
     })
+    const withLaterFeeEvidence = await Effect.runPromise(
+      Effect.scoped(
+        runForwardPerformance(config, {
+          ...readers,
+          postgres: (...args) =>
+            readers
+              .postgres(...args)
+              .pipe(Effect.map((evidence) => ({ ...evidence, postReconciliationActivityCount: 1 }))),
+        }).pipe(Effect.provideService(PgClient.PgClient, sql)),
+      ),
+    )
+    expect(withLaterFeeEvidence.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+    expect(withLaterFeeEvidence.evidence.reasonCodes).toEqual(['UNCLOSED_WINDOW'])
+    expect(withLaterFeeEvidence.profitability).toBe('UNDETERMINED')
+    expect(withLaterFeeEvidence.totals).toEqual(receipt.totals)
   })
+})
+
+test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, makeStreamingPartitionPerformanceFixture])(
+  'routes native completed cycles to the bounded archive and preserves their evidence: %p',
+  async (makeFixture) => {
+    const { request, archive, bars } = makeFixture()
+    let volumeReads = 0
+    let watermarkReads = 0
+    const statement = (strings: TemplateStringsArray) => {
+      const text = strings.join('?')
+      if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
+      if (text.includes('GROUP BY source_topic, source_partition')) {
+        watermarkReads += 1
+        return Effect.succeed(
+          archive.archiveWatermarks.map((item) => ({
+            source_topic: item.sourceTopic,
+            source_partition: String(item.sourcePartition),
+            inclusive_last_offset: item.inclusiveLastOffset,
+          })),
+        )
+      }
+      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
+        volumeReads += 1
+        return Effect.succeed(bars)
+      }
+      return Effect.die(new Error('Unexpected market-data query'))
+    }
+    const client = Object.assign(statement, {
+      param: (_type: string, value: unknown) => ({ value }),
+    }) as unknown as ClickhouseClient.ClickhouseClient
+    const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
+    const evidence = await Effect.runPromise(
+      readForwardPerformanceMarketVolumeWithClient(nativeConfig, [request]).pipe(
+        Effect.provideService(ClickhouseClient.ClickhouseClient, client),
+      ),
+    )
+    expect(watermarkReads).toBe(1)
+    expect(volumeReads).toBe(1)
+    expect(evidence).toHaveLength(1)
+    expect(evidence[0]).toMatchObject({
+      decisionSnapshotId: request.decisionSnapshotId,
+      sourceFeed: 'iex',
+      quantityMicros: '39000000000',
+      archiveRequest: archive,
+    })
+  },
+)
+
+test.each(['legacy', 'mixed'] as const)(
+  'rejects %s market evidence without explicit legacy configuration before any query',
+  async (kind) => {
+    const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
+    const requests =
+      kind === 'legacy' ? [marketVolumeRequest] : [makeStreamingPerformanceFixture().request, marketVolumeRequest]
+    let queries = 0
+    const client = Object.assign(
+      () => {
+        queries += 1
+        return Effect.die(new Error('No market query is authorized by incomplete report configuration'))
+      },
+      { param: (_type: string, value: unknown) => ({ value }) },
+    ) as unknown as ClickhouseClient.ClickhouseClient
+    const result = await Effect.runPromise(
+      Effect.result(
+        readForwardPerformanceMarketVolumeWithClient(nativeConfig, requests).pipe(
+          Effect.provideService(ClickhouseClient.ClickhouseClient, client),
+        ),
+      ),
+    )
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ForwardPerformanceMarketVolumeError', operation: 'read' },
+    })
+    if (Result.isFailure(result)) expect(result.failure.message).toContain('BAYN_SIGNAL_*')
+    expect(queries).toBe(0)
+
+    // The production wrapper must reject before acquiring a ClickHouse client, not only before SQL.
+    const liveResult = await Effect.runPromise(
+      Effect.result(readForwardPerformanceMarketVolume(nativeConfig, requests)),
+    )
+    expect(liveResult).toMatchObject({
+      _tag: 'Failure',
+      failure: { _tag: 'ForwardPerformanceMarketVolumeError', operation: 'read' },
+    })
+    if (Result.isFailure(liveResult)) expect(liveResult.failure.message).toContain('BAYN_SIGNAL_*')
+  },
+)
+
+test('an empty native market-evidence request needs neither historical settings nor a client', async () => {
+  const { historicalSignal: _historicalSignal, ...nativeConfig } = marketReaderConfig
+  expect(await Effect.runPromise(readForwardPerformanceMarketVolume(nativeConfig, []))).toEqual([])
 })

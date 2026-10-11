@@ -1,5 +1,6 @@
 import { Result, Schema } from 'effect'
 
+import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
@@ -122,7 +123,7 @@ export interface RiskContextRow {
   readonly authority_kill: KillState | null
   readonly authority_reason: string | null
   readonly authority_version: string | null
-  readonly authority_updated_at: Date | null
+  readonly authority_updated_at: string | null
   readonly authority_observed_at: Date | null
   readonly daily_traded_notional_micros: string
   readonly day_start_equity_micros: string
@@ -147,6 +148,12 @@ export type ReconciliationAlgebraFailure =
       readonly _tag: 'ReceiptVerificationFailed'
       readonly brokerEventId: string
       readonly cause: CanonicalHashFailure
+    }
+  | {
+      readonly _tag: 'BrokerFeePredatesOpeningCash'
+      readonly activityId: string
+      readonly feeDate: string
+      readonly openingObservedAt: string
     }
   | {
       readonly _tag: 'AccountingPredatesOpeningCash'
@@ -203,7 +210,7 @@ export type ReconciliationAlgebraFailure =
   | { readonly _tag: 'AuthorityStateDecodeFailed'; readonly cause: unknown }
   | {
       readonly _tag: 'RiskContextTimestampFailed'
-      readonly field: 'authority_observed_at' | 'authority_updated_at'
+      readonly field: 'authority_observed_at'
       readonly epochMillis: number
     }
 
@@ -440,6 +447,7 @@ export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
+  readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly receipts: readonly AccountingReceipt[]
   readonly ledgerExact: boolean
   readonly snapshot: ReconciliationSnapshotMaterial
@@ -465,12 +473,23 @@ export const compareOpeningCash = (input: {
         transaction.transactionId,
       )
     }
+    for (const fee of input.fees ?? []) {
+      if (brokerFeePredatesOpeningCash(fee, input.openingCash.observed_at))
+        return yield* fail({
+          _tag: 'BrokerFeePredatesOpeningCash',
+          activityId: fee.activityId,
+          feeDate: fee.date,
+          openingObservedAt: input.openingCash.observed_at,
+        })
+      expectedCash += yield* parseAccountingAmount('transaction-cash-delta', fee.netAmountMicros, fee.activityId)
+    }
     const expectedCashMicros = expectedCash.toString()
     const accountingHashValue = yield* accountingHash({
       schemaVersion: legacyAccountingStateSchemaVersion,
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
+      ...(input.fees === undefined || input.fees.length === 0 ? {} : { brokerFees: input.fees }),
       receipts: input.receipts,
       ledgerExact: input.ledgerExact,
     })
@@ -620,10 +639,7 @@ const validateReconciliationReadbackDataFirst = (
 
 export const validateReconciliationReadback = Pipeable.dual(2, validateReconciliationReadbackDataFirst)
 
-const timestamp = (
-  field: 'authority_observed_at' | 'authority_updated_at',
-  value: Date,
-): Result.Result<string, ReconciliationAlgebraFailure> =>
+const timestamp = (field: 'authority_observed_at', value: Date): Result.Result<string, ReconciliationAlgebraFailure> =>
   Number.isFinite(value.getTime())
     ? Result.succeed(value.toISOString())
     : fail({ _tag: 'RiskContextTimestampFailed', field, epochMillis: value.getTime() })
@@ -698,7 +714,6 @@ const riskContextFromRowDataFirst = (
       })
     }
 
-    const authorityUpdatedAt = yield* timestamp('authority_updated_at', row.authority_updated_at)
     const authority = yield* Result.mapError(
       decodeAuthorityState({
         schemaVersion: row.authority_schema_version,
@@ -708,12 +723,13 @@ const riskContextFromRowDataFirst = (
         kill: row.authority_kill,
         ...(row.authority_reason === null ? {} : { reason: row.authority_reason }),
         version,
-        updatedAt: authorityUpdatedAt,
+        updatedAt: row.authority_updated_at,
       }),
       (cause): ReconciliationAlgebraFailure => ({ _tag: 'AuthorityStateDecodeFailed', cause }),
     )
     const authorityObservedAt = yield* timestamp('authority_observed_at', row.authority_observed_at)
-    if (authority.updatedAt > authorityObservedAt) {
+    // Observation clocks remain millisecond-resolution; the unmodified timestamp still binds exact SQL identity.
+    if (Date.parse(authority.updatedAt) > Date.parse(authorityObservedAt)) {
       return yield* fail({
         _tag: 'InvalidRiskContext',
         reason: 'authority-update-after-observation',
@@ -756,6 +772,12 @@ export const reconciliationAlgebraFailureDetails = (
         failure: 'invariant',
         message: `accounting receipt verification failed for broker event ${failure.brokerEventId}`,
         cause: failure.cause,
+      }
+    case 'BrokerFeePredatesOpeningCash':
+      return {
+        failure: 'invariant',
+        message: `broker fee ${failure.activityId} predates the opening cash baseline and requires earlier baseline evidence`,
+        cause: failure,
       }
     case 'AccountingPredatesOpeningCash':
       return {

@@ -20,6 +20,8 @@ import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcDatabaseInstantSchema,
+  UtcSourceTimestampSchema,
   strictParseOptions,
 } from '../../schemas'
 import { AccountingReceiptRowSchema, AccountingTransactionRowSchema } from '../accounting-rows'
@@ -33,6 +35,23 @@ export const EventRow = Schema.Struct({
   source_sequence: Schema.String,
 })
 export type EventRow = typeof EventRow.Type
+
+export const HistoryEventRow = Schema.Struct({
+  ...EventRow.fields,
+  source_event_id: NonEmptyString,
+  payload_exists: Schema.Boolean,
+  accounting_complete: Schema.Boolean,
+})
+export type HistoryEventRow = typeof HistoryEventRow.Type
+
+export const CompletedAccountingRow = Schema.Struct({
+  ...AccountingTransactionRowSchema.fields,
+  source_event_id: NonEmptyString,
+  event_content_hash: Sha256,
+  prior_quantity_micros: Schema.String,
+  prior_cost_micros: Schema.String,
+})
+export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
 
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
@@ -101,7 +120,7 @@ export const AuthorityStateRow = Schema.Struct({
   kill_state: Schema.Enum(KillState),
   reason: Schema.NullOr(NonEmptyString),
   version: Schema.String,
-  updated_at: Schema.Date,
+  updated_at: UtcDatabaseInstantSchema,
 })
 export type AuthorityStateRow = typeof AuthorityStateRow.Type
 
@@ -136,7 +155,9 @@ export const AuthorityGenerationRow = Schema.Struct({
   activation_source_revision: Schema.NullOr(Schema.String),
   activation_image_repository: Schema.NullOr(NonEmptyString),
   activation_image_digest: Schema.NullOr(Schema.String),
-  strategy_name: Schema.NullOr(Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum'])),
+  strategy_name: Schema.NullOr(
+    Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum', 'jev']),
+  ),
   strategy_behavior_hash: Schema.NullOr(Sha256),
   strategy_parameter_hash: Schema.NullOr(Sha256),
   strategy_parameter_schema_version: Schema.NullOr(
@@ -146,6 +167,9 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.opening-drive.protocol.v2',
       'bayn.intraday-momentum.protocol.v1',
       'bayn.intraday-momentum.protocol.v2',
+      'bayn.intraday-momentum.protocol.v3',
+      'bayn.jev.protocol.v1',
+      'bayn.jev.protocol.v2',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),
@@ -176,7 +200,7 @@ export const MutationBaselineRow = Schema.Tuple([
     latest_mutation_at: Schema.NullOr(Schema.Date),
   }),
 ])
-export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: Schema.Date })])
+export const DatabaseInstantRow = Schema.Tuple([Schema.Struct({ activated_at: UtcSourceTimestampSchema })])
 export const AuthorityRestrictionInput = Schema.Struct({ reason: NonEmptyString, updatedAt: UtcInstant })
 
 const decodeEventInputDataFirst = Schema.decodeUnknownEffect(BrokerEventInputSchema, strictParseOptions)
@@ -196,6 +220,17 @@ export const decodeValuationInput = Pipeable.dual(1, (input: unknown) => decodeV
 const decodeEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(EventRow), strictParseOptions)
 
 export const decodeEventRows = Pipeable.dual(1, (input: unknown) => decodeEventRowsDataFirst(input))
+const decodeHistoryEventRowsDataFirst = Schema.decodeUnknownEffect(Schema.Array(HistoryEventRow), strictParseOptions)
+
+export const decodeHistoryEventRows = Pipeable.dual(1, (input: unknown) => decodeHistoryEventRowsDataFirst(input))
+const decodeCompletedAccountingRowsDataFirst = Schema.decodeUnknownEffect(
+  Schema.Array(CompletedAccountingRow),
+  strictParseOptions,
+)
+
+export const decodeCompletedAccountingRows = Pipeable.dual(1, (input: unknown) =>
+  decodeCompletedAccountingRowsDataFirst(input),
+)
 const decodeLastSequenceDataFirst = Schema.decodeUnknownEffect(LastSequenceRow, strictParseOptions)
 
 export const decodeLastSequence = Pipeable.dual(1, (input: unknown) => decodeLastSequenceDataFirst(input))

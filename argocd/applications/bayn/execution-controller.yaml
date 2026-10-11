@@ -17,11 +17,6 @@ spec:
         name: restate
         namespace: restate
         port: 9070
-    # Restate serializes the account-keyed controller while every durable
-    # trading-state mutation acquires the same transaction-scoped PostgreSQL
-    # writer fence. Old revisions can therefore drain alongside ready replicas
-    # without overlapping durable writers.
-    drainDelaySeconds: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: bayn-execution-controller
@@ -78,13 +73,13 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "d75d49707af22ccdb5a2cdee0362e453a68380a4618b5a4b735e9d8d121c37f0"
+              value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
             - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: 8f4602324111bbb3dd5d8695aabf199f4a5328fa
+              value: 808bfa84609959712042174b6fd176fc56f8edb2
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1d3b93a585e9b37836507880323f57ba7f7db385241dccf09234c43125ee5285"
+              value: "48517ebba573e0e2b6fbf57c135ec56f5bf5198e0d5e936a05065cb23c39f001"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "104bb22429eb54e025a092a8434be2b8390059c24515512de8cbb99c66cbb797"
+              value: "f787f21d7824f533ae9e6fc9266f0f9fddadc5e85d0df019a15670a61bbb804a"
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -93,7 +88,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"423c6c805917f05d5dcf80da7e439cf8c6a373762298148b15306ed8acfe2625\",\"authoredActivation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"},\"activation\":{\"sourceRevision\":\"ee60493eb5a9b5f8572e868b6ff31c17675501a3\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7\"}}"
+              value: "{\"schemaVersion\":\"bayn.research-capital-build-lineage.v1\",\"requestHash\":\"8f85240c1a0f8d54650b0914cbfadf3245311c32c650f2a295cc76dabad7063f\",\"authoredActivation\":{\"sourceRevision\":\"808bfa84609959712042174b6fd176fc56f8edb2\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:4802491b70fce1d0cece839c7ee0a1400f4f605c9e8179ad0ea1ffd27f5198cc\"},\"activation\":{\"sourceRevision\":\"808bfa84609959712042174b6fd176fc56f8edb2\",\"imageRepository\":\"registry.ide-newton.ts.net/lab/bayn\",\"imageDigest\":\"sha256:4802491b70fce1d0cece839c7ee0a1400f4f605c9e8179ad0ea1ffd27f5198cc\"}}"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
@@ -141,22 +136,6 @@ spec:
                 secretKeyRef:
                   name: bayn-clickhouse-auth
                   key: password
-            - name: BAYN_SIGNAL_SNAPSHOT_ID
-              value: "f50f63fecf62991203e8ddae519406a432b1d1a06c3376b18a2957b962c67a60"
-            - name: BAYN_SIGNAL_PUBLICATION_ASOF
-              value: "2026-08-04"
-            - name: BAYN_SIGNAL_CALENDAR_VERSION
-              value: "alpaca-us-equity-calendar-v1"
-            - name: BAYN_SIGNAL_DATA_START
-              value: "2016-01-04"
-            - name: BAYN_SIGNAL_DATA_END
-              value: "2026-08-04"
-            - name: BAYN_SIGNAL_LOOKBACK_START
-              value: "2016-01-04"
-            - name: BAYN_SIGNAL_EVALUATION_START
-              value: "2017-01-03"
-            - name: BAYN_SIGNAL_EVALUATION_END
-              value: "2026-08-04"
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
@@ -172,7 +151,7 @@ spec:
               value: "ledger-0.ledger-headless.bayn.svc.cluster.local:3000,ledger-1.ledger-headless.bayn.svc.cluster.local:3000,ledger-2.ledger-headless.bayn.svc.cluster.local:3000"
             - name: BAYN_TIGERBEETLE_LEDGER
               value: "7001"
-            - name: BAYN_EXECUTION_BOOTSTRAP_TOKEN
+            - name: BAYN_EXECUTION_ACTIVATION_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: bayn-execution-bootstrap
@@ -185,6 +164,49 @@ spec:
               value: "9080"
             - name: NODE_ENV
               value: production
+            - name: BAYN_KAFKA_BROKERS
+              value: kafka-kafka-bootstrap.kafka.svc.cluster.local:9092
+            - name: BAYN_KAFKA_USERNAME
+              value: bayn-market-data
+            - name: BAYN_KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-market-data
+                  key: password
+            - name: BAYN_KAFKA_TECHNICAL_FEATURES_TOPIC
+              value: torghut.technical-features.v1
+            - name: BAYN_KAFKA_TIMESTAMP_POLICY
+              value: dorvud.producer-clock.v1
+            - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
+              value: "300000"
+            - name: BAYN_RESEARCH_CAPTURE_S3_ENDPOINT
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
+            - name: BAYN_RESEARCH_CAPTURE_S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-research-captures
+                  key: BUCKET_NAME
+            - name: BAYN_RESEARCH_CAPTURE_S3_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-research-captures
+                  key: BUCKET_REGION
+            - name: BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-captures
+                  key: AWS_ACCESS_KEY_ID
+            - name: BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-captures
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: BAYN_JEV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-jev-auth
+                  key: api-key
+                  optional: true
           startupProbe:
             tcpSocket:
               port: restate
@@ -232,7 +254,7 @@ spec:
         - name: postgres-ca
           secret:
             secretName: bayn-db-ca
-            defaultMode: 0444
+            defaultMode: 444
             items:
               - key: ca.crt
                 path: ca.crt

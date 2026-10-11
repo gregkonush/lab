@@ -2,7 +2,7 @@
 
 Tengri's Chrome home page (`tengri://agent`) is the Codex client for the signed-in user's microVM. It is not a log
 viewer and it does not use AgentRun. The browser talks only to the authenticated Next.js BFF; the BFF signs the GitHub
-subject for the Rust Tengri control plane; Tengri calls the Nanoagent process inside the owner's `kata-fc` guest.
+subject for the Rust Tengri control plane; Tengri reaches Nanoagent through the owner's authenticated Firecracker slot supervisor.
 
 ```text
 Chrome agent tab
@@ -25,13 +25,45 @@ signed GitHub subject and the server-owned `MicroVM` owner hash.
    explicit restart invalidates that attempt.
 3. Nanoagent persists the resulting Codex login under the PVC-backed user home. Tengri does not inject or share an
    `OPENAI_API_KEY`.
-4. The first message creates a thread. Later messages resume the browser's persisted thread ID, and **New
-   conversation** starts a separate thread without deleting earlier guest-side thread state.
+4. The first message creates a thread. The browser keeps the **active** thread id in `tengri-thread:${agentId}` and a
+   client-side conversation registry in `tengri-conversations:${agentId}` (`{ id, title, updatedAt }[]`, title from the
+   first user message). Later messages resume the active thread. The left sidebar lists registry entries (newest first);
+   choosing one sets the active thread and resumes it. **New conversation** clears the active thread and transcript UI
+   without removing other registry entries or guest-side thread state. There is no `ListCodexThreads` gRPC yet.
 5. A message starts a turn. While that turn is active, subsequent input steers it and the stop control interrupts it.
 6. Typed app-server events update assistant text, reasoning summaries, plans, tools, file changes, approvals, usage,
    warnings, and errors in place.
 
 The chat, Finder, Code, Terminal, and preview tabs all operate on the same guest home and `/workspace` filesystem.
+
+## Model and reasoning selection
+
+The chat defaults to `gpt-6.1-sol`. Its **Model** selector reads the signed-in guest's paginated `model/list` catalog;
+the **Reasoning effort** selector offers that model's supported efforts and displays its default effort. Both settings
+are saved per agent in the browser and sent explicitly on thread creation, thread resume, and every subsequent turn.
+Changing models resets an incompatible effort to the selected model's default. New conversations keep the settings.
+An active turn keeps its original settings; the selectors become available after it finishes.
+
+If the catalog fails to load, the chat displays the error with **Retry models** and blocks starting a new turn.
+During a rollout, an older controller or guest can explicitly report that model selection is unsupported. The chat
+then explains that it uses the existing Codex settings and continues sending without model or reasoning overrides.
+Updated guests default to `gpt-6.1-sol`; omitted options preserve the guest configuration and existing thread settings.
+Retrying the catalog restores the selectors when the compatible controller and guest are available.
+If the account does not offer the selected model or effort, the selection stays visible until the user chooses an
+available option. An unavailable saved selection is not applied during automatic recovery, and the selectors stay
+editable after recovery fails so the user can choose valid settings and retry the same conversation. Tengri does not
+silently substitute a model. A running turn can still be steered or interrupted.
+
+## Guest administration
+
+Terminal and Codex operate in a guest with a writable operating-system root and passwordless `sudo` for the
+`nanoagent` user. The owner can install system packages, edit `/etc` and `/usr/local`, manage guest processes, mount
+filesystems, and configure guest networking. Codex uses `danger-full-access`; the Firecracker VM provides the isolation
+boundary around guest administration.
+
+The root filesystem has 1 GiB capacity. Snapshot sleep/resume preserves root changes and guest processes while releasing
+resident guest RAM. A fenced cold replacement resets the root from the image. Home and `/workspace` use the retained
+32 GiB PVC, including Codex credentials, threads, and installed tools. Ordinary sleep keeps the claimed runtime image.
 
 ## API path
 
@@ -42,10 +74,11 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | `codex-account`      | `GetCodexAccount`      | `account/read`                      |
 | `codex-login-status` | `GetCodexLogin`        | Nanoagent active-login snapshot     |
 | `codex-login`        | `StartCodexLogin`      | `account/login/start`               |
+| `codex-models`       | `ListCodexModels`      | `model/list`                        |
 | `create-thread`      | `CreateCodexThread`    | `thread/start`                      |
 | `resume-thread`      | `ResumeCodexThread`    | `thread/resume`                     |
-| `send-turn`          | `SendCodexTurn`        | `turn/start`                        |
-| `steer-turn`         | `SteerCodexTurn`       | `turn/steer`                        |
+| `send-turn`          | `SendCodexInput`       | `turn/start`                        |
+| `steer-turn`         | `SteerCodexInput`      | `turn/steer`                        |
 | `interrupt-turn`     | `InterruptCodexTurn`   | `turn/interrupt`                    |
 | `resolve-approval`   | `ResolveCodexApproval` | pending server-request response     |
 | event stream         | `WatchCodexEvents`     | replayable app-server notifications |
@@ -66,17 +99,27 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
   prior snapshot for the same thread and turn.
 - A resolved approval removes the matching pending approval card. The UI presents only the decisions advertised by the
   request, including command-policy and network-policy amendments when supplied.
+- Codex's empty-form MCP tool confirmations use the same approval card, showing the requested tool and arguments.
+  Oversized confirmations retain bounded display and scope metadata and explicitly report omitted arguments.
+  Approve once allows that call; advertised session approval remembers the tool in the current session. Deny declines
+  the call, and Stop interrupts the turn and invalidates its pending controls. Read-only tools retain Codex's normal
+  approval behavior. Input forms and URL/access elicitation are not interpreted as tool approvals: the desktop reports
+  the unsupported request and cancels it without attributing a decision to the user.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the
-  error. Only that explicit action clears the browser's selection; the next message creates a thread in the same
-  guest workspace. Temporary failures remain retryable without replacing the conversation or resetting the agent.
+  error. Only that explicit action clears the browser's active selection; the next message creates a thread in the same
+  guest workspace. The matching registry entry can be marked unavailable without wiping other conversations. Temporary
+  failures remain retryable without replacing the conversation or resetting the agent.
+- Deleting an agent clears `tengri-thread:${agentId}` and `tengri-conversations:${agentId}` alongside other desktop
+  local/session keys for that agent.
 - Account refreshes and login-completion events are tied to the current device-login attempt so stale responses cannot
   overwrite a newer login.
 - A reconnecting browser restores the active device-login snapshot from the same app-server generation. Nanoagent
   rejects a stale snapshot after the app server restarts, and Tengri preserves the attempt's original expiry.
 - The UI caps retained events and rendered text. It does not render remote Markdown images or raw unbounded app-server
-  payloads.
+  payloads. Nanoagent projects tool-result images to `[Image output]` before the replay byte limit, retaining the
+  tool's identity, status, text, and structured output. Codex receives the original image payload.
 
 Closing and reopening Chrome does not terminate Codex. Nanoagent supervises one long-lived `codex app-server` process;
 browser reconnects restore the persisted thread and event state from the same microVM.
@@ -92,6 +135,7 @@ bun test \
   apps/landing/src/components/tengri/codex-events.test.ts \
   apps/landing/src/components/tengri/codex-event-card.test.tsx \
   apps/landing/src/lib/tengri/grpc.test.ts \
+  apps/landing/src/lib/tengri/codex-models.test.ts \
   apps/landing/src/lib/tengri/schemas.test.ts \
   apps/landing/src/lib/tengri/sse.test.ts \
   apps/landing/src/lib/tengri/ready-desktop.test.tsx
@@ -107,13 +151,16 @@ The live acceptance path runs only after the GitOps rollout described in
 [`operations.md`](./operations.md). It must prove the complete owner-scoped path:
 
 1. Sign in with GitHub and create or resume one agent.
-2. Verify its Pod is unprivileged and uses `runtimeClassName: kata-fc` without changing node scheduling.
+2. Verify its slot Pod uses the normal OCI runtime, `privileged: false`, and no host namespaces or filesystem mounts.
+   In Terminal, verify `sudo -n id -u` returns `0` and an owner-requested system-file edit or package install succeeds.
 3. Open Chrome at `tengri://agent`, complete a per-user Codex device login, and create a thread.
-4. Send a real turn that reads or edits `/workspace`; confirm typed assistant, tool, and file-diff events render.
+4. Select a model and supported reasoning effort. Send a real turn that reads or edits `/workspace`; confirm the
+   app-server model/effort readback and typed assistant, tool, and file-diff events. Reload and verify the selection.
 5. Exercise one advertised approval decision, steer or interrupt a running turn, and reload Chrome during a turn to
    prove replay and thread recovery.
 6. Read the changed file in Finder, Code, and Terminal to prove all surfaces share the same guest filesystem.
-7. Sleep and resume the agent; verify the same Codex account and thread remain available from the retained PVC.
+7. Sleep and resume the agent; verify the VMM exited during sleep, then verify the same shell PID, Codex account,
+   thread, root edits, and home files. Measure authenticated creation/resume through file, terminal, and Codex readiness.
 
 Do not substitute fixture output, a manually created Pod, a privileged launcher, or a permanent canary DaemonSet for
 this acceptance path.

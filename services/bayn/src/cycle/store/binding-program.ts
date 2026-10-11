@@ -1,3 +1,5 @@
+import type { SimulatedSnapshotReference } from '../../market-data/streaming/simulation-service'
+import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
@@ -7,7 +9,7 @@ import {
   snapshotReferenceIssueTags,
 } from '../../db/snapshot-reference'
 import { decodeInputManifestArtifact } from '../../evidence-contracts'
-import type { ArchiveVerifiedIntradaySnapshotReference } from '../../market-data/intraday/model'
+import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { InputManifest } from '../../types'
@@ -150,12 +152,16 @@ const makeCycleBindingProgramsDataFirst = (
     )
 
   const persistIntradaySnapshotReference = (
-    reference: ArchiveVerifiedIntradaySnapshotReference,
+    reference: StreamingVerifiedSnapshotReference | SimulatedSnapshotReference,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const manifest = reference.manifest
+      const table =
+        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1'
+          ? 'simulated_snapshot_references'
+          : 'streaming_snapshot_references'
       yield* sql`
-        INSERT INTO intraday_snapshot_references (
+        INSERT INTO ${sql(table)} (
           snapshot_id, schema_version, content_hash, observed_at, manifest
         ) VALUES (
           ${manifest.snapshotId}, ${reference.schemaVersion}, ${manifest.contentHash},
@@ -166,7 +172,7 @@ const makeCycleBindingProgramsDataFirst = (
       const [match] = yield* sql<{ matches: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM intraday_snapshot_references AS reference
+          FROM ${sql(table)} AS reference
           WHERE reference.snapshot_id = ${manifest.snapshotId}
             AND reference.schema_version = ${reference.schemaVersion}
             AND reference.content_hash = ${manifest.contentHash}
@@ -178,7 +184,7 @@ const makeCycleBindingProgramsDataFirst = (
         return yield* failCycleStore(
           'bind-decision',
           'conflict',
-          'stored intraday snapshot reference diverged from the archive-verified manifest',
+          'stored intraday snapshot reference diverged from the verified market manifest',
         )
       }
     })
@@ -186,25 +192,44 @@ const makeCycleBindingProgramsDataFirst = (
   const persistDecisionEvidence = (
     evidence: CycleDecisionBindingEvidence | undefined,
   ): Effect.Effect<void, CycleStoreInternalError> =>
-    Effect.forEach(evidence?.intradaySnapshotReferences ?? [], persistIntradaySnapshotReference, {
-      concurrency: 1,
-      discard: true,
-    })
+    Effect.forEach(
+      [...(evidence?.streamingSnapshotReferences ?? []), ...(evidence?.simulatedSnapshotReferences ?? [])],
+      persistIntradaySnapshotReference,
+      {
+        concurrency: 1,
+        discard: true,
+      },
+    )
 
   const requireDecisionEvidence = (document: CycleDecisionDocument): Effect.Effect<void, CycleStoreInternalError> =>
-    queries
-      .decisionEvidenceMatches(document)
-      .pipe(
-        Effect.flatMap((matches) =>
-          matches
-            ? Effect.void
-            : failCycleStore(
-                'bind-decision',
-                'invariant',
-                'decision does not match its durable market-data and exact reconciliation evidence',
+    queries.decisionEvidenceMismatch(document).pipe(
+      Effect.flatMap((mismatch) =>
+        mismatch === null
+          ? Effect.void
+          : Effect.logWarning('Bayn decision evidence rejected').pipe(
+              Effect.annotateLogs({
+                schemaVersion: 'bayn.decision-evidence-rejection.v1',
+                mismatch,
+                cycleId: document.bindings.cycleId,
+                snapshotId: document.bindings.snapshotId,
+                reconciliationId: document.bindings.reconciliationId,
+                plannedIntentCount: document.targetPlan.intentTargets.length,
+                riskEvaluationCount: document.deltaRisk.length,
+                riskContextBound:
+                  document.mode === legacyExecutionAuthorityToken && document.bindings.riskContext !== undefined,
+                firstRiskStatePresent:
+                  document.mode === legacyExecutionAuthorityToken && document.deltaRisk[0]?.facts?.state !== undefined,
+              }),
+              Effect.andThen(
+                failCycleStore(
+                  'bind-decision',
+                  'invariant',
+                  `decision does not match its durable market-data and exact reconciliation evidence [${mismatch}]`,
+                ),
               ),
-        ),
-      )
+            ),
+      ),
+    )
 
   const interpretSnapshotDecision = (
     manifest: InputManifest,
@@ -272,7 +297,7 @@ const makeCycleBindingProgramsDataFirst = (
           AND (
             snapshot_id = ${decision.document.bindings.snapshotId}
             OR (
-              schema_version = 'bayn.autonomous-cycle.v3'
+              schema_version IN ('bayn.autonomous-cycle.v3', 'bayn.autonomous-cycle.v4')
               AND snapshot_id IS NULL
             )
           )
@@ -315,6 +340,7 @@ const makeCycleBindingProgramsDataFirst = (
       'bind-decision',
       upgradeDecisionDocumentConstraints(sql).pipe(
         Effect.andThen(decodeDecisionInput({ cycleId, document, observedAt })),
+        Effect.tap((input) => queries.retainValidatedDecision(input.document)),
         Effect.flatMap((input) =>
           sql.withTransaction(
             mutations.readLocked('bind-decision', input.cycleId).pipe(

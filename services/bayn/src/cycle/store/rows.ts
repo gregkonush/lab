@@ -18,19 +18,27 @@ import {
   CycleTerminalReason,
   type AutonomousCycle,
 } from '../model'
+import { DecisionEvidenceMismatch } from './model'
 
 const StoredCycleRowSchema = Schema.Struct({
   cycle_id: Sha256Schema,
-  schema_version: Schema.Literals(['bayn.autonomous-cycle.v1', 'bayn.autonomous-cycle.v2', 'bayn.autonomous-cycle.v3']),
+  schema_version: Schema.Literals([
+    'bayn.autonomous-cycle.v1',
+    'bayn.autonomous-cycle.v2',
+    'bayn.autonomous-cycle.v3',
+    'bayn.autonomous-cycle.v4',
+  ]),
   identity_schema_version: Schema.Literals([
     'bayn.autonomous-cycle-identity.v1',
     'bayn.autonomous-cycle-identity.v2',
     'bayn.autonomous-cycle-identity.v3',
+    'bayn.autonomous-cycle-identity.v4',
   ]),
-  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum']),
+  strategy_name: Schema.Literals(['risk-balanced-trend', 'opening-drive-momentum', 'intraday-momentum', 'jev']),
   qualification_run_id: Sha256Schema,
   strategy_protocol_hash: Sha256Schema,
   account_id: StrictNonEmptyStringSchema,
+  entry_attempt_ordinal: PositiveIntegerSchema,
   signal_session_date: Schema.NullOr(IsoDateSchema),
   signal_calendar_version: Schema.NullOr(StrictNonEmptyStringSchema),
   execution_policy_schema_version: Schema.Literals([
@@ -101,9 +109,13 @@ const FinishInputSchema = Schema.Struct({
 })
 const MutationRowsSchema = Schema.Array(Schema.Struct({ cycle_id: Sha256Schema })).check(Schema.isMaxLength(1))
 const DecisionEvidenceMatchSchema = Schema.Tuple([Schema.Struct({ matches: Schema.Boolean })])
+const DecisionEvidenceMismatchSchema = Schema.Tuple([
+  Schema.Struct({ mismatch: Schema.NullOr(Schema.Enum(DecisionEvidenceMismatch)) }),
+])
 const StoredDecisionDocumentRowsSchema = Schema.Array(
   Schema.Struct({
-    document: CycleDecisionDocumentSchema,
+    document: Schema.Unknown,
+    matches_retained_document: Schema.Boolean,
     execution_completion_evidence_matches: Schema.Boolean,
     execution_generation_is_superseded: Schema.Boolean,
   }),
@@ -146,6 +158,10 @@ const decodeDecisionEvidenceMatchDataFirst = Schema.decodeUnknownEffect(Decision
 
 export const decodeDecisionEvidenceMatch = Pipeable.dual(1, (input: unknown) =>
   decodeDecisionEvidenceMatchDataFirst(input),
+)
+export const decodeDecisionEvidenceMismatch = Schema.decodeUnknownEffect(
+  DecisionEvidenceMismatchSchema,
+  strictParseOptions,
 )
 const decodeStoredDecisionDocumentRowsDataFirst = Schema.decodeUnknownEffect(
   StoredDecisionDocumentRowsSchema,
@@ -204,7 +220,11 @@ const rowToCycle = (row: typeof StoredCycleRowSchema.Type) =>
       qualificationRunId: row.qualification_run_id,
       strategyProtocolHash: row.strategy_protocol_hash,
       accountId: row.account_id,
-      ...(row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v3'
+      ...(row.identity_schema_version === 'bayn.autonomous-cycle-identity.v4'
+        ? { entryAttemptOrdinal: row.entry_attempt_ordinal }
+        : {}),
+      ...(row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v3' &&
+      row.identity_schema_version !== 'bayn.autonomous-cycle-identity.v4'
         ? {
             signalSessionDate: row.signal_session_date,
             signalCalendarVersion: row.signal_calendar_version,

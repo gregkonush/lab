@@ -146,11 +146,17 @@ validate manifests before an authorized apply.
 
 - Normal deployments use committed CI/CD and GitOps. Direct cluster mutation requires explicit authorization or an
   authorized emergency procedure. Do not deploy from a worktree or use legacy direct-cluster helpers for releases.
+- An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
+  Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
+  affected resources. For Kargo-managed applications, verify the eligible image, selected Freight, and the authorized
+  Stage's generated `kargo/<stage>` commit. Sync only that commit and preserve Kargo metadata and existing automation
+  and retention settings.
+  Scope expansion, unrequested destructive pruning, and credential or permission changes still require approval.
 - Kargo owns application image promotion. Follow [release automation](docs/release-automation.md) for artifact
   eligibility, enrollment, promotion, evidence, and recovery. The path is reviewed `main` merge, successful immutable
   image publication, Warehouse/Freight, exact automatic Stage promotion, generated `kargo/<stage>`, Argo reconciliation,
   workload rollout, and live proof. Do not bypass gates with SHA/digest bumps, release branches, deployment PRs,
-  release automerge, manual Argo sync, direct `kubectl` deployment, or operator-created/retagged image aliases.
+  release automerge, direct `kubectl` deployment, or operator-created/retagged image aliases.
 - Preserve the release contract's OCI annotations, immutable and run-qualified tags, and external `analysis`/`bilig`
   exceptions. CI receipts come from the selected image's annotations. Multi-image receipt builders withhold every
   discoverable Kargo alias until all images, terminal validation, and artifact uploads succeed; preparation tags must
@@ -161,8 +167,8 @@ validate manifests before an authorized apply.
   Promotion must update the configured renderer's source inputs, with rendered output verified against the digest.
   Retained post-deploy workflows follow the exact Kargo branch and Stage-written paths; manual dispatch is diagnostic.
   Use `lab-delivery` for promotion evidence and `argocd` for Application evidence.
-- Bayn is outside Kargo. It has no Warehouse, Freight, or Stage. `bayn-release` activation and lineage remain the
-  authority for strategy activation.
+- Bayn uses the same Kargo image-delivery path. Its native activation hook and trading runtime retain account,
+  strategy, grant, reconciliation, and order-risk enforcement; image promotion does not grant live capital authority.
 - Confirm the Kubernetes context and pass an explicit namespace to `kubectl`. On authorization failures, verify
   identity and follow the [access runbook](docs/runbooks/galactic-kubernetes-access.md) without silently changing
   credentials or targets. If Coder has no context, configure `in-cluster` from its mounted service account files at

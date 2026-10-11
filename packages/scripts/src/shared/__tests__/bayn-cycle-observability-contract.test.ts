@@ -37,6 +37,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
       'BaynExecutionWindowUnready',
+      'BaynInputWindowUnavailable',
       'BaynExecutionDecisionLagging',
       'BaynCycleObservationUnavailable',
       'BaynRuntimeDegraded',
@@ -63,16 +64,25 @@ describe('Bayn cycle operations alert contract', () => {
       'bayn_execution_controller_next_due_timestamp_seconds{',
     )
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_cycle_stall_threshold_seconds{')
-    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_preflight_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_execution_session_ready{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_decision_bound{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_open_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
     expect(expressions.BaynExecutionWindowUnready).toContain('- 600')
+    expect(expressions.BaynExecutionWindowUnready).toMatch(
+      /unless on\(job, namespace, service, instance\)[\s\S]+condition="decision_lagging"/,
+    )
+    expect(expressions.BaynExecutionWindowUnready).toContain('condition="input_unavailable"')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_runtime_ready{')
+    expect(expressions.BaynExecutionWindowUnready).toContain('bayn_cycle_first_observation_timestamp_seconds{')
+    expect(expressions.BaynInputWindowUnavailable).toContain('condition="input_unavailable"')
+    expect(expressions.BaynInputWindowUnavailable).toContain('bayn_cycle_first_observation_timestamp_seconds{')
+    expect(expressions.BaynInputWindowUnavailable.match(/and on\(job, namespace, service, instance\)/g)).toHaveLength(7)
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_execution_session_preflight_ready{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_bound{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_open_timestamp_seconds{')
+    expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_decision_deadline_timestamp_seconds{')
     expect(expressions.BaynExecutionDecisionLagging).toContain('bayn_cycle_submission_cutoff_timestamp_seconds{')
-    expect(expressions.BaynExecutionDecisionLagging).toContain('+ 120')
+    expect(expressions.BaynExecutionDecisionLagging).not.toContain('+ 120')
     expect(expressions.BaynCycleObservationUnavailable).toContain('bayn_cycle_observation_available')
     expect(expressions.BaynCycleObservationUnavailable).not.toContain('absent(')
     expect(expressions.BaynRuntimeDegraded).toContain('bayn_runtime_ready')
@@ -112,14 +122,18 @@ describe('Bayn cycle operations alert contract', () => {
     expect(kubeStateMetricsSource).toContain('kind: RestateDeployment')
     expect(kubeStateMetricsSource).toContain('name: deployment_spec_replicas')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
-    expect(alloy).toContain('label = "app.kubernetes.io/part-of=bayn"')
+    const baynLogDiscovery = /discovery\.kubernetes "bayn_log_pods" \{(.*?)\n\}/s.exec(alloy)?.[1]
+    expect(baynLogDiscovery).toContain('names = ["bayn"]')
+    expect(baynLogDiscovery).not.toContain('app.kubernetes.io/part-of')
     const baynContainerKeepRule =
       /source_labels = \["__meta_kubernetes_pod_container_name"\]\s+regex\s+=\s+"([^"]+)"/s.exec(alloy)?.[1]
     if (baynContainerKeepRule === undefined) throw new Error('Bayn container log keep rule is missing')
     const retainedBaynContainer = new RegExp(`^(?:${baynContainerKeepRule})$`)
     expect(
-      ['bayn', 'execution-controller', 'activate'].filter((container) => retainedBaynContainer.test(container)),
-    ).toEqual(['bayn', 'execution-controller', 'activate'])
+      ['bayn', 'execution-controller', 'activate', 'postgres'].filter((container) =>
+        retainedBaynContainer.test(container),
+      ),
+    ).toEqual(['bayn', 'execution-controller', 'activate', 'postgres'])
     expect(
       ['lifecycle', 'register', 'egress-proxy'].filter((container) => retainedBaynContainer.test(container)),
     ).toEqual([])
@@ -217,6 +231,12 @@ describe('Bayn cycle operations alert contract', () => {
       readonly version: number
       readonly time: { readonly from: string; readonly to: string }
       readonly panels: readonly {
+        readonly datasource:
+          | { readonly type: 'prometheus'; readonly uid: 'prom' }
+          | {
+              readonly type: 'loki'
+              readonly uid: 'loki'
+            }
         readonly description?: string
         readonly gridPos: {
           readonly h: number
@@ -230,6 +250,8 @@ describe('Bayn cycle operations alert contract', () => {
           readonly expr?: string
           readonly instant?: boolean
           readonly legendFormat?: string
+          readonly maxLines?: number
+          readonly queryType?: 'range' | 'instant'
           readonly range?: boolean
           readonly refId?: string
         }[]
@@ -245,7 +267,7 @@ describe('Bayn cycle operations alert contract', () => {
 
     expect(dashboard.uid).toBe('bayn-cycle-operations')
     expect(dashboard.title).toBe('Bayn Trading Operations')
-    expect(dashboard.version).toBe(7)
+    expect(dashboard.version).toBe(8)
     expect(dashboard.time).toEqual({ from: 'now-24h', to: 'now' })
     expect(dashboard.description).toContain('zero orders are explained by the first stage that did not advance')
     expect(dashboard.panels.map(({ title }) => title)).toEqual([
@@ -288,8 +310,36 @@ describe('Bayn cycle operations alert contract', () => {
       'Execution latency',
       'Safety freshness',
       'Running build',
+      'Trace export failures',
+      'Trace export failure logs',
     ])
     expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
+    const exportFailures = dashboard.panels.find(({ title }) => title === 'Trace export failures')
+    const exportLogs = dashboard.panels.find(({ title }) => title === 'Trace export failure logs')
+    expect(exportFailures?.type).toBe('timeseries')
+    expect(exportLogs?.type).toBe('logs')
+    for (const panel of [exportFailures, exportLogs]) {
+      expect(panel?.datasource).toEqual({ type: 'loki', uid: 'loki' })
+      expect(panel?.targets).toHaveLength(1)
+      expect(panel?.targets?.[0]?.queryType).toBe('range')
+      const expression = panel?.targets?.[0]?.expr
+      expect(expression).toContain('{namespace="bayn",container=~"bayn|execution-controller|activate"}')
+      expect(expression).toMatch(/\|= "bayn\.telemetry\.export" \| json /)
+      expect(expression).toContain('export_stage="annotations.stage"')
+      expect(expression).toContain('export_service="annotations.serviceName"')
+      expect(expression).toContain('export_reason="annotations.failureReason"')
+      expect(expression).toContain('export_http_status="annotations.httpStatus"')
+      expect(expression).toContain('| export_stage="bayn.telemetry.export" | __error__=""')
+      expect(expression).not.toMatch(/vector\(|or\s+(?:on\([^)]*\)\s+)?0/)
+      expect(panel?.description).toContain('unavailable logs')
+    }
+    expect(exportFailures?.targets?.[0]?.expr).toBe(
+      `sum by (export_service, export_reason, export_http_status) (count_over_time(${exportLogs?.targets?.[0]?.expr} [5m]))`,
+    )
+    expect(exportFailures?.description).toContain('failed export attempts')
+    expect(exportFailures?.description).toContain('lost spans')
+    expect(exportLogs?.targets?.[0]?.maxLines).toBe(1000)
+    expect(exportLogs?.options?.dedupStrategy).toBe('none')
     const targetsPanel = dashboard.panels.find(({ title }) => title === 'Targets')
     expect(targetsPanel?.fieldConfig?.defaults?.noValue).toBe('NO CYCLE')
     expect(targetsPanel?.fieldConfig?.defaults?.mappings?.[0]?.options?.['-1']?.text).toBe('NO DECISION')

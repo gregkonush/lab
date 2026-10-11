@@ -9,6 +9,7 @@ import {
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
   UtcInstantSchema as UtcInstant,
+  UtcDatabaseInstantSchema,
   UtcOrderTimestampSchema as UtcOrderTimestamp,
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
@@ -189,7 +190,7 @@ const AccountSnapshotBase = Schema.Struct({
 export const AccountSnapshotSchema = AccountSnapshotBase
 export type AccountSnapshot = typeof AccountSnapshotSchema.Type
 
-export const PositionSchema = Schema.Struct({
+const LegacyPositionSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyPositionSchemaVersion),
   accountId: NonEmptyString,
   symbol: SymbolName,
@@ -200,6 +201,14 @@ export const PositionSchema = Schema.Struct({
   unrealizedPnlMicros: SignedMicros,
   observedAt: UtcInstant,
 })
+export const PositionSchema = Schema.Union([
+  LegacyPositionSchema,
+  Schema.Struct({
+    ...LegacyPositionSchema.fields,
+    schemaVersion: Schema.Literal('bayn.position.v2'),
+    costBasisMicros: SignedMicros,
+  }),
+])
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({
@@ -902,7 +911,7 @@ const AuthorityStateBase = Schema.Struct({
   kill: Schema.Enum(KillState),
   reason: Schema.optionalKey(NonEmptyString),
   version: Version,
-  updatedAt: UtcInstant,
+  updatedAt: UtcDatabaseInstantSchema,
 })
 
 export const AuthorityStateSchema = AuthorityStateBase.check(

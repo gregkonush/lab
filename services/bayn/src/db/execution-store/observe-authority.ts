@@ -1,5 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
+import { Effect, Option, Result } from 'effect'
+import { withObservedStage } from '../../telemetry'
+import { databaseUtcInstant } from '../clock'
 
 import {
   BrokerEnvironment,
@@ -10,6 +12,7 @@ import {
 import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
+  reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -154,7 +157,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const [databaseTime] = yield* sql<Record<string, unknown>>`
-        SELECT clock_timestamp() AS activated_at
+        SELECT to_char(${authority.clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
@@ -183,7 +186,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
         )
         RETURNING
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const insertedRow = inserted[0]
       if (insertedRow === undefined) {
@@ -209,7 +212,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
   const terminalizeUnusedPreSubmissionResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql`
       UPDATE autonomous_cycles AS cycle
@@ -245,6 +248,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
@@ -252,10 +256,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
-                AND EXISTS (
-                  SELECT 1
-                  FROM autonomous_forward_performance_receipts AS receipt
-                  WHERE receipt.authority_generation_hash = state.generation_hash
+                AND (
+                  EXISTS (
+                    SELECT 1
+                    FROM autonomous_forward_performance_receipts AS receipt
+                    WHERE receipt.authority_generation_hash = state.generation_hash
+                  )
+                  OR research_paper_expired_zero_execution_settled(state.generation_hash)
                 )
               )
             )
@@ -353,11 +360,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
             AND jsonb_array_length(reconciliation.discrepancies) = 0
             AND reconciliation.reconciled_at > state.updated_at
             AND reconciliation.reconciled_at < ${activatedAt}
-            AND NOT EXISTS (
-              SELECT 1
-              FROM mutation_events AS mutation
-              JOIN intents AS intent ON intent.intent_id = mutation.intent_id
-              WHERE intent.account_id = ${identity.accountId}
+            AND observe_recovery_account_settled(
+              state.generation_hash, ${identity.accountId}, reconciliation.reconciled_at
             ) AS eligible
           FROM authority_state AS state
           JOIN authority_generations AS previous_generation
@@ -375,6 +379,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (
                       ${executionMandateCompletedRestrictionReason},
@@ -382,10 +387,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                       ${legacyV1CompletedRestrictionReason},
                       ${legacyExecutionActivationExpiredRestrictionReason}
                     )
-                    AND EXISTS (
-                      SELECT 1
-                      FROM autonomous_forward_performance_receipts AS receipt
-                      WHERE receipt.authority_generation_hash = state.generation_hash
+                    AND (
+                      EXISTS (
+                        SELECT 1
+                        FROM autonomous_forward_performance_receipts AS receipt
+                        WHERE receipt.authority_generation_hash = state.generation_hash
+                      )
+                      OR research_paper_expired_zero_execution_settled(state.generation_hash)
                     )
                   )
                 )
@@ -431,7 +439,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           AND (NOT research_rearm.candidate OR research_rearm.eligible)
         RETURNING
           state.schema_version, state.generation_hash, state.maximum, state.effective, state.kill_state, state.reason,
-          state.version::text AS version, state.updated_at
+          state.version::text AS version, ${databaseUtcInstant(sql, sql`state.updated_at`)} AS updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const rotatedRow = rotated[0]
       if (rotatedRow === undefined) {
@@ -446,7 +454,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, clock_timestamp() AS observed_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+          ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -485,7 +494,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, clock_timestamp() AS observed_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+          ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -519,14 +529,26 @@ const makeObserveAuthorityInterpreterDataFirst = (
       ),
     )
 
-  const readAuthorityState = runExecutionOperation(
-    'authority',
-    sql<Record<string, unknown>>`
+  const authorityStateQuery = sql`
         SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
         FROM authority_state
         WHERE singleton
-      `.pipe(
+      `
+  const readAuthorityState = runExecutionOperation(
+    'authority',
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transaction = yield* Effect.serviceOption(sql.transactionService)
+        const connection = Option.isSome(transaction)
+          ? transaction.value[0]
+          : yield* sql.reserve.pipe(withObservedStage('bayn.postgres.connection-acquire', { dependency: 'postgresql' }))
+        const [statement, parameters] = authorityStateQuery.compile()
+        return yield* connection
+          .execute(statement, parameters, undefined)
+          .pipe(withObservedStage('bayn.postgres.authority-query', { dependency: 'postgresql' }))
+      }),
+    ).pipe(
       Effect.flatMap(decodeAuthorityStateRows),
       Effect.flatMap((rows) =>
         rows[0] === undefined

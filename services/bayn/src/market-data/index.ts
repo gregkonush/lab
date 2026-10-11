@@ -15,7 +15,6 @@ export type { SignalBarRow, SignalManifestRow, SignalSessionRow, SnapshotRows } 
 export { marketDataOperationError } from './errors'
 export { makeMarketData, MarketDataLive } from './program'
 export type {
-  ArchiveVerifiedIntradaySnapshotReference,
   IntradayArchiveWatermark,
   IntradayBar,
   IntradayDelayClass,
@@ -30,13 +29,7 @@ export type {
   IntradaySnapshotRequest,
   IntradayTrade,
 } from './intraday/model'
-export {
-  archiveVerifiedIntradaySnapshotReference,
-  IntradayMarketData,
-  IntradaySnapshotFailure,
-  IntradaySnapshotPurpose,
-} from './intraday/model'
-export { IntradayMarketDataLive, makeIntradayMarketData } from './intraday/program'
+export { IntradayMarketData, IntradaySnapshotFailure, IntradaySnapshotPurpose } from './intraday/model'
 export { compareIntradayInstants, intradayAgeNanos, intradayInstantNanos, millisecondsAsNanos } from './intraday/time'
 export {
   persistIntradaySnapshotRows,

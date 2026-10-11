@@ -13,10 +13,12 @@ Follow the [Loki 3 migration](../../../docs/runbooks/loki-3-migration.md) for th
 procedure. The sole Loki 3 compactor uses a retained 10 GiB Ceph claim; log retention remains disabled.
 Mimir 3.2 uses normal rolling updates for ingesters, store gateway, compactor, and Alertmanager. Follow the
 [Mimir 3.2 rollout](../../../docs/runbooks/mimir-3-2-upgrade.md) for the native configuration gate, ordered sync waves,
-and live acceptance. The bundled Kafka broker uses Apache's JVM 4.3.1 image with normal StatefulSet rolling updates.
-Its existing log subdirectory is explicitly mounted at the image's declared data volume. Follow the
-[Kafka 4.3 upgrade](../../../docs/runbooks/mimir-kafka-4-3-upgrade.md) for clone recovery, buffer preservation,
-and metadata-feature acceptance.
+and live acceptance. Mimir uses the shared Strimzi Kafka cluster at
+`kafka-kafka-bootstrap.kafka.svc.cluster.local:9093`, on `observability.mimir.ingest.v1`.
+The topic has three partitions, replication factor three, and minimum ISR two. Topic creation belongs to the Kafka
+application; Mimir's bundled Kafka chart is disabled. Increase topic partitions before scaling ingesters above three.
+The [shared Kafka migration runbook](../../../docs/runbooks/mimir-shared-kafka.md) describes the hard cutover,
+offset handling, and verification. Historical Kafka snapshot/restore PVCs remain as retained data without a workload.
 The [Mimir recovery procedure](../../../docs/runbooks/mimir-rgw-tls-recovery.md) is historical guidance for
 Mimir 3.1.2/chart 6.1.0; its process-reload helper deliberately rejects newer images and rolling strategies. The
 [compatibility runbook](../../../docs/runbooks/ceph-rgw-sigv4-compatibility.md) documents the verified TLS path.
@@ -113,6 +115,52 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+
+The TA and market-data archive scrapes retain separate pipeline identities. Their critical email alerts detect a
+missing scrape, no running Flink job, and stalled or missing checkpoints, with mutually exclusive failure conditions
+to avoid duplicate pages for one failed pipeline. Bayn runtime degradation still fires after one minute and remains
+one incident across brief recoveries, resolving only after five minutes without the condition. Email subjects include
+`FIRING` or `RESOLVED`; mailbox delivery alone does not establish the current alert state.
+
+The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
+The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
+and `container_cpu_cfs_throttled_seconds_total` for namespace `bayn` and the `torghut-ws` container in namespace
+`torghut`. Compare their rates with CPU use and limits during the same execution trace or producer-stall window.
+Other Torghut containers remain excluded from CFS retention. An absent throttle series remains UNKNOWN, rather
+than zero throttling. See [producer stall diagnostics](../../../services/dorvud/README.md#producer-stall-diagnostics)
+for JVM, Kafka, probe, and restart correlation.
+The CNPG allow-list retains the exact `cnpg_bayn_io_*`, `cnpg_bayn_replication_*`, and `cnpg_bayn_waits_*` diagnostic
+series declared by Bayn's catalog-only monitoring queries, including timing-enabled flags and statistics-reset times.
+Bayn's `bayn-db` instances are scraped every five seconds with a four-second scrape timeout; the other CNPG
+targets retain their thirty-second cadence. Complementary target filters prevent duplicate scrapes and preserve the
+`cnpg-postgres` job labels. `scrape_duration_seconds` is retained alongside exporter collection errors to expose the
+cost and availability of this sampling. These catalog reads run in the collector, outside the execution and closure
+paths. A wait shorter than five seconds can still be missed; correlate retained samples with application spans and
+PostgreSQL slow-statement logs before attributing a commit stall to WAL I/O or synchronous replication.
+It also retains bounded exporter collection errors and durations so a failed built-in collector cannot be mistaken
+for zero I/O. Unknown future metric families and unrelated PostgreSQL settings remain excluded. A new exporter
+metric requires both its query definition and this ingestion policy; direct endpoint availability is not Mimir proof.
+The storage-observability contract test exercises the configured allow-list against every declared metric name and
+negative examples. Verify both database pods in Mimir after the collector's configuration-digest rollout.
+The Rook application owns a read-only host Alloy DaemonSet (`node-storage` job) for disk latency/queue depth,
+NIC throughput/link speed/drops, CPU, memory, and pressure. It pushes to the same Mimir gateway without exposing
+a listener on the provider LAN. See the [Ceph telemetry runbook](../../../docs/runbooks/ceph-performance-telemetry.md)
+for ingestion acceptance, recording-rule units, missing-data alerts, and the bounded recovery-override cleanup.
+
+The same central Alloy retains sanitized Bayn object-store access receipts as `job="bayn-rgw"` in the existing Loki
+destination. Discovery selects `app=rook-ceph-rgw,rgw=objectstore` pods in `rook-ceph` and only their `rgw` container.
+The approved namespace Role grants `GET pods/log` to the existing collector service account. RBAC permits reading
+all pod logs in that namespace; it cannot constrain this grant by pod label. The pipeline drops unrelated and malformed
+records, then replaces matching content-hash access lines with `bayn.rgw-access.v1` JSON containing only method,
+object hash, HTTP status, the native logged-byte field and gateway latency. It retains no query strings, headers,
+principals, agents or bucket names. Object hashes stay in log content rather than metric or stream labels.
+The receipt filter accepts the LF or CRLF terminator preserved by Alloy's Kubernetes log reader. The native Alloy
+regression in `packages/scripts/src/shared/__tests__/bayn-rgw-observability-contract.test.ts` exercises that reader
+shape, malformed records and query redaction through the deployed version's processing stages.
+
+After the configuration-digest rollout, verify native `get pods --subresource=log` authorization for
+`system:serviceaccount:observability:observability-cluster-metrics-alloy` in `rook-ceph`, both discovered RGW pods,
+and exact content-hash receipt joins in Loki. Collector readiness alone does not establish receipt ingestion.
 
 Validate the Mimir tenant after sync:
 

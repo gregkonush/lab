@@ -3,6 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
+import type { Statement } from 'effect/sql/Statement'
+
+import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
+import { discoverAutonomousCyclePass } from '../runner/program'
 
 import {
   CycleState,
@@ -18,6 +23,10 @@ import {
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
+import {
+  executionActivationExpiredRestrictionReason,
+  legacyExecutionActivationExpiredRestrictionReason,
+} from '../../execution/mandate'
 import { BlockedCycleIntentStore } from '../../execution/intents/blocked-cycle'
 import { BlockedCycleIntentStoreLive } from '../../execution/intents/blocked-cycle-postgres'
 import { canonicalHashV1 } from '../../hash'
@@ -27,10 +36,15 @@ import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleStore, CycleStoreLive } from '.'
 import { makeCycleQueries } from './queries'
+import { DecisionEvidenceMismatch } from './model'
+import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
+import { databaseUtcInstant } from '../../db/clock'
+import { decideJevEntry } from '../../jev/decision'
+import { nativeJevDecisionEvidence } from '../../jev/native.test-support'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
-const encodeSqlJson = Schema.encodeSync(Schema.UnknownFromJsonString)
 const accountId = 'paper-account-intraday-store'
 const qualificationRunId = '1'.repeat(64)
 const sessionDate = '2026-08-28' as const
@@ -51,6 +65,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 const draft = (
   strategyProtocolHash = canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
   executionModel = intradayMomentumExecutionModel,
+  entryAttemptOrdinal = 1,
 ) => {
   const calendar = value(
     makeExecutionCalendarObservation({
@@ -64,11 +79,12 @@ const draft = (
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(executionModel))
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
       strategyName: 'intraday-momentum',
       qualificationRunId,
       strategyProtocolHash,
       accountId,
+      entryAttemptOrdinal,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
       executionCalendarSource: calendar.executionCalendarSource,
@@ -142,6 +158,141 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
   })
 
+  test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
+    const first = draft(undefined, undefined, 1)
+    const second = draft(undefined, undefined, 2)
+    const third = draft(undefined, undefined, 3)
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const firstReceipt = yield* store.acquire(first, acquiredAt)
+        const secondReceipt = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        const secondReplay = yield* store.acquire(second, '2026-08-28T15:01:00.000Z')
+        const thirdReceipts = yield* Effect.all(
+          [store.acquire(third, '2026-08-28T15:02:00.000Z'), store.acquire(third, '2026-08-28T15:02:00.000Z')],
+          { concurrency: 'unbounded' },
+        )
+        return {
+          firstReceipt,
+          secondReceipt,
+          secondReplay,
+          thirdReceipts,
+          first: yield* store.read(first.identity.cycleId),
+          second: yield* store.read(second.identity.cycleId),
+          slot: yield* store.readAuthoritySlot({ qualificationRunId, accountId, executionSessionDate: sessionDate }),
+        }
+      }),
+    )
+
+    expect(first.identity.cycleId).not.toBe(second.identity.cycleId)
+    expect(result.firstReceipt.created).toBeTrue()
+    expect(result.secondReceipt.created).toBeTrue()
+    expect(result.secondReplay.created).toBeFalse()
+    expect(result.thirdReceipts.filter(({ created }) => created)).toHaveLength(1)
+    expect(result.thirdReceipts.every(({ cycle }) => cycle.identity.cycleId === third.identity.cycleId)).toBeTrue()
+    expect(Option.getOrThrow(result.first).identity).toMatchObject({ entryAttemptOrdinal: 1 })
+    expect(Option.getOrThrow(result.second).identity).toMatchObject({ entryAttemptOrdinal: 2 })
+    expect(Option.getOrThrow(result.slot).identity).toMatchObject({
+      cycleId: third.identity.cycleId,
+      entryAttemptOrdinal: 3,
+    })
+  })
+
+  for (const version of ['v3', 'v4'] as const)
+    test(`discovery preserves the ${version} pre-open block and converges on one new unbound attempt`, async () => {
+      const currentDraft = draft()
+      if (currentDraft.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4')
+        throw new Error('expected v4 fixture')
+      const { cycleId: _id, schemaVersion: _schema, entryAttemptOrdinal: _ordinal, ...material } = currentDraft.identity
+      const candidate =
+        version === 'v4'
+          ? currentDraft
+          : value(
+              makeCycleDraft(
+                value(makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' })),
+                currentDraft.window,
+              ),
+            )
+      const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+      if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+        throw new Error('invalid policy')
+      const forbidden = () => Effect.die(new Error('unexpected recovery-side broker or decision operation'))
+      const broker: BrokerReadShape = {
+        account: forbidden(),
+        accountConfiguration: forbidden(),
+        positions: forbidden(),
+        assetBySymbol: forbidden,
+        orders: forbidden,
+        orderById: forbidden,
+        orderByClientId: forbidden,
+        fillActivities: forbidden,
+        feeActivities: forbidden,
+        marketCalendar: () =>
+          Effect.succeed({
+            value: {
+              schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+              source: 'alpaca-v2-calendar',
+              timeZone: 'UTC',
+              requestedRange: { start: sessionDate, end: sessionDate },
+              normalizedResponseHash: '8'.repeat(64),
+              sessions: [
+                { date: sessionDate, openAt: '2026-08-28T13:30:00.000Z', closeAt: '2026-08-28T20:00:00.000Z' },
+              ],
+            },
+            evidence: {
+              requestId: 'recovery-calendar',
+              status: 200,
+              contentHash: '9'.repeat(64),
+              observedAt: '2026-08-28T13:11:00.000Z',
+            },
+          }),
+      }
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const store = yield* CycleStore
+          yield* store.acquire(candidate, acquiredAt)
+          const blocked = yield* store.block(
+            candidate.identity.cycleId,
+            CycleTerminalReason.ProvenanceMismatch,
+            '2026-08-28T13:10:00.000Z',
+          )
+          yield* TestClock.setTime(Date.parse('2026-08-28T13:11:00.000Z'))
+          const discover = discoverAutonomousCyclePass({
+            cycleBindingId: qualificationRunId,
+            accountId,
+            strategyName: 'intraday-momentum',
+            strategyProtocolHash: candidate.identity.strategyProtocolHash,
+            authorityGenerationHash: '7'.repeat(64),
+            executionPolicy,
+            buildDecision: forbidden,
+          })
+          const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
+          const sql = yield* PgClient.PgClient
+          const [intents] = yield* sql<{ count: string }>`SELECT count(*)::text AS count FROM intents`
+          return {
+            blocked: blocked.cycle,
+            previous: yield* store.read(candidate.identity.cycleId),
+            current: yield* store.readAuthoritySlot({
+              qualificationRunId,
+              accountId,
+              executionSessionDate: sessionDate,
+            }),
+            attempts,
+            intentCount: intents?.count,
+          }
+        }).pipe(Effect.provideService(BrokerRead, broker), Effect.provide(TestClock.layer())),
+      )
+      expect(Option.getOrThrow(result.previous)).toEqual(result.blocked)
+      const current = Option.getOrThrow(result.current)
+      expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
+      expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
+      expect(current.state).toBe(CycleState.Pending)
+      expect(current.bindings).toEqual({})
+      expect(current.window).toEqual(candidate.window)
+      expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
+      expect(result.intentCount).toBe('0')
+    })
+
   test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {
     const candidate = draft(canonicalHashV1({ strategy: 'intraday-momentum', boundaries: 'regular-session' }), {
       ...intradayMomentumExecutionModel,
@@ -195,6 +346,67 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(Option.isNone(result.after)).toBeTrue()
   })
 
+  test('unfinished recovery avoids historical decision payload reads', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        const candidate = draft()
+        yield* store.acquire(candidate, acquiredAt)
+        yield* store.activate(candidate.identity.cycleId, activatedAt)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text PRIMARY KEY, decision_hash text NOT NULL, document jsonb NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              SELECT md5(n::text) || md5('cycle-' || n::text),
+                md5('decision-' || n::text) || md5(n::text),
+                jsonb_build_object(
+                  'schemaVersion', 'bayn.paper-cycle-decision.v1', 'mode', 'PAPER',
+                  'targetPlan', jsonb_build_object('status', 'PLANNED'),
+                  'retainedEvidence', (SELECT jsonb_agg(md5(k::text)) FROM generate_series(1, 512) AS k)
+                )
+              FROM generate_series(1, 128) AS n`
+            yield* sql`ANALYZE autonomous_cycle_shadow_decisions`
+            let lookup: Statement<Record<string, unknown>> | undefined
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (statement.compile()[0].includes('WITH cycle_candidates AS')) lookup = statement
+                return statement
+              },
+            })
+            const cycles = yield* makeCycleQueries(monitored).selectOldestUnfinishedCycle({
+              qualificationRunId,
+              accountId,
+            })
+            expect(cycles.map((cycle) => cycle.identity.cycleId)).toEqual([candidate.identity.cycleId])
+            if (lookup === undefined) throw new Error('Recovery did not read unfinished cycles')
+            const [query, parameters] = lookup.compile()
+            const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+            const plans = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                }),
+              ),
+            )(explanation)
+            const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+            if (root === undefined) throw new Error('PostgreSQL did not return the recovery query plan')
+            const touchedBlocks = [
+              'Shared Hit Blocks',
+              'Shared Read Blocks',
+              'Local Hit Blocks',
+              'Local Read Blocks',
+            ].reduce((sum, key) => sum + Number(root[key] ?? 0), 0)
+            expect(touchedBlocks).toBeLessThan(32)
+          }),
+        )
+      }),
+    )
+  })
+
   test('rejects conflicting authority-slot content and invalid lifecycle transitions', async () => {
     const candidate = draft()
     const conflicting = draft('f'.repeat(64))
@@ -224,7 +436,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     const authorityGenerationHash = '2'.repeat(64)
     const policyHash = 'a'.repeat(64)
     const parentAuthorityUpdatedAt = '2026-08-28T14:57:30.000Z'
-    const authorityUpdatedAt = '2026-08-28T14:58:00.000Z'
+    const authorityUpdatedAt = '2026-08-28T14:58:00.038402Z'
     const forgedReconciledAt = '2026-08-28T14:57:00.000Z'
     const reconciledAt = '2026-08-28T14:59:00.000Z'
     const observedAt = '2026-08-28T15:00:00.000Z'
@@ -263,7 +475,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         reconciliationHash,
         policyHash,
         decisionMarketData: {
-          schemaVersion: 'bayn.execution-market-data-binding.v2',
+          schemaVersion: 'bayn.execution-market-data-binding.v3',
           snapshotId,
           contentHash: snapshotContentHash,
           observedAt,
@@ -282,7 +494,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             content_hash, status, discrepancies, reconciled_at
           ) VALUES (
             ${reconciliationId}, 'bayn.paper-reconciliation.v1', ${accountId}, ${stateHash}, ${stateHash},
-            ${reconciliationHash}, 'EXACT', ${sql.json(encodeSqlJson([]))}, ${reconciledAt}
+            ${reconciliationHash}, 'EXACT', ${sql.json([])}, ${reconciledAt}
           )
         `
         yield* sql`
@@ -459,38 +671,92 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             )
         `
         const queries = makeCycleQueries(sql)
-        const missingArchiveReference = yield* queries.decisionEvidenceMatches(document)
+        const missingStreamReference = yield* queries.decisionEvidenceMismatch(document)
         yield* sql`
-          INSERT INTO intraday_snapshot_references (
+          INSERT INTO streaming_snapshot_references (
             snapshot_id, schema_version, content_hash, observed_at, manifest
           ) VALUES (
-            ${snapshotId}, 'bayn.intraday-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
+            ${snapshotId}, 'bayn.streaming-snapshot-reference.v1', ${snapshotContentHash}, ${observedAt},
             ${sql.json({
-              schemaVersion: 'bayn.intraday-market-snapshot.v1',
+              schemaVersion: 'bayn.streaming-market-snapshot.v1',
+              streaming: { schemaVersion: 'bayn.streaming-input-cut.v1' },
               snapshotId,
               contentHash: snapshotContentHash,
               observedAt,
             })}
           )
         `
-        const exact = yield* queries.decisionEvidenceMatches(document)
+        // Exercise the production PostgreSQL read/decoder: Date conversion used to truncate this identity.
+        const storedAuthority = yield* makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), undefined)
+          .readAuthorityState
+        expect(storedAuthority.updatedAt).toBe(authorityUpdatedAt)
+        const exact = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: { ...document.bindings, riskContext: { ...riskContext, authority: storedAuthority } },
+        })
+        const changedTimestamp = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...storedAuthority, updatedAt: '2026-08-28T14:58:00.038403Z' },
+            },
+          },
+        })
+        const truncatedTimestamp = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            riskContext: {
+              ...riskContext,
+              authority: { ...storedAuthority, updatedAt: new Date(authorityUpdatedAt).toISOString() },
+            },
+          },
+        })
+        const missingReconciliation = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: { ...document.bindings, reconciliationId: '9'.repeat(64) },
+        })
+        const prematureDecision = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          createdAt: forgedReconciledAt,
+        })
         const unverifiedSnapshotId = 'd'.repeat(64)
         const unverifiedSnapshotContentHash = 'e'.repeat(64)
-        const unverifiedArchiveReference = yield* queries.decisionEvidenceMatches({
+        const marketData = document.bindings.decisionMarketData
+        if (marketData?.schemaVersion !== 'bayn.execution-market-data-binding.v3')
+          throw new Error('Fixture requires a streaming decision binding')
+        const missingPricing = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          bindings: {
+            ...document.bindings,
+            executionMarketData: {
+              ...marketData,
+              snapshotId: unverifiedSnapshotId,
+              contentHash: unverifiedSnapshotContentHash,
+            },
+          },
+        })
+        const missingJev = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          strategyDecision: Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence())),
+        })
+        const unverifiedStreamReference = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: {
             ...document.bindings,
             snapshotId: unverifiedSnapshotId,
             snapshotContentHash: unverifiedSnapshotContentHash,
             decisionMarketData: {
-              schemaVersion: 'bayn.execution-market-data-binding.v2',
+              schemaVersion: 'bayn.execution-market-data-binding.v3',
               snapshotId: unverifiedSnapshotId,
               contentHash: unverifiedSnapshotContentHash,
               observedAt,
             },
           },
         } as unknown as ExecutionDecisionDocument)
-        const forgedAuthority = yield* queries.decisionEvidenceMatches({
+        const forgedAuthority = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: {
             ...document.bindings,
@@ -500,45 +766,88 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             },
           },
         })
-        const forgedEquity = yield* queries.decisionEvidenceMatches({
+        const forgedEquity = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: {
             ...document.bindings,
             riskContext: { ...riskContext, dayStartEquityMicros: (BigInt(equityMicros) + 1n).toString() },
           },
         })
-        const forgedReconciliationCutoff = yield* queries.decisionEvidenceMatches({
+        const forgedReconciliationCutoff = yield* queries.decisionEvidenceMismatch({
           ...document,
           deltaRisk: [{ facts: { state: { reconciliation: { reconciledAt: forgedReconciledAt } } } }],
         } as unknown as ExecutionDecisionDocument)
-        const forgedPolicyHash = yield* queries.decisionEvidenceMatches({
+        const forgedPolicyHash = yield* queries.decisionEvidenceMismatch({
           ...document,
           bindings: { ...document.bindings, policyHash: 'c'.repeat(64) },
         } as unknown as ExecutionDecisionDocument)
+        const nonemptyPlanMissingRiskFacts = yield* queries.decisionEvidenceMismatch({
+          ...document,
+          deltaRisk: [],
+          targetPlan: { intentTargets: [{}] },
+        } as unknown as ExecutionDecisionDocument)
         return {
-          missingArchiveReference,
+          missingStreamReference,
           exact,
-          unverifiedArchiveReference,
+          changedTimestamp,
+          truncatedTimestamp,
+          missingReconciliation,
+          prematureDecision,
+          missingPricing,
+          missingJev,
+          unverifiedStreamReference,
           forgedAuthority,
           forgedEquity,
           forgedPolicyHash,
           forgedReconciliationCutoff,
+          nonemptyPlanMissingRiskFacts,
         }
       }),
     )
 
     expect(result).toEqual({
-      missingArchiveReference: false,
-      exact: true,
-      unverifiedArchiveReference: false,
-      forgedAuthority: false,
-      forgedEquity: false,
-      forgedPolicyHash: false,
-      forgedReconciliationCutoff: false,
+      missingStreamReference: DecisionEvidenceMismatch.DecisionMarketData,
+      exact: null,
+      changedTimestamp: DecisionEvidenceMismatch.RiskContext,
+      truncatedTimestamp: DecisionEvidenceMismatch.RiskContext,
+      missingReconciliation: DecisionEvidenceMismatch.Reconciliation,
+      prematureDecision: DecisionEvidenceMismatch.Reconciliation,
+      missingPricing: DecisionEvidenceMismatch.ExecutionMarketData,
+      missingJev: DecisionEvidenceMismatch.Jev,
+      unverifiedStreamReference: DecisionEvidenceMismatch.DecisionMarketData,
+      forgedAuthority: DecisionEvidenceMismatch.RiskContext,
+      forgedEquity: DecisionEvidenceMismatch.RiskContext,
+      forgedPolicyHash: DecisionEvidenceMismatch.RiskContext,
+      forgedReconciliationCutoff: DecisionEvidenceMismatch.RiskContext,
+      nonemptyPlanMissingRiskFacts: DecisionEvidenceMismatch.RiskContext,
     })
   })
 
-  test('bounds completion reads over a large history without admitting stale or incomplete IOC evidence', async () => {
+  test('reads exact PostgreSQL authority instants in UTC without changing historical millisecond encodings', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`SET LOCAL TIME ZONE 'America/Los_Angeles'`
+            for (const [stored, expected] of [
+              ['2026-08-28T14:58:00.038402Z', '2026-08-28T14:58:00.038402Z'],
+              ['2026-08-28T14:58:00.038000Z', '2026-08-28T14:58:00.038Z'],
+              ['2026-08-28T14:58:00.000000Z', '2026-08-28T14:58:00.000Z'],
+            ]) {
+              const [row] = yield* sql<{ value: string; exact: boolean }>`
+                SELECT ${databaseUtcInstant(sql, sql`${stored}::timestamptz`)} AS value,
+                  ${databaseUtcInstant(sql, sql`${stored}::timestamptz`)}::timestamptz = ${stored}::timestamptz AS exact
+              `
+              expect(row).toEqual({ value: expected, exact: true })
+            }
+          }),
+        )
+      }),
+    )
+  })
+
+  test('bounds terminal recovery reads over a large history without admitting stale or incomplete evidence', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -570,10 +879,18 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               quantity_micros numeric, filled_quantity_micros numeric, status text
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE broker_events (
-              event_id text, source_sequence bigint, observed_at timestamptz
+              event_id text, source_sequence bigint, observed_at timestamptz,
+              account_id text DEFAULT 'account'
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE fills (
-              account_id text, broker_order_id text, intent_id text
+              account_id text, broker_order_id text, intent_id text,
+              client_order_id text DEFAULT 'client', symbol text DEFAULT 'AMZN', side text DEFAULT 'BUY',
+              quantity_micros numeric DEFAULT 1000000
+            ) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE position_snapshots (
+              snapshot_id text, account_id text, position_count integer, observed_at timestamptz,
+              ingestion_sequence bigint GENERATED ALWAYS AS IDENTITY,
+              ingestion_order_trusted boolean DEFAULT true
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE reconciliations (
               account_id text, status text, expected_hash text, observed_hash text,
@@ -621,7 +938,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               'event', 'account', 'broker-order', 'client', 'intent', 'AMZN', 'BUY',
               'LIMIT', 'IOC', 38000000, 0, 'CANCELED'
             )`
-            yield* sql`INSERT INTO broker_events VALUES ('event', 1, '2026-09-08T17:02:00Z')`
+            yield* sql`INSERT INTO broker_events(event_id,source_sequence,observed_at) VALUES ('event', 1, '2026-09-08T17:02:00Z')`
             yield* sql`INSERT INTO reconciliations
               SELECT 'account', 'EXACT', 'state', 'state', '[]'::jsonb,
                 '2026-09-08T17:00:00Z'::timestamptz - sequence * interval '1 second'
@@ -657,8 +974,35 @@ describePostgres('PostgreSQL intraday cycle store', () => {
 
             yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
             expect(yield* completionMatches()).toBe(false)
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id)
+              VALUES ('account', 'broker-order', 'intent')`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
+              VALUES ('partial-close', 'account', 1, '2026-09-08T17:02:30Z')`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0`
+            expect(yield* completionMatches()).toBe(true)
+            yield* sql`UPDATE fills SET quantity_micros = 500000`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE fills SET quantity_micros = 1000000, client_order_id = 'wrong-client'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE fills SET client_order_id = 'client'`
+            yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = false`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = true,
+              observed_at = '2026-09-08T17:03:30Z'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE position_snapshots SET observed_at = '2026-09-08T17:02:30Z'`
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:03:00Z'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
+            yield* sql`UPDATE orders SET filled_quantity_micros = quantity_micros`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            expect(yield* completionMatches()).toBe(true)
+            yield* sql`DELETE FROM fills`
+            yield* sql`DELETE FROM position_snapshots`
             yield* sql`UPDATE orders SET filled_quantity_micros = 0`
-            yield* sql`INSERT INTO fills VALUES ('account', 'broker-order', 'intent')`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account', 'broker-order', 'intent')`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`DELETE FROM fills`
             yield* sql`UPDATE orders SET client_order_id = 'wrong-client'`
@@ -682,11 +1026,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,
-              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text
+              qualification_run_id text, research_plan_hash text, strategy_protocol_hash text,
+              broker_environment text DEFAULT 'sandbox'
             ) ON COMMIT DROP`
             yield* sql`INSERT INTO authority_generations VALUES (
               ${generationHash}, 'account', 'PAPER', 'bayn.paper-authority-generation.v3',
-              NULL, ${researchPlanHash}, 'protocol'
+              NULL, ${researchPlanHash}, 'protocol', 'sandbox'
             )`
             yield* sql`CREATE TEMP TABLE authority_state (
               singleton boolean, generation_hash text, maximum text, effective text, kill_state text,
@@ -708,7 +1053,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               blockedCycleCount: 0,
               terminalIntentCount: 1,
             })
-            yield* sql`INSERT INTO fills VALUES ('account', 'broker-order', 'intent')`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account', 'broker-order', 'intent')`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`DELETE FROM fills`
             yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
@@ -722,13 +1067,156 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:05:00Z'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE autonomous_cycles SET terminal_at = '2026-09-08T17:03:30Z'`
-            yield* sql`UPDATE intents SET terminal_outcome = 'FILLED'`
+            yield* sql`UPDATE intents SET terminal_outcome = 'REJECTED'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE intents SET terminal_outcome = 'CANCELED'`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id)
+              VALUES ('account', 'broker-order', 'intent')`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
+              VALUES ('closed-partial-entry', 'account', 0, '2026-09-08T17:02:30Z')`
+            expect(yield* settle).toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: generationHash,
+              blockedCycleCount: 0,
+              terminalIntentCount: 1,
+            })
+            yield* sql`UPDATE position_snapshots SET position_count = 1`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE position_snapshots SET position_count = 0`
+            yield* sql`UPDATE fills SET quantity_micros = 500000`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+            yield* sql`UPDATE fills SET quantity_micros = 1000000`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
             expect(authority).toEqual([{ effective: 'OBSERVE', kill_state: 'ACTIVE' }])
+
+            yield* sql`ALTER TABLE authority_generations
+              ADD previous_generation_hash text,
+              ADD proof_plan_hash text,
+              ADD authority_version bigint,
+              ADD activated_at timestamptz,
+              ADD broker_identity_schema_version text DEFAULT 'bayn.broker-identity.v2',
+              ADD broker_identity_hash text DEFAULT 'identity',
+              ADD broker_provider text DEFAULT 'alpaca'`
+            yield* sql`UPDATE authority_generations SET proof_plan_hash = ${researchPlanHash}`
+            yield* sql`INSERT INTO authority_generations (
+              generation_hash, previous_generation_hash, maximum, authority_version, activated_at, account_id
+            ) VALUES ('successor', ${generationHash}, 'OBSERVE', 4, '2026-09-08T17:05:00Z', 'account')`
+            yield* sql`UPDATE authority_state SET reason = ${restriction}`
+            yield* sql`ALTER TABLE reconciliations ADD reconciliation_id text DEFAULT 'reconciliation'`
+            yield* sql`TRUNCATE position_snapshots`
+            yield* sql`CREATE INDEX ON position_snapshots (account_id, observed_at DESC)`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
+              SELECT sequence::text, 'account', 0,
+                '2026-09-08T17:00:00Z'::timestamptz - sequence * interval '1 second'
+              FROM generate_series(1, 100000) AS sequence`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at) VALUES (
+              'current', 'account', 0, '2026-09-08T17:02:00Z'
+            )`
+            yield* sql`ANALYZE position_snapshots`
+            const rearmEligible = sql`SELECT research_paper_rearm_eligible(
+              'successor', 4, '2026-09-08T17:05:00Z'::timestamptz
+            ) AS eligible`.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ eligible: Schema.Boolean })]))),
+              Effect.map(([row]) => row.eligible),
+            )
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE authority_state SET reason = ${'reconciliation discrepancy ' + 'a'.repeat(64)}`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'current'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0,
+              observed_at = '2026-09-08T17:04:00Z' WHERE snapshot_id = 'current'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET observed_at = '2026-09-08T17:02:00Z'
+              WHERE snapshot_id = 'current'`
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at) VALUES (
+              'z-tied', 'account', 1, '2026-09-08T17:02:00Z'
+            )`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at) VALUES (
+              'foreign', 'other-account', 1, '2026-09-08T17:04:00Z'
+            )`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE mutation_events SET event_type = 'SUBMIT_STARTED' WHERE sequence = 350`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
+            yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
+            expect(yield* rearmEligible).toBe(false)
+
+            // Expiry with zero executions has no qualified performance receipt. The real migrated
+            // rearm predicate must accept a settled empty/NO_TRADE mandate, without weakening
+            // account settlement or treating the missing performance as profitable.
+            yield* sql`CREATE TEMP TABLE accounting_transactions (intent_id text) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_forward_performance_receipts (
+              authority_generation_hash text
+            ) ON COMMIT DROP`
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE autonomous_cycles SET qualification_run_id = ${researchPlanHash},
+              strategy_protocol_hash = 'protocol'`
+            for (const expiry of [
+              executionActivationExpiredRestrictionReason,
+              legacyExecutionActivationExpiredRestrictionReason,
+            ]) {
+              yield* sql`UPDATE authority_state SET reason = ${expiry}`
+              expect(yield* rearmEligible).toBe(true)
+              yield* sql`UPDATE autonomous_cycles SET state = 'NO_TRADE'`
+              expect(yield* rearmEligible).toBe(true)
+            }
+            const expiredState = yield* sql`SELECT * FROM authority_state`
+            yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account','broker-order','intent')`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`DELETE FROM fills`
+            yield* sql`UPDATE orders SET filled_quantity_micros = 1`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`INSERT INTO accounting_transactions VALUES ('intent')`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`DELETE FROM accounting_transactions`
+            yield* sql`UPDATE intents SET state = 'SUBMITTING'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE intents SET state = 'TERMINAL'`
+            yield* sql`UPDATE mutation_events SET event_type = 'SUBMIT_STARTED' WHERE sequence = 350`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE mutation_events SET event_type = 'RECOVERY_FOUND' WHERE sequence = 350`
+            yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE autonomous_cycles SET state = 'NO_TRADE'`
+            yield* sql`UPDATE orders SET status = 'NEW'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET status = 'CANCELED', intent_id = NULL`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE orders SET intent_id = 'intent'`
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:04:00Z'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(true)
+            expect(yield* sql`SELECT * FROM authority_state`).toEqual(expiredState)
+            expect(yield* sql`SELECT * FROM autonomous_forward_performance_receipts`).toHaveLength(0)
+
+            // A mandate that expired before creating any cycle/intent must also be able to retire.
+            yield* sql`DELETE FROM autonomous_cycle_shadow_decisions`
+            yield* sql`DELETE FROM autonomous_cycles`
+            yield* sql`DELETE FROM mutation_events`
+            yield* sql`DELETE FROM orders`
+            yield* sql`DELETE FROM broker_events`
+            yield* sql`DELETE FROM intents`
+            expect(yield* rearmEligible).toBe(true)
+            yield* sql`UPDATE position_snapshots SET position_count = 1 WHERE snapshot_id = 'z-tied'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE position_snapshots SET position_count = 0 WHERE snapshot_id = 'z-tied'`
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:04:00Z'`
+            expect(yield* rearmEligible).toBe(false)
+            yield* sql`UPDATE authority_state SET updated_at = '2026-09-08T17:01:30Z', reason = 'operator kill switch'`
+            expect(yield* rearmEligible).toBe(false)
           }),
         )
       }).pipe(Effect.provide(BlockedCycleIntentStoreLive)),

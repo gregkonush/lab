@@ -19,14 +19,13 @@ use futures::{SinkExt, StreamExt};
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::ListParams};
 use rand::distr::{Alphanumeric, SampleString};
-use reqwest::redirect::Policy;
 use serde::Deserialize;
 use tokio::{
     net::TcpStream,
     sync::{Mutex, OnceCell},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
     tungstenite::{
         Error as TungsteniteError, Message as TungsteniteMessage, client::IntoClientRequest,
         protocol::WebSocketConfig,
@@ -55,6 +54,8 @@ const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
 type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+mod terminal_rpc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpstreamWebSocketError {
@@ -152,8 +153,9 @@ pub struct GatewayState {
     pub client: Client,
     pub namespace: String,
     pub tickets: TicketStore,
+    authorization: crate::authz::WorkspaceAuthorization,
     activity: ActivityTracker,
-    http: reqwest::Client,
+    identity: crate::identity::WorkloadIdentity,
     preview_origin: PreviewOrigin,
     preview_guests: Arc<Mutex<HashMap<String, PreviewGuestBinding>>>,
 }
@@ -199,16 +201,16 @@ impl GatewayState {
         tickets: TicketStore,
         activity: ActivityTracker,
         preview_origin: PreviewOrigin,
+        identity: crate::identity::WorkloadIdentity,
+        authorization: crate::authz::WorkspaceAuthorization,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             client,
             namespace,
             tickets,
+            authorization,
             activity,
-            http: reqwest::Client::builder()
-                .redirect(Policy::none())
-                .connect_timeout(Duration::from_secs(5))
-                .build()?,
+            identity,
             preview_origin,
             preview_guests: Arc::new(Mutex::new(HashMap::new())),
         })
@@ -235,6 +237,7 @@ impl GatewayState {
         let namespace = self.namespace.clone();
         let agent_id = session.agent_id.clone();
         let incarnation = session.incarnation.clone();
+        let identity = self.identity.clone();
         let guest = binding
             .get_or_try_init(|| async move {
                 GuestClient::for_agent_incarnation(
@@ -242,6 +245,7 @@ impl GatewayState {
                     &namespace,
                     &agent_id,
                     incarnation.as_deref(),
+                    &identity,
                 )
                 .await
             })
@@ -403,6 +407,9 @@ pub fn preview_router(state: GatewayState) -> Router {
 }
 
 async fn readiness(State(state): State<GatewayState>) -> StatusCode {
+    if state.authorization.ready().await.is_err() {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
     if state.tickets.stats().is_err() {
         return StatusCode::SERVICE_UNAVAILABLE;
     }
@@ -461,8 +468,20 @@ async fn terminal_websocket(
             "ticket is not scoped to a terminal",
         );
     };
+    let access = state
+        .authorization
+        .access(&state.namespace, &ticket.agent_id, &ticket.owner_hash);
+    if let Err(error) = access.require().await {
+        return status_response(error.code(), error.message());
+    }
     state.activity.touch(&ticket.agent_id);
-    let guest = match GuestClient::for_agent(state.client, &state.namespace, &ticket.agent_id).await
+    let guest = match GuestClient::for_agent(
+        state.client,
+        &state.namespace,
+        &ticket.agent_id,
+        &state.identity,
+    )
+    .await
     {
         Ok(guest) => guest,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
@@ -472,13 +491,8 @@ async fn terminal_websocket(
         .into_iter()
         .filter(|(name, _)| matches!(name.as_str(), "reconnect" | "since" | "cols" | "rows"))
         .collect::<Vec<_>>();
-    let query = serde_urlencoded::to_string(terminal_query).unwrap_or_default();
-    let url = format!(
-        "ws://{}/v1/terminals/{terminal_id}/ws{}{}",
-        guest.base_url().trim_start_matches("http://"),
-        if query.is_empty() { "" } else { "?" },
-        query,
-    );
+    let attachment = terminal_rpc::attachment(&terminal_id, &terminal_query);
+    let rpc = guest.rpc.clone();
     let activity = state.activity;
     let agent_id = ticket.agent_id;
     websocket
@@ -486,8 +500,11 @@ async fn terminal_websocket(
         .max_message_size(MAX_WEBSOCKET_MESSAGE)
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER)
         .protocols([protocol])
-        .on_upgrade(move |socket| {
-            bridge_websocket(socket, url, guest.token().to_owned(), activity, agent_id)
+        .on_upgrade(move |socket| async move {
+            tokio::select! {
+                _ = terminal_rpc::bridge(socket, rpc, attachment, activity, agent_id) => {},
+                _ = access.revoked() => {},
+            }
         })
         .into_response()
 }
@@ -508,6 +525,14 @@ async fn open_preview(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
+    if let Err(error) = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .require()
+        .await
+    {
+        return status_response(error.code(), error.message());
+    }
     let location = preview_launch_location(
         &state.preview_origin,
         &session.id,
@@ -576,6 +601,14 @@ async fn preview_bootstrap(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
+    if let Err(error) = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .require()
+        .await
+    {
+        return status_response(error.code(), error.message());
+    }
     state.activity.touch(&session.agent_id);
     let lifetime = if session.port == crate::guest::EDITOR_PORT {
         86400
@@ -709,6 +742,14 @@ async fn preview_host_proxy(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
+    if let Err(error) = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .require()
+        .await
+    {
+        return status_response(error.code(), error.message());
+    }
     state.activity.touch(&session.agent_id);
     let guest = match state.preview_guest(&session).await {
         Ok(guest) => guest,
@@ -736,24 +777,31 @@ async fn preview_host_proxy(
         query,
     );
     if let Some(websocket) = websocket {
-        let websocket_target = target.replacen("http://", "ws://", 1);
+        let websocket_target = target
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
         let token = guest.client.token().to_owned();
         let activity = state.activity.clone();
         let agent_id = session.agent_id.clone();
-        let (upstream, selected_protocol) =
-            match connect_upstream_websocket(&websocket_target, &token, Some(request.headers()))
-                .await
-            {
-                Ok(connection) => connection,
-                Err(error) => {
-                    if error.invalidates_guest_binding() {
-                        state
-                            .invalidate_preview_guest(&session.id, &guest.binding)
-                            .await;
-                    }
-                    return StatusCode::BAD_GATEWAY.into_response();
+        let (upstream, selected_protocol) = match connect_upstream_websocket(
+            &websocket_target,
+            &token,
+            Some(request.headers()),
+            guest.client.preview_tls.clone(),
+            &guest.client.claim_headers,
+        )
+        .await
+        {
+            Ok(connection) => connection,
+            Err(error) => {
+                if error.invalidates_guest_binding() {
+                    state
+                        .invalidate_preview_guest(&session.id, &guest.binding)
+                        .await;
                 }
-            };
+                return StatusCode::BAD_GATEWAY.into_response();
+            }
+        };
         let websocket = websocket
             .max_frame_size(MAX_WEBSOCKET_FRAME)
             .max_message_size(MAX_WEBSOCKET_MESSAGE)
@@ -773,6 +821,12 @@ async fn preview_host_proxy(
                             .tickets
                             .preview_session(&session.id, &session.token)
                             .is_err()
+                            || state
+                                .authorization
+                                .access(&state.namespace, &session.agent_id, &session.owner_hash)
+                                .require()
+                                .await
+                                .is_err()
                         {
                             return;
                         }
@@ -854,7 +908,8 @@ async fn proxy_http(
                 .into_response();
         }
     };
-    let mut upstream = state
+    let mut upstream = guest
+        .client
         .http
         .request(parts.method, target)
         .bearer_auth(guest.client.token());
@@ -896,15 +951,23 @@ async fn proxy_http(
     }
     let headers = upstream.headers().clone();
     let is_editor = session.port == crate::guest::EDITOR_PORT;
-    let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
+    let inject_bridge = session.port != crate::guest::BROWSER_PORT
+        && should_inject_preview_bridge(&request_method, status, &headers);
+    let upstream_body = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .guard_stream(upstream.bytes_stream().map(|chunk| {
+            chunk.map_err(|error| {
+                tonic::Status::unavailable(format!("preview stream failed: {error}"))
+            })
+        }));
     let (body, bridge_nonce) = if inject_bridge {
-        let bytes = match to_bytes(Body::from_stream(upstream.bytes_stream()), MAX_PROXY_BODY).await
-        {
+        let bytes = match to_bytes(Body::from_stream(upstream_body), MAX_PROXY_BODY).await {
             Ok(bytes) => bytes,
             Err(_) => {
                 return (
                     StatusCode::BAD_GATEWAY,
-                    "preview response body is too large",
+                    "preview response body could not be read",
                 )
                     .into_response();
             }
@@ -921,7 +984,7 @@ async fn proxy_http(
             None => (Body::from(bytes), None),
         }
     } else {
-        (Body::from_stream(upstream.bytes_stream()), None)
+        (Body::from_stream(upstream_body), None)
     };
     let preview_origin = state.preview_origin.origin(&session.id);
     let frame_ancestors = if is_editor {
@@ -983,37 +1046,26 @@ async fn proxy_http(
         .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
-async fn bridge_websocket(
-    mut browser: axum::extract::ws::WebSocket,
-    target: String,
-    token: String,
-    activity: ActivityTracker,
-    agent_id: String,
-) {
-    activity.touch(&agent_id);
-    let Ok((upstream, _)) = connect_upstream_websocket(&target, &token, None).await else {
-        let _ = browser.send(AxumMessage::Close(None)).await;
-        return;
-    };
-    bridge_open_websocket(browser, upstream, activity, agent_id).await;
-}
-
 async fn connect_upstream_websocket(
     target: &str,
     token: &str,
     forwarded_headers: Option<&HeaderMap>,
+    tls: Option<Arc<rustls::ClientConfig>>,
+    claim_headers: &HeaderMap,
 ) -> Result<(UpstreamWebSocket, Option<String>), UpstreamWebSocketError> {
-    let request = upstream_websocket_request(target, token, forwarded_headers)
+    let mut request = upstream_websocket_request(target, token, forwarded_headers)
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
+    request.headers_mut().extend(claim_headers.clone());
     let requested_protocols = websocket_protocols(request.headers())
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     let config = WebSocketConfig::default()
         .max_frame_size(Some(MAX_WEBSOCKET_FRAME))
         .max_message_size(Some(MAX_WEBSOCKET_MESSAGE))
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
-    let (upstream, response) = connect_async_with_config(request, Some(config), false)
-        .await
-        .map_err(|error| classify_upstream_websocket_error(&error))?;
+    let (upstream, response) =
+        connect_async_tls_with_config(request, Some(config), false, tls.map(Connector::Rustls))
+            .await
+            .map_err(|error| classify_upstream_websocket_error(&error))?;
     let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)
         .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
     Ok((upstream, selected_protocol))
@@ -1146,6 +1198,7 @@ fn status_response(code: tonic::Code, message: &str) -> axum::response::Response
         tonic::Code::PermissionDenied => StatusCode::FORBIDDEN,
         tonic::Code::NotFound => StatusCode::NOT_FOUND,
         tonic::Code::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::BAD_REQUEST,
     };
     (status, message.to_owned()).into_response()
@@ -1380,6 +1433,8 @@ fn forward_request_header(name: &HeaderName) -> bool {
             | "x-forwarded-for"
             | "x-forwarded-host"
             | "x-forwarded-proto"
+            | "x-tengri-microvm-uid"
+            | "x-tengri-claim-epoch"
     )
 }
 
@@ -1431,6 +1486,8 @@ mod tests {
                 "https://proompteng.ai".to_owned(),
             )
             .expect("preview origin"),
+            crate::identity::WorkloadIdentity::Fixture(8080),
+            crate::authz::WorkspaceAuthorization::Fixture,
         )
         .expect("gateway state")
     }
@@ -1646,6 +1703,51 @@ mod tests {
         )
         .await;
         assert_eq!(unavailable, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn readiness_and_preview_bootstrap_fail_closed_when_spicedb_is_unavailable() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let fixture = crate::authz::tests::SpiceFixture::new().await;
+        let mut state = test_gateway_state(Client::new(service, "tengri"));
+        state.authorization = fixture.authorization.clone();
+        fixture.mode.store(4, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            readiness(State(state.clone())).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        for (mode, expected) in [
+            (1, StatusCode::FORBIDDEN),
+            (4, StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            fixture
+                .mode
+                .store(mode, std::sync::atomic::Ordering::SeqCst);
+            let ticket = state
+                .tickets
+                .issue_preview(&"a".repeat(64), "agent-fixture", 3000, "/", "")
+                .unwrap();
+            let session = state.tickets.consume_preview(&ticket.token).unwrap();
+            let response = preview_router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/_tengri/bootstrap")
+                        .header(header::HOST, format!("tengri-{}.proompteng.ai", session.id))
+                        .body(Body::from(
+                            serde_json::json!({"token": session.token}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(!response.headers().contains_key(header::SET_COOKIE));
+            let status = response.status();
+            let body = to_bytes(response.into_body(), MAX_BOOTSTRAP_BODY)
+                .await
+                .unwrap();
+            assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
+        }
     }
 
     #[tokio::test]

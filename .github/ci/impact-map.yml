@@ -68,11 +68,11 @@ targets:
       - .github/workflows/forgejo-image-publish.yml
       - argocd/applications/forgejo/upstream-image.json
       - argocd/applications/hermes/**
+      - argocd/applications/kargo/stages.yaml
       - argocd/applications/kube-router/**
       - argocd/applications/buzz/networkpolicy.yaml
       - argocd/applications/clickhouse-upgrade-acceptance/preparation.yaml
       - argocd/applications/observability/grafana-upgrade-backup.yaml
-      - argocd/applications/observability/mimir-kafka-upgrade-backup.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/preparation.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/recovery.yaml
       - argocd/applications/postgres-upgrade-acceptance/base/three-source-recovery.yaml
@@ -204,6 +204,7 @@ targets:
       - flake.lock
       - flake.nix
       - nix/images/agents.nix
+      - nix/verify-agents-shell-image-lifecycle.sh
       - nix/images/bun-workspace-service.nix
       - nix/images/openai-codex-cli.nix
       - nix/packages.nix
@@ -377,6 +378,7 @@ targets:
     workflow: dorvud-ci
     paths:
       - services/dorvud/**
+      - services/bayn/src/market-data/features/fixtures/**
 
   otel:
     kind: delegated

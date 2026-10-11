@@ -1,4 +1,5 @@
 import type { Effect } from 'effect'
+import type { BrokerEnvironment } from '../broker/identity'
 import { BrokerRead } from '../broker/alpaca'
 import type { CycleExecutionPolicy } from '../cycle'
 import type { CycleRunnerError, CycleRunResult } from '../cycle/runner'
@@ -21,8 +22,14 @@ import type { IntradayMarketDataService } from '../market-data'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
+import { CandidateObservationStore } from './candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
+import { JevClient } from '../jev/client'
+import { JevPositionStore } from '../jev/portfolio'
 
-export type ObserveDecisionRuntime =
+export type ReconciliationRuntime =
+  | CandidateObservationStore
   | BrokerRead
   | BrokerEventStore
   | FillAccountingStore
@@ -31,6 +38,13 @@ export type ObserveDecisionRuntime =
   | AuthorityGenerationStore
   | AuthorityRestrictionStore
   | WriterFence
+
+export type ObserveDecisionRuntime =
+  | ReconciliationRuntime
+  | JevBatchStore
+  | JevEvaluationStore
+  | JevClient
+  | JevPositionStore
 
 type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 
@@ -50,25 +64,33 @@ export type RecoveryFirstCycleAdvance = {
   readonly result?: CycleRunResult
   /** Optional one-shot durable scheduling override for the next Restate command. */
   readonly nextDelayMs?: number
+  /** Absolute cap retained until completion, so post-pass work cannot extend a selected wake. */
+  readonly nextWakeAt?: string
 }
 
-export type RecoveryFirstCycleDriver = {
-  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, RecoveryFirstRuntime>
+export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
+  readonly timeoutMs: number
+  readonly onTimeout: (error: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>
   /** Restate must schedule the next production command no later than either the cycle or reconciliation cadence. */
   readonly nextDelayMs: number
 }
 
-export type RecoveryFirstCycleDriverOwner = (
-  driver: RecoveryFirstCycleDriver,
-) => Effect.Effect<void, never, RecoveryFirstRuntime>
+export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
+  driver: RecoveryFirstCycleDriver<R>,
+) => Effect.Effect<void, never, R>
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
+  readonly brokerEnvironment?: BrokerEnvironment
+  /** The exact policy hash from the verified durable mandate; absence retains the original policy. */
+  readonly riskPolicyHash?: string
   readonly authorityGenerationHash: string
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
+  readonly simulation?: { readonly runId: string }
   /** Explicit archive dependency; required only for an INTRADAY strategy. */
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
@@ -93,7 +115,7 @@ export type MutationAutonomousCycleInput = ObserveAutonomousCycleInput & {
 
 export type ExecutionCapability =
   | { readonly _tag: 'RecoveryOnly' }
-  | { readonly _tag: 'Mutation'; readonly executionProgram: ExecutionProgram }
+  | { readonly _tag: 'Mutation' | 'CloseOnly'; readonly executionProgram: ExecutionProgram }
 
 export type MutationCycleExecutionMode = ExecutionCapability['_tag']
 

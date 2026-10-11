@@ -250,6 +250,38 @@ const emptyRiskRow = (): RiskContextRow => ({
 })
 
 describe('PostgreSQL reconciliation algebra', () => {
+  test('includes separate broker fee activities in exact cash and the accounting identity', () => {
+    const input = comparisonInput()
+    const cash = (BigInt(input.snapshot.account.cashMicros) - 230000n).toString()
+    const snapshot = {
+      ...input.snapshot,
+      account: { ...input.snapshot.account, cashMicros: cash },
+      valuation: { ...input.snapshot.valuation, cashMicros: cash },
+    }
+    const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
+      accountId,
+      activityId: `fee-${index}`,
+      date: '2026-07-22',
+      netAmountMicros,
+    }))
+    const missing = successOf(compareOpeningCash({ ...input, snapshot }))
+    const exact = successOf(compareOpeningCash({ ...input, snapshot, fees }))
+    expect(missing.comparison.discrepancies.some((item) => item.kind === 'CASH')).toBe(true)
+    expect(exact.comparison.discrepancies).toEqual([])
+    expect(exact.accountingHash).not.toBe(missing.accountingHash)
+  })
+
+  test('rejects fee history that predates the opening cash baseline', () => {
+    const input = comparisonInput()
+    const result = compareOpeningCash({
+      ...input,
+      fees: [{ accountId, activityId: 'old-fee', date: '2026-07-01', netAmountMicros: '-230000' }],
+    })
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result))
+      expect(result.failure).toMatchObject({ _tag: 'BrokerFeePredatesOpeningCash', activityId: 'old-fee' })
+  })
+
   test('projects intent uncertainty without Effects', () => {
     const projection = successOf(
       projectIntentExpectations([
@@ -671,7 +703,7 @@ describe('PostgreSQL reconciliation algebra', () => {
       peakEquityMicros: '1000000000',
     })
 
-    const updatedAt = sqlTimestamp('2026-07-22T15:30:01.000Z')
+    const updatedAt = '2026-07-22T15:30:01.000Z'
     const observedAuthorityAt = sqlTimestamp('2026-07-22T15:30:02.000Z')
     const authority = successOf(
       riskContextFromRow(
@@ -696,7 +728,7 @@ describe('PostgreSQL reconciliation algebra', () => {
         effective: Authority.Observe,
         kill: KillState.Clear,
         version: 1,
-        updatedAt: updatedAt.toISOString(),
+        updatedAt,
       },
       authorityObservedAt: observedAuthorityAt.toISOString(),
     })
@@ -745,7 +777,7 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_effective: Authority.Execution,
           authority_kill: KillState.Clear,
           authority_version: '1',
-          authority_updated_at: sqlTimestamp('2026-07-22T15:30:01.000Z'),
+          authority_updated_at: '2026-07-22T15:30:01.000Z',
           authority_observed_at: sqlTimestamp('2026-07-22T15:30:02.000Z'),
         },
         0,
@@ -772,20 +804,20 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_effective: Authority.Observe,
           authority_kill: KillState.Clear,
           authority_version: '1',
-          authority_updated_at: invalidSqlTimestamp(),
-          authority_observed_at: sqlTimestamp('2026-07-22T15:30:02.000Z'),
+          authority_updated_at: '2026-07-22T15:30:01.000Z',
+          authority_observed_at: invalidSqlTimestamp(),
         },
         0,
       ),
     )
     expect(invalidTimestamp).toMatchObject({
       _tag: 'RiskContextTimestampFailed',
-      field: 'authority_updated_at',
+      field: 'authority_observed_at',
       epochMillis: Number.NaN,
     })
     expect(reconciliationAlgebraFailureDetails(invalidTimestamp)).toEqual({
       failure: 'invariant',
-      message: 'reconciliation risk context timestamp authority_updated_at is invalid',
+      message: 'reconciliation risk context timestamp authority_observed_at is invalid',
       cause: invalidTimestamp,
     })
   })

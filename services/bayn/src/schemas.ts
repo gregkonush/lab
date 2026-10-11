@@ -37,10 +37,28 @@ export type IsoDate = typeof IsoDateSchema.Type
 export const UtcInstantSchema = Schema.String.check(
   Schema.makeFilter(isUtcInstant, { expected: 'a canonical UTC instant (YYYY-MM-DDTHH:mm:ss.sssZ)' }),
 )
+/** PostgreSQL identity timestamps retain microseconds; exact millisecond values keep their historical encoding. */
+export const UtcDatabaseInstantSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) =>
+      isUtcInstant(value) ||
+      (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value) && isUtcInstant(`${value.slice(0, 23)}Z`)),
+    { expected: 'a valid UTC database instant with three or six fractional digits' },
+  ),
+)
 export const UtcOrderTimestampSchema = Schema.String.check(
   Schema.makeFilter(isUtcOrderTimestamp, {
     expected: 'a canonical UTC ordering timestamp (YYYY-MM-DDTHH:mm:ss.nnnnnnnnnZ)',
   }),
+)
+export const UtcSourceTimestampSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) => {
+      const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(value)
+      return match !== null && isUtcOrderTimestamp(`${match[1]}.${(match[2] ?? '').padEnd(9, '0')}Z`)
+    },
+    { expected: 'a valid UTC source timestamp with up to nine fractional digits' },
+  ),
 )
 export const Sha256Schema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))
 export const ImageDigestSchema = Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))

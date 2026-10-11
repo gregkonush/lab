@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/mdlayher/vsock"
 )
 
 const (
@@ -23,22 +25,38 @@ const (
 	kernelReleasePath         = "/proc/sys/kernel/osrelease"
 	maxBootstrapOutputBytes   = 4 << 10
 	toolchainBootstrapTimeout = 2 * time.Minute
+	developerBootstrapTimeout = 15 * time.Minute
 )
 
 type evidence struct {
-	Architecture  string    `json:"architecture"`
-	BootID        string    `json:"bootId"`
-	Hostname      string    `json:"hostname"`
-	KernelRelease string    `json:"kernelRelease"`
-	MicroVMID     string    `json:"microvmId"`
-	StartedAt     time.Time `json:"startedAt"`
-	State         string    `json:"state"`
+	Architecture         string    `json:"architecture"`
+	BootID               string    `json:"bootId"`
+	Hostname             string    `json:"hostname"`
+	KernelRelease        string    `json:"kernelRelease"`
+	MicroVMID            string    `json:"microvmId"`
+	GuestProtocolVersion uint32    `json:"guestProtocolVersion"`
+	StartedAt            time.Time `json:"startedAt"`
+	State                string    `json:"state"`
 }
 
 type fileReader func(string) ([]byte, error)
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "browser-mcp" {
+		if err := runBrowserMCP(os.Stdin, os.Stdout, os.Getenv("HOME")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if len(os.Args) == 2 && os.Args[1] == "guest-init" {
+		if err := runGuestInit(logger); err != nil {
+			logger.Error("guest init stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(logger); err != nil {
 		logger.Error("nanoagent stopped", "error", err)
 		os.Exit(1)
@@ -61,6 +79,7 @@ func run(logger *slog.Logger) error {
 	if err := configureToolchainEnvironment(homeRoot); err != nil {
 		return fmt.Errorf("configure persistent toolchain environment: %w", err)
 	}
+	toolchainStarted := time.Now()
 	if err := bootstrapToolchain(
 		context.Background(),
 		os.Getenv("TOOLCHAIN_BOOTSTRAP_COMMAND"),
@@ -68,6 +87,14 @@ func run(logger *slog.Logger) error {
 	); err != nil {
 		return err
 	}
+	logger.Info("nanoagent startup stage finished", "stage", "toolchain", "durationMs", time.Since(toolchainStarted).Milliseconds())
+	developerStarted := time.Now()
+	if err := bootstrapPersistentInstall(context.Background(), os.Getenv("DEVELOPER_TOOLS_BOOTSTRAP_COMMAND"),
+		developerBootstrapTimeout, "DEVELOPER_TOOLS_BOOTSTRAP_COMMAND", "developer tools"); err != nil {
+		return err
+	}
+	logger.Info("nanoagent startup stage finished", "stage", "developer-tools", "durationMs", time.Since(developerStarted).Milliseconds())
+	codexStarted := time.Now()
 	if err := bootstrapCodex(
 		context.Background(),
 		os.Getenv("CODEX_BOOTSTRAP_COMMAND"),
@@ -75,10 +102,12 @@ func run(logger *slog.Logger) error {
 	); err != nil {
 		return err
 	}
+	logger.Info("nanoagent startup stage finished", "stage", "codex", "durationMs", time.Since(codexStarted).Milliseconds())
 	current, err := collectEvidence(microVMID, bootstrapToken, os.ReadFile, time.Now().UTC())
 	if err != nil {
 		return err
 	}
+	current.GuestProtocolVersion = guestProtocolVersion
 
 	encoded, err := json.Marshal(current)
 	if err != nil {
@@ -86,10 +115,11 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("nanoagent guest booted", "evidence", json.RawMessage(encoded))
 
-	listenAddress := strings.TrimSpace(os.Getenv("LISTEN_ADDRESS"))
-	if listenAddress == "" {
-		listenAddress = ":8080"
+	listener, err := vsock.Listen(1024, nil)
+	if err != nil {
+		return fmt.Errorf("listen on private guest vsock: %w", err)
 	}
+	defer listener.Close()
 	codexBinary := strings.TrimSpace(os.Getenv("CODEX_BINARY"))
 	if codexBinary == "" {
 		codexBinary = "codex"
@@ -99,6 +129,9 @@ func run(logger *slog.Logger) error {
 		bootstrapToken:      bootstrapToken,
 		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
 		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
+		browserBinary:       os.Getenv("BROWSER_BINARY"),
+		browserBootstrap:    os.Getenv("BROWSER_BOOTSTRAP_COMMAND"),
+		browserAssets:       os.Getenv("BROWSER_ASSETS_DIRECTORY"),
 		codexBinary:         codexBinary,
 		evidence:            current,
 		homeRoot:            homeRoot,
@@ -112,8 +145,8 @@ func run(logger *slog.Logger) error {
 	defer api.close()
 
 	server := &http.Server{
-		Addr:              listenAddress,
 		Handler:           newHandler(api),
+		Protocols:         guestHTTPProtocols(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -121,12 +154,16 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	serverErrors := make(chan error, 1)
+	health := &http.Server{Addr: "127.0.0.1:8080", Handler: newHealthHandler(api), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: time.Minute}
+	serverErrors := make(chan error, 2)
 	go func() {
-		logger.Info("nanoagent listening", "address", listenAddress)
-		serverErrors <- server.ListenAndServe()
+		logger.Info("nanoagent listening", "vsockPort", 1024)
+		serverErrors <- server.Serve(listener)
 	}()
 
+	go func() { serverErrors <- health.ListenAndServe() }()
+	defer health.Close()
+	defer server.Close()
 	select {
 	case <-ctx.Done():
 		api.beginShutdown()
@@ -216,14 +253,31 @@ func configureToolchainEnvironment(home string) error {
 	}
 
 	prefix := filepath.Join(home, ".local")
-	path := prependPath(filepath.Join(prefix, "bin"), os.Getenv("PATH"))
+	brew := filepath.Join(home, ".linuxbrew")
+	path := prependPath(filepath.Join(brew, "sbin"), os.Getenv("PATH"))
+	path = prependPath(filepath.Join(brew, "bin"), path)
+	path = prependPath(filepath.Join(prefix, "bin"), path)
 	for key, value := range map[string]string{
-		"BUN_INSTALL":       prefix,
-		"NPM_CONFIG_PREFIX": prefix,
-		"PATH":              path,
+		"BUN_INSTALL":         prefix,
+		"NPM_CONFIG_PREFIX":   prefix,
+		"PATH":                path,
+		"HOMEBREW_PREFIX":     brew,
+		"HOMEBREW_CELLAR":     filepath.Join(brew, "Cellar"),
+		"HOMEBREW_REPOSITORY": filepath.Join(brew, "Homebrew"),
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			return fmt.Errorf("set %s: %w", key, err)
+		}
+	}
+	for _, key := range []string{"EDITOR", "VISUAL"} {
+		if os.Getenv(key) == "" {
+			value := "nvim"
+			if key == "VISUAL" {
+				value = os.Getenv("EDITOR")
+			}
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("set %s: %w", key, err)
+			}
 		}
 	}
 
@@ -253,6 +307,8 @@ func bootstrapUserHome(home string) error {
 	}{
 		{path: "workspace", mode: 0o750},
 		{path: ".cache", mode: 0o750},
+		{path: ".cache/apt/lists", mode: 0o750},
+		{path: ".cache/apt/archives", mode: 0o750},
 		{path: ".local/bin", mode: 0o750},
 		{path: ".bun", mode: 0o750},
 		{path: ".cargo", mode: 0o750},
@@ -266,7 +322,8 @@ func bootstrapUserHome(home string) error {
 	}
 	toolchainProfile := "export BUN_INSTALL=\"$HOME/.local\"\n" +
 		"export NPM_CONFIG_PREFIX=\"$HOME/.local\"\n" +
-		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n"
+		"export PATH=\"$HOME/.local/bin:$HOME/go/bin:$HOME/.cargo/bin:$PATH\"\n" +
+		"if [ -f /etc/profile.d/tengri-development.sh ]; then . /etc/profile.d/tengri-development.sh; fi\n"
 	files := map[string]string{
 		".bashrc":  toolchainProfile + "cd /workspace 2>/dev/null || true\n",
 		".profile": toolchainProfile,
@@ -334,7 +391,7 @@ func readTrimmed(readFile fileReader, path string) (string, error) {
 	return trimmed, nil
 }
 
-func newHandler(api *apiServer) http.Handler {
+func newHealthHandler(api *apiServer) http.Handler {
 	mux := http.NewServeMux()
 	live := func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -351,6 +408,12 @@ func newHandler(api *apiServer) http.Handler {
 	mux.HandleFunc("GET /livez", live)
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /healthz", live)
-	mux.Handle("/v1/", api.authenticatedRoutes())
 	return mux
+}
+
+func newHandler(api *apiServer) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/", newHealthHandler(api))
+	mux.Handle("/v1/", api.previewRoutes())
+	return api.rpcHandler(mux)
 }

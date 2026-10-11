@@ -21,7 +21,7 @@ const RETURN_SCALE = 10n ** BigInt(RETURN_DECIMAL_PLACES)
 
 export interface ForwardPerformanceDomainFailure {
   readonly _tag: 'ForwardPerformanceDomainFailure'
-  readonly operation: 'hash-execution-evidence' | 'hash-receipt'
+  readonly operation: 'hash-execution-evidence' | 'hash-position-episodes' | 'hash-receipt' | 'hash-report'
   readonly cause: unknown
 }
 
@@ -30,10 +30,10 @@ interface ParsedTotals {
   readonly realizedGains: bigint
   readonly realizedLosses: bigint
   readonly brokerExecutionFees: bigint
-  readonly otherChargedCosts: bigint
+  readonly otherChargedCosts: bigint | null
   readonly cashYield: bigint
   readonly grossRealizedPnl: bigint
-  readonly netRealizedPnlAfterCosts: bigint
+  readonly netRealizedPnlAfterCosts: bigint | null
 }
 
 const inSignedMicrosRange = (value: bigint): boolean => value >= SIGNED_MICROS_MIN && value <= SIGNED_MICROS_MAX
@@ -110,7 +110,9 @@ const parseTotals = (
   const realizedGains = parseSignedMicros(ledger.realizedGainMicros)
   const realizedLosses = parseSignedMicros(ledger.realizedLossMicros)
   const brokerExecutionFees = parseSignedMicros(ledger.brokerExecutionFeesMicros)
-  const otherChargedCosts = parseSignedMicros(ledger.otherChargedCostsMicros)
+  const otherChargedCosts =
+    ledger.otherChargedCostsMicros === null ? null : parseSignedMicros(ledger.otherChargedCostsMicros)
+  if (otherChargedCosts === null) reasons.add('OPERATING_COST_EVIDENCE_GAP')
   const cashYield = parseSignedMicros(ledger.cashYieldMicros)
   if (
     startingCapital === undefined ||
@@ -122,7 +124,7 @@ const parseTotals = (
     brokerExecutionFees === undefined ||
     brokerExecutionFees < 0n ||
     otherChargedCosts === undefined ||
-    otherChargedCosts < 0n ||
+    (otherChargedCosts !== null && otherChargedCosts < 0n) ||
     cashYield === undefined ||
     cashYield < 0n
   ) {
@@ -131,9 +133,11 @@ const parseTotals = (
   }
   const grossRealizedPnl = checkedAdd(realizedGains, -realizedLosses)
   const afterFees = grossRealizedPnl === undefined ? undefined : checkedAdd(grossRealizedPnl, -brokerExecutionFees)
-  const afterOtherCosts = afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
-  const netRealizedPnlAfterCosts = afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
-  if (grossRealizedPnl === undefined || netRealizedPnlAfterCosts === undefined) {
+  const afterOtherCosts =
+    otherChargedCosts === null ? null : afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
+  const netRealizedPnlAfterCosts =
+    afterOtherCosts === null ? null : afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
+  if (grossRealizedPnl === undefined || afterFees === undefined || netRealizedPnlAfterCosts === undefined) {
     reasons.add('INVALID_MICROS')
     return undefined
   }
@@ -174,6 +178,19 @@ const transactionTotalsMatch = (
     fees = nextFees
     gains = nextGains
     losses = nextLosses
+  }
+  for (const fee of input.brokerFees ?? []) {
+    const net = parseSignedMicros(fee.netAmountMicros)
+    if (net === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, -net)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
   }
   if (gains !== totals.realizedGains || losses !== totals.realizedLosses || fees !== totals.brokerExecutionFees) {
     reasons.add('LEDGER_MISMATCH')
@@ -334,12 +351,12 @@ const makeMaterial = (
       realizedGainsMicros: totals?.realizedGains.toString() ?? null,
       realizedLossesMicros: totals?.realizedLosses.toString() ?? null,
       brokerExecutionFeesMicros: totals?.brokerExecutionFees.toString() ?? null,
-      otherChargedCostsMicros: totals?.otherChargedCosts.toString() ?? null,
+      otherChargedCostsMicros: totals?.otherChargedCosts?.toString() ?? null,
       cashYieldMicros: totals?.cashYield.toString() ?? null,
       grossRealizedPnlMicros: totals?.grossRealizedPnl.toString() ?? null,
-      netRealizedPnlAfterCostsMicros: totals?.netRealizedPnlAfterCosts.toString() ?? null,
+      netRealizedPnlAfterCostsMicros: totals?.netRealizedPnlAfterCosts?.toString() ?? null,
       netRealizedReturn:
-        totals === undefined
+        totals === undefined || totals.netRealizedPnlAfterCosts === null
           ? null
           : {
               numeratorMicros: totals.netRealizedPnlAfterCosts.toString(),
@@ -368,7 +385,7 @@ const makeMaterial = (
     executionQuality: measurements.executionQuality,
     observedCapacity: measurements.observedCapacity,
     profitability:
-      !sufficient || totals === undefined
+      !sufficient || totals === undefined || totals.netRealizedPnlAfterCosts === null
         ? 'UNDETERMINED'
         : totals.netRealizedPnlAfterCosts > 0n
           ? 'PROFITABLE'

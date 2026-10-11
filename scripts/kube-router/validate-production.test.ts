@@ -123,7 +123,7 @@ test('rejects an unscoped optional Tengri namespace check in the coverage probe'
 test('rejects a preflight that does not pin the exact Hermes policy set', async () => {
   const files = copy(await loadProductionFiles())
   files.preflightHook = files.preflightHook.replace(
-    'expected_hermes_policy_hash=048056134b08a44eedf8530f3dccc2a5d8903432e31ee0bc7ead474bfe6586e3',
+    'expected_hermes_policy_hash=9480db61358cfe0459d7d0de9e755751dee551616c2f576b0cb312c581bf066a',
     `expected_hermes_policy_hash=${'0'.repeat(64)}`,
   )
   expect(validateProductionContent(files)).toContainEqual(
@@ -357,8 +357,7 @@ for (const [namespace, sources] of Object.entries(reviewedPolicySources)) {
 
 test('normalizes API-omitted empty policy rules and ignores other manifest kinds', async () => {
   const files = copy(await loadProductionFiles())
-  files.clickhouseRehearsalPolicies = files.clickhouseRehearsalPolicies.replace(/^  (ingress|egress): \[\]\n/gm, '')
-  files.clickhouseRehearsalPolicies +=
-    '\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated\ndata: {}\n'
+  files.grafanaRehearsalPolicies = files.grafanaRehearsalPolicies.replace(/^  (ingress|egress): \[\]\n/gm, '')
+  files.grafanaRehearsalPolicies += '\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated\ndata: {}\n'
   expect(validateProductionContent(files)).toEqual([])
 })

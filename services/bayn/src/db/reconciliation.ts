@@ -1,9 +1,11 @@
 import { PgClient } from '@effect/sql-pg'
+import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
+import type { WriterFenceService } from '../execution/writer-fence'
 import type { JournalService } from '../ledger'
 import {
   Authority,
@@ -31,12 +33,17 @@ import {
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
 } from '../reconciliation'
-import { isExecutionMandateFailureRestriction } from '../execution/mandate'
+import {
+  isExecutionMandateFailureRestriction,
+  isExecutionMandateRecoveryRestriction,
+  isRetiredOneShotMandateRestriction,
+} from '../execution/mandate'
 import {
   IsoDateSchema,
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
   UtcInstantSchema as UtcInstant,
+  UtcDatabaseInstantSchema,
   strictParseOptions,
 } from '../schemas'
 import { MutationEventType } from '../execution/mutations'
@@ -57,6 +64,10 @@ import {
   type ReconciliationAlgebraFailure,
 } from '../reconciliation/algebra'
 import { Pipeable } from '../pipeable'
+import { accountBrokerFees, type BrokerFeeAccounting } from './broker-fees'
+import type { FeeActivity } from '../broker/alpaca'
+import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
+import type { BrokerStateVersion } from '../execution/broker-state-cache'
 
 export interface IntentBinding {
   readonly intentId: string
@@ -70,6 +81,7 @@ export interface BrokerSnapshot {
   readonly orders: readonly Order[]
   readonly ordersObservedAt: string
   readonly fills: readonly Fill[]
+  readonly fees: readonly Observed<FeeActivity>[]
   readonly valuation: Valuation
   readonly reconciledAt: string
 }
@@ -91,6 +103,7 @@ interface AccountingReadPhase {
   readonly receipts: readonly AccountingReceipt[]
   readonly exactReceipts: ReadonlyMap<string, boolean>
   readonly ledgerExact: boolean
+  readonly fees: readonly FeeActivity[]
 }
 
 interface ComparisonReadPhase {
@@ -156,7 +169,7 @@ const ReconciliationRiskContextRow = Schema.Tuple([
     authority_kill: Schema.NullOr(Schema.Enum(KillState)),
     authority_reason: Schema.NullOr(NonEmptyString),
     authority_version: Schema.NullOr(Schema.String),
-    authority_updated_at: Schema.NullOr(Schema.Date),
+    authority_updated_at: Schema.NullOr(UtcDatabaseInstantSchema),
     authority_observed_at: Schema.NullOr(Schema.Date),
     daily_traded_notional_micros: UnsignedMicrosSchema,
     day_start_equity_micros: SignedMicrosSchema,
@@ -175,7 +188,7 @@ const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconcil
 const decodeContent = Schema.decodeUnknownEffect(ReconciliationContentRow, strictParseOptions)
 const decodeFinalExecutionRiskContext = Schema.decodeUnknownEffect(FinalExecutionRiskContextRow, strictParseOptions)
 const decodeRiskContext = Schema.decodeUnknownEffect(ReconciliationRiskContextRow, strictParseOptions)
-const encodeDiscrepancies = Schema.encodeSync(Schema.fromJsonString(Schema.Array(DiscrepancySchema)))
+const encodeDiscrepancies = Schema.encodeSync(Schema.Array(DiscrepancySchema))
 
 const storeError = (
   operation: ReconciliationStoreError['operation'],
@@ -211,10 +224,18 @@ const attempt = <A>(
   })
 
 const isTransientReconciliationRestriction = (reason: string | null): boolean =>
-  reason === 'reconciliation pass incomplete' || reason?.startsWith('reconciliation discrepancy ') === true
+  reason === 'reconciliation pass incomplete' ||
+  (reason?.startsWith('reconciliation discrepancy ') === true && isExecutionMandateFailureRestriction(reason))
+
+const isRecoverableRestriction = (reason: string | null): boolean =>
+  isExecutionMandateRecoveryRestriction(reason ?? undefined) || isRetiredOneShotMandateRestriction(reason ?? undefined)
 
 const shouldPromoteRestrictionReason = (currentReason: string | null, nextReason: string): boolean =>
-  isTransientReconciliationRestriction(currentReason) && isExecutionMandateFailureRestriction(nextReason)
+  (isRecoverableRestriction(currentReason) && !isRecoverableRestriction(nextReason)) ||
+  (currentReason === 'reconciliation pass incomplete' && nextReason.startsWith('reconciliation discrepancy ')) ||
+  (isTransientReconciliationRestriction(currentReason) &&
+    !isTransientReconciliationRestriction(nextReason) &&
+    isExecutionMandateFailureRestriction(nextReason))
 
 const fromDecision = <A>(
   operation: ReconciliationStoreError['operation'],
@@ -334,10 +355,56 @@ const readFinalExecutionRiskContextDataFirst = (
 
 export const readFinalExecutionRiskContext = Pipeable.dual(3, readFinalExecutionRiskContextDataFirst)
 
-const makeReconciliationDataFirst = (
+/** Called under the account writer fence; the current durable start reserves this cache version. */
+export const verifyBrokerStateVersion = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  version: BrokerStateVersion,
+  intentId: string,
+): Effect.Effect<void, ReconciliationStoreError> =>
+  runStore(
+    'risk-context',
+    Effect.gen(function* () {
+      const [row] = yield* sql<Record<string, unknown>>`
+    SELECT (
+      (SELECT reconciliation_id FROM reconciliations WHERE account_id = ${accountId}
+        ORDER BY reconciled_at DESC, reconciliation_id COLLATE "C" DESC LIMIT 1) = ${version.reconciliationId}
+      AND EXISTS (SELECT 1 FROM reconciliations WHERE account_id = ${accountId}
+        AND reconciliation_id = ${version.reconciliationId}
+        AND reconciled_at = ${version.reconciledAt}::timestamptz AND status = 'EXACT')
+      AND EXISTS (SELECT 1 FROM authority_state WHERE generation_hash = ${version.authorityGenerationHash}
+        AND version = ${version.authorityVersion}::bigint)
+      AND NOT EXISTS (
+        SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
+        WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= ${version.reconciledAt}::timestamptz
+          AND NOT (mutation.intent_id = ${intentId} AND mutation.event_type = 'SUBMIT_STARTED')
+      )
+      AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
+        AND observed_at > ${version.reconciledAt}::timestamptz)
+    ) AS valid
+  `.pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ valid: Schema.NullOr(Schema.Boolean) })]),
+            strictParseOptions,
+          ),
+        ),
+      )
+      if (row.valid !== true)
+        return yield* storeError(
+          'risk-context',
+          'invariant',
+          'cached broker reconciliation version changed before submit',
+        )
+    }),
+  )
+
+export const makeReconciliation = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: Pick<RuntimeConfig, 'tigerBeetle'>,
+  writerFence: WriterFenceService,
+  clock: DatabaseClock = postgresWallClock(sql),
 ) => {
   const bindings = (accountId: string): Effect.Effect<readonly IntentBinding[], ReconciliationStoreError> =>
     runStore(
@@ -353,7 +420,10 @@ const makeReconciliationDataFirst = (
       ),
     )
 
-  const readAccountingPhase = (accountId: string): Effect.Effect<AccountingReadPhase, ReconciliationStoreError> =>
+  const readAccountingPhase = (
+    accountId: string,
+    feeAccounting: BrokerFeeAccounting,
+  ): Effect.Effect<AccountingReadPhase, ReconciliationStoreError> =>
     runStore(
       'reconcile',
       Effect.gen(function* () {
@@ -449,14 +519,22 @@ const makeReconciliationDataFirst = (
           verifyAccountingReceipts(transactions, receipts, config),
         )
         const ledgerExact = yield* journal
-          .verifyAccount(accountId, plans)
+          .verifyAccount(accountId, [...plans, ...feeAccounting.plans])
           .pipe(
             Effect.mapError((cause) =>
               storeError('reconcile', 'ledger', 'TigerBeetle account verification failed during reconciliation', cause),
             ),
           )
 
-        return { intents, unknownMutationCount, transactions, receipts, exactReceipts, ledgerExact }
+        return {
+          intents,
+          unknownMutationCount,
+          transactions,
+          receipts,
+          exactReceipts,
+          ledgerExact,
+          fees: feeAccounting.fees,
+        }
       }),
     )
 
@@ -514,6 +592,8 @@ const makeReconciliationDataFirst = (
           FROM account_snapshots AS snapshot
           JOIN broker_events AS event ON event.event_id = snapshot.event_id
           WHERE snapshot.account_id = ${accountId}
+            AND event.account_id = snapshot.account_id
+            AND event.event_kind = 'ACCOUNT'
           ORDER BY event.source_sequence
           LIMIT 1
         `.pipe(Effect.flatMap(decodeOpeningCash))
@@ -523,6 +603,7 @@ const makeReconciliationDataFirst = (
             accountId,
             openingCash,
             transactions: accounting.transactions,
+            fees: accounting.fees,
             receipts: accounting.receipts,
             ledgerExact: accounting.ledgerExact,
             snapshot,
@@ -606,8 +687,8 @@ const makeReconciliationDataFirst = (
             authority.kill_state AS authority_kill,
             authority.reason AS authority_reason,
             authority.version::text AS authority_version,
-            authority.updated_at AS authority_updated_at,
-            CASE WHEN authority.singleton IS NULL THEN NULL ELSE clock_timestamp() END AS authority_observed_at,
+            ${databaseUtcInstant(sql, sql`authority.updated_at`)} AS authority_updated_at,
+            CASE WHEN authority.singleton IS NULL THEN NULL ELSE ${clock.now} END AS authority_observed_at,
             coalesce((
               SELECT sum(transaction.notional_micros)::text
               FROM accounting_transactions AS transaction
@@ -645,7 +726,8 @@ const makeReconciliationDataFirst = (
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
-        const accounting = yield* readAccountingPhase(accountId)
+        const feeAccounting = yield* accountBrokerFees(sql, journal, accountId, snapshot.fees, config.tigerBeetle)
+        const accounting = yield* readAccountingPhase(accountId, feeAccounting)
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting)
         const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt)
         const riskContext = yield* readRiskContextPhase(
@@ -658,9 +740,7 @@ const makeReconciliationDataFirst = (
     )
 
   const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
-    runStore('reconcile', sql.withTransaction(reconcileTransaction(snapshot)))
+    runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
 
   return { bindings, reconcile }
 }
-
-export const makeReconciliation = Pipeable.dual(3, makeReconciliationDataFirst)

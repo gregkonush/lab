@@ -57,14 +57,26 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
 		}
-	case "bayn-intraday-replay":
-		args := append([]string{"/bin/node", "/app/services/bayn/dist/intraday-replay-command.js"}, os.Args[1:]...)
+	case "bayn-backtest":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/backtest-command.js"}, os.Args[1:]...)
 		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
 		}
-	case "bayn-vendor-intraday-replay":
-		args := append([]string{"/bin/node", "/app/services/bayn/dist/vendor-intraday-replay-command.js"}, os.Args[1:]...)
+	case "bayn-inference-cost":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/inference-cost-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
+	case "bayn-control-study":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/control-study-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
+	case "bayn-jev-study-export":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/jev-study-export-command.js"}, os.Args[1:]...)
 		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
@@ -73,19 +85,32 @@ func main() {
 		if exists("/node-fail") {
 			os.Exit(99)
 		}
-		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/forward-performance-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256>] | --help")
+		if len(os.Args) != 3 {
+			os.Exit(2)
+		}
+		if os.Args[1] == "/app/services/bayn/dist/streaming-diagnostics-command.js" && os.Args[2] == "--codecs" {
+			fmt.Println("Kafka codecs verified: gzip,snappy,lz4,zstd")
 			return
 		}
-		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/intraday-replay-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-intraday-replay --input <path> | --study <path> [--output-directory <new-directory>] | --help")
-			return
+		if os.Args[2] != "--help" {
+			os.Exit(2)
 		}
-		if len(os.Args) == 3 && os.Args[1] == "/app/services/bayn/dist/vendor-intraday-replay-command.js" && os.Args[2] == "--help" {
-			fmt.Println("Usage: bayn-vendor-intraday-replay --input <path> --cache <directory> | --help")
-			return
+		switch os.Args[1] {
+		case "/app/services/bayn/dist/forward-performance-command.js":
+			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help")
+		case "/app/services/bayn/dist/inference-cost-command.js":
+			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help")
+		case "/app/services/bayn/dist/backtest-command.js":
+			fmt.Println("Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help")
+		case "/app/services/bayn/dist/control-study-command.js":
+			fmt.Println("Usage: bayn-control-study --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> [--mode study|preflight] [--evidence-directory <new-directory-required-for-JEV-study>] | --help")
+		case "/app/services/bayn/dist/jev-study-export-command.js":
+			fmt.Println("Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help")
+		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
+			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
+		default:
+			os.Exit(2)
 		}
-		os.Exit(2)
 	default:
 		os.Exit(2)
 	}
@@ -97,42 +122,22 @@ root="${work}/layer-root"
 mkdir -p \
   "${root}/bin" \
   "${root}/app/services/bayn/dist" \
-  "${root}/nix/store/test-bayn-forward-performance/bin" \
-  "${root}/nix/store/test-bayn-intraday-replay/bin" \
-  "${root}/nix/store/test-bayn-vendor-intraday-replay/bin" \
-  "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist" \
-  "${root}/nix/store/test-node/bin"
+  "${root}/nix/store/test-node/bin" \
+  "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist"
 
-install -m 0555 "${work}/runtime" \
-  "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
-install -m 0555 "${work}/runtime" \
-  "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay"
-install -m 0555 "${work}/runtime" \
-  "${root}/nix/store/test-bayn-vendor-intraday-replay/bin/bayn-vendor-intraday-replay"
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
-: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/forward-performance-command.js"
-: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/intraday-replay-command.js"
-: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/vendor-intraday-replay-command.js"
-: > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/restate-execution-server.js"
-chmod 0444 \
-  "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/forward-performance-command.js" \
-  "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/intraday-replay-command.js" \
-  "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/vendor-intraday-replay-command.js" \
-  "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/restate-execution-server.js"
-
-ln -s /nix/store/test-bayn-forward-performance/bin/bayn-forward-performance "${root}/bin/bayn-forward-performance"
-ln -s /nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay "${root}/bin/bayn-intraday-replay"
-ln -s /nix/store/test-bayn-vendor-intraday-replay/bin/bayn-vendor-intraday-replay \
-  "${root}/bin/bayn-vendor-intraday-replay"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/forward-performance-command.js \
-  "${root}/app/services/bayn/dist/forward-performance-command.js"
-ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/intraday-replay-command.js \
-  "${root}/app/services/bayn/dist/intraday-replay-command.js"
-ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/vendor-intraday-replay-command.js \
-  "${root}/app/services/bayn/dist/vendor-intraday-replay-command.js"
-ln -s /nix/store/test-bayn-runtime/app/services/bayn/dist/restate-execution-server.js \
-  "${root}/app/services/bayn/dist/restate-execution-server.js"
+for command in forward-performance backtest inference-cost control-study jev-study-export; do
+  mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
+  install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
+  ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
+done
+for command in forward-performance-command inference-cost-command backtest-command control-study-command jev-study-export-command restate-execution-server streaming-diagnostics-command; do
+  : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
+  chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
+  ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \
+    "${root}/app/services/bayn/dist/${command}.js"
+done
 
 pack_image() {
   tar -C "${root}" -cf "${work}/rootfs.tar" .
@@ -148,12 +153,12 @@ verify_image() {
 }
 
 pack_image
-test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
+test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
 
 chmod u+w "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 cat > "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-forward-performance [--authority-generation <sha256>] | --help'
+printf '%s\n' 'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
 EOF
 chmod 0555 "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 pack_image
@@ -162,35 +167,48 @@ if verify_image >/dev/null 2>&1; then
   exit 1
 fi
 
-chmod u+w "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay"
-cat > "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay" <<'EOF'
+chmod u+w "${root}/nix/store/test-bayn-backtest/bin/bayn-backtest"
+cat > "${root}/nix/store/test-bayn-backtest/bin/bayn-backtest" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-intraday-replay --input <path> | --study <path> [--output-directory <new-directory>] | --help'
+printf '%s\n' 'Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help'
 EOF
-chmod 0555 "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay"
+chmod 0555 "${root}/nix/store/test-bayn-backtest/bin/bayn-backtest"
 pack_image
 if verify_image >/dev/null 2>&1; then
-  echo 'Bayn image verification accepted a broken intraday-replay wrapper.' >&2
+  echo 'Bayn image verification accepted a broken backtest wrapper.' >&2
   exit 1
 fi
 
 install -m 0555 "${work}/runtime" \
-  "${root}/nix/store/test-bayn-intraday-replay/bin/bayn-intraday-replay"
+  "${root}/nix/store/test-bayn-backtest/bin/bayn-backtest"
 
-chmod u+w "${root}/nix/store/test-bayn-vendor-intraday-replay/bin/bayn-vendor-intraday-replay"
-cat > "${root}/nix/store/test-bayn-vendor-intraday-replay/bin/bayn-vendor-intraday-replay" <<'EOF'
+chmod u+w "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study"
+cat > "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-vendor-intraday-replay --input <path> --cache <directory> | --help'
+exit 42
 EOF
-chmod 0555 "${root}/nix/store/test-bayn-vendor-intraday-replay/bin/bayn-vendor-intraday-replay"
+chmod 0555 "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study"
 pack_image
 if verify_image >/dev/null 2>&1; then
-  echo 'Bayn image verification accepted a broken vendor-intraday-replay wrapper.' >&2
+  echo 'Bayn image verification accepted a broken control-study wrapper.' >&2
   exit 1
 fi
-
 install -m 0555 "${work}/runtime" \
-  "${root}/nix/store/test-bayn-vendor-intraday-replay/bin/bayn-vendor-intraday-replay"
+  "${root}/nix/store/test-bayn-control-study/bin/bayn-control-study"
+
+chmod u+w "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export"
+cat > "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+chmod 0555 "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export"
+pack_image
+if verify_image >/dev/null 2>&1; then
+  echo 'Bayn image verification accepted a broken Jev study-export wrapper.' >&2
+  exit 1
+fi
+install -m 0555 "${work}/runtime" \
+  "${root}/nix/store/test-bayn-jev-study-export/bin/bayn-jev-study-export"
 
 install -m 0555 "${work}/runtime" \
   "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
