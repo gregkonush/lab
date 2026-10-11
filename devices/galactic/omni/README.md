@@ -80,7 +80,11 @@ the cluster template first installs an explicit `RegistryMirrorConfig` whose `na
 reference host, including port. Talos honors that mirror for its own installer pull as well as containerd pulls. A
 direct pull of the same host without the mirror defaults to HTTPS and is not an equivalent test.
 
-Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
+Never commit the raw or rendered templates. Delete both temporary files after the operation.
+Do not print full machine configurations or Omni's `redactedcurrentmachineconfig` field. Extension environment
+values can still contain credentials. Select only the network or status fields needed for the check.
+
+Follow the current
 [Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
 `docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
