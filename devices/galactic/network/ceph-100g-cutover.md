@@ -15,23 +15,46 @@ Only OSD replication, recovery, and cluster heartbeats move to `10.100.0.0/24`.
    Whereabouts on all nodes, one available reconciler, and the `rook-ceph/ceph-cluster-100g` network definition.
 2. Create diagnostic pods selecting that network on Altra and Turin. Verify their secondary addresses, bidirectional
    connectivity, and ordinary Flannel DNS/Service connectivity. Never select the storage network on Ryzen.
-3. Merge and sync the attachment phase: retain the default Ceph provider, add the OSD Multus annotation, and
+3. Freeze all six OSD Deployments with `ceph.rook.io/do-not-reconcile=true` before merging either OSD rollout phase.
+   Verify all six carry the label. Merge and sync the attachment phase: retain the default Ceph provider, add the OSD Multus annotation, and
    temporarily set `skipUpgradeChecks: true`. Rook v1.20.7 forces one OSD update at a time with that override.
    It bypasses both the clean-PG gate and `ok-to-stop`; restarting an OSD holding the only available copy can make
-   affected PGs temporarily inactive. Require each replacement OSD to return before the next update.
+   affected PGs temporarily inactive. Release exactly one OSD using the commands below. Require its replacement to
+   return up/in in Ceph before releasing another; Kubernetes Deployment readiness alone is insufficient.
 4. Require all six OSD pods to have a `10.244.*` primary address and a `10.100.0.*` secondary address. Ceph still
    advertises its old cluster addresses in this phase. This supplies cross-network reachability during conversion.
-5. Merge and sync the provider phase: `network.provider: multus`, cluster selector
+5. Freeze all six again, then merge and sync the provider phase: `network.provider: multus`, cluster selector
    `rook-ceph/ceph-cluster-100g`, and cluster address range `10.100.0.0/24`. Leave the public selector unset and retain
-   existing messenger settings. Rook generates the OSD network annotation. Verify six OSDs return up/in and all
+   existing messenger settings. Rook generates the OSD network annotation. Release and verify one OSD at a time again.
+   Verify six OSDs return up/in and all
    cluster addresses move to `10.100.0.*`; public addresses must remain `10.244.*`.
 6. Merge and sync the restoration phase: remove `skipUpgradeChecks` and the manual attachment annotation.
-   Keep `upgradeOSDRequiresHealthyPGs: true`. The provider now owns the same attachment; no compatibility path remains.
+   Keep `upgradeOSDRequiresHealthyPGs: true`, then remove the temporary Deployment freeze labels. The provider now
+   owns the same attachment; no compatibility path remains.
 7. Verify replication/recovery increments counters on the 100G links. Exercise an RBD/CephFS write, fsync, and
    checksum readback. Record actual results separately from configuration convergence; do not claim 100G throughput
    from carrier speed alone.
 
-Useful readback:
+Before each OSD rollout phase, freeze all six:
+
+```bash
+kubectl --context galactic-lan -n rook-ceph label deployment -l app=rook-ceph-osd ceph.rook.io/do-not-reconcile=true --overwrite
+kubectl --context galactic-lan -n rook-ceph get deployment -l app=rook-ceph-osd -L ceph.rook.io/do-not-reconcile
+```
+
+For each OSD ID 0 through 5, freeze all again, release only the selected OSD, then restart the operator so its cached
+skip set contains the other five. Do not release another until the selected OSD's replacement has the intended
+network and a fresh `ceph osd dump` reports it up/in. If it fails, all other OSDs remain frozen.
+
+```bash
+osd_id=0
+kubectl --context galactic-lan -n rook-ceph label deployment -l app=rook-ceph-osd ceph.rook.io/do-not-reconcile=true --overwrite
+kubectl --context galactic-lan -n rook-ceph label deployment "rook-ceph-osd-${osd_id}" ceph.rook.io/do-not-reconcile-
+kubectl --context galactic-lan -n rook-ceph rollout restart deployment rook-ceph-operator
+kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd dump --format json
+```
+
+After the restoration phase, remove the freeze labels from all six Deployments. Useful readback:
 
 ```bash
 kubectl --context galactic-lan -n kube-system get ds kube-multus-ds whereabouts
