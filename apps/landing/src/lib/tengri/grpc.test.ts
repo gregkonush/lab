@@ -93,23 +93,6 @@ beforeAll(async () => {
         ...(call.request.displayName === 'Old runtime' ? {} : { idleTimeoutMinutes: 60 }),
       })
     },
-    resumeAgent(
-      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-      callback: grpc.sendUnaryData<Record<string, unknown>>,
-    ) {
-      receivedDeadline = Number(call.getDeadline())
-      callback(null, {
-        id: call.request.id,
-        displayName: 'Tengri',
-        phase: 'AGENT_PHASE_READY',
-        architecture: 'ARCHITECTURE_AMD64',
-        cpuMillis: 4_000,
-        memoryMib: 8_192,
-        workspaceGib: 32,
-        uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        idleTimeoutMinutes: 60,
-      })
-    },
     updatePowerSettings(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -620,7 +603,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { createAgent } = await import('./grpc')
     const agent = await createAgent('github:42', 'Tengri')
 
-    expect(receivedRequest).toEqual({ displayName: 'Tengri' })
+    expect(receivedRequest).toEqual({ displayName: 'Tengri', reservationId: '' })
     expect(agent).toMatchObject({
       id: 'agent-test',
       displayName: 'Tengri',
@@ -650,14 +633,19 @@ describe('Tengri gRPC BFF transport', () => {
     )
   })
 
-  test('creation and resume retain the full synchronous lifecycle deadline', async () => {
-    const { createAgent, resumeAgent } = await import('./grpc')
-    for (const request of [() => createAgent('github:42', 'Tengri'), () => resumeAgent('github:42', 'agent-test')]) {
-      const started = Date.now()
-      expect((await request()).id).toBe('agent-test')
-      expect(receivedDeadline).toBeGreaterThan(started + 300_000)
-      expect(receivedDeadline).toBeLessThanOrEqual(Date.now() + 310_000)
-    }
+  test('creation retains the full synchronous lifecycle deadline', async () => {
+    const { createAgent } = await import('./grpc')
+    const started = Date.now()
+    expect((await createAgent('github:42', 'Tengri')).id).toBe('agent-test')
+    expect(receivedDeadline).toBeGreaterThan(started + 300_000)
+    expect(receivedDeadline).toBeLessThanOrEqual(Date.now() + 310_000)
+  })
+
+  test('the removed direct resume RPC fails closed until the BFF adopts Ofz commands', async () => {
+    const { resumeAgent } = await import('./grpc')
+    const previousRequest = receivedRequest
+    expect(await rejection(resumeAgent('github:42', 'agent-test'))).toMatchObject({ status: 503 })
+    expect(receivedRequest).toBe(previousRequest)
   })
 
   test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {
