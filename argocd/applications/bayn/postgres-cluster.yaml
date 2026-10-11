@@ -28,7 +28,7 @@ spec:
                 operator: In
                 values:
                   - amd64
-    podAntiAffinityType: required
+    podAntiAffinityType: preferred
     topologyKey: kubernetes.io/hostname
   resources:
     requests:

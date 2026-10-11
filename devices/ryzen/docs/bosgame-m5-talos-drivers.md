@@ -1,6 +1,33 @@
 # Bosgame M5 (Ryzen AI Max+ 395) - Talos driver notes
 
-Last reviewed: 2026-01-24
+Last reviewed: 2026-10-11
+
+## Network expansion and workload placement
+
+The Galactic unit is a Bosgame M5 with a Ryzen AI Max+ 395. Talos reports a Realtek
+RTL8125 Ethernet controller, PCI ID `10ec:8125`, on a PCIe 2.0 x1 link. Its `eno1`
+interface currently negotiates 1000 Mb/s. The onboard controller supports 2.5GbE;
+the current 1Gb/s link is not evidence of a 1GbE-only controller.
+
+Bosgame exposes USB4 and two M.2 PCIe 4.0 x4 storage slots, without a conventional
+PCIe x8 or x16 card slot. AMD specifies the USB4 ports at 40Gb/s. An M.2 PCIe 4.0 x4
+adapter has about 63Gb/s of encoded lane bandwidth before transaction overhead.
+Neither interface can carry a full 100Gb/s in one direction. An externally powered
+M.2 NIC arrangement might negotiate a 100G Ethernet link, but would retain the PCIe
+bottleneck and require separate power, mounting, and cooling. It is not a practical
+full-rate 100G upgrade for this chassis.
+
+Sources: [Bosgame M5 specifications](https://www.bosgamepc.com/products/bosgame-m5-ai-mini-desktop-ryzen-ai-max-395)
+and [AMD Ryzen AI Max+ 395 specifications](https://www.amd.com/en/products/processors/laptop/ryzen/ai-300-series/amd-ryzen-ai-max-plus-395.html).
+The controller, PCIe link, negotiated Ethernet speed, and CPU identity were read
+from this unit on 2026-10-11.
+
+Galactic therefore reserves Ryzen for compute and local storage. Its 1.8TB XFS
+user volume at `/var/mnt/local-path-provisioner` shares the physical boot NVMe with
+Talos `/var`; separate partitions isolate capacity, not disk I/O. Ceph services,
+including the third monitor, retain access to Ryzen. Applications mounting Ceph
+volumes use Altra or Turin. See the
+[placement rollout](../../galactic/scheduling/README.md) for the scheduling contract.
 
 ## What this device is (vendor + AMD)
 
