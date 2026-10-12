@@ -223,14 +223,22 @@ change. A successful command alone does not establish fan speed or cooling.
 Set all four channels to full duty, then restart the stock manager:
 
 ```sh
-tool=/usr/local/bin/pwmtachtool
-for channel in 0 1 3 4; do
-    "$tool" 0 --set-pwm-dutycycle "$channel" 100 || exit 1
-done
-/etc/init.d/thermalmgr.sh stop
-/etc/init.d/thermalmgr.sh start >/dev/null 2>&1 </dev/null
-ps | grep '[t]hermalmgr$'
+(
+    tool=/usr/local/bin/pwmtachtool
+    result=0
+    for channel in 0 1 3 4; do
+        "$tool" 0 --set-pwm-dutycycle "$channel" 100 || result=1
+    done
+    /etc/init.d/thermalmgr.sh stop || result=1
+    /etc/init.d/thermalmgr.sh start >/dev/null 2>&1 </dev/null || result=1
+    ps | grep '[t]hermalmgr$' || result=1
+    exit "$result"
+)
 ```
+
+The block restarts the manager even if a PWM write fails and returns nonzero
+if any operation fails. Read back every channel after a failure; the manager
+controls only channels `0,1`.
 
 Verify that `thermalmgr` runs. Repeat the duty and RPM reads until channels
 `0,1` follow the stock curve; channels `3,4` remain at 100%. During the tested
