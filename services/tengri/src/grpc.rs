@@ -33,7 +33,7 @@ use crate::{
     gateway::PreviewOrigin,
     guest::{
         BROWSER_PORT, CodexHistoryPart as GuestHistoryPart, CodexOptions, EDITOR_BRIDGE_PORT,
-        EDITOR_PORT, GuestClient, GuestError, TerminalCreation as GuestTerminalCreation,
+        EDITOR_PORT, GuestClient, GuestError, GuestPool, TerminalCreation as GuestTerminalCreation,
     },
     metrics,
     pod::{FINALIZER_NAME, SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
@@ -77,6 +77,7 @@ const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
 pub struct ControlPlane {
     client: Client,
     identity: crate::identity::WorkloadIdentity,
+    guests: GuestPool,
     namespace: Arc<str>,
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
@@ -121,6 +122,7 @@ impl ControlPlane {
             config.identity.clone(),
         );
         Ok(Self {
+            guests: GuestPool::new(client.clone(), namespace.clone(), config.identity.clone()),
             client,
             identity: config.identity,
             namespace,
@@ -223,10 +225,15 @@ impl ControlPlane {
     }
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
-        self.wake_agent(principal, id).await?;
-        GuestClient::for_agent(self.client.clone(), &self.namespace, id, &self.identity)
+        let agent = self.wake_agent(principal, id).await?;
+        self.guests
+            .for_microvm(&agent)
             .await
             .map_err(map_guest_error)
+    }
+
+    pub fn guest_pool(&self) -> GuestPool {
+        self.guests.clone()
     }
 }
 
@@ -1791,7 +1798,7 @@ fn codex_collaboration_outcome(value: &Value) -> Option<String> {
 
     if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
         let mut states = states.iter().collect::<Vec<_>>();
-        states.sort_by(|(left, _), (right, _)| left.cmp(right));
+        states.sort_by_key(|(left, _)| *left);
         for (thread_id, state) in states {
             let agent_status = state
                 .get("status")

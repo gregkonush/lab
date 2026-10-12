@@ -152,7 +152,7 @@ impl Vmm {
         ] {
             vm.request(Method::PUT, &format!("/drives/{id}"), json!({
                 "drive_id": id, "path_on_host": path, "is_root_device": root, "is_read_only": false,
-                "cache_type": "Unsafe", "io_engine": "Sync"
+                "cache_type": "Writeback", "io_engine": "Async"
             })).await?;
         }
         vm.request(

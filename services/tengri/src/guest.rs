@@ -1,9 +1,4 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    pin::Pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use futures::Stream;
 use k8s_openapi::api::core::v1::Secret;
@@ -14,17 +9,16 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{
-    crd::{MicroVM, MicroVMPhase},
-    identity::WorkloadIdentity,
-};
+use crate::{crd::MicroVM, identity::WorkloadIdentity};
 
 mod codex_history;
 pub use codex_history::CodexHistoryPart;
 mod codex_options;
+mod pool;
 pub(crate) mod rpc;
 
 pub use codex_options::CodexOptions;
+pub use pool::GuestPool;
 
 pub(crate) const GUEST_API_PORT: u16 = 8443;
 pub const EDITOR_PORT: u16 = 13337;
@@ -206,6 +200,8 @@ impl GuestClient {
         incarnation: Option<&str>,
         identity: &WorkloadIdentity,
     ) -> Result<Self, GuestError> {
+        let _latency =
+            crate::metrics::global().latency_timer(crate::metrics::Latency::GuestConnect);
         let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
         let microvm = microvms.get(agent_id).await?;
         if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
@@ -214,34 +210,32 @@ impl GuestClient {
                 message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
             });
         }
-        let status = microvm
-            .status
-            .as_ref()
-            .filter(|status| {
-                status.phase == MicroVMPhase::Ready
-                    && status.guest_ready
-                    && status.observed_generation >= microvm.metadata.generation.unwrap_or_default()
-            })
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let guest_ip = status
-            .pod_ip
-            .as_ref()
-            .ok_or_else(|| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let pod_uid = status
-            .pod_uid
-            .as_deref()
-            .filter(|uid| !uid.is_empty())
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let slot = microvm
-            .spec
-            .slot
-            .as_ref()
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        if slot.pod_uid != pod_uid {
-            return Err(GuestError::NotReady(agent_id.to_owned()));
-        }
-        let claim = crate::slot::client::claim_for(&microvm)?;
-        let secret_name = crate::pod::bootstrap_secret_name(&slot.name);
+        Self::for_microvm(client, namespace, &microvm, identity).await
+    }
+
+    async fn for_microvm(
+        client: Client,
+        namespace: &str,
+        microvm: &MicroVM,
+        identity: &WorkloadIdentity,
+    ) -> Result<Self, GuestError> {
+        let target = pool::GuestTarget::from_microvm(microvm, identity)?;
+        Self::for_target(client, namespace, target, identity).await
+    }
+
+    async fn for_target(
+        client: Client,
+        namespace: &str,
+        target: pool::GuestTarget,
+        identity: &WorkloadIdentity,
+    ) -> Result<Self, GuestError> {
+        let pool::GuestTarget {
+            claim,
+            pod_uid,
+            address,
+            slot_name,
+        } = target;
+        let secret_name = crate::pod::bootstrap_secret_name(&slot_name);
         let secrets: Api<Secret> = Api::namespaced(client, namespace);
         let secret = secrets.get(&secret_name).await?;
         let token_bytes = secret
@@ -252,17 +246,7 @@ impl GuestClient {
         let token = String::from_utf8(token_bytes.0.clone())
             .map_err(|_| GuestError::MissingToken(secret_name))?;
 
-        let ip: IpAddr = guest_ip
-            .parse()
-            .map_err(|_| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let port = GUEST_API_PORT;
-        #[cfg(test)]
-        let port = match identity {
-            WorkloadIdentity::Fixture(port) => *port,
-            _ => port,
-        };
-        let address = SocketAddr::new(ip, port);
-        let tls = identity.guest_tls(identity.guest_id(namespace, pod_uid)?)?;
+        let tls = identity.guest_tls(identity.guest_id(namespace, &pod_uid)?)?;
         let channel = identity.guest_channel(address, tls.clone())?;
         let preview_tls = tls.map(|config| {
             let mut config = config.as_ref().clone();
@@ -299,7 +283,7 @@ impl GuestClient {
         let base_url = format!("{scheme}://{address}");
         let mut rpc = rpc::RpcClient::new(channel, &token)?;
         rpc.bind_claim(claim);
-        rpc.verify_identity(pod_uid).await?;
+        rpc.verify_identity(&pod_uid).await?;
         Ok(Self {
             base_url,
             token,

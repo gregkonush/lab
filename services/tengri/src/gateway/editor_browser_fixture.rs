@@ -42,7 +42,7 @@ async fn editor_browser_acceptance_fixture() {
             "editor-test-signing-secret-at-least-32-bytes".to_owned(),
         )
         .unwrap(),
-        ActivityTracker::new(client, "tengri".to_owned()),
+        ActivityTracker::new(client.clone(), "tengri".to_owned()),
         PreviewOrigin::parse(
             (if https {
                 "https://tengri-{session}.tengri.localhost:3443"
@@ -58,7 +58,11 @@ async fn editor_browser_acceptance_fixture() {
             .to_owned(),
         )
         .unwrap(),
-        crate::identity::WorkloadIdentity::Fixture(8080),
+        crate::guest::GuestPool::new(
+            client,
+            "tengri",
+            crate::identity::WorkloadIdentity::Fixture(8080),
+        ),
         crate::authz::WorkspaceAuthorization::Fixture,
     )
     .unwrap();
