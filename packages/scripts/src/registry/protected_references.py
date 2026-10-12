@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read current workload images and retained Kargo artifacts without saving cluster objects."""
+"""Protect built-in and custom workload images without saving cluster objects."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -11,17 +11,14 @@ HOSTS = ("registry.ide-newton.ts.net/", "registry.registry.svc.cluster.local/")
 
 
 def references(context):
-    commands = [
-        [
-            "-n",
-            "registry",
-            "get",
-            "pods,deployments,statefulsets,daemonsets,cronjobs,jobs",
-            "--all-namespaces",
-            "-o",
-            "json",
-        ],
-        ["-n", "lab-delivery", "get", "freight,stages,promotions", "-o", "json"],
+    workloads = [
+        "-n",
+        "registry",
+        "get",
+        "pods,deployments,statefulsets,daemonsets,cronjobs,jobs",
+        "--all-namespaces",
+        "-o",
+        "json",
     ]
     result = set()
 
@@ -53,7 +50,33 @@ def references(context):
             )
         )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        builtins = pool.submit(read, workloads)
+        definitions = pool.submit(
+            read, ["-n", "registry", "get", "customresourcedefinitions", "-o", "json"]
+        )
+        visit(builtins.result())
+        resources = sorted(
+            {
+                item["metadata"]["name"]
+                for item in definitions.result()["items"]
+                if any(version["served"] for version in item["spec"]["versions"])
+            }
+        )
+        # CRDs include idle providers, scale-to-zero services, workflow templates and Kargo
+        # artifacts in every namespace. An incomplete read must abort preparation.
+        commands = [
+            [
+                "-n",
+                "registry",
+                "get",
+                ",".join(resources[start : start + 8]),
+                "--all-namespaces",
+                "-o",
+                "json",
+            ]
+            for start in range(0, len(resources), 8)
+        ]
         for value in pool.map(read, commands):
             visit(value)
     if not result:

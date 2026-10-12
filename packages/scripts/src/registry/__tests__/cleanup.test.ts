@@ -18,3 +18,9 @@ test('online registry maintenance does not create another RWO attachment', () =>
   const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
   expect(result.exitCode, result.stderr.toString()).toBe(0)
 })
+
+test('registry protection includes idle custom workloads and fails closed on incomplete discovery', () => {
+  const path = fileURLToPath(new URL('../test_protected_references.py', import.meta.url))
+  const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
+  expect(result.exitCode, result.stderr.toString()).toBe(0)
+})

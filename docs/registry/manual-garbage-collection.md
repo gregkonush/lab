@@ -32,8 +32,15 @@ python3 packages/scripts/src/registry/prepare.py \
   --references /tmp/registry-references.json
 ```
 
-The runner snapshots workload and retained Kargo references. The maintenance
-container reads the existing claim through a read-only mount. The runner verifies
+The runner snapshots built-in workloads and every served custom resource type,
+including cluster-scoped resources and all namespaces. This protects idle
+AgentProviders, workflow templates, scale-to-zero services, image catalogs and
+retained Kargo artifacts even when they have no Pod or Job. A discovery or list
+failure aborts preparation; an incomplete snapshot cannot authorize deletion.
+Raw cluster objects are not saved. CRDs with no served version cannot be queried
+and are excluded.
+
+The maintenance container reads the existing claim through a read-only mount. The runner verifies
 transferred input hashes, saves the plan locally and removes its temporary inputs.
 It records the claim UID/PV in the plan. It never changes registry
 files or disables uploads. Preparation fails on unsupported manifests or missing
