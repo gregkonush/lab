@@ -63,17 +63,18 @@ difference between nominal system memory and Kubernetes allocatable memory; read
 | GPU reservation | Nominal system RAM | Estimated Kubernetes allocatable | Five runners plus retained requests |
 | --------------- | ------------------ | -------------------------------- | ----------------------------------- |
 | 64GiB, current  | 64GiB              | 61.8GiB, measured                | Does not fit                        |
-| 32GiB           | 96GiB              | 93.8GiB                          | Does not fit                        |
-| 16GiB           | 112GiB             | 109.8GiB                         | About 14.9GiB request headroom      |
-| 8GiB            | 120GiB             | 117.8GiB                         | About 22.9GiB request headroom      |
+| 32GiB           | 96GiB              | 93.8GiB                          | About 1.9GiB request headroom       |
+| 16GiB           | 112GiB             | 109.8GiB                         | About 17.9GiB request headroom      |
+| 8GiB            | 120GiB             | 117.8GiB                         | About 25.9GiB request headroom      |
 
-The inventory above uses the original 16GiB memory and four logical CPU request per AMD64 runner. The initial
-two-Ryzen/three-Turin migration instead reserves 21GiB per runner to prevent three fitting on the measured 61.82GiB
-Ryzen node; strict hostname spread keeps all five shared-label slots across the two hosts. Before changing BIOS memory,
-revise that temporary reservation and spread through the reviewed ARC configuration. A future all-five Ryzen plan
-may restore the original 16GiB request only after native memory and concurrent-build acceptance. After the planned
-application Ceph-client and Bayn moves, the snapshot projects 14.95GiB memory and 7.78 logical CPUs for retained
-workloads. Five runners therefore request about 94.95GiB and 27.78 logical CPUs in total. Ryzen currently offers
+The inventory above uses the 16GiB memory and four logical CPU request per AMD64 runner. The initial
+two-Ryzen/three-Turin migration used 21GiB per runner to prevent three fitting on the measured 61.82GiB Ryzen node.
+The authorized expansion restores 16GiB requests and raises hostname spread to `maxSkew: 3`, allowing nine AMD64
+slots to place as three on Ryzen and six on Turin. After application Ceph clients and Bayn left Ryzen, the
+2026-10-12 native inventory measured 11.94GiB memory and 6.57 logical CPUs for retained workloads. Three runners
+therefore request about 59.94GiB and 18.57 logical CPUs, with user-authorized memory overcommit up to the existing
+32GiB combined container limits per runner. A future all-five Ryzen plan requires revising this host-spread contract
+and validating the new memory split. Five runners would request about 91.94GiB and 26.57 logical CPUs. Ryzen currently offers
 31.95 logical CPUs from its 16-core / 32-thread processor. These numbers establish scheduling fit, not simultaneous
 build performance. Each runner Pod permits up to 32GiB through its container limits, so burst usage still needs
 measurement. Scratch I/O also shares the physical NVMe with Talos `/var` and etcd.

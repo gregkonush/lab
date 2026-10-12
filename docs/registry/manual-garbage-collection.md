@@ -11,6 +11,31 @@ The former `prune-images.ts` CLI is removed. Its creation-date ordering, bare-ha
 tag matcher and manifest-digest deletion are replaced by upload-time retention,
 current build-tag recognition, explicit protections and tag removal.
 
+## Daily cleanup
+
+The GitOps-managed `registry-cleanup` CronJob runs at **03:23 America/Los_Angeles**
+every day. `concurrencyPolicy: Forbid` prevents overlapping scheduled runs.
+The Job has a two-hour deadline, no automatic retry, one retained successful run
+and three retained failed runs. Inspect its status and logs in namespace `registry`.
+
+`scheduled.py` resumes receipted quarantine purges, prepares online, refreshes
+protected references immediately before collection, then purges with uploads open.
+It skips collection when the plan is empty. The controller's four-minute collection
+ceiling, helper deletion and upload-restoration checks also apply to scheduled runs.
+Interrupted collections retain their receipt for the next run after writes are restored;
+an unresolved maintenance hold requires operator recovery.
+
+The Job has no registry PVC mount. Its service account can list protected workloads
+and the explicitly listed served CRD groups, use registry Pod exec, manage the
+collector Pod and patch only the named registry Deployment and Application.
+It cannot read Kubernetes Secrets. Add newly served CRD groups to
+`cleanup-rbac.yaml` through review; missing discovery permissions fail the run.
+Missing retained manifests or blobs also fail preparation before uploads are stopped.
+Resolve a stale reference at its owning resource rather than bypassing protection.
+
+The manual phases below use the same committed implementation for recovery or
+an explicitly requested cleanup outside the daily cadence.
+
 ## Prepare with uploads open
 
 Roll out the reviewed registry Deployment through GitOps before using these commands.

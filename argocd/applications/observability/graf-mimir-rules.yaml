@@ -6,6 +6,48 @@ metadata:
 data:
   graf-rules.yaml: |
     groups:
+      - name: bayn-research.rules
+        rules:
+          - alert: BaynResearchWorkerStale
+            expr: |
+              (time() - max(bayn_research_worker_heartbeat_seconds) > 120
+                or absent_over_time(bayn_research_worker_heartbeat_seconds[10m]))
+              and on()
+              (sum(kube_deployment_spec_replicas{namespace="bayn",deployment=~"bayn-research.*"}) > 0)
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Bayn research worker stopped publishing telemetry
+              description: Inspect the isolated research worker and database access. Trading execution has no research dependency.
+              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+          - alert: BaynResearchAttemptsFailing
+            expr: sum(increase(bayn_research_attempts_total{outcome!="COMPLETE"}[15m])) >= 3
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Bayn research attempts are failing
+              description: Join runId, receiptHash and trace_id in bayn-research logs. Check model expiry, invalid streams and signed registration.
+              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+          - alert: BaynResearchCostCoverageIncomplete
+            expr: max(bayn_research_unpriced_attempts) > 0 or max(bayn_research_ambiguous_attempts) > 0 or max(bayn_research_oldest_pending_expense_seconds) > 300
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Bayn research costs lack complete verified coverage
+              description: Inspect retained run and receipt identities, the frozen allocation basis and expense projection. Unknown costs prevent a fully costed comparison.
+              runbook_url: services/bayn/README.md#independent-alpha-r1-research
       - name: bayn-model.rules
         rules:
           - alert: BaynModelUnavailable

@@ -51,6 +51,8 @@ including idle providers and retained Kargo references across all namespaces; fa
 `collect.py` renames eligible tags and verified old blobs into quarantine under a bounded read-only hold and restores uploads.
 `purge.py` deletes quarantined data through the registry Pod's maintenance container,
 whose sole writable claim mount is quarantine. Preparation and purge create no separate RWO attachment.
+`scheduled.py` runs these phases daily through the GitOps-managed `registry-cleanup` CronJob,
+resumes receipted purges and skips the read-only phase for an empty plan.
 The former `prune-images.ts` CLI is removed.
 
 Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph,
