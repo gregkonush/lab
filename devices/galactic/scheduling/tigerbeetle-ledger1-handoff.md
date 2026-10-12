@@ -23,8 +23,10 @@ two hosts do not provide tolerance of either host's failure.
 | Source directory    | `/var/mnt/local-path-provisioner/pvc-d7517621-a1ed-4961-96d6-060d7ecb7f61_bayn_data-ledger-1` |
 | Target directory    | `/var/mnt/tigerbeetle/pvc-d7517621-a1ed-4961-96d6-060d7ecb7f61_bayn_data-ledger-1`            |
 
-The target is a retained, static local PV on Turin's 4.1 TB ORICO system disk, whose existing `EPHEMERAL` partition
-is persistent XFS at `/var`. It is outside both rebuildable scratch mounts and the provisioner's scratch-directory
+The target is a retained, static local PV under the Omni-owned `UserVolumeConfig/tigerbeetle` with
+`volumeType: directory`. It uses Turin's 4.1 TB ORICO system disk, whose existing `EPHEMERAL` partition is persistent
+XFS at `/var`. Talos exposes this directory volume writable to the kubelet without partitioning or formatting a disk.
+It is outside both rebuildable scratch mounts and the provisioner's scratch-directory
 allocation. Preserve it across normal Omni upgrades, and treat a Talos reset or system-disk replacement as a ledger
 replica loss requiring healthy peers and the retained source copy. Never place a ledger on `turin-nvme-intel` or
 `turin-nvme-transcend`; those disks remain scratch-only. Check the target helper's actual filesystem device and free
@@ -46,7 +48,10 @@ isolated empty path and claim; it did not modify any Bayn volume. Production sti
 
 ## Offline copy and metadata replacement
 
-1. Switch the Bayn PostgreSQL primary to the caught-up Turin instance through CNPG before applying its new host
+1. Render and validate the merged Omni template, require its no-reboot dry run to add only Turin's directory volume,
+   and sync only the reviewed `36-8bf7ec00-171c-11f1-8000-7cc255f16774-tigerbeetle-storage` patch. Require
+   `u-tigerbeetle` Ready and the target helper to report XFS on the live `EPHEMERAL` device with sufficient free space.
+   Switch the Bayn PostgreSQL primary to the caught-up Turin instance through CNPG before applying its new host
    affinity. Deliver the reviewed placement through normal image publication, Kargo promotion, and Argo's generated
    revision. Require both PostgreSQL instances healthy on separate 100G hosts before continuing to TigerBeetle.
 2. Let the TigerBeetle operator roll the placement template. Require replicas 0 and 2 Ready and replica 1 Pending
