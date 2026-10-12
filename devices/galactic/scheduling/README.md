@@ -98,8 +98,16 @@ The same dependency applies to its live stores and TigerBeetle's three-replica c
 
 Stage the affinity change before restricting these workloads to the two 100G hosts:
 
-1. Capture the resource and Pod identities, current templates, PDB, and native health. Use a bounded, owned Argo
-   manual-sync window during the transition. Keep ARC gated until the final Ryzen storage and memory checks pass.
+1. Capture the resource and Pod identities, current templates, PDB, and native health. On `AppProject/default`, add
+   an owned `spec.syncWindows` entry with `kind: deny`, the affected Application names, `manualSync: true`, and a
+   bounded UTC schedule and duration covering the transition. Guard the update with the project's UID and
+   resourceVersion, preserve unrelated windows, and record the exact entry and owner annotation for removal.
+   Verify it is **Active** with `argocd proj windows list default` and that each affected Application has no pending
+   `operation` or Running/Terminating `status.operationState` before patching a workload. Finish or terminate an
+   existing operation and verify it stopped first. The project window blocks automated sync and self-heal while
+   allowing deliberate manual syncs; ApplicationSet reconciliation does not overwrite this project-level control.
+   Do not rely on disabling automation only on a generated Application. Keep `arc` in the owned deny window until
+   the final Ryzen storage and memory checks pass. See [Argo sync windows](https://argo-cd.readthedocs.io/en/stable/user-guide/sync_windows/).
 2. For this authorized migration, temporarily apply the reviewed preferred affinity through the owning workload
    resource while retaining its existing three-host eligibility. Change only placement. Preserve images, replica
    identities, storage, labels, and the disruption budget. For TigerBeetle, update its cluster resource and let its
@@ -111,7 +119,8 @@ Stage the affinity change before restricting these workloads to the two 100G hos
    template is insufficient. Require native partition progress for Tempo and native protocol health for TigerBeetle.
 5. Reconcile the final 100G restriction from the reviewed owning GitOps revision. Kargo-managed workloads still use
    their generated branch and normal image-delivery gates. Complete the native data checks, then remove the owned
-   transition controls. The temporary three-host eligibility is not retained as desired state.
+   transition controls with identity and original-value guards, preserving unrelated windows. Remove the owned
+   cron entry rather than leaving it to recur next year. The temporary three-host eligibility is not retained as desired state.
 
 For TigerBeetle, complete this affinity stage before the final restriction makes replica 1 Pending on its Ryzen PV.
 Then follow the [retained ledger handoff](tigerbeetle-ledger1-handoff.md). Both surviving Pods must already use
