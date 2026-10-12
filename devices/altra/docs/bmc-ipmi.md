@@ -199,6 +199,77 @@ of an RPM value and compare duty changes using the same interface. The native
 fan-property table was uninitialized, so do not use `--set-fan-speed` as a
 calibrated RPM controller or change its property table to conceal the mismatch.
 
+### Set the installed Noctua case fans near 1,200 RPM
+
+The operator identified four connected Noctua case fans on 2026-10-12:
+three at the front and one at the rear, with no pump identified on these
+headers. The header-to-position mapping is not established.
+
+The 1,000-RPM trial left RAM temperature rising at 77 C against an 80 C
+memory-hot threshold, with the NIC at 97 C. The profile below increases
+airflow to approximately 1,200 RPM.
+
+The tested fixed duties are:
+
+| Carrier header | PWM/tach channel | Duty | Native RPM samples |
+| -------------- | ---------------: | ---: | -----------------: |
+| `FAN_1`        |                0 |  53% |          1208–1214 |
+| `FAN_2`        |                1 |  32% |          1216–1226 |
+| `FAN_4`        |                3 |  65% |          1207–1214 |
+| `FAN_5`        |                4 |  65% |          1211–1218 |
+
+`FAN_2` also intermittently reported about 820 RPM at the same 32% duty.
+These are native-tool readings, not calibrated physical speeds.
+
+At 18:09 UTC after this change, CPU temperature was 46 C, the hottest RAM
+channels were 77 C, and the NIC was 91 C with its 100G carrier up. RAM still
+had only 3 C of margin below its 80 C memory-hot threshold.
+
+Apply the profile inside the BMC shell. On a command failure, the cleanup
+attempts full duty on every channel and starts the stock manager if absent:
+
+```sh
+(
+    set -e
+    tool=/usr/local/bin/pwmtachtool
+    restore_failed_trial() {
+        result=$?
+        trap - 0 HUP INT TERM
+        for channel in 0 1 3 4; do
+            "$tool" 0 --set-pwm-dutycycle "$channel" 100 || result=1
+        done
+        if ! ps | grep -q '[t]hermalmgr$'; then
+            /etc/init.d/thermalmgr.sh start >/dev/null 2>&1 </dev/null || result=1
+        fi
+        exit "$result"
+    }
+    trap restore_failed_trial 0
+    trap 'exit 1' HUP INT TERM
+    /etc/init.d/thermalmgr.sh stop
+    if ps | grep -q '[t]hermalmgr$'; then
+        echo 'thermalmgr is still running' >&2
+        exit 1
+    fi
+    "$tool" 0 --set-pwm-dutycycle 0 53
+    "$tool" 0 --set-pwm-dutycycle 1 32
+    "$tool" 0 --set-pwm-dutycycle 3 65
+    "$tool" 0 --set-pwm-dutycycle 4 65
+    sleep 5
+    for channel in 0 1 3 4; do
+        "$tool" 0 --get-pwm-dutycycle "$channel"
+        "$tool" 0 --get-fan-speed "$channel"
+    done
+    trap - 0 HUP INT TERM
+)
+```
+
+If a fan reports zero or its reading is unavailable, restore automatic cooling.
+Read CPU, RAM, regulator, and [NIC temperatures](../../galactic/network/README.md#read-nic-temperature)
+again after the fans settle.
+The profile disables automatic temperature response and does not install a
+startup override. Recheck and reapply after a BMC restart. A temperature check
+at one workload does not establish cooling under a heavier workload.
+
 ### Change PWM duty
 
 Confirm the pump's header before lowering any duty. Fixed PWM disables the
