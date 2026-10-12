@@ -9,7 +9,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{crd::MicroVM, identity::WorkloadIdentity};
+use crate::identity::WorkloadIdentity;
 
 mod codex_history;
 pub use codex_history::CodexHistoryPart;
@@ -184,45 +184,6 @@ pub struct CodexCallResult {
 }
 
 impl GuestClient {
-    pub async fn for_agent(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        identity: &WorkloadIdentity,
-    ) -> Result<Self, GuestError> {
-        Self::for_agent_incarnation(client, namespace, agent_id, None, identity).await
-    }
-
-    pub async fn for_agent_incarnation(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        incarnation: Option<&str>,
-        identity: &WorkloadIdentity,
-    ) -> Result<Self, GuestError> {
-        let _latency =
-            crate::metrics::global().latency_timer(crate::metrics::Latency::GuestConnect);
-        let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
-        let microvm = microvms.get(agent_id).await?;
-        if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
-            return Err(GuestError::Api {
-                status: StatusCode::GONE,
-                message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
-            });
-        }
-        Self::for_microvm(client, namespace, &microvm, identity).await
-    }
-
-    async fn for_microvm(
-        client: Client,
-        namespace: &str,
-        microvm: &MicroVM,
-        identity: &WorkloadIdentity,
-    ) -> Result<Self, GuestError> {
-        let target = pool::GuestTarget::from_microvm(microvm, identity)?;
-        Self::for_target(client, namespace, target, identity).await
-    }
-
     async fn for_target(
         client: Client,
         namespace: &str,
@@ -510,12 +471,12 @@ mod tests {
                     )
                 },
             );
-            let result = GuestClient::for_agent(
+            let result = GuestPool::new(
                 Client::new(service, "tengri"),
                 "tengri",
-                "agent-fixture",
-                &WorkloadIdentity::Fixture(fixture_port),
+                WorkloadIdentity::Fixture(fixture_port),
             )
+            .for_agent("agent-fixture", None)
             .await;
             assert_eq!(
                 result.is_ok(),
@@ -548,13 +509,12 @@ mod tests {
                     .unwrap(),
             )
         });
-        let result = GuestClient::for_agent_incarnation(
+        let result = GuestPool::new(
             Client::new(service, "tengri"),
             "tengri",
-            "editor-fixture",
-            Some("old-incarnation"),
-            &WorkloadIdentity::Fixture(8080),
+            WorkloadIdentity::Fixture(8080),
         )
+        .for_agent("editor-fixture", Some("old-incarnation"))
         .await;
         assert!(matches!(
             result,

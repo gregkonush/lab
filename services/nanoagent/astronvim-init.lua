@@ -23,7 +23,7 @@ table.insert(plugins, {
 require("lazy").setup(plugins, {
   root = building and editor .. "/plugins" or nil,
   lockfile = building and editor .. "/lazy-lock.json" or nil,
-  install = { colorscheme = { "astrotheme", "habamax" } },
+  install = { missing = building, colorscheme = { "astrotheme", "habamax" } },
   ui = { backdrop = 100 },
   performance = { rtp = { paths = { editor .. "/site" } } },
 })

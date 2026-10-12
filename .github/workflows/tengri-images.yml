@@ -65,10 +65,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
 
-      - name: Set up Go for guest interoperability
+      - name: Set up Go for seccomp and guest interoperability
         uses: actions/setup-go@v6
         with:
-          go-version-file: services/nanoagent/go.mod
+          go-version-file: services/tengri/seccomp/go.mod
           cache-dependency-path: |
             services/nanoagent/go.sum
             services/tengri/seccomp/go.sum

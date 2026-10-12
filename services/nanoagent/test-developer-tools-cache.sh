@@ -35,7 +35,8 @@ trap cleanup EXIT
 # Upgrade untouched generated configs, while preserving edits and the plugin lockfile.
 mkdir -p "$HOME/.local/share/nvim/lazy/custom-plugin"
 printf 'retained user plugin\n' > "$HOME/.local/share/nvim/lazy/custom-plugin/fixture"
-sha256sum "$HOME/.local/share/nvim/lazy/custom-plugin/fixture" > "$work/plugins.sha256"
+[[ -f "$HOME/.config/nvim/lazy-lock.json" ]] || printf '{}\n' > "$HOME/.config/nvim/lazy-lock.json"
+sha256sum "$HOME/.local/share/nvim/lazy/custom-plugin/fixture" "$HOME/.config/nvim/lazy-lock.json" > "$work/plugins.sha256"
 sed 's/icons_enabled = true/icons_enabled = false/' "$work/init.lua" > "$HOME/.config/nvim/init.lua"
 old_init_hash="$(sha256sum "$HOME/.config/nvim/init.lua" | cut -d ' ' -f 1)"
 awk -v hash="$old_init_hash" 'NR == 2 { $1 = hash } { print }' "$work/receipt" > "$receipt"

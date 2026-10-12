@@ -12,6 +12,7 @@ export XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data" XDG_STATE_HOME=
 for _ in 1 2; do
   /opt/tengri/editor/bin/nvim --headless \
     '+lua assert(vim.fn.has("nvim-0.12") == 1); assert(require("astronvim").version() == "v6.1.0"); assert(vim.o.number and vim.o.undofile)' \
+    '+lua assert(require("lazy.core.config").options.install.missing == false)' \
     '+lua for name,plugin in pairs(require("lazy.core.config").plugins) do assert(plugin.dir == "/opt/tengri/editor/plugins/" .. name, name .. " is not local"); assert(plugin._.installed, name .. " is missing") end' \
     '+lua for _,lang in ipairs({"bash","c","lua","markdown","markdown_inline","python","query","vim","vimdoc"}) do assert(vim.api.nvim_get_runtime_file("parser/" .. lang .. ".so", false)[1], lang .. " parser missing") end' \
     '+if v:errmsg != "" | cquit 1 | endif' +qa

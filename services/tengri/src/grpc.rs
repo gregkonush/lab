@@ -116,13 +116,11 @@ impl ControlPlane {
             config.internal_hmac_secret,
         )?;
         let namespace: Arc<str> = config.namespace.into();
-        let provisional_terminal_leases = ProvisionalTerminalLeaseManager::new(
-            client.clone(),
-            namespace.clone(),
-            config.identity.clone(),
-        );
+        let guests = GuestPool::new(client.clone(), namespace.clone(), config.identity.clone());
+        let provisional_terminal_leases =
+            ProvisionalTerminalLeaseManager::new(client.clone(), namespace.clone(), guests.clone());
         Ok(Self {
-            guests: GuestPool::new(client.clone(), namespace.clone(), config.identity.clone()),
+            guests,
             client,
             identity: config.identity,
             namespace,
@@ -1162,18 +1160,13 @@ impl MicroVmControlPlane for ControlPlane {
         let incarnation = agent
             .uid()
             .ok_or_else(|| Status::unavailable("agent identity is unavailable"))?;
-        GuestClient::for_agent_incarnation(
-            self.client.clone(),
-            &self.namespace,
-            &request.agent_id,
-            Some(&incarnation),
-            &self.identity,
-        )
-        .await
-        .map_err(map_guest_error)?
-        .open_editor()
-        .await
-        .map_err(map_guest_error)?;
+        self.guests
+            .for_microvm(&agent)
+            .await
+            .map_err(map_guest_error)?
+            .open_editor()
+            .await
+            .map_err(map_guest_error)?;
         let issued = self.tickets.issue_editor(
             &principal.owner_hash,
             &request.agent_id,
@@ -1896,20 +1889,16 @@ fn validate_terminal_creation_id(value: &str) -> Result<(), Status> {
 #[derive(Clone)]
 struct ProvisionalTerminalLeaseManager {
     client: Client,
-    identity: crate::identity::WorkloadIdentity,
+    guests: GuestPool,
     namespace: Arc<str>,
     registry: ProvisionalTerminalLeaseRegistry,
 }
 
 impl ProvisionalTerminalLeaseManager {
-    fn new(
-        client: Client,
-        namespace: Arc<str>,
-        identity: crate::identity::WorkloadIdentity,
-    ) -> Self {
+    fn new(client: Client, namespace: Arc<str>, guests: GuestPool) -> Self {
         Self {
             client,
-            identity,
+            guests,
             namespace,
             registry: ProvisionalTerminalLeaseRegistry::default(),
         }
@@ -1966,14 +1955,7 @@ impl ProvisionalTerminalLeaseManager {
     }
 
     async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
-        let guest = match GuestClient::for_agent(
-            self.client.clone(),
-            &self.namespace,
-            agent_id,
-            &self.identity,
-        )
-        .await
-        {
+        let guest = match self.guests.for_agent(agent_id, None).await {
             Ok(guest) => Some(guest),
             Err(error) if agent_is_absent(&error) => None,
             Err(error) => {
@@ -3748,10 +3730,15 @@ mod tests {
     async fn provisional_terminal_lease_is_persisted_on_the_microvm() {
         let (service, mut handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let client = Client::new(service, "tengri");
         let manager = ProvisionalTerminalLeaseManager::new(
-            Client::new(service, "tengri"),
+            client.clone(),
             Arc::<str>::from("tengri"),
-            crate::identity::WorkloadIdentity::Fixture(8080),
+            GuestPool::new(
+                client,
+                "tengri",
+                crate::identity::WorkloadIdentity::Fixture(8080),
+            ),
         );
         let tracking_manager = manager.clone();
         let tracked_after = Utc::now();
@@ -3811,10 +3798,15 @@ mod tests {
     async fn terminal_cleanup_retry_is_registered_before_returning() {
         let (service, _handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let client = Client::new(service, "tengri");
         let manager = ProvisionalTerminalLeaseManager::new(
-            Client::new(service, "tengri"),
+            client.clone(),
             Arc::<str>::from("tengri"),
-            crate::identity::WorkloadIdentity::Fixture(8080),
+            GuestPool::new(
+                client,
+                "tengri",
+                crate::identity::WorkloadIdentity::Fixture(8080),
+            ),
         );
 
         manager
