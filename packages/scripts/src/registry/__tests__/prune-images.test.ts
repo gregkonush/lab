@@ -131,8 +131,6 @@ describe('registry prune-images', () => {
       '--keep-tag=main',
       '--keep-tag=latest',
       '--concurrency=3',
-      '--gc',
-      '--no-restart-registry',
       '--apply',
       '--tag-pattern=^v[0-9]+$',
       '--catalog-page-size=123',
@@ -142,8 +140,6 @@ describe('registry prune-images', () => {
     ])
 
     expect(options.apply).toBe(true)
-    expect(options.gc).toBe(true)
-    expect(options.restartRegistry).toBe(false)
     expect(options.keep).toBe(7)
     expect(options.concurrency).toBe(3)
     expect(options.catalogPageSize).toBe(123)
@@ -175,9 +171,15 @@ describe('registry prune-images', () => {
     expect(options.portForward).toBe(false)
   })
 
-  it('parseArgs can disable deleting untagged manifests', () => {
-    const options = parseArgs(['--no-delete-untagged'])
-
-    expect(options.deleteUntagged).toBe(false)
+  it.each([
+    '--gc',
+    '--no-gc',
+    '--delete-untagged',
+    '--no-delete-untagged',
+    '--restart-registry',
+    '--no-restart-registry',
+    '--unknown-option',
+  ])('rejects unsupported option %s before registry operations', (flag) => {
+    expect(() => parseArgs([flag])).toThrow(`Unknown argument '${flag}'`)
   })
 })

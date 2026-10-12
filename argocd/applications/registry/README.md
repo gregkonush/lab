@@ -47,8 +47,8 @@ and verify that upload initiation is rejected before running
 `registry garbage-collect --delete-untagged /etc/docker/registry/config.yml`
 against the existing claim. A maintenance Pod sharing the RWO claim must stay on
 the registry node. Check that protected digests remain reachable from retained
-tags before enabling `--delete-untagged`. Do not use the prune script's `--gc`
-option against a writable registry. After collection, trim this filesystem if its
+tags before enabling `--delete-untagged`. The prune CLI rejects GC flags; follow
+the [maintenance runbook](../../../docs/registry/manual-garbage-collection.md). After collection, trim this filesystem if its
 mount does not enable discard so freed extents return to RBD. Remove maintenance
 Pods before restoring the committed Deployment and Argo reconciliation, then
 verify a push, a pull, and claim free space.
