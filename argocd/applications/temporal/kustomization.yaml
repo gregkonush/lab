@@ -63,6 +63,14 @@ patches:
       path: /spec/template/spec/containers/0/image
       value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
     - op: add
+      path: /spec/template/spec/containers/0/startupProbe
+      value:
+        exec:
+          command: ["/bin/sh", "-c", "nodetool status"]
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 90
+    - op: add
       path: /spec/template/spec/containers/0/env/-
       value:
         name: CASSANDRA_NUM_TOKENS
@@ -253,7 +261,7 @@ images:
   digest: sha256:53d6a2b0b32015a78b8748235a1743e4d5b1bf3a7d6c01dc916aa01023745932
 - name: temporal-worker-runtime
   newName: registry.ide-newton.ts.net/lab/temporal-worker
-  digest: sha256:84222b465b0ecfed9e77d95285c0c4b81334eddba4bf803cc8fe976d5eb8d86b
+  digest: sha256:953b80615acbfaecf969cd05c837664ae265c707dbb62d31df652b23c24815f4
 configMapGenerator:
 - name: temporal-cassandra-upgrade-scripts
   files:

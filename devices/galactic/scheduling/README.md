@@ -17,7 +17,7 @@ tolerations, selectors, and affinity remain intact. This policy requires the clu
 Kubernetes 1.37 API and no additional admission service.
 
 Named local PVC consumers must opt in explicitly after verifying their class and bound PV.
-Bayn's local-path TigerBeetle cluster already does this. Do not add the toleration or a
+Bayn's local-path TigerBeetle cluster moves to Altra and Turin and must not retain that opt-in. Do not add the toleration or a
 blanket `Exists` toleration to applications with Ceph volumes. This taint is a scheduling
 contract for reviewed workloads, not an authorization boundary against arbitrary Pod specifications.
 
@@ -37,22 +37,28 @@ remain eligible on Ryzen. The monitor placement retains all three hosts with
    the actual API's mutation logic. It creates a UUID-named policy and binding scoped to a unique test label in
    `local-path-storage`, submits only server-dry-run Pods, and removes both policy objects in a `finally` block.
    No application Pod or existing policy is changed. This probe requires PyYAML and cluster policy creation permissions.
-4. Check Altra and Turin NIC temperatures and run the [100G routing acceptance](../network/README.md).
-   The 2026-10-11 observation put Altra's NIC at its reported 105C critical threshold. Resolve that cooling gate before
-   adding client traffic. A negotiated 100G link alone does not establish safe sustained operation.
-5. Verify memory requests and local filesystem free space before moving runners. The 2026-10-11 snapshot had about
-   61.8Gi allocatable on Ryzen and 25.8Gi of non-Ceph Pod requests. Two ARC runners add 32Gi; a third does not fit.
+4. Check fresh Altra and Turin NIC temperatures and run the [100G routing acceptance](../network/README.md).
+   Require temperatures below the reported critical threshold before adding client traffic. Historical peaks do not
+   establish the current temperature, and a negotiated 100G link alone does not prove sustained operation.
+5. Keep the existing CPU/GPU memory split for the initial ARC move. Ryzen has 128GiB installed, with 64GiB reserved
+   for the GPU and 61.8GiB allocatable. Place at most two AMD64 runners there, and retain three on Turin. Each runner
+   reserves 21Gi and four logical CPUs. The 2026-10-11 inventory projects about 56.95GiB and 15.78 logical CPUs for
+   retained workloads plus two runners after application Ceph clients and all Bayn components leave Ryzen. Verify
+   fresh requests and local filesystem free space before promotion. A later all-five move requires the
+   [Bosgame memory repartition](../../ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
 
 Three Ceph-backed database clusters, SPIRE server, and Restate retain three replicas but use preferred host separation
-because only two application storage-client hosts remain. Bayn and Torghut PostgreSQL retain their AMD64 restriction,
-so both instances share Turin. This removes host redundancy for those two databases. Preserve their synchronous
-replication and writer fences; do not interpret replica count as physical failure-domain count.
+because only two application storage-client hosts remain. Bayn PostgreSQL must retain one instance on Altra and one
+on Turin with required host separation; both architecture images must be validated before that rollout. Bayn status,
+execution workers, and egress likewise span those hosts. Its three TigerBeetle replicas use a two-plus-one placement
+across them, preserving replica identity and local data during the Ryzen handoff. No Bayn component belongs on Ryzen.
+Torghut PostgreSQL currently retains its AMD64 restriction, so its two instances can share Turin. Preserve database
+synchronous replication and writer fences; replica count is not the physical failure-domain count.
 
 ## Apply the reviewed desired state in order
 
-Merge the storage and scheduling preparation first. Keep the dependent ARC runner-placement PR in draft until steps
-1 through 5 pass. Changes under `argocd/applications/arc/**` automatically build an image and enter Kargo promotion;
-merging the runner move before its local class and memory headroom exist can remove the available AMD64 build capacity.
+Merge the storage and scheduling preparation first. Complete steps 1 through 5 before delivering the dependent ARC runner-placement configuration. Changes under `argocd/applications/arc/**` automatically build an image and enter Kargo promotion;
+do not sync its Kargo revision before its local class and memory headroom exist.
 
 1. Verify the exact merged revision and required CI. Reconcile the reviewed Rook and node-agent changes through their
    existing Argo applications. Confirm Ryzen's Ceph monitor remains in the three-monitor quorum and its node agents are ready.
@@ -71,11 +77,15 @@ merging the runner move before its local class and memory headroom exist can rem
 6. Keep Forgejo's AMD64 runner on Turin with its original Ceph registration PVC. Drain assigned jobs through the
    [Forgejo runner procedure](../../../argocd/applications/forgejo-runners/README.md) before its move.
 7. Promote the reviewed ARC configuration through the existing `arc-runner` Kargo Stage after Ceph clients have left Ryzen.
-   Keep the ARM64 sets on Altra. Let busy AMD64 runners finish normally; their replacements use `local-path-ryzen`.
+   Keep the ARM64 sets on Altra. Let busy AMD64 runners finish normally. One five-runner `arc-amd64` set uses
+   `local-path-ci-amd64`, whose node maps select Turin Transcend or Ryzen local scratch. Strict two-host spread and
+   the 21Gi memory reservation allow two on current Ryzen capacity and three on Turin. Require fresh non-runner
+   Ryzen requests below 19.82GiB. Revisit this reservation and spread before a BIOS memory change.
 8. Run `python3 devices/galactic/scheduling/verify-placement.py --context galactic-lan --verify`.
    Require no application Ceph client on Ryzen, an AMD64 runner using only its local scratch claim, and the Ryzen monitor in quorum.
    Execute a non-publishing AMD64 CI job that writes scratch files, builds and runs a container, and executes Nix binaries.
-   Check Ryzen etcd latency during two concurrent builds. Its local scratch partition shares the physical NVMe with `/var`.
+   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during two concurrent Ryzen builds and three concurrent Turin builds.
+   Its local scratch partition shares the physical NVMe with `/var`.
 
 ## Recover an interrupted rollout
 
