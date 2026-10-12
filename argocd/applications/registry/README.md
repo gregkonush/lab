@@ -31,11 +31,10 @@ per-stream limiter combined with concurrent writers.
 
 ## Clean old images
 
-Keep at least five recent builds per repository, every image from the last seven
-days, and all digests referenced by workload templates or retained Kargo
+Keep at least five recent version tags per repository, every image uploaded in the
+last seven days, and all digests referenced by workload templates or retained Kargo
 Freight, Stage history, and promotions. Preserve the platform manifests and
-attestations reachable from retained image indexes. Leave unknown tags and build
-dates alone. The prune script's default bare-hash pattern does not cover current
+attestations reachable from retained image indexes. Leave unknown tags alone. The prune script's default bare-hash pattern does not cover current
 `sha-*`, `kargo-sha-*`, or run-qualified build tags.
 
 Delete only reviewed, unreferenced manifests through the registry API. Manifest
