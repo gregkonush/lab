@@ -31,7 +31,11 @@ type SessionState =
     }
   | { readonly phase: 'finished'; readonly reason?: CaptureInvalidation; readonly seal?: ResearchCaptureSeal }
 
-export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig, sourceRevision: string) =>
+export const makeResearchCaptureSession = (
+  config: ResearchCaptureSessionConfig,
+  sourceRevision: string,
+  activeProtocolHash: string,
+) =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
     const {
@@ -190,6 +194,7 @@ export const makeResearchCaptureSession = (config: ResearchCaptureSessionConfig,
           if (
             universeHash === undefined ||
             universeHash !== config.universeHash ||
+            Result.getOrUndefined(canonicalHashV1Result(protocol)) !== activeProtocolHash ||
             universe.symbols.join(',') !== protocol.universe.join(',') ||
             universe.universeId !== protocol.universeId ||
             universe.universeSymbolHash !== protocol.universeSymbolHash ||

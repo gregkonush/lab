@@ -394,17 +394,32 @@ export const runMatchedEntryStudy = (
       (yield* Effect.fromResult(canonicalHashV1Result(input.study.assumptions)))
     )
       return yield* new SignalStudyFailure({ message: 'Execution assumptions differ from registration' })
-    const witnessed = new Set(input.witnesses.map((w) => w.sha256))
-    const required = [
+    const required = new Set([
       registration.latencyEvidenceHash,
       registration.capacityEvidenceHash,
       ...input.inventory.map((i) => i.evidenceHash),
       ...input.timings.map((entry) => entry.witness?.evidenceHash ?? null),
       ...input.timings.map((entry) => entry.witness?.decisionEvidenceHash ?? null),
       ...input.costs.flatMap((c) => [c.inference?.evidenceHash ?? null, c.sharedOperating?.evidenceHash ?? null]),
-    ]
-    if (required.some((hash) => hash !== null && !witnessed.has(hash)))
-      return yield* new SignalStudyFailure({ message: 'Referenced private witness is missing from input' })
+    ])
+    const fs = yield* FileSystem.FileSystem
+    const witnessed = new Map<string, Uint8Array>()
+    for (const hash of required) {
+      if (hash === null) continue
+      const file = input.witnesses.find((candidate) => candidate.sha256 === hash)
+      if (file === undefined)
+        return yield* new SignalStudyFailure({ message: 'Referenced private witness is missing from input' })
+      const bytes = yield* fs
+        .readFile(file.path)
+        .pipe(
+          Effect.mapError(
+            (cause) => new SignalStudyFailure({ message: 'Referenced private witness cannot be read', cause }),
+          ),
+        )
+      if (sha256(bytes) !== hash)
+        return yield* new SignalStudyFailure({ message: 'Referenced private witness bytes differ' })
+      witnessed.set(hash, bytes)
+    }
     if (registration.definitionHash !== definitionHash || registration.latencyMs !== input.study.assumptions.latencyMs)
       return yield* new SignalStudyFailure({ message: 'Frozen definition or routing assumptions differ' })
     const dates = registration.sessionDates
@@ -474,26 +489,19 @@ export const runMatchedEntryStudy = (
       timingIds.add(entry.batchId)
       if (entry.witness === null) continue
       const timing = entry.witness
-      const file = input.witnesses.find((candidate) => candidate.sha256 === timing.evidenceHash)
-      if (file === undefined) return yield* new SignalStudyFailure({ message: 'Timing witness file is missing' })
-      const fs = yield* FileSystem.FileSystem
-      const bytes = yield* fs.readFileString(file.path)
-      if (sha256(bytes) !== timing.evidenceHash)
-        return yield* new SignalStudyFailure({ message: 'Timing witness bytes differ' })
+      const bytes = witnessed.get(timing.evidenceHash)
+      if (bytes === undefined) return yield* new SignalStudyFailure({ message: 'Timing witness file is missing' })
       const retained = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(EntryTimingReceiptSchema),
         strictParseOptions,
-      )(bytes)
-      const decisionFile = input.witnesses.find((candidate) => candidate.sha256 === timing.decisionEvidenceHash)
-      if (decisionFile === undefined)
+      )(new TextDecoder().decode(bytes))
+      const decisionBytes = witnessed.get(timing.decisionEvidenceHash)
+      if (decisionBytes === undefined)
         return yield* new SignalStudyFailure({ message: 'Committed decision witness file is missing' })
-      const decisionBytes = yield* fs.readFileString(decisionFile.path)
-      if (sha256(decisionBytes) !== timing.decisionEvidenceHash)
-        return yield* new SignalStudyFailure({ message: 'Committed decision witness bytes differ' })
       const decision = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(ExecutionDecisionDocumentSchema),
         strictParseOptions,
-      )(decisionBytes)
+      )(new TextDecoder().decode(decisionBytes))
       const native = decision.strategyDecision
       const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
       if (

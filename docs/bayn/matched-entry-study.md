@@ -64,6 +64,10 @@ Shared infrastructure, data and subscription allocations need explicit witnessed
 These are witnessed allocation scenarios, not invoice reconciliation. Hashes establish identity; review the
 allocation's source joins and accounting scope independently.
 
+Every referenced witness is read and hashed as raw bytes, including latency, capacity, zero-batch inventories and
+both cost allocations. Missing, unreadable or changed files fail the command before evaluation. Timing and native
+decision decoders consume those same verified bytes without rereading a mutable path.
+
 Every original native observation remains independently validated. Its selected bars, quotes, trades, feature
 payloads (including optional technical indicators), model-relevant session/window context and exact source
 coordinates must reproduce from the frozen capture. Missing technical evidence is distinct from present evidence.

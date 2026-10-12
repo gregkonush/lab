@@ -224,6 +224,61 @@ const witnessedFixture = () =>
     }
   })
 
+test.each(
+  (['latency', 'capacity', 'inventory', 'inference', 'operating'] as const).flatMap((gate) =>
+    (['verified', 'missing', 'changed'] as const).map((state) => [gate, state] as const),
+  ),
+)('matched study verifies %s witness bytes when %s', async (gate, state) => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const data = fixture()
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.gz`
+      yield* fs.writeFile(arrivals, gzipSync(data.body))
+      const path = `${directory}/evidence.bin`
+      const bytes = new Uint8Array([0, 255, 192, 128, 10])
+      const evidenceHash = sha256(bytes)
+      if (state !== 'missing')
+        yield* fs.writeFile(path, state === 'changed' ? new Uint8Array([0, 255, 192, 128, 11]) : bytes)
+      const registration = {
+        ...data.registration,
+        latencyEvidenceHash: gate === 'latency' ? evidenceHash : null,
+        capacityEvidenceHash: gate === 'capacity' ? evidenceHash : null,
+      }
+      const cost = { costMicros: '17', evidenceHash, unresolvedCount: 0 }
+      const input = {
+        ...data.input,
+        witnesses: [{ path, sha256: evidenceHash }],
+        inventory: data.input.inventory.map((entry, index) => ({
+          ...entry,
+          evidenceHash: gate === 'inventory' && index === 0 ? evidenceHash : null,
+        })),
+        costs: data.input.costs.map((entry) => ({
+          ...entry,
+          inference: gate === 'inference' ? cost : null,
+          sharedOperating: gate === 'operating' ? cost : null,
+        })),
+      }
+      const result = yield* runMatchedEntryStudy(input, registration, arrivals, data.receipt).pipe(Effect.result)
+      if (state === 'verified') {
+        expect(Result.isSuccess(result)).toBeTrue()
+      } else {
+        expect(Result.isFailure(result)).toBeTrue()
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(SignalStudyFailure)
+          expect(result.failure).toMatchObject({
+            message:
+              state === 'missing'
+                ? 'Referenced private witness cannot be read'
+                : 'Referenced private witness bytes differ',
+          })
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
 test('witnessed immediate and delayed arms on the same symbol keep independent fills and hold clocks', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {

@@ -15,7 +15,9 @@ The calendar is supplied evidence; the worker does not fetch a calendar or choos
 
 The configuration also requires `researchSchedule: { protocol, pollIntervalMs }`. Bind the reviewed native Jev
 protocol and an integer cadence from 1,000 to 60,000 ms before capture starts. Its universe and source topics must
-match the acquired worker. Older configurations without this registration are invalid and start no capture.
+match the acquired worker, and its complete canonical protocol hash must match the active strategy's parameter hash
+from the application plan. A mismatch stops capture before object acquisition or SQL writes. Older configurations
+without this registration are invalid and start no capture.
 
 The existing scoped session timer records one `research-opportunity` for every open-anchored ordinal strictly before
 close, independently of live holdings or model execution. Each receipt retains scheduled and actual observation
