@@ -278,7 +278,7 @@ test('native Jev entry uses measured commitment before execution and mechanical 
   expect(report.ledger.positions).toEqual([])
 })
 
-test('native entry abstentions retain paid calls and incomplete expired evidence cannot submit orders', async () => {
+test('native entry abstentions retain paid calls without submitting orders', async () => {
   const wait = await simulate({
     nativeEntry: true,
     entryAction: 'wait',
@@ -289,6 +289,9 @@ test('native entry abstentions retain paid calls and incomplete expired evidence
   expect(wait.report.decisions.some((decision) => decision.status === 'NO_SIGNAL')).toBeTrue()
   expect(wait.report.modelCallCount).toBeGreaterThan(0)
   expect(BigInt(wait.report.knownModelCostMicros)).toBeGreaterThan(0n)
+})
+
+test('incomplete expired native entry evidence cannot submit orders', async () => {
   const expired = await simulate({
     nativeEntry: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,

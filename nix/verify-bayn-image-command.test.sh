@@ -107,7 +107,7 @@ func main() {
 		case "/app/services/bayn/dist/jev-study-export-command.js":
 			fmt.Println("Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help")
 		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
-			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
+			fmt.Println("Usage: bayn-streaming-diagnostics --query <query.json> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
 		default:
 			os.Exit(2)
 		}
