@@ -1,12 +1,12 @@
 # Tengri control plane
 
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
-4 vCPU, 8 GiB RAM, a private 1 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
+4 vCPU, 8 GiB RAM, a private 1.5 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
 The host runner reserves 9 GiB, including 1 GiB beyond guest RAM for preparation and VMM overhead, matching the native
-acceptance fixture. Artifact staging has a separate 2 GiB limit so copying the boot disk does not exhaust a 128 MiB
+acceptance fixture. Artifact staging has a separate 3 GiB limit so copying the boot disk does not exhaust a 128 MiB
 container through charged file pages. The namespace quota covers all six runners, supervisors, and the controller.
 
 Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
@@ -28,7 +28,7 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-direct-io.1`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
+`1.16.1+tengri-async-io.2`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
 generation before vCPUs run, then thaws root/home,
 sets the guest clock, binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
@@ -250,11 +250,17 @@ CI builds these artifacts without executing the KVM fixture. It requires no SSH 
 requires the scoped approval below.
 Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
 as the native images, including the KVM harness cache, to reuse the release compilation.
-`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
-absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. Routine main publication runs
+`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
+select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
+`bash services/tengri/test-kvm.sh`. The retained Tengri fixture includes the native `runner-seccomp.json` profile.
+Routine main publication runs
 three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
 requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page
-eviction, guest administration, and browser startup. The first sleep lasts three minutes so the previous host SVID
+eviction, guest administration, and browser startup. It also requires terminal first output below 300 ms, managed
+Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
+disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
+error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
+The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful

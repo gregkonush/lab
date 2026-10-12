@@ -210,6 +210,7 @@ test('critical Ceph alerts opt into the configured email route', () => {
   expect(criticalRules.map((rule) => rule.alert)).toEqual([
     'CephClusterHealthError',
     'CephSlowOps',
+    'CephOsdReadLatencyHigh',
     'CephOsdCommitLatencyCritical',
   ])
 

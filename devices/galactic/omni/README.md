@@ -36,8 +36,8 @@ omnictl cluster template validate \
   --file /tmp/galactic-cluster-template.rendered.yaml
 ```
 
-The renderer also copies the non-secret `image-factory-registry.yaml` sidecar next to the rendered template so Omni
-can resolve the relative patch reference.
+The renderer also copies referenced non-secret patch sidecars next to the rendered template so Omni can resolve
+their relative paths, including `image-factory-registry.yaml` and the native Tengri runner seccomp patches.
 
 Review the sync before applying it:
 
@@ -87,6 +87,19 @@ values can still contain credentials. Select only the network or status fields n
 Follow the current
 [Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
 `docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
+
+## Tengri runner seccomp
+
+`tengri-runner-amd64.json` and `tengri-runner-arm64.json` are generated Talos machine patches for containerd 2.3.4.
+Regenerate them with `bash services/tengri/seccomp/generate.sh` from the repository root. Talos 1.14 manages
+`machine.seccompProfiles` at `/var/lib/kubelet/seccomp/profiles`; the slot runner selects
+`profiles/tengri-runner.json`. Other containers retain RuntimeDefault. No Kubernetes installer writes host files.
+
+This is a permission change and requires approval before syncing. Render and validate the full current template,
+require the exact profile addition to pass a server-side Talos `--mode no-reboot --dry-run` on each target, and
+review the Omni dry-run for unrelated changes before syncing. Read back each profile resource and file, then run
+native KVM confinement, disk-error, lifecycle and responsiveness acceptance before releasing the new slot image.
+See the [profile contract and upstream references](../../../services/tengri/seccomp/README.md).
 
 ## CI scratch reclamation
 
