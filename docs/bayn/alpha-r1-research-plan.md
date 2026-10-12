@@ -86,6 +86,14 @@ Preserve meaningful omitted/null distinctions. Reject unknown or unfrozen reques
 normalized policy against the registration before transmission, not only its request hash afterward. A runtime policy
 change creates a new run identity and follows the registered experiment budget. No post-result override or tuning.
 
+The study registration also binds an immutable manifest for every comparison arm, not only Alpha-R1. Each manifest
+identifies its role, model/provider/checkpoint or numeric implementation, input transform, exact prompt/template,
+resolved inference policy, supported seed or explicit unsupported-seed status, factor limit, decision thresholds,
+ranking/tie-break and portfolio/routing policy. Freeze request count, repeat aggregation, retry/attempt/time/cost
+budgets and the treatment of rejected or ambiguous attempts. Include all arm-manifest hashes in the canonical study
+and run identities. Direct Flamingo selection has a separate manifest from Flamingo description generation. Pinning
+one role does not register the other. An unregistered arm or configuration cannot produce an eligible result.
+
 Use terminal outcomes for complete, rejected, cancelled, expired, ambiguous and unavailable attempts. An incomplete
 stream, missing usage or unknown engine outcome cannot silently become successful or free. Retain private payloads
 in the existing controlled evidence store. Logs contain identifiers and hashes, never request or response bodies.
@@ -114,6 +122,9 @@ results can replay without inference. Account for every transmitted attempt, inc
       sessions, label-overlap embargo, experiment count and rejection criteria before viewing evaluation outcomes.
 - [ ] Freeze the complete resolved Alpha-R1 inference policy from runtime configuration into the registration and
       run identity. Bind maximum selected factors as well as generation parameters and the pinned serving defaults.
+- [ ] Freeze separate manifests and attempt budgets for Jev-only, direct Flamingo selection, Alpha-R1 selection,
+      the numeric selector and the immediate/delayed controls. Register Flamingo description generation separately.
+      Record unsupported provider controls explicitly. Never infer a selector policy from its producer role.
 - [ ] Freeze the factor-context recipe before evaluation. The [publisher's pipeline](https://github.com/FinStep-AI/Alpha-R1)
       builds semantic descriptions from single-factor performance and global market memory. Candidate IDs or raw numbers
       alone do not reproduce that interface. Bind formulas, performance windows, memory inputs and availability cutoffs.
@@ -130,7 +141,8 @@ results can replay without inference. Account for every transmitted attempt, inc
 late evidence. Add rejection cases for changed descriptions, unbound producer identity, post-cutoff performance labels
 and future market-memory facts. Changed decoding, reasoning, output limits or factor limits must change the run ID;
 an attempt with a different normalized policy must fail before transmission. A real PUT/GET and retained
-original-session replay establish input eligibility.
+original-session replay establish input eligibility. Validate these rules for every arm and role, including changes
+to direct Flamingo's prompt, seed/attempt budget or factor limit and the numeric selector's thresholds.
 Measure recorder queue, bytes and execution latency against capture-disabled baseline. Missing evidence leaves
 evaluation UNKNOWN.
 
@@ -239,7 +251,9 @@ entry and closure measurements are mandatory; Sunday readiness samples do not qu
 - [ ] Run the existing immediate/delayed/Jev three-arm audit first. Report selection effect, delay effect and total
       increment. Follow matched-opportunity diagnostics with independently evolving complete portfolios.
 - [ ] Compare Jev-only, Alpha-R1-assisted research selection, Flamingo and one frozen cheap numeric selector on the
-      same eligible inputs, candidate pool, budgets, risk bounds and cost assumptions. Preserve the no-trade outcome.
+      same eligible inputs, candidate pool, budgets, risk bounds and cost assumptions. Require each arm's own P1
+      manifest before any call or numerical evaluation. Enforce its attempt budget and preregistered repeat aggregation;
+      retain every attempt rather than selecting the best answer or prompt after observing returns. Preserve no-trade.
 - [ ] Declare how factor selection maps to Bayn's actual horizon before testing. Alpha-R1's published setting cannot
       establish usefulness for Bayn. A changed holding horizon is a separate registered experiment.
 - [ ] Test original, ticker-aliased, relative-date and combined request representations with repeated-original
