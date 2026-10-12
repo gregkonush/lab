@@ -105,6 +105,7 @@ def server_args(lock, cache):
         "--middleware",
         "admission.AdmissionMiddleware",
         "--enable-request-id-headers",
+        "--enable-force-include-usage",
         "--disable-uvicorn-access-log",
         "--disable-fastapi-docs",
     ]
