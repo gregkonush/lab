@@ -202,7 +202,12 @@ builds the desktop and makes that same source revision eligible for its automati
 The device plugin supplies only KVM/TUN, using existing ready-node labels. The TAP init container gets NET_ADMIN only in
 the Pod network namespace. The runner starts with MKNOD/SETUID/SETGID only to create its private block-device inode and
 drop UID/GID. Runtime and Firecracker capability sets must all be empty. The supervisor alone receives SPIFFE CSI access.
-No permission change to host device inodes, node configuration, namespace labels, or scheduling is needed.
+The Async block engine requires the generated, runner-only seccomp profile. Omni's native Talos
+`machine.seccompProfiles` manages it at `/var/lib/kubelet/seccomp/profiles/tengri-runner.json`; only the runner selects
+`profiles/tengri-runner.json`. Other containers retain RuntimeDefault. Validate the complete current machine
+configuration and require a no-reboot server dry run on each target before syncing the approved profile change.
+The existing Alloy collector also needs the scoped NetworkPolicy ingress to slot health port 8080 for responsiveness
+metrics. Host device inode permissions, namespace labels and scheduling do not change.
 
 Before merging a change that would automatically reconcile new SPIRE permissions or expose a new Kargo image pair,
 require authorization for that effect or keep delivery held at the PR boundary. Do not treat a manual sync omission as
@@ -212,8 +217,9 @@ A reviewed cutover follows this order:
 
 1. Complete native builds, component checks, isolated KVM acceptance, and permission review. Record exact source,
    paired artifacts, kernel/Firecracker pins, measurement boundary, p50/p95/max, RAM release, failures, and exclusions.
-2. Through reviewed GitOps, reconcile only approved device/host-SPIRE prerequisites. Verify actual allocations and
-   supervisor identity without modifying nodes. Confirm the slot admission policy and its Deny binding are installed
+2. Through reviewed GitOps and the [Omni procedure](../../devices/galactic/omni/README.md), reconcile only approved
+   device, host-SPIRE and native seccomp prerequisites. Read back the profile resource and file on each target;
+   verify actual allocations and supervisor identity. Confirm the slot admission policy and its Deny binding are installed
    before KVM/TUN allocations are advertised. Before the initial device Application enrollment, record zero advertised
    `runtime.proompteng.ai/kvm-tun` capacity across all nodes and zero existing Pod requests or limits for that resource
    across all namespaces, including pending Pods. A new admission policy does not fence earlier allocations. If either
@@ -317,6 +323,17 @@ for five minutes. Both use kube-state-metrics, so a healthy controller scrape or
 An occupied, healthy pool does not fire either alert. The existing quota rejection alert covers exhausted capacity.
 All Tengri alerts link back to this runbook and use bounded labels; owner hashes,
 agent IDs, terminal IDs, prompts, file contents, and ticket material must never appear in metrics.
+
+Fixed-bucket histograms distinguish guest connection setup and identity verification
+(`tengri_guest_connect_seconds`), guest terminal attachment (`tengri_terminal_attach_seconds`),
+first nonempty PTY output (`tengri_terminal_first_output_seconds`), and control-plane-to-guest terminal ping
+round trips (`tengri_terminal_heartbeat_seconds`). Terminal timings start after the WebSocket upgrade;
+they exclude frontend API requests, browser transport, and rendering. A reattached terminal with no new output
+does not produce a first-output observation until bytes arrive, so that series is diagnostic, not a startup alert.
+The heartbeat alert requires at least ten observations in five minutes and p95 above 100 ms for five minutes.
+Guest connection p95 above 300 ms requires at least five observations in fifteen minutes and five minutes of delay.
+An idle histogram does not establish responsiveness. Correlate these timings with the Ceph read/queue alerts
+and browser measurements before attributing a stall to a specific layer.
 
 For a missing slot Pod, inspect its Lease, MicroVM, and original home PVC. Follow the fenced recovery procedure above
 before resetting a binding. Pod absence alone does not prove that its former storage writer stopped. Preserve the

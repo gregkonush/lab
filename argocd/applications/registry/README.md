@@ -39,26 +39,17 @@ fixture alone does not establish shared-storage stability.
 
 ## Clean old images
 
-Keep at least five recent version tags per repository, every image uploaded in the
+Keep at least five recent build tags per repository, every image uploaded in the
 last seven days, and all digests referenced by workload templates or retained Kargo
 Freight, Stage history, and promotions. Preserve the platform manifests and
 attestations reachable from retained image indexes. Leave unknown tags alone.
-The prune script's default bare-hash pattern does not cover current
-`sha-*`, `kargo-sha-*`, or run-qualified build tags.
+Retention recognizes bare hashes, `sha-*`, `kargo-sha-*` and run-qualified build tags.
 
-Remove reviewed old tags through the registry API. Tag removal alone does not
-reclaim blob storage. For garbage collection, pause
-Argo reconciliation for this Application using an owned
-[maintenance hold](../../applicationsets/README.md#storage-maintenance-holds),
-restart the registry in read-only mode,
-and verify that upload initiation is rejected before running
-`registry garbage-collect --delete-untagged /etc/docker/registry/config.yml`
-against the existing claim. A maintenance Pod sharing the RWO claim must stay on
-the registry node. Check that protected digests remain reachable from retained
-tags before enabling `--delete-untagged`. The prune CLI rejects GC flags; follow
-the [maintenance runbook](../../../docs/registry/manual-garbage-collection.md). After collection, trim this filesystem if its
-mount does not enable discard so freed extents return to RBD. Remove maintenance
-Pods before restoring the committed Deployment and Argo reconciliation, then
-verify a push, a pull, and claim free space.
-
-See [Distribution's garbage collection requirements](https://distribution.github.io/distribution/about/garbage-collection/).
+Use the [cleanup runbook](../../../docs/registry/manual-garbage-collection.md).
+Preparation runs while uploads remain available. An owned maintenance hold limits
+the final read-only phase to validating current roots and atomically moving eligible
+tags and old unreferenced blobs into quarantine. The controller removes its helper before
+restoring uploads and Argo reconciliation. The committed maintenance container has
+a read-only CAS mount and a writable quarantine subpath. It prepares plans and
+frees quarantined blocks online without a separate RWO attachment. Preserve the claim and verify protected images, a
+completed push, a full pull and reclaimed capacity.

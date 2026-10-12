@@ -61,6 +61,7 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-arm64.json
   - idOverride: 35-12345678-9abc-deff-1234-56789abcdeff-workload-placement
     annotations:
       name: Advertise 100G workload capacity
@@ -276,6 +277,7 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-amd64.json
   - idOverride: 35-8bf7ec00-171c-11f1-8000-7cc255f16774-workload-placement
     annotations:
       name: Advertise 100G workload capacity
@@ -465,6 +467,7 @@ systemExtensions:
   - siderolabs/tailscale
   - proompteng/talos-kata-runtimes
 patches:
+  - file: tengri-runner-amd64.json
   - idOverride: 35-ff115a00-c307-11f0-a28f-648eab3e4100-workload-placement
     annotations:
       name: Reserve Ryzen for compute and local storage

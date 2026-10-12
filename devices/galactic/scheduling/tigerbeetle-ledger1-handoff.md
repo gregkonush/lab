@@ -51,6 +51,9 @@ isolated empty path and claim; it did not modify any Bayn volume. Production sti
 1. Render and validate the merged Omni template, require its no-reboot dry run to add only Turin's directory volume,
    and sync only the reviewed `36-8bf7ec00-171c-11f1-8000-7cc255f16774-tigerbeetle-storage` patch. Require
    `u-tigerbeetle` Ready and the target helper to report XFS on the live `EPHEMERAL` device with sufficient free space.
+   Complete the [required-affinity transition](README.md#transition-existing-required-host-separation) while all three
+   original hosts remain eligible. Require three healthy replicas and verify preferred separation on every actual
+   Pod before applying the final two-host restriction. Preserve the cluster image, identities, claims, and PDB.
    Switch the Bayn PostgreSQL primary to the caught-up Turin instance through CNPG before applying its new host
    affinity. Deliver the reviewed placement through normal image publication, Kargo promotion, and Argo's generated
    revision. Require both PostgreSQL instances healthy on separate 100G hosts before continuing to TigerBeetle.
