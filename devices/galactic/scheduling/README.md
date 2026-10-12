@@ -89,6 +89,36 @@ do not sync its Kargo revision before its local class and memory headroom exist.
 
 ## Recover an interrupted rollout
 
+### Transition existing required host separation
+
+Changing a StatefulSet template from required to preferred host separation does not change its existing Pods.
+During the three-host to two-host move, the first replacement can remain Pending: the two old Pods still require
+their peers to use different hosts. This occurred for Tempo's block builders during the 2026-10-11 rollout.
+The same dependency applies to its live stores and TigerBeetle's three-replica cluster.
+
+Stage the affinity change before restricting these workloads to the two 100G hosts:
+
+1. Capture the resource and Pod identities, current templates, PDB, and native health. Use a bounded, owned Argo
+   manual-sync window during the transition. Keep ARC gated until the final Ryzen storage and memory checks pass.
+2. For this authorized migration, temporarily apply the reviewed preferred affinity through the owning workload
+   resource while retaining its existing three-host eligibility. Change only placement. Preserve images, replica
+   identities, storage, labels, and the disruption budget. For TigerBeetle, update its cluster resource and let its
+   operator reconcile the StatefulSet.
+3. Let the controller replace one Pod at a time. A replacement that never scheduled under the old template can be
+   recreated under the staged template only after confirming its UID, Pending state, absent node assignment, and
+   absent started containers. Do not evict a second available replica or relax the PDB to clear this dependency.
+4. Require all three replicas healthy and inspect every actual Pod's affinity. Updating only the controller
+   template is insufficient. Require native partition progress for Tempo and native protocol health for TigerBeetle.
+5. Reconcile the final 100G restriction from the reviewed owning GitOps revision. Kargo-managed workloads still use
+   their generated branch and normal image-delivery gates. Complete the native data checks, then remove the owned
+   transition controls. The temporary three-host eligibility is not retained as desired state.
+
+For TigerBeetle, complete this affinity stage before the final restriction makes replica 1 Pending on its Ryzen PV.
+Then follow the [retained ledger handoff](tigerbeetle-ledger1-handoff.md). Both surviving Pods must already use
+preferred separation before the retained replica can join one of their hosts.
+
+### Restore availability and desired state
+
 Stop moving additional clients if quorum, readiness, or volume attachment checks fail. Preserve all claims and registrations.
 For a placement regression, revert the reviewed Omni taint patch and affected GitOps configuration through their owners,
 then verify node eligibility and restore unavailable replicas one at a time. Removing `NoSchedule` makes Ryzen eligible;
