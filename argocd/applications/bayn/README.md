@@ -4,7 +4,8 @@
 
 `research-worker.yaml` runs only `BaynResearchRun`, with one inference in flight and a separate two-connection
 PostgreSQL pool. It has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
-existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads.
+existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads. Research rolls
+out after execution activation and the public service, so its initial grants cannot delay their rollout.
 Recovery pauses only the research worker through GitOps; it does not change trading authority.
 
 The approved `bayn_research` CNPG-managed role uses `bayn-research-db` for its password and connection URI. It is

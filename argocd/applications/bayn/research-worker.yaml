@@ -3,7 +3,7 @@ kind: RestateDeployment
 metadata:
   name: bayn-research
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: "2"
   labels:
     app.kubernetes.io/name: bayn-research
     app.kubernetes.io/part-of: bayn
