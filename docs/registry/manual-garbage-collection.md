@@ -2,7 +2,9 @@
 
 Use the existing `registry-data` claim in namespace `registry`. Cleanup has three
 phases: prepare with uploads open, quarantine under a bounded read-only hold, then
-physically delete quarantined files with uploads open. Do not run Distribution's
+physically delete quarantined files with uploads open. Preparation and purge use
+the committed `registry-maintenance` container in the existing registry Pod.
+Do not run Distribution's
 full `--delete-untagged` scan under an unbounded maintenance window.
 
 The former `prune-images.ts` CLI is removed. Its creation-date ordering, bare-hash
@@ -10,6 +12,13 @@ tag matcher and manifest-digest deletion are replaced by upload-time retention,
 current build-tag recognition, explicit protections and tag removal.
 
 ## Prepare with uploads open
+
+Roll out the reviewed registry Deployment through GitOps before using these commands.
+The added maintenance container causes one singleton `Recreate` restart; wait for
+all three containers to be Ready. Sync only the registry Application at the reviewed
+commit. Preserve the claim during rollout and recovery. If a rollout fails, restore
+the last reviewed Deployment through GitOps after the maintenance process exits;
+quarantine receipts remain on the existing claim for retry.
 
 Use Python 3.14 and an authenticated `kubectl`. Record the existing PVC UID/PV,
 registry node and Application UID. Stop if another maintenance owner, node pin,
@@ -23,10 +32,10 @@ python3 packages/scripts/src/registry/prepare.py \
   --references /tmp/registry-references.json
 ```
 
-The runner snapshots workload and retained Kargo references. It creates a pinned
-Python helper on the current registry node with the existing claim mounted
-read-only, verifies transferred input hashes, saves the plan locally and deletes
-the helper. It records the claim UID/PV in the plan. It never changes registry
+The runner snapshots workload and retained Kargo references. The maintenance
+container reads the existing claim through a read-only mount. The runner verifies
+transferred input hashes, saves the plan locally and removes its temporary inputs.
+It records the claim UID/PV in the plan. It never changes registry
 files or disables uploads. Preparation fails on unsupported manifests or missing
 retained content.
 
@@ -93,17 +102,22 @@ python3 packages/scripts/src/registry/purge.py \
   --output /tmp/registry-purge.log
 ```
 
-This creates a one-off Job with eight deletion workers. Its PVC mount exposes only
-`docker/registry/v2/_gc_quarantine` at `/quarantine`. It has no mount of the live CAS,
-no service-account token and no added capabilities. Reuploading the same digest
+This runs eight deletion workers in `registry-maintenance`. Its only writable
+claim mount exposes `docker/registry/v2/_gc_quarantine` at `/quarantine`; the live
+CAS mount is read-only. The Pod has no service-account token and the container has
+no added capabilities. Preparation and purge do not create another RWO attachment,
+so a registry restart cannot leave the claim held by a separate maintenance Pod.
+Reuploading the same digest
 creates a new live file; deleting the quarantined inode cannot remove it.
 
 The Job verifies each receipt's inode, size and timestamp before deleting blobs,
 and validates quarantined tag links before deleting their metadata.
 Absent quarantined files are safe to skip on retry. A failed or interrupted purge
 preserves the receipt and remaining files. Retry the same batch after inspecting
-its Job; do not delete live blobs or change the claim. Successful Jobs and their
-script ConfigMaps are removed by the runner. Failed Jobs retain diagnostic evidence.
+the saved output; do not delete live blobs or change the claim. A kernel lock
+prevents overlapping purges. A one-hour process deadline and the registry Pod's
+lifecycle bound the purge. The runner removes its temporary script; interrupted
+receipts remain resumable after the Pod is replaced.
 
 After deletion, audit protected references and blob sizes, pull a retained image,
 and read filesystem free space. If the mount lacks `discard`, trim only this

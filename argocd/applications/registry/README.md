@@ -41,6 +41,7 @@ Use the [cleanup runbook](../../../docs/registry/manual-garbage-collection.md).
 Preparation runs while uploads remain available. An owned maintenance hold limits
 the final read-only phase to validating current roots and atomically moving eligible
 tags and old unreferenced blobs into quarantine. The controller removes its helper before
-restoring uploads and Argo reconciliation. A separate Job mounts only quarantine
-and frees its blocks online. Preserve the claim and verify protected images, a
+restoring uploads and Argo reconciliation. The committed maintenance container has
+a read-only CAS mount and a writable quarantine subpath. It prepares plans and
+frees quarantined blocks online without a separate RWO attachment. Preserve the claim and verify protected images, a
 completed push, a full pull and reclaimed capacity.

@@ -48,7 +48,8 @@ The registry cleanup CLI is Python 3.14. Follow the [cleanup runbook](../../docs
 `src/registry/protected_references.py` snapshots current workload and retained Kargo references.
 `prepare.py` builds a read-only retention and blob plan on the existing claim.
 `collect.py` renames eligible tags and verified old blobs into quarantine under a bounded read-only hold and restores uploads.
-`purge.py` creates an online deletion Job that can mount only quarantine.
+`purge.py` deletes quarantined data through the registry Pod's maintenance container,
+whose sole writable claim mount is quarantine. Preparation and purge create no separate RWO attachment.
 The former `prune-images.ts` CLI is removed.
 
 Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph,

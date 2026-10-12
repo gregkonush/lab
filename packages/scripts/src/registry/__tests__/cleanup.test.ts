@@ -12,3 +12,9 @@ test('registry collection timeout restores writes only after the collector is go
   const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
   expect(result.exitCode, result.stderr.toString()).toBe(0)
 })
+
+test('online registry maintenance does not create another RWO attachment', () => {
+  const path = fileURLToPath(new URL('../test_maintenance.py', import.meta.url))
+  const result = Bun.spawnSync(['python3', path], { stdout: 'pipe', stderr: 'pipe' })
+  expect(result.exitCode, result.stderr.toString()).toBe(0)
+})
