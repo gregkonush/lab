@@ -363,13 +363,14 @@ immediately afterward. That exceeds the two-second storage gate even though requ
 registry boundary initially shaped mutation request bodies to 1 MiB/s. This bounded the shared Ceph write path
 independently of publisher implementation while leaving `GET` and `HEAD` image pulls unthrottled.
 
-The registry's current boundary shares one 20 MiB/s budget across all mutation requests, including concurrent blob
+The registry's current boundary shares one 10 MiB/s budget across all mutation requests, including concurrent blob
 uploads and manifest commits. This is an aggregate limit, not a per-request allowance. Publishing 6.8 GiB has a transfer
-floor of about 5.8 minutes before queueing and overhead. Mimir history from August 28 through September 27, 2026 showed a 104.7 MiB/s peak five-minute
+floor of about 11.6 minutes before queueing and overhead. Mimir history from August 28 through September 27, 2026 showed a 104.7 MiB/s peak five-minute
 client write rate and a 57.1 MiB/s peak rolling-hour average across Ceph pools. Those observations support testing a
-modest increase but do not establish a safe registry throughput ceiling. Require a coordinated 30-minute sustained
-upload test against current Ceph, Kafka and database dependencies before deploying an increase. Revert the cap to the
-previous validated 5 MiB/s through GitOps if the higher rate
+modest increase but do not establish a safe registry throughput ceiling. The operator selected 10 MiB/s and waived
+the proposed sustained load trial; this change does not establish shared-storage stability at that rate. Require a
+coordinated 30-minute observation of current Ceph, Kafka and database dependencies before any further increase.
+Revert the cap to the previous validated 5 MiB/s through GitOps if the higher rate
 causes a gate failure. The generated proxy ConfigMap rolls the singleton registry with its existing `Recreate` strategy;
 schedule that restart after active publications complete, since interrupted uploads may need a retry.
 
@@ -380,7 +381,7 @@ live HAProxy socket state showed full client receive queues waiting behind the s
 publisher reproduced the same head-of-line blocking.
 
 Manifest commits now have a separate, bounded four-connection backend selected only for `PUT
-/v2/<repository>/manifests/<reference>`. All mutation bodies share the 20 MiB/s frontend limit, while blob
+/v2/<repository>/manifests/<reference>`. All mutation bodies share the 10 MiB/s frontend limit, while blob
 upload initiation, transfer, finalization, and deletion use the bounded 32-connection backend. The separate manifest path is
 safe because an image manifest or index is only a few KiB and Distribution rejects references to blobs that are not
 already present. Concurrent blob requests avoid a stalled upload blocking every publisher; the shared aggregate limit

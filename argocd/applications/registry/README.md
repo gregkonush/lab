@@ -1,7 +1,7 @@
 # Private registry
 
 The registry keeps its existing single `registry-data` claim. HAProxy shares one
-20 MiB/s upload budget across every mutation using a constant stick-table key.
+10 MiB/s upload budget across every mutation using a constant stick-table key.
 Up to 32 blob requests can stream concurrently. Serializing them behind one
 writer makes cold image/cache uploads wait long enough for clients to disconnect.
 
@@ -18,7 +18,7 @@ do not change the claim or delete uploaded blobs.
 
 Validate the traffic boundary with the deployed HAProxy version in an isolated
 container. A slow upload holds its request open for eight seconds while three
-32 MiB uploads run. The fixture uses four proxy threads. The test checks digests,
+16 MiB uploads run. The fixture uses four proxy threads. The test checks digests,
 completion before the slow request, the aggregate upload budget, and concurrent
 read access.
 
@@ -30,14 +30,21 @@ docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp --memory 
 The same test fails with the former single-writer configuration and with a
 per-stream limiter combined with concurrent writers.
 
-Before increasing the deployed budget, also run sustained uploads against the
-real registry for at least 30 minutes. Coordinate a window without storage moves
-or broker restarts. Verify unchanged disk error counters, clean Ceph placement
-groups, healthy Kafka partitions and durable PostgreSQL settings, and no new
-kernel I/O faults or Kafka controller stalls above two seconds. The isolated
-fixture alone does not establish shared-storage stability.
+The operator selected 10 MiB/s and waived the proposed sustained load trial.
+This is a configured limit, not a measured shared-storage throughput ceiling.
+Further increases require a coordinated 30-minute observation of current Ceph,
+Kafka and database dependencies. Roll back to 5 MiB/s through GitOps if the higher
+rate causes storage or Kafka stalls.
 
 ## Clean old images
+
+`registry-cleanup` runs daily at **03:23 America/Los_Angeles**. Its CronJob,
+service account, permissions and scripts are committed with this Application.
+Runs cannot overlap; failed runs are retained and are not automatically retried.
+Each run resumes receipted quarantine purges, prepares online, refreshes protected
+references, collects for at most four minutes and purges with uploads open.
+An empty plan skips the read-only restart. Missing protected content or incomplete
+cluster discovery fails the run before collection.
 
 Keep at least five recent build tags per repository, every image uploaded in the
 last seven days, and all digests referenced by workload templates or retained Kargo
