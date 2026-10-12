@@ -17,9 +17,9 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 9
       matrix:
-        slot: [1, 2, 3, 4, 5]
+        slot: [1, 2, 3, 4, 5, 6, 7, 8, 9]
     runs-on: arc-amd64
     env:
       SLOT: ${{ matrix.slot }}
@@ -59,7 +59,7 @@ jobs:
           name: arc-ready-${{ github.run_attempt }}-${{ matrix.slot }}
           path: ${{ runner.temp }}/arc-ready.json
           retention-days: 1
-      - name: Require all five slots concurrently
+      - name: Require all nine slots concurrently
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,7 +72,7 @@ jobs:
           for _ in $(seq 1 90); do
             count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
               --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
-            if test "$count" = 5; then
+            if test "$count" = 9; then
               jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
               sleep 60
               jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
@@ -80,7 +80,7 @@ jobs:
             fi
             sleep 5
           done
-          echo 'All five shared-label runner slots did not become ready concurrently' >&2
+          echo 'All nine shared-label runner slots did not become ready concurrently' >&2
           exit 1
       - name: Publish concurrency proof
         uses: actions/upload-artifact@v4
@@ -96,15 +96,15 @@ jobs:
         with:
           pattern: arc-proof-${{ github.run_attempt }}-*
           path: proof
-      - name: Verify two Ryzen and three Turin slots overlapped
+      - name: Verify three Ryzen and six Turin slots overlapped
         shell: bash
         run: |
           set -euo pipefail
           jq -s -e '
-            length == 5 and
-            ([.[].slot] | unique | length) == 5 and
-            ([.[].pod] | unique | length) == 5 and
-            ([.[] | select(.node == "talos-192-168-1-194")] | length) == 2 and
-            ([.[] | select(.node == "turin")] | length) == 3 and
+            length == 9 and
+            ([.[].slot] | unique | length) == 9 and
+            ([.[].pod] | unique | length) == 9 and
+            ([.[] | select(.node == "talos-192-168-1-194")] | length) == 3 and
+            ([.[] | select(.node == "turin")] | length) == 6 and
             ([.[].end] | min) - ([.[].start] | max) >= 45
           ' proof/*/arc-complete.json
