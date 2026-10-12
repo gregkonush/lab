@@ -745,6 +745,16 @@
   },
   {
     "surface": "supervisor",
+    "operation": "GET /metrics",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
+    "operation": "HEAD /metrics",
+    "public": true
+  },
+  {
+    "surface": "supervisor",
     "operation": "GET /slot/status",
     "internal_only": true,
     "action": "ACTION_WORKSPACE_ENROLL"

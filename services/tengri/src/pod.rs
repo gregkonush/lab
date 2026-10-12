@@ -141,6 +141,8 @@ pub fn build_slot_pod(
     network["capabilities"]["add"] = json!(["NET_ADMIN"]);
     let mut runner = network.clone();
     runner["capabilities"]["add"] = json!(["MKNOD", "SETUID", "SETGID"]);
+    runner["seccompProfile"] =
+        json!({"type": "Localhost", "localhostProfile": "profiles/tengri-runner.json"});
     serde_json::from_value(json!({"metadata": metadata, "spec": {
         "serviceAccountName": "tengri-slot", "automountServiceAccountToken": false,
         "enableServiceLinks": false, "terminationGracePeriodSeconds": 30,
@@ -148,7 +150,7 @@ pub fn build_slot_pod(
         "nodeSelector": {"kubernetes.io/arch": architecture.kubernetes_label()},
         "initContainers": [
             {"name": "guest-artifacts", "image": guest_image, "command": ["/bin/cp", "/guest/rootfs.ext4", "/guest/vmlinux", "/artifacts/"],
-                "securityContext": restricted, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "1", "memory": "2Gi"}},
+                "securityContext": restricted, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "1", "memory": "3Gi"}},
                 "volumeMounts": [{"name": "artifacts", "mountPath": "/artifacts"}]},
             {"name": "tap", "image": runtime_image, "command": ["/usr/local/bin/tengri-network"],
                 "securityContext": network, "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi", "runtime.proompteng.ai/kvm-tun": "1"}}}
@@ -278,6 +280,29 @@ mod tests {
         );
         let supervisor = &spec.containers[0];
         let runner = &spec.containers[1];
+        let profile = runner
+            .security_context
+            .as_ref()
+            .unwrap()
+            .seccomp_profile
+            .as_ref()
+            .unwrap();
+        assert_eq!(profile.type_, "Localhost");
+        assert_eq!(
+            profile.localhost_profile.as_deref(),
+            Some("profiles/tengri-runner.json")
+        );
+        for container in std::iter::once(supervisor).chain(spec.init_containers.as_ref().unwrap()) {
+            let profile = container
+                .security_context
+                .as_ref()
+                .unwrap()
+                .seccomp_profile
+                .as_ref()
+                .unwrap();
+            assert_eq!(profile.type_, "RuntimeDefault");
+            assert!(profile.localhost_profile.is_none());
+        }
         assert!(
             !supervisor
                 .volume_mounts

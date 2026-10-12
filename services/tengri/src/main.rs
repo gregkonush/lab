@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
         tickets.clone(),
         activity,
         preview_origin,
-        workload_identity.clone(),
+        service.guest_pool(),
         authorization.clone(),
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
