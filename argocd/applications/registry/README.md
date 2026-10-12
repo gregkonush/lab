@@ -1,7 +1,7 @@
 # Private registry
 
 The registry keeps its existing single `registry-data` claim. HAProxy shares one
-20 MiB/s upload budget across every mutation using a constant stick-table key.
+10 MiB/s upload budget across every mutation using a constant stick-table key.
 Up to 32 blob requests can stream concurrently. Serializing them behind one
 writer makes cold image/cache uploads wait long enough for clients to disconnect.
 
@@ -18,8 +18,9 @@ do not change the claim or delete uploaded blobs.
 
 Validate the traffic boundary with the deployed HAProxy version in an isolated
 container. A slow upload holds its request open for eight seconds while three
-32 MiB uploads run. The fixture uses four proxy threads. The test checks digests, completion before the slow request, the aggregate
-upload budget, and concurrent read access.
+16 MiB uploads run. The fixture uses four proxy threads. The test checks digests,
+completion before the slow request, the aggregate upload budget, and concurrent
+read access.
 
 ```sh
 docker build -f argocd/applications/registry/tests/Dockerfile -t registry-pacing-test argocd/applications/registry
@@ -28,6 +29,13 @@ docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp --memory 
 
 The same test fails with the former single-writer configuration and with a
 per-stream limiter combined with concurrent writers.
+
+Before increasing the deployed budget, also run sustained uploads against the
+real registry for at least 30 minutes. Coordinate a window without storage moves
+or broker restarts. Verify unchanged disk error counters, clean Ceph placement
+groups, healthy Kafka partitions and durable PostgreSQL settings, and no new
+kernel I/O faults or Kafka controller stalls above two seconds. The isolated
+fixture alone does not establish shared-storage stability.
 
 ## Clean old images
 
