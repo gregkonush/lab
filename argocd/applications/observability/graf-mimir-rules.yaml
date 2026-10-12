@@ -6,6 +6,75 @@ metadata:
 data:
   graf-rules.yaml: |
     groups:
+      - name: bayn-research.rules
+        rules:
+          - alert: BaynResearchWorkerStale
+            expr: |
+              (time() - max(bayn_research_worker_heartbeat_seconds) > 120
+                or absent_over_time(bayn_research_worker_heartbeat_seconds[10m]))
+              and on()
+              (sum(kube_deployment_spec_replicas{namespace="bayn",deployment=~"bayn-research.*"}) > 0)
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Bayn research worker stopped publishing telemetry
+              description: Inspect the isolated research worker and database access. Trading execution has no research dependency.
+              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+          - alert: BaynResearchAttemptsFailing
+            expr: sum(increase(bayn_research_attempts_total{outcome!="COMPLETE"}[15m])) >= 3
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Bayn research attempts are failing
+              description: Join runId, receiptHash and trace_id in bayn-research logs. Check model expiry, invalid streams and signed registration.
+              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+          - alert: BaynResearchCostCoverageIncomplete
+            expr: max(bayn_research_unpriced_attempts) > 0 or max(bayn_research_ambiguous_attempts) > 0 or max(bayn_research_oldest_pending_expense_seconds) > 300
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              namespace: bayn
+              service: bayn-research
+            annotations:
+              summary: Bayn research costs lack complete verified coverage
+              description: Inspect retained run and receipt identities, the frozen allocation basis and expense projection. Unknown costs prevent a fully costed comparison.
+              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+      - name: bayn-model.rules
+        rules:
+          - alert: BaynModelUnavailable
+            expr: |
+              (up{job="bayn-model"} == 0 or absent(up{job="bayn-model"}))
+              and on()
+              (kube_deployment_spec_replicas{namespace="bayn-model",deployment="bayn-model"} > 0)
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: bayn-model
+            annotations:
+              summary: Bayn research model is unavailable
+              description: The private Alpha-R1 metrics endpoint has been unavailable for fifteen minutes. Research is paused; execution has no dependency on this endpoint.
+              runbook_url: services/bayn-model/README.md
+          - alert: BaynModelRequestsExpiring
+            expr: sum(increase(bayn_model_requests_total{namespace="bayn-model",outcome="expired"}[15m])) >= 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: bayn-model
+            annotations:
+              summary: Bayn research inference is reaching its deadline
+              description: At least two research requests reached the server deadline in fifteen minutes. Inspect queue, prefill, decode and shared GPU pressure before retrying.
+              runbook_url: services/bayn-model/README.md
       - name: buzz-production.rules
         rules:
           - record: buzz_rollout_enabled
@@ -931,6 +1000,29 @@ data:
               summary: Ceph reports slow operations
               description: Ceph has reported one or more slow operations continuously for 5 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephOsdReadLatencyHigh
+            expr: ceph_storage:osd_read_latency_seconds:mean5m > 0.5
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+              notify: email
+            annotations:
+              summary: Ceph client reads are severely delayed
+              description: "{{ $labels.node }}/{{ $labels.ceph_daemon }} has averaged more than 500 ms per client read for five minutes. This is a counter-derived mean, not a percentile."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
+          - alert: CephOsdQueueWaitHigh
+            expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph client operations are waiting in queues
+              description: "{{ $labels.node }}/{{ $labels.ceph_daemon }} has an estimated mean queue wait above 100 ms for ten minutes. Compare client reads, scrub work, and host disk queues before changing scheduling."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
@@ -3658,6 +3750,38 @@ data:
             annotations:
               summary: Tengri agent resume latency is high
               description: Average guest resume latency has exceeded one minute across at least two resumes in 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriTerminalHeartbeatLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_terminal_heartbeat_seconds_bucket{job="tengri",namespace="tengri"}[5m]))
+              ) > 0.1
+              and
+              sum(increase(tengri_terminal_heartbeat_seconds_count{job="tengri",namespace="tengri"}[5m])) >= 10
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri terminal guest round trips are slow
+              description: The guest terminal ping p95 has exceeded 100 ms for five minutes with at least ten observations per five-minute window. This excludes browser transport and inactive terminals without observations.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriGuestConnectLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_guest_connect_seconds_bucket{job="tengri",namespace="tengri"}[15m]))
+              ) > 0.3
+              and
+              sum(increase(tengri_guest_connect_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 5
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri guest connection setup is slow
+              description: Guest connection setup and identity verification p95 has exceeded 300 ms for five minutes across at least five observations in fifteen minutes.
               runbook_url: docs/tengri/operations.md
           - alert: TengriQuotaRejections
             expr: |

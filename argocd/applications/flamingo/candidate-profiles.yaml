@@ -22,9 +22,9 @@ data:
     bun run flamingo:benchmark --profile=full --candidate-id=<candidate> --baseline-result=<baseline.json> --long-targets=180000,220000,229000 --fail-on-gate
 
     The profiles below record standalone experiments. The current Deployment
-    shares Blackwell with Rune and Plex using 0.60 GPU memory utilization,
+    shares Blackwell with Bayn's Alpha-R1 research server and Plex using 0.60 GPU memory utilization,
     eight active sequences, and 8192 batched tokens. Keep the 262144 context.
-    Do not apply the historical 0.85 allocation while Rune remains resident.
+    Do not apply the historical 0.85 allocation while the research model remains resident.
 
     Do not run the full profile while Saigak is still resident on Turin. The
     July 3, 2026 baseline attempt OOMed the vLLM engine during `warmup-c16` with
