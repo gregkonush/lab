@@ -21,7 +21,15 @@ two hosts do not provide tolerance of either host's failure.
 | Target hostname     | `turin`                                                                                       |
 | Ledger filename     | `122731676035874920802382025803517750735_1.tigerbeetle`                                       |
 | Source directory    | `/var/mnt/local-path-provisioner/pvc-d7517621-a1ed-4961-96d6-060d7ecb7f61_bayn_data-ledger-1` |
-| Target directory    | `/var/mnt/turin-nvme-intel/pvc-d7517621-a1ed-4961-96d6-060d7ecb7f61_bayn_data-ledger-1`       |
+| Target directory    | `/var/mnt/tigerbeetle/pvc-d7517621-a1ed-4961-96d6-060d7ecb7f61_bayn_data-ledger-1`            |
+
+The target is a retained, static local PV on Turin's 4.1 TB ORICO system disk, whose existing `EPHEMERAL` partition
+is persistent XFS at `/var`. It is outside both rebuildable scratch mounts and the provisioner's scratch-directory
+allocation. Preserve it across normal Omni upgrades, and treat a Talos reset or system-disk replacement as a ledger
+replica loss requiring healthy peers and the retained source copy. Never place a ledger on `turin-nvme-intel` or
+`turin-nvme-transcend`; those disks remain scratch-only. Check the target helper's actual filesystem device and free
+space against the live Talos `EPHEMERAL` volume before copying. The legacy `local-path` class name is preserved only
+because the existing PVC's class is immutable; this procedure creates the retained PV explicitly.
 
 Require three Ready hosts, healthy Ceph data/quorum, and working cross-host Services. Bayn must report EXACT
 reconciliation, zero unresolved mutations, and continuing progress from its existing exclusive execution owner.
@@ -57,7 +65,7 @@ isolated empty path and claim; it did not modify any Bayn volume. Production sti
    UID/resourceVersion and original-value preconditions. Read it back before deletion. Preserve the old Ryzen file
    for recovery even after acceptance.
 6. Prepare a replacement PV with the same name, capacity, access/volume modes, storage class, and exact original
-   claimRef including PVC UID. Its hostPath must be the fixed Turin Intel directory and its required hostname Turin.
+   claimRef including PVC UID. Its hostPath must be the fixed retained Turin directory and its required hostname Turin.
    Keep `Retain`. Remove server metadata from the creation document. Never clear or replace the PVC's volumeName.
 7. Immediately recheck the two healthy peers, unchanged claim UID, offline original replica, Pending replacement,
    target file checksum, 100G node labels, and PV/PVC bindings. Delete only that PV metadata with UID/resourceVersion
