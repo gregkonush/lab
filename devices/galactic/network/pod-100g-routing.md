@@ -131,8 +131,8 @@ address and checks the previously uncovered masqueraded-Service reply routes.
 
 ## Recover stalled CSI operations
 
-If an earlier route selected a storage source and left a CSI operation stuck, correct the preferred source and pass
-all 52 checks first. Before restarting a CephFS plugin, identify every PVC consumer on the affected node. For Altra:
+If an earlier route selected a storage source and left a CSI operation stuck, correct the preferred source and require
+a successful verifier exit first. Before restarting a CephFS plugin, identify every PVC consumer on the affected node. For Altra:
 
 ```bash
 kubectl --context galactic-lan -n rook-ceph get pods --all-namespaces \
