@@ -24,12 +24,21 @@ describe('bounded native inference stream', () => {
     streamFixture('<alpha_list>alpha002</alpha_list>'),
     streamFixture().replace('"finish_reason":"stop"', '"finish_reason":"length"'),
     streamFixture().replace('alpha-r1-82c2aa5fcdda', 'wrong-model'),
+    streamFixture().replaceAll('"model":"alpha-r1-82c2aa5fcdda",', ''),
+    streamFixture()
+      .replace('"completion_tokens":20', '"completion_tokens":4097')
+      .replace('"total_tokens":30', '"total_tokens":4107'),
     streamFixture('<think><alpha_list>alpha001</alpha_list></think>'),
     streamFixture('<alpha_list>alpha001</alpha_list><alpha_list>alpha001</alpha_list>'),
   ])('rejects malformed or incomplete output %#', (text) => {
     const decoder = makeResearchStreamDecoder(fixture)
     const pushed = decoder.push(encode(text), 10)
     expect(Result.isFailure(pushed) || Result.isFailure(decoder.complete())).toBe(true)
+  })
+  test('accepts usage at the approved completion-token limit', () => {
+    const decoder = makeResearchStreamDecoder({ ...fixture, policy: { ...fixture.policy, max_tokens: 20 } })
+    Result.getOrThrow(decoder.push(encode(streamFixture()), 10))
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
   })
   test('bounds retained response memory', () =>
     expect(Result.isFailure(makeResearchStreamDecoder(fixture).push(new Uint8Array(262145), 10))).toBe(true))

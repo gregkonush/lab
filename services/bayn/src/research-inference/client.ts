@@ -40,6 +40,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
   const received: Uint8Array[] = []
   let finished = false
   let done = false
+  let modelObserved = false
   let firstTokenAtMs: number | null = null
   let serverRequestId: string | null = null
   let usage: typeof ChunkSchema.Type.usage = null
@@ -65,6 +66,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         return yield* Result.fail(
           new ResearchError({ message: 'Research response model differs from its frozen policy' }),
         )
+      if (chunk.model !== undefined) modelObserved = true
       if (chunk.id !== undefined) {
         if (chunk.id.length > 160 || (serverRequestId !== null && serverRequestId !== chunk.id))
           return yield* Result.fail(new ResearchError({ message: 'Research stream request identity changed' }))
@@ -75,6 +77,10 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
           return yield* Result.fail(new ResearchError({ message: 'Research stream repeated usage' }))
         if (chunk.usage.total_tokens !== chunk.usage.prompt_tokens + chunk.usage.completion_tokens)
           return yield* Result.fail(new ResearchError({ message: 'Research token usage does not add up' }))
+        if (chunk.usage.completion_tokens > run.policy.max_tokens)
+          return yield* Result.fail(
+            new ResearchError({ message: 'Research completion exceeds its approved token budget' }),
+          )
         usage = chunk.usage
       }
       if (chunk.choices.length > 1)
@@ -140,6 +146,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         pending.trim() !== '' ||
         !finished ||
         !done ||
+        !modelObserved ||
         usage === null ||
         usage === undefined ||
         serverRequestId === null
