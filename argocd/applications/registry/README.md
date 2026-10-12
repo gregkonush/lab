@@ -37,14 +37,17 @@ Freight, Stage history, and promotions. Preserve the platform manifests and
 attestations reachable from retained image indexes. Leave unknown tags alone. The prune script's default bare-hash pattern does not cover current
 `sha-*`, `kargo-sha-*`, or run-qualified build tags.
 
-Delete only reviewed, unreferenced manifests through the registry API. Manifest
-deletion alone does not reclaim blob storage. For garbage collection, pause
+Remove reviewed old tags through the registry API. Tag removal alone does not
+reclaim blob storage. For garbage collection, pause
 Argo reconciliation for this Application, restart the registry in read-only mode,
 and verify that upload initiation is rejected before running
 `registry garbage-collect --delete-untagged /etc/docker/registry/config.yml`
-against the existing claim. Check that retained digests remain reachable from
+against the existing claim. A maintenance Pod sharing the RWO claim must stay on
+the registry node. Check that protected digests remain reachable from retained
 tags before enabling `--delete-untagged`. Do not use the prune script's `--gc`
-option against a writable registry. Restore the committed Deployment and Argo
-reconciliation afterward, then verify a push, a pull, and claim free space.
+option against a writable registry. After collection, trim this filesystem if its
+mount does not enable discard so freed extents return to RBD. Remove maintenance
+Pods before restoring the committed Deployment and Argo reconciliation, then
+verify a push, a pull, and claim free space.
 
 See [Distribution's garbage collection requirements](https://distribution.github.io/distribution/about/garbage-collection/).
