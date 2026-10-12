@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vllm.entrypoints.cli.serve import ServeSubcommand
+from vllm.entrypoints.openai.chat_completion.protocol import DeltaMessage
 from vllm.entrypoints.serve.utils.api_utils import with_cancellation
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
@@ -20,6 +21,12 @@ from runtime import read_lock, server_args
 
 
 class ServingContractTest(unittest.TestCase):
+    def test_stream_reasoning_field_matches_the_research_decoder(self):
+        delta = DeltaMessage(reasoning="fixture reasoning")
+        self.assertEqual(
+            delta.model_dump(exclude_none=True)["reasoning"], "fixture reasoning"
+        )
+
     def test_actual_vllm_parser_accepts_the_locked_launch_profile(self):
         lock = read_lock(Path(__file__).with_name("model-lock.json"))
         parser = FlexibleArgumentParser()

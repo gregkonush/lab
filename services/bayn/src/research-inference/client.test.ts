@@ -17,6 +17,18 @@ describe('bounded native inference stream', () => {
     expect(decoder.snapshot().usage?.total_tokens).toBe(30)
     expect(decoder.snapshot().firstTokenAtMs).toBe(10)
   })
+  test('counts the pinned vLLM reasoning delta as the first generated token', () => {
+    const decoder = makeResearchStreamDecoder(fixture)
+    const reasoning = {
+      id: 'chatcmpl-synthetic',
+      model: fixture.policy.model,
+      choices: [{ index: 0, delta: { reasoning: 'thinking' }, finish_reason: null }],
+    }
+    Result.getOrThrow(decoder.push(encode(`data: ${JSON.stringify(reasoning)}\n\n`), 1))
+    Result.getOrThrow(decoder.push(encode(streamFixture()), 20))
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
+    expect(decoder.snapshot().firstTokenAtMs).toBe(1)
+  })
   test.each([
     streamFixture().replace('data: [DONE]\n\n', ''),
     streamFixture().replace('"total_tokens":30', '"total_tokens":31'),

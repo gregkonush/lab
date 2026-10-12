@@ -24,7 +24,7 @@ const ChunkSchema = Schema.Struct({
       index: Schema.Int,
       delta: Schema.Struct({
         content: Schema.optionalKey(Schema.NullOr(Schema.String)),
-        reasoning_content: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        reasoning: Schema.optionalKey(Schema.NullOr(Schema.String)),
       }),
       finish_reason: Schema.NullOr(Schema.String),
     }),
@@ -91,11 +91,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
       for (const choice of chunk.choices) {
         if (choice.index !== 0 || finished)
           return yield* Result.fail(new ResearchError({ message: 'Research stream choice continued after finish' }))
-        if (
-          choice.delta.reasoning_content !== undefined &&
-          choice.delta.reasoning_content !== null &&
-          choice.delta.reasoning_content !== ''
-        )
+        if (choice.delta.reasoning !== undefined && choice.delta.reasoning !== null && choice.delta.reasoning !== '')
           firstTokenAtMs ??= now
         const content = choice.delta.content
         if (content !== undefined && content !== null && content !== '') {
