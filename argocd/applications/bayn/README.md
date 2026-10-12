@@ -203,6 +203,8 @@ Its placement is two-plus-one across the 100G hosts. The target is replicas 0 an
 Losing the host with two replicas loses quorum. Moving replica 1 requires an offline, checksum-verified handoff of its
 existing ledger file before rebinding local storage; never let a replacement format an empty ledger. A reviewed
 placement commit alone does not complete that data handoff. Keep the two healthy peers available throughout it.
+Follow the [replica 1 local-volume handoff](../../../devices/galactic/scheduling/tigerbeetle-ledger1-handoff.md)
+for the offline copy, retained PV metadata replacement, and unchanged-PVC acceptance.
 
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
 operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
