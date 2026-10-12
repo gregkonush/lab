@@ -166,49 +166,68 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
   return { body, input, registration, receipt: retainedReplayCaptureFixture(completeSource), native, evidence }
 }
 
+const witnessedFixture = () =>
+  Effect.gen(function* () {
+    const data = fixture(5100)
+    const fs = yield* FileSystem.FileSystem
+    const directory = yield* fs.makeTempDirectoryScoped()
+    const arrivals = `${directory}/arrivals.gz`
+    yield* fs.writeFile(arrivals, gzipSync(data.body))
+    const batch = data.input.study.batches[0]
+    if (batch === undefined) throw new Error('Missing native batch')
+    const committed = yield* matchedCommittedDecisionFixture(data.native, data.evidence)
+    const decisionBytes = JSON.stringify(committed)
+    const decisionEvidenceHash = sha256(decisionBytes)
+    const decisionPath = `${directory}/decision.json`
+    yield* fs.writeFileString(decisionPath, decisionBytes)
+    const at = Date.parse(batch.observation.observedAt)
+    const clocks = {
+      inputAvailableAt: batch.observation.observedAt,
+      deterministicSelectedAt: batch.observation.observedAt,
+      deterministicSymbol: 'AAPL',
+      batchCompletedAt: batch.batchResult.completedAt,
+      decisionCommittedAt: new Date(at + 5100).toISOString(),
+    }
+    const timingBytes = JSON.stringify({
+      schemaVersion: 'bayn.jev-entry-timing.v1',
+      sourceRevision: data.registration.sourceRevision,
+      batchId: batch.batchPlan.batchId,
+      observationHash: batch.batchPlan.observationHash,
+      snapshotHash: batch.observation.manifest.contentHash,
+      decisionHash: committed.contentHash,
+      ...clocks,
+    })
+    const evidenceHash = sha256(timingBytes)
+    const path = `${directory}/timing.json`
+    yield* fs.writeFileString(path, timingBytes)
+    const input = {
+      ...data.input,
+      witnesses: [
+        { path, sha256: evidenceHash },
+        { path: decisionPath, sha256: decisionEvidenceHash },
+      ],
+      timings: [{ batchId: batch.batchPlan.batchId, witness: { ...clocks, evidenceHash, decisionEvidenceHash } }],
+    }
+    return {
+      data,
+      fs,
+      directory,
+      arrivals,
+      batch,
+      committed,
+      at,
+      clocks,
+      timingBytes,
+      evidenceHash,
+      decisionEvidenceHash,
+      input,
+    }
+  })
+
 test('witnessed immediate and delayed arms on the same symbol keep independent fills and hold clocks', async () => {
-  const data = fixture(5100)
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
-      const directory = yield* fs.makeTempDirectoryScoped()
-      const arrivals = `${directory}/arrivals.gz`
-      yield* fs.writeFile(arrivals, gzipSync(data.body))
-      const batch = data.input.study.batches[0]
-      if (batch === undefined) throw new Error('Missing native batch')
-      const committed = yield* matchedCommittedDecisionFixture(data.native, data.evidence)
-      const decisionBytes = JSON.stringify(committed)
-      const decisionEvidenceHash = sha256(decisionBytes)
-      const decisionPath = `${directory}/decision.json`
-      yield* fs.writeFileString(decisionPath, decisionBytes)
-      const at = Date.parse(batch.observation.observedAt)
-      const clocks = {
-        inputAvailableAt: batch.observation.observedAt,
-        deterministicSelectedAt: batch.observation.observedAt,
-        deterministicSymbol: 'AAPL',
-        batchCompletedAt: batch.batchResult.completedAt,
-        decisionCommittedAt: new Date(at + 5100).toISOString(),
-      }
-      const timingBytes = JSON.stringify({
-        schemaVersion: 'bayn.jev-entry-timing.v1',
-        sourceRevision: data.registration.sourceRevision,
-        batchId: batch.batchPlan.batchId,
-        observationHash: batch.batchPlan.observationHash,
-        snapshotHash: batch.observation.manifest.contentHash,
-        decisionHash: committed.contentHash,
-        ...clocks,
-      })
-      const evidenceHash = sha256(timingBytes)
-      const path = `${directory}/timing.json`
-      yield* fs.writeFileString(path, timingBytes)
-      const input = {
-        ...data.input,
-        witnesses: [
-          { path, sha256: evidenceHash },
-          { path: decisionPath, sha256: decisionEvidenceHash },
-        ],
-        timings: [{ batchId: batch.batchPlan.batchId, witness: { ...clocks, evidenceHash, decisionEvidenceHash } }],
-      }
+      const { data, arrivals, at, input } = yield* witnessedFixture()
       const report = yield* runMatchedEntryStudy(input, data.registration, arrivals, data.receipt)
       const pair = report.pairs[0]
       expect(pair?.timingAvailable).toBe(true)
@@ -217,69 +236,86 @@ test('witnessed immediate and delayed arms on the same symbol keep independent f
       expect(pair?.immediateMomentum?.fills[0]?.priceMicros).not.toBe(pair?.delayedMomentum?.fills[0]?.priceMicros)
       expect(pair?.jev).toEqual(pair?.delayedMomentum)
       expect(pair?.immediateMomentum?.episodes[0]?.exitedAtMs).not.toBe(pair?.delayedMomentum?.episodes[0]?.exitedAtMs)
-      const changed = {
-        ...input,
-        timings: [
-          {
-            batchId: batch.batchPlan.batchId,
-            witness: {
-              ...clocks,
-              evidenceHash,
-              decisionEvidenceHash,
-              deterministicSelectedAt: new Date(at - 1).toISOString(),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test.each([
+  ['selection-clock', 'Timing receipt belongs to another batch, source or clock'],
+  ['decision-file', 'Timing receipt does not bind the committed native entry decision'],
+  ['decision-hash', 'Timing receipt does not bind the committed native entry decision'],
+] as const)('timing witness rejects an unrelated %s', async (variant, message) => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const {
+        data,
+        fs,
+        directory,
+        arrivals,
+        batch,
+        committed,
+        at,
+        clocks,
+        timingBytes,
+        evidenceHash,
+        decisionEvidenceHash,
+        input,
+      } = yield* witnessedFixture()
+      let changed = input
+      if (variant === 'selection-clock') {
+        changed = {
+          ...input,
+          timings: [
+            {
+              batchId: batch.batchPlan.batchId,
+              witness: {
+                ...clocks,
+                evidenceHash,
+                decisionEvidenceHash,
+                deterministicSelectedAt: new Date(at - 1).toISOString(),
+              },
             },
-          },
-        ],
+          ],
+        }
+      } else {
+        const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
+        expect(alternate.contentHash).not.toBe(committed.contentHash)
+        if (variant === 'decision-file') {
+          const alternateBytes = JSON.stringify(alternate)
+          const alternateHash = sha256(alternateBytes)
+          const alternatePath = `${directory}/alternate-decision.json`
+          yield* fs.writeFileString(alternatePath, alternateBytes)
+          changed = {
+            ...input,
+            witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
+            timings: [
+              {
+                batchId: batch.batchPlan.batchId,
+                witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
+              },
+            ],
+          }
+        } else {
+          const wrongReceiptBytes = JSON.stringify({ ...JSON.parse(timingBytes), decisionHash: alternate.contentHash })
+          const wrongReceiptHash = sha256(wrongReceiptBytes)
+          const wrongReceiptPath = `${directory}/wrong-timing.json`
+          yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
+          changed = {
+            ...input,
+            witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
+            timings: [
+              {
+                batchId: batch.batchPlan.batchId,
+                witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
+              },
+            ],
+          }
+        }
       }
-      expect(
-        Result.isFailure(
-          yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(Effect.result),
-        ),
-      ).toBe(true)
-      const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
-      expect(alternate.contentHash).not.toBe(committed.contentHash)
-      const alternateBytes = JSON.stringify(alternate)
-      const alternateHash = sha256(alternateBytes)
-      const alternatePath = `${directory}/alternate-decision.json`
-      yield* fs.writeFileString(alternatePath, alternateBytes)
-      const unrelated = {
-        ...input,
-        witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
-        timings: [
-          {
-            batchId: batch.batchPlan.batchId,
-            witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
-          },
-        ],
-      }
-      const swapped = yield* runMatchedEntryStudy(unrelated, data.registration, arrivals, data.receipt).pipe(
-        Effect.result,
+      const result = yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(Effect.result)
+      expect(Result.isFailure(result) && result.failure instanceof SignalStudyFailure && result.failure.message).toBe(
+        message,
       )
-      expect(
-        Result.isFailure(swapped) && swapped.failure instanceof SignalStudyFailure && swapped.failure.message,
-      ).toBe('Timing receipt does not bind the committed native entry decision')
-      const wrongReceiptBytes = JSON.stringify({ ...JSON.parse(timingBytes), decisionHash: alternate.contentHash })
-      const wrongReceiptHash = sha256(wrongReceiptBytes)
-      const wrongReceiptPath = `${directory}/wrong-timing.json`
-      yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
-      const wrongReceipt = {
-        ...input,
-        witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
-        timings: [
-          {
-            batchId: batch.batchPlan.batchId,
-            witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
-          },
-        ],
-      }
-      const wrongCommit = yield* runMatchedEntryStudy(wrongReceipt, data.registration, arrivals, data.receipt).pipe(
-        Effect.result,
-      )
-      expect(
-        Result.isFailure(wrongCommit) &&
-          wrongCommit.failure instanceof SignalStudyFailure &&
-          wrongCommit.failure.message,
-      ).toBe('Timing receipt does not bind the committed native entry decision')
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })

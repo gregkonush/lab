@@ -283,10 +283,10 @@ test('native entry abstentions retain paid calls without submitting orders', asy
     nativeEntry: true,
     entryAction: 'wait',
     managedLatencyMs: 10,
-    sessionDurationMs: 37 * 60_000,
+    sessionDurationMs: 36 * 60_000,
   })
   expect(wait.report.orders).toEqual([])
-  expect(wait.report.decisions.some((decision) => decision.status === 'NO_SIGNAL')).toBeTrue()
+  expect(wait.report.decisions.filter((decision) => decision.status === 'NO_SIGNAL')).toHaveLength(1)
   expect(wait.report.modelCallCount).toBeGreaterThan(0)
   expect(BigInt(wait.report.knownModelCostMicros)).toBeGreaterThan(0n)
 })
