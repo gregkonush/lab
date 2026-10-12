@@ -83,6 +83,31 @@ Ceph opts `CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCrit
 `notify: email`. The route repeats firing notifications every hour and sends a resolved notification.
 Ceph health warnings, scrub debt, and warning-level latency alerts remain visible without sending email.
 
+## Email links and alert UI
+
+Mimir 3.2 removed the embedded Alertmanager web UI. Grafana provides the UI through the provisioned
+`Mimir Alertmanager` data source, UID `mimir-alertmanager`, using the Mimir implementation and gateway root URL.
+Grafana adds `/alertmanager` to API requests itself. Do not include that prefix in the data source URL.
+
+The email's **View In Alertmanager** link still uses `https://mimir.ide-newton.ts.net/alertmanager/`.
+The gateway redirects only `/alertmanager` and `/alertmanager/` to
+`https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#`.
+The empty fragment clears the old `#/alerts?receiver=...` fragment from email links. Grafana selects Mimir
+Alertmanager and shows its current alert groups. Resolved alerts no longer appear in that active view.
+Sign in to Grafana if prompted.
+
+Keep `alertmanager.external_url` on the Mimir host and prefix. Mimir also uses it for API routing.
+The exact UI redirects leave `/alertmanager/api/v2/*`, `/api/v1/alerts`, and the Ruler API on Mimir.
+Email routing and SMTP credentials remain managed by External Secrets. Grafana does not forward its own
+managed alerts to this data source.
+
+Roll out the reviewed observability revision through Argo CD. Grafana must reload its provisioned data
+sources before the redirect can select Mimir Alertmanager. Validate both slash variants, then follow the
+link from an existing email and confirm the selected Alertmanager and current alert groups. Verify
+`/alertmanager/api/v2/alerts` still returns JSON. To recover from a failed rollout, revert both Helm values
+files together and sync that reviewed revision. Reverting restores the previous API configuration and
+also restores the broken UI landing page.
+
 ## Rule Delivery
 
 `graf-mimir-rules.yaml` is a ConfigMap source file. It is not mounted into the Mimir ruler pod. The `observability-mimir-rule-loader` Argo CD PostSync Job uploads each rule group to the Mimir Ruler API for tenant `anonymous`:
@@ -194,6 +219,8 @@ After delivery is confirmed, silence or let the synthetic alert resolve by not r
 
 ## References
 
+- [Mimir 3.2 Alertmanager UI removal](https://github.com/grafana/mimir/blob/mimir-3.2.1/CHANGELOG.md#320)
+- [Grafana Alertmanager data source provisioning](https://grafana.com/docs/grafana/latest/datasources/alertmanager/#provision-the-data-source)
 - [Grafana Mimir configuration parameters](https://grafana.com/docs/mimir/latest/configure/configuration-parameters/)
 - [Grafana Mimir distributed Helm chart configuration](https://grafana.com/docs/helm-charts/mimir-distributed/latest/run-production-environment-with-helm/configuration-with-helm/)
 - [Prometheus Alertmanager configuration](https://prometheus.io/docs/alerting/latest/configuration/)
