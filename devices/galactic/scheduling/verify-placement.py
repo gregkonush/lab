@@ -85,6 +85,7 @@ def inventory(context, verify):
             namespace == "arc"
             and meta.get("labels", {}).get("actions.github.com/scale-set-name")
             == "arc-amd64"
+            and meta.get("labels", {}).get("app.kubernetes.io/component") == "runner"
         ):
             runners.append(pod)
         for volume in spec.get("volumes", []):
