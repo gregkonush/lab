@@ -184,6 +184,26 @@ terminal failure after its dependency recovers. This identity does not deduplica
 The acceptance log records the attempt UID, `activationInvocationId`, source revision and receipt status before waiting.
 The verified log retains the completed successor proof after the successful hook is removed.
 
+## 100G host placement
+
+All Bayn components require `network.proompteng.ai/100g=true`, supplied by Omni on Turin and Altra. Ryzen is reserved
+for compute and local CI scratch. Status, the current execution revision, and egress each retain two replicas with
+`minDomains: 2` and strict hostname spreading, so each pair uses both eligible hosts. Retained execution revisions
+must finish draining through Restate; their replicas cannot satisfy the current revision's spread constraint.
+
+The two PostgreSQL instances require separate hostnames and use the pinned PostgreSQL 18.6 multi-architecture image.
+The architecture restriction is removed. Before migration, the existing Buzz cluster demonstrated streaming/quorum
+replication across Altra ARM64 and Turin/Ryzen AMD64 with the exact same image, control-file layout, glibc and ICU
+versions. Verify Bayn's actual synchronous replication and data/index behavior after its move. Preserve the existing
+PVCs, synchronous replica count and writer fences. Switch over to the healthy Turin instance before moving Ryzen's
+former primary to Altra through CNPG maintenance.
+
+TigerBeetle retains its cluster ID, three replica identities, three local PVCs and a minimum-two disruption budget.
+Its placement is two-plus-one across the 100G hosts. The target is replicas 0 and 1 on Turin and replica 2 on Altra.
+Losing the host with two replicas loses quorum. Moving replica 1 requires an offline, checksum-verified handoff of its
+existing ledger file before rebinding local storage; never let a replacement format an empty ledger. A reviewed
+placement commit alone does not complete that data handoff. Keep the two healthy peers available throughout it.
+
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
 operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
 leave both current workers on one node. Restate remains the only scheduler and serializes the account-keyed virtual

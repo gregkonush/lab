@@ -24,11 +24,11 @@ spec:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
           - matchExpressions:
-              - key: kubernetes.io/arch
+              - key: network.proompteng.ai/100g
                 operator: In
                 values:
-                  - amd64
-    podAntiAffinityType: preferred
+                  - "true"
+    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
   resources:
     requests:
