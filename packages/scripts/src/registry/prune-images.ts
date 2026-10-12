@@ -2,16 +2,13 @@
 
 import { spawn } from 'node:child_process'
 
-import { ensureCli, fatal, run } from '../shared/cli'
+import { ensureCli, fatal } from '../shared/cli'
 
 type PruneOptions = {
   apply: boolean
   baseUrl: string | null
   catalogPageSize: number
   concurrency: number
-  deleteUntagged: boolean
-  gc: boolean
-  restartRegistry: boolean
   keep: number
   keepTags: string[]
   namespace: string
@@ -42,9 +39,6 @@ const parseArgs = (args: string[]): PruneOptions => {
     baseUrl: null,
     catalogPageSize: 250,
     concurrency: 8,
-    deleteUntagged: true,
-    gc: false,
-    restartRegistry: true,
     keep: 5,
     keepTags: ['latest'],
     namespace: 'registry',
@@ -58,30 +52,6 @@ const parseArgs = (args: string[]): PruneOptions => {
   for (const arg of args) {
     if (arg === '--apply') {
       options.apply = true
-      continue
-    }
-    if (arg === '--gc') {
-      options.gc = true
-      continue
-    }
-    if (arg === '--no-gc') {
-      options.gc = false
-      continue
-    }
-    if (arg === '--delete-untagged') {
-      options.deleteUntagged = true
-      continue
-    }
-    if (arg === '--no-delete-untagged') {
-      options.deleteUntagged = false
-      continue
-    }
-    if (arg === '--restart-registry') {
-      options.restartRegistry = true
-      continue
-    }
-    if (arg === '--no-restart-registry') {
-      options.restartRegistry = false
       continue
     }
     if (arg === '--no-port-forward') {
@@ -159,7 +129,9 @@ const parseArgs = (args: string[]): PruneOptions => {
         throw new Error(`--port must be a valid TCP port (received '${arg}')`)
       }
       options.portForwardPort = value
+      continue
     }
+    throw new Error(`Unknown argument '${arg}'`)
   }
 
   options.keepTags = [...new Set(options.keepTags)]
@@ -605,7 +577,7 @@ export const main = async () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     fatal(
-      `${message}\n\nUsage: bun run packages/scripts/src/registry/prune-images.ts [--repo=lab/jangar] [--keep=5] [--apply] [--gc] [--no-restart-registry] [--no-keep-tags | --no-keep-tag-latest] [--base-url=https://registry.example] [--no-delete-untagged]\n\nDefaults:\n- Uses kubectl port-forward to the in-cluster registry service\n- Keeps 5 tags per repository matching ${DEFAULT_TAG_PATTERN} (keeps non-version tags like 'latest')\n- Does NOT run registry garbage collection unless --gc is set\n- GC deletes untagged manifests by default (use --no-delete-untagged to disable)\n- Restarts the registry after gc unless --no-restart-registry`,
+      `${message}\n\nUsage: bun run packages/scripts/src/registry/prune-images.ts [--repo=lab/jangar] [--keep=5] [--apply] [--no-keep-tags | --no-keep-tag-latest] [--base-url=https://registry.example]\n\nDefaults:\n- Uses kubectl port-forward to the in-cluster registry service\n- Keeps 5 tags per repository matching ${DEFAULT_TAG_PATTERN} (keeps non-version tags like 'latest')\n- Garbage collection is a separate read-only maintenance operation; follow docs/registry/manual-garbage-collection.md`,
     )
   }
 
@@ -631,11 +603,6 @@ export const main = async () => {
     console.log(`Found ${allRepos.length} repositories.`)
     if (options.repositories.length > 0) {
       console.log(`Restricting to repos: ${options.repositories.join(', ')}`)
-    }
-
-    if (options.apply && options.gc) {
-      console.log('Disk usage before prune:')
-      await run('kubectl', ['-n', options.namespace, 'exec', 'deploy/registry', '--', 'df', '-h', '/var/lib/registry'])
     }
 
     let attemptedDeletes = 0
@@ -731,36 +698,6 @@ export const main = async () => {
         }
         if (failures.length > 10) console.warn(`- ... (${failures.length - 10} more)`)
       }
-    }
-
-    if (options.apply && options.gc) {
-      console.log('\nRunning registry garbage collection...')
-      const gcArgs = ['-n', options.namespace, 'exec', 'deploy/registry', '--', 'registry', 'garbage-collect']
-      if (options.deleteUntagged) {
-        gcArgs.push('--delete-untagged')
-      }
-      gcArgs.push('/etc/distribution/config.yml')
-      await run('kubectl', gcArgs)
-
-      if (options.restartRegistry) {
-        console.log('\nRestarting registry deployment to clear in-memory cache...')
-        await run('kubectl', ['-n', options.namespace, 'scale', 'deploy/registry', '--replicas=0'])
-        await run('kubectl', [
-          '-n',
-          options.namespace,
-          'delete',
-          'pod',
-          '-l',
-          'app=registry',
-          '--ignore-not-found=true',
-          '--wait=true',
-        ])
-        await run('kubectl', ['-n', options.namespace, 'scale', 'deploy/registry', '--replicas=1'])
-        await run('kubectl', ['-n', options.namespace, 'rollout', 'status', 'deploy/registry', '--timeout=180s'])
-      }
-
-      console.log('Disk usage after gc:')
-      await run('kubectl', ['-n', options.namespace, 'exec', 'deploy/registry', '--', 'df', '-h', '/var/lib/registry'])
     }
   } finally {
     if (portForward) await portForward.stop()

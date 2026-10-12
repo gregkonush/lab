@@ -1,111 +1,105 @@
-# Registry Manual Garbage Collection
+# Registry manual garbage collection
 
-The `registry` Argo CD app intentionally does not include a suspended garbage-collection CronJob.
+The registry uses Deployment `registry`, PVC `registry-data`, and ConfigMap
+`registry-config` in namespace `registry`. Collection runs against the existing
+filesystem at `/var/lib/registry`. Use a read-only maintenance window so pulls
+remain available while pushes are rejected.
 
-The registry stores blobs on one filesystem-backed `ReadWriteOnce` PVC:
+The former scale-to-zero Job procedure is retired. Argo self-heal could recreate
+a writable registry during collection. The prune CLI also no longer supports GC
+or registry restart flags.
 
-- Namespace: `registry`
-- Deployment: `registry`
-- PVC: `registry-data`
-- StorageClass: `rook-ceph-block`
-- Registry path: `/var/lib/registry`
+## Prepare and acquire the hold
 
-Garbage collection is disruptive. It scales the registry deployment to zero, mounts the same PVC in a
-one-shot job, runs `registry garbage-collect`, then restores the deployment. Run it only during a
-maintenance window when there are no active image pushes.
+Confirm one ready registry Pod, a Bound claim, a settled Argo revision, and no
+active sync or other maintenance owner. Record the Application UID, PVC UID/PV,
+registry node, original replica count, and any existing read-only or node override.
+Stop if those overrides indicate unfinished maintenance.
 
-## Preflight
+Retain at least five recent version tags per repository, uploads from the last
+seven days, live workload references, and retained Kargo Freight, Stage history,
+and promotions. Resolve image indexes through their platform manifests and
+attestations. Before `--delete-untagged`, every protected digest must remain
+reachable from a retained tag and all referenced blobs must exist. Freeze and
+repeat that audit after writes have stopped.
 
-```bash
-kubectl --context galactic-tailscale -n registry get deploy/registry -o wide
-kubectl --context galactic-tailscale -n registry get pod,pvc,endpoints -o wide
-kubectl --context galactic-tailscale -n registry get events --sort-by=.lastTimestamp | tail -40
-curl -k -fsS -m 10 https://registry.ide-newton.ts.net/v2/
-```
-
-Required state:
-
-- `deployment.apps/registry` is `1/1`.
-- `persistentvolumeclaim/registry-data` is `Bound`.
-- `endpoints/registry` has exactly one ready registry pod address.
-- `/v2/` returns `{}`.
-
-## Run GC
+The owning bootstrap ApplicationSet must preserve both maintenance annotations.
+Take the hold atomically, with UID and resourceVersion preconditions:
 
 ```bash
 set -euo pipefail
-
-NS=registry
-CTX=galactic-tailscale
-JOB="registry-gc-manual-$(date +%Y%m%d%H%M%S)"
-
-REGISTRY_POD="$(kubectl --context "${CTX}" -n "${NS}" get pod -l app=registry -o jsonpath='{.items[0].metadata.name}')"
-REGISTRY_NODE="$(kubectl --context "${CTX}" -n "${NS}" get pod "${REGISTRY_POD}" -o jsonpath='{.spec.nodeName}')"
-DESIRED_REPLICAS="$(kubectl --context "${CTX}" -n "${NS}" get deploy/registry -o jsonpath='{.spec.replicas}')"
-
-cleanup() {
-  kubectl --context "${CTX}" -n "${NS}" delete job "${JOB}" --wait=true --timeout=10m --ignore-not-found
-  kubectl --context "${CTX}" -n "${NS}" scale deploy/registry --replicas="${DESIRED_REPLICAS:-1}"
-  kubectl --context "${CTX}" -n "${NS}" rollout status deploy/registry --timeout=10m
-}
-trap cleanup EXIT
-
-kubectl --context "${CTX}" -n "${NS}" scale deploy/registry --replicas=0
-kubectl --context "${CTX}" -n "${NS}" rollout status deploy/registry --timeout=5m || true
-kubectl --context "${CTX}" -n "${NS}" wait --for=delete pod -l app=registry --timeout=5m
-
-cat <<YAML | kubectl --context "${CTX}" -n "${NS}" apply -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${JOB}
-spec:
-  activeDeadlineSeconds: 7200
-  backoffLimit: 0
-  ttlSecondsAfterFinished: 3600
-  template:
-    spec:
-      nodeName: ${REGISTRY_NODE}
-      restartPolicy: Never
-      containers:
-        - name: gc
-          image: registry:3
-          command:
-            - /bin/registry
-            - garbage-collect
-            - /etc/docker/registry/config.yml
-          volumeMounts:
-            - name: registry-data
-              mountPath: /var/lib/registry
-            - name: registry-config
-              mountPath: /etc/docker/registry
-      volumes:
-        - name: registry-data
-          persistentVolumeClaim:
-            claimName: registry-data
-        - name: registry-config
-          configMap:
-            name: registry-config
-YAML
-
-kubectl --context "${CTX}" -n "${NS}" wait --for=condition=complete "job/${JOB}" --timeout=2h
-kubectl --context "${CTX}" -n "${NS}" logs "job/${JOB}"
+LAB_REGISTRY_CONTEXT=galactic-lan
+LAB_REGISTRY_HOLD="registry-gc-$(uuidgen)"
+LAB_REGISTRY_APP="$(kubectl --context "$LAB_REGISTRY_CONTEXT" -n argocd get application registry -o json)"
+printf '%s' "$LAB_REGISTRY_APP" | jq -e '
+  .operation == null and .status.sync.status == "Synced" and
+  .metadata.annotations["argocd.argoproj.io/skip-reconcile"] == null and
+  .metadata.annotations["storage.proompteng.ai/ceph-remount-owner"] == null
+' >/dev/null
+LAB_REGISTRY_UID="$(printf '%s' "$LAB_REGISTRY_APP" | jq -r .metadata.uid)"
+LAB_REGISTRY_PATCH="$(printf '%s' "$LAB_REGISTRY_APP" | jq --arg owner "$LAB_REGISTRY_HOLD" '[
+  {op:"test",path:"/metadata/uid",value:.metadata.uid},
+  {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+  {op:"add",path:"/metadata/annotations/argocd.argoproj.io~1skip-reconcile",value:"true"},
+  {op:"add",path:"/metadata/annotations/storage.proompteng.ai~1ceph-remount-owner",value:$owner}
+]')"
+kubectl --context "$LAB_REGISTRY_CONTEXT" -n argocd patch application registry --type=json -p "$LAB_REGISTRY_PATCH"
 ```
 
-## Postflight
+Save the owner and recovery values locally. If a precondition fails, read fresh
+state before retrying. Verify both annotations survive ApplicationSet
+reconciliation. While held, Argo status is stale; use native workload readback.
+
+## Collect with writes disabled
+
+1. Keep the registry on its current node while a maintenance Pod shares the RWO
+   claim. Add a temporary `nodeName` and set
+   `REGISTRY_STORAGE_MAINTENANCE_READONLY_ENABLED=true` on the registry container.
+   Wait for its `Recreate` rollout to finish.
+2. Require `GET /v2/` to return 200 and upload initiation
+   (`POST /v2/ceph-smoke/registry-gc-check/blobs/uploads/`) to return 405.
+   A 202 response means writes are still enabled: stop before collection.
+3. Use a maintenance Pod on the same node, with the exact deployed registry image,
+   `registry-data` mounted read/write at `/var/lib/registry`, and `registry-config`
+   mounted read-only at `/etc/docker/registry`. Give it no service-account token,
+   no added capabilities, and a read-only container root. Validate its manifest
+   before creation. Repeat the frozen protected-reference audit against this mount.
+4. Run one collector, using the mounted configuration:
+
+   ```sh
+   registry garbage-collect --delete-untagged /etc/docker/registry/config.yml
+   ```
+
+   Keep its output and exit status. An exec disconnect does not prove the collector
+   stopped. Keep writes disabled until its process has exited or its maintenance
+   Pod has been deleted and deletion confirmed.
+5. Repeat the protected-reference and blob audit after collection. Record claim
+   free space. If the filesystem lacks `discard`, trim only this claim's verified
+   CSI global mount from the existing privileged RBD CSI node container. Match
+   the CSI volume handle and device before `fstrim`; do not trim other filesystems.
+
+## Restore and verify
+
+Delete the maintenance Pod and confirm deletion before removing the temporary
+node pin or restoring writes. This prevents RWO multi-attach and ensures no
+collector can continue alongside uploads. Restore the original Deployment values,
+wait for readiness, and verify the original PVC UID/PV is unchanged. If helper
+termination or restoration fails, retain the hold and recovery receipt.
+
+Release only this operation's annotations, checking the saved UID and owner:
 
 ```bash
-kubectl --context galactic-tailscale -n registry rollout status deploy/registry --timeout=10m
-kubectl --context galactic-tailscale -n registry get deploy/registry -o wide
-kubectl --context galactic-tailscale -n registry get pod,pvc,endpoints -o wide
-curl -k -fsS -m 10 https://registry.ide-newton.ts.net/v2/
-argocd app get registry --refresh --grpc-web
+LAB_REGISTRY_PATCH="$(jq -n --arg uid "$LAB_REGISTRY_UID" --arg owner "$LAB_REGISTRY_HOLD" '[
+  {op:"test",path:"/metadata/uid",value:$uid},
+  {op:"test",path:"/metadata/annotations/storage.proompteng.ai~1ceph-remount-owner",value:$owner},
+  {op:"remove",path:"/metadata/annotations/argocd.argoproj.io~1skip-reconcile"},
+  {op:"remove",path:"/metadata/annotations/storage.proompteng.ai~1ceph-remount-owner"}
+]')"
+kubectl --context "$LAB_REGISTRY_CONTEXT" -n argocd patch application registry --type=json -p "$LAB_REGISTRY_PATCH"
 ```
 
-Required state:
+Verify fresh Argo reconciliation, a new push, a full retained-image pull, the
+protected digests, and free capacity on the existing claim. Remove owned test tags.
 
-- Registry deployment is `1/1`.
-- Registry pod is `Running`.
-- Registry endpoint has a ready address.
-- `/v2/` returns `{}`.
-- Argo app remains `Synced/Healthy`.
+See [ApplicationSet maintenance holds](../../argocd/applicationsets/README.md#storage-maintenance-holds)
+and [Distribution's collection requirements](https://distribution.github.io/distribution/about/garbage-collection/).
