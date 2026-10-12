@@ -48,22 +48,7 @@ Ingress, Rune API alias, old model fallback or local execution poller.
 
 ## Execution and research boundary
 
-Before this cutover:
-
-```mermaid
-flowchart LR
-  TA[Torghut signals] --> C[Bayn execution controller]
-  C --> J[Jev decision]
-  J --> R[Risk and order authorization]
-  R --> B[Broker submission]
-  B --> O[Broker observation and reconciliation]
-  O --> L[TigerBeetle and retained receipts]
-  C --> X[Deterministic deadline and protective exits]
-  X --> R
-  U[Rune resident on Blackwell]
-```
-
-The cutover keeps that execution graph and changes the resident research endpoint:
+The execution graph has no dependency on the resident research endpoint:
 
 ```mermaid
 flowchart LR
@@ -86,6 +71,9 @@ independently; execution adds no model RPC, send acknowledgement or outbox wait.
 strategy comparisons against Jev-only, the existing Flamingo model and a cheap numeric selector before admission.
 Shared-GPU contention still needs a measured baseline and overload test; asynchronous orchestration alone does not
 provide resource isolation.
+
+The [research implementation plan](../../docs/bayn/alpha-r1-research-plan.md) defines the input qualification,
+independent worker, cost accounting, comparisons and live acceptance required to connect this endpoint to Bayn.
 
 ## Observability and cost
 
@@ -135,19 +123,18 @@ and Argo Application. The Stage reads the tested image's source revision and bui
 paths does not rebuild CUDA or manufacture an image alias. The upstream server digest and provisioner remain one
 reviewed source contract. Do not release a local image or manually bump the selected digest.
 
-The ApplicationSet retires Rune's Deployment, Service and NetworkPolicy. The existing Rune namespace has no owner or Argo tracking and is not an Application-managed resource. It remains
-after Application removal. The `rune/rune-models` claim retains `Prune=false,Delete=false`. Verify namespace ownership
-and claim retention before retiring the Application; never delete the retained namespace. The new application uses a separate claim and
-namespace; it does not adopt or delete the previous cache. Research availability may have a gap during first image
-publication and model download. Neither service is a dependency of the active Jev trading path. vLLM checks free
-physical VRAM before loading; if old Rune still holds its allocation, the new process must wait/restart rather than
-lowering its checks or increasing the shared GPU budget.
+Rune's application, workloads, delivery resources, namespace and model cache have been retired. The explicitly
+requested storage cleanup also removed its local volume and cached directory. `bayn-model` owns its separate
+namespace and `bayn-model-cache` claim. That current claim retains `Prune=false,Delete=false`.
+Research availability may have a gap during image publication and model download. The endpoint is independent of
+the active Jev trading path. vLLM checks free physical VRAM before loading. Insufficient free memory must fail
+startup rather than lower its checks or increase the shared GPU budget.
 
 For an authorized rollout, record and verify:
 
 1. Exact merged source, successful CI and immutable provisioner digest/signature.
 2. Eligible Freight, automatic Stage promotion and the generated `kargo/bayn-model` source commit.
-3. Rune Application/workload removal with its old claim retained; no simultaneous resident Rune process.
+3. No retired resident model workload or delivery resource; the current model owns its independent cache.
 4. Argo's exact desired/deployed revision and digest, both init and server completion/readiness, and `nvidia-smi`
    process/VRAM readback on Turin. Preserve Flamingo's 262K context and current resource limits.
 5. `GET /v1/models` returns the exact served name. A bounded factor-selection request returns HTTP 200, nonempty
@@ -159,4 +146,4 @@ For an authorized rollout, record and verify:
 
 If startup or contention fails, stop research through a reviewed GitOps change (`replicas: 0`) while preserving its
 claim. Inspect checksum failures, exact logs, VRAM, KV pressure, disk and host memory before changing budgets. Do not
-reinstate the old Rune API, reduce Flamingo context, bypass Kargo or change trading authority as a recovery shortcut.
+reduce Flamingo context, bypass Kargo or change trading authority as a recovery shortcut.
