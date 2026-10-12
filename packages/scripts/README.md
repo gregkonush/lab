@@ -45,7 +45,8 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 ## Registry maintenance
 
 The registry cleanup CLI is Python 3.14. Follow the [cleanup runbook](../../docs/registry/manual-garbage-collection.md).
-`src/registry/protected_references.py` snapshots current workload and retained Kargo references.
+`src/registry/protected_references.py` snapshots built-in workloads and all served custom resources,
+including idle providers and retained Kargo references across all namespaces; failed discovery or listing aborts cleanup.
 `prepare.py` builds a read-only retention and blob plan on the existing claim.
 `collect.py` renames eligible tags and verified old blobs into quarantine under a bounded read-only hold and restores uploads.
 `purge.py` deletes quarantined data through the registry Pod's maintenance container,
