@@ -6,7 +6,7 @@ import { SqlClient } from 'effect/sql'
 
 import migration from '../../migrations/0093_research_inference'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
-import { hashResearch, ResearchOutcome } from './contract'
+import { hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
 import { researchFixture, streamFixture } from './test-support'
 import { makeResearchStore, projectResearchExpenses, researchExpensePlan, verifyResearchReceipt } from './store'
 import { makeResearchRunner } from './runner'
@@ -48,7 +48,12 @@ integration('research attempt durability with real PostgreSQL', () => {
       port: 0,
       fetch: () => {
         calls++
-        return new Response(streamFixture(), { headers: { 'content-type': 'text/event-stream' } })
+        return new Response(streamFixture(), {
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(researchFixture().policy)),
+          },
+        })
       },
     })
     try {
@@ -90,7 +95,13 @@ integration('research attempt durability with real PostgreSQL', () => {
   ledgerTest('recovers post-before-ack with exact native ledger transfers and balances', async () => {
     const model = Bun.serve({
       port: 0,
-      fetch: () => new Response(streamFixture(), { headers: { 'content-type': 'text/event-stream' } }),
+      fetch: () =>
+        new Response(streamFixture(), {
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(researchFixture().policy)),
+          },
+        }),
     })
     try {
       await runtime.runPromise(

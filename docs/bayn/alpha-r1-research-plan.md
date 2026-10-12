@@ -5,6 +5,10 @@ command are implemented. The isolated worker and approved credentials are enroll
 [Bayn GitOps](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research), using the existing Kargo release path.
 No strategy has been admitted or economically qualified by this work.
 
+The endpoint returns its verified model-lock identity and deployment-bound serving image with every inference
+response. The worker compares all five serving-artifact fields with the approved run before consuming the stream,
+retains them in the receipt, and verifies them again on replay and expense projection. A model alias alone is insufficient.
+
 ## Runtime
 
 `BaynResearchRun` is a finite Restate Workflow keyed by the canonical run hash. It runs in a separate process and

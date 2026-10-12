@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { sha256 } from '../hash'
-import { decodeResearchRun, hashResearch, ResearchOutcome, researchRequest, sealResearchReceipt } from './contract'
+import {
+  decodeResearchRun,
+  hashResearch,
+  ResearchOutcome,
+  researchRequest,
+  researchServingIdentity,
+  sealResearchReceipt,
+} from './contract'
 import { researchExpensePlan, verifyResearchReceipt } from './store'
 import { researchFixture, streamFixture } from './test-support'
 
@@ -17,6 +24,7 @@ const receipt = (outcome = ResearchOutcome.Complete) =>
       firstTokenAtMs: 1,
       outcome,
       httpStatus: 200,
+      servingIdentity: researchServingIdentity(run.policy),
       serverRequestId: 'chatcmpl-synthetic',
       responseBase64: Buffer.from(streamFixture()).toString('base64'),
       responseHash: sha256(streamFixture()),
@@ -99,6 +107,8 @@ describe('frozen research contract and existing expense ledger', () => {
     } = receipt()
     for (const changed of [
       { ...material, httpStatus: 503 },
+      { ...material, servingIdentity: null },
+      { ...material, servingIdentity: { ...researchServingIdentity(run.policy), checkpoint: '0'.repeat(40) } },
       { ...material, firstTokenAtMs: null },
       { ...material, firstTokenAtMs: material.completedAtMs + 1 },
     ]) {

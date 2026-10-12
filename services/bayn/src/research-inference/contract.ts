@@ -85,6 +85,20 @@ export const ResearchRunSchema = Schema.Struct({
 })
 export type ResearchRun = typeof ResearchRunSchema.Type
 export type ResearchPolicy = typeof ResearchPolicySchema.Type
+export const ResearchServingIdentitySchema = Schema.Struct({
+  model: StrictNonEmptyStringSchema.check(Schema.isMaxLength(160)),
+  checkpoint: GitSourceRevisionSchema,
+  servingImage: Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/)),
+  tokenizerRevision: GitSourceRevisionSchema,
+  chatTemplateRevision: GitSourceRevisionSchema,
+})
+export const researchServingIdentity = (policy: ResearchPolicy) => ({
+  model: policy.model,
+  checkpoint: policy.checkpoint,
+  servingImage: policy.servingImage,
+  tokenizerRevision: policy.tokenizerRevision,
+  chatTemplateRevision: policy.chatTemplateRevision,
+})
 
 export const hashResearch = (input: unknown) =>
   canonicalHashV1Result(input).pipe(
@@ -204,6 +218,7 @@ export const ResearchReceiptSchema = Schema.Struct({
   firstTokenAtMs: Schema.NullOr(NonNegativeIntegerSchema),
   outcome: Schema.Enum(ResearchOutcome),
   httpStatus: Schema.NullOr(NonNegativeIntegerSchema),
+  servingIdentity: Schema.NullOr(ResearchServingIdentitySchema),
   serverRequestId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(160))),
   responseHash: Schema.NullOr(Sha256Schema),
   responseText: Schema.String.check(Schema.isMaxLength(262144)),

@@ -6,6 +6,9 @@ import {
   parseResearchFactors,
   ResearchError,
   ResearchOutcome,
+  hashResearch,
+  ResearchServingIdentitySchema,
+  researchServingIdentity,
   researchRequest,
   sealResearchReceipt,
   type ResearchRun,
@@ -173,6 +176,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   )
   const stream = makeResearchStreamDecoder(run)
   let httpStatus: number | null = null
+  let servingIdentity: typeof ResearchServingIdentitySchema.Type | null = null
   const cutoff = Date.parse(run.featureCutoff)
   const state: { outcome: ResearchOutcome } = {
     outcome: startedAtMs < cutoff ? ResearchOutcome.Rejected : ResearchOutcome.Expired,
@@ -196,6 +200,17 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         return
       }
       state.outcome = ResearchOutcome.Rejected
+      const attestation = incoming.headers['x-bayn-serving-identity']
+      if (attestation === undefined || attestation.length > 1024)
+        return yield* new ResearchError({ message: 'Research response lacks bounded serving attestation' })
+      servingIdentity = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ResearchServingIdentitySchema))(
+        attestation,
+      )
+      if (
+        (yield* Effect.fromResult(hashResearch(servingIdentity))) !==
+        (yield* Effect.fromResult(hashResearch(researchServingIdentity(run.policy))))
+      )
+        return yield* new ResearchError({ message: 'Research serving artifacts differ from the frozen policy' })
       yield* incoming.stream.pipe(
         Stream.runForEach((bytes) =>
           Effect.gen(function* () {
@@ -223,6 +238,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
       completedAtMs,
       outcome: state.outcome,
       httpStatus,
+      servingIdentity,
       ...stream.snapshot(),
       factors,
     }),

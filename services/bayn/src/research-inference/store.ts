@@ -14,6 +14,7 @@ import {
   ResearchError,
   ResearchReceiptSchema,
   researchRequest,
+  researchServingIdentity,
   sealResearchReceipt,
   type ResearchReceipt,
   type ResearchRun,
@@ -48,6 +49,7 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
     if (
       receipt.outcome === 'COMPLETE' &&
       (receipt.httpStatus !== 200 ||
+        (yield* hashResearch(receipt.servingIdentity)) !== (yield* hashResearch(researchServingIdentity(run.policy))) ||
         receipt.firstTokenAtMs === null ||
         receipt.firstTokenAtMs < receipt.startedAtMs ||
         receipt.firstTokenAtMs > receipt.completedAtMs ||

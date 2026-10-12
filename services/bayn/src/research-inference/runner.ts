@@ -32,6 +32,7 @@ export const makeResearchRunner = (
             firstTokenAtMs: null,
             outcome: ResearchOutcome.Ambiguous,
             httpStatus: null,
+            servingIdentity: null,
             serverRequestId: null,
             responseHash: null,
             responseText: '',

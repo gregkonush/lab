@@ -44,6 +44,13 @@ class ServingContractTest(unittest.TestCase):
 
 
 class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        image = patch.dict(
+            "os.environ", {"BAYN_MODEL_SERVING_IMAGE": "sha256:" + "1" * 64}
+        )
+        image.start()
+        self.addCleanup(image.stop)
+
     async def test_vllm_disconnect_precedes_framework_null_response(self):
         app = FastAPI()
         entered = asyncio.Event()

@@ -38,6 +38,7 @@ integration('real Restate research Workflow', () => {
         firstTokenAtMs: null,
         outcome: ResearchOutcome.Expired,
         httpStatus: null,
+        servingIdentity: null,
         serverRequestId: null,
         responseHash: null,
         responseText: '',

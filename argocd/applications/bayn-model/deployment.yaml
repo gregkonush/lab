@@ -57,6 +57,8 @@ spec:
           image: vllm/vllm-openai:v0.29.0-cu129@sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2
           command: [python3, /opt/bayn-model/serve.py]
           env:
+            - name: BAYN_MODEL_SERVING_IMAGE
+              value: sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2
             - name: PYTHONPATH
               value: /opt/bayn-model
             - name: PYTHONDONTWRITEBYTECODE
