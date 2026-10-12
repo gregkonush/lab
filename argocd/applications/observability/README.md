@@ -30,6 +30,12 @@ See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) f
 
 ## Sources of truth
 
+Loki, Mimir and Tempo Deployments and StatefulSets require `network.proompteng.ai/100g=true` on Turin or Altra.
+Their stateless Kafka and RGW clients also require this label; the Ryzen Ceph-volume exclusion alone cannot keep
+these network workloads off its slower link. Tempo keeps three block builders and three live stores with a two-plus-one
+host spread. The Loki canary and node collectors retain all-host coverage. Move retained storage clients individually
+and verify native rings, Kafka offsets, ingestion and historical queries before advancing the rollout.
+
 1. `argocd/applications/rook-ceph/rook-ceph-objectstore-loki-user.yaml`
 2. `argocd/applications/rook-ceph/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
