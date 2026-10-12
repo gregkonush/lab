@@ -4,9 +4,8 @@ metadata:
   name: torghut-db
   namespace: torghut
 spec:
-  # Avoid unproved cross-architecture physical replication. The lab has two
-  # amd64 workers, so run one instance on each instead of retaining the legacy
-  # single-host pin.
+  # Preserve amd64 physical replication. Ryzen is compute/local-storage only,
+  # so both Ceph-backed instances share Turin until another amd64 storage client exists.
   instances: 2
   primaryUpdateStrategy: unsupervised
   # Planned pod-spec updates must hand writes to the ready standby instead of
@@ -22,7 +21,7 @@ spec:
                 operator: In
                 values:
                   - amd64
-    podAntiAffinityType: required
+    podAntiAffinityType: preferred
     topologyKey: kubernetes.io/hostname
   resources:
     requests:

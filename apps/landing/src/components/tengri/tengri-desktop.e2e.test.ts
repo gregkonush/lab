@@ -1345,6 +1345,36 @@ test('connects while the icon font is stalled and redraws icons when it arrives'
   }
 })
 
+test('connects and accepts input while an optional terminal addon chunk is stalled', async ({ page }) => {
+  const mock = await mockTengri(page)
+  let releaseAddon = () => {}
+  const addonGate = new Promise<void>((resolve) => {
+    releaseAddon = resolve
+  })
+  let blockedAddons = 0
+  await page.route('**/_next/static/chunks/**', async (route) => {
+    if (route.request().resourceType() !== 'script') return route.continue()
+    const response = await route.fetch()
+    const source = await response.text()
+    if (/(?:"WebglAddon"\s*,|["']?WebglAddon["']?\s*:)\s*\(\)\s*=>/.test(source)) {
+      blockedAddons += 1
+      await addonGate
+    }
+    await route.fulfill({ response })
+  })
+  try {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    const terminal = page.getByRole('region', { name: 'Terminal window' })
+    await expect.poll(() => blockedAddons).toBeGreaterThan(0)
+    await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+    await terminal.getByRole('textbox', { name: 'Terminal input' }).pressSequentially('addon still loading')
+    await expect.poll(() => mock.terminalInput.join('')).toBe('addon still loading')
+  } finally {
+    releaseAddon()
+  }
+})
+
 test('keeps the terminal usable when WebGL and its icon font are unavailable', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.addInitScript(() => {

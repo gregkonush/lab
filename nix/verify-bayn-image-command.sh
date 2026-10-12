@@ -65,6 +65,9 @@ forward_wrapper="$(resolve_image_entry /bin/bayn-forward-performance)"
 forward_command="$(resolve_image_entry /app/services/bayn/dist/forward-performance-command.js)"
 cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
+research_wrapper="$(resolve_image_entry /bin/bayn-research)"
+research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
+research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
 replay_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
 replay_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
 control_wrapper="$(resolve_image_entry /bin/bayn-control-study)"
@@ -79,6 +82,9 @@ test -x "${forward_wrapper}"
 test -f "${forward_command}"
 test -x "${cost_wrapper}"
 test -f "${cost_command}"
+test -x "${research_wrapper}"
+test -f "${research_command}"
+test -f "${research_server}"
 test -x "${replay_wrapper}"
 test -f "${replay_command}"
 test -x "${control_wrapper}"
@@ -123,6 +129,15 @@ cost_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
 expected_cost='Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help'
 if [[ "${cost_actual}" != "${expected_cost}" ]]; then
   printf 'Unexpected Bayn inference-cost help output: %s\n' "${cost_actual}" >&2
+  exit 1
+fi
+
+research_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-research "${image_id}" --help)"
+expected_research='Usage: bayn-research --validate <run.json> | --run <run.json> --output <new-receipt.json> | --help'
+if [[ "${research_actual}" != "${expected_research}" ]]; then
+  printf 'Unexpected Bayn research help output: %s\n' "${research_actual}" >&2
   exit 1
 fi
 

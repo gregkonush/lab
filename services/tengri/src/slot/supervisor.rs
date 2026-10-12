@@ -1,4 +1,4 @@
-use std::{env, sync::Arc};
+use std::{env, path::Path, sync::Arc};
 
 use anyhow::Context;
 use axum::{
@@ -33,9 +33,60 @@ pub const CLAIM_EPOCH_HEADER: &str = "x-tengri-claim-epoch";
 struct Supervisor {
     state: watch::Sender<SlotState>,
     gate: Arc<Mutex<()>>,
+    grpc: Arc<Mutex<Option<GuestConnection>>>,
+    fences: watch::Sender<()>,
+}
+
+struct GuestConnection {
+    claim: Claim,
+    fence: watch::Receiver<()>,
+    sender: hyper::client::conn::http2::SendRequest<Body>,
 }
 
 impl Supervisor {
+    async fn grpc_sender(
+        &self,
+        claim: &Claim,
+        socket: &Path,
+    ) -> anyhow::Result<hyper::client::conn::http2::SendRequest<Body>> {
+        let mut cached = self.grpc.lock().await;
+        if let Some(connection) = cached.as_ref().filter(|connection| {
+            connection.claim == *claim
+                && !connection.sender.is_closed()
+                && !connection.fence.has_changed().unwrap_or(true)
+        }) {
+            return Ok(connection.sender.clone());
+        }
+        let stream = connect_vsock(socket, GUEST_API_PORT).await?;
+        // Hyper's HTTP/2 driver owns a background task. Dropping its connection
+        // future alone does not close streams held by cloned senders.
+        let stream = stream.into_std()?;
+        let fence_socket = stream.try_clone()?;
+        let stream = tokio::net::UnixStream::from_std(stream)?;
+        let (sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await?;
+        let mut state = self.state.subscribe();
+        let fence = self.fences.subscribe();
+        let mut lifetime = fence.clone();
+        let expected = claim.clone();
+        tokio::spawn(async move {
+            tokio::pin!(connection);
+            tokio::select! {
+                _ = &mut connection => {},
+                _ = state.wait_for(|state| !state.serves(&expected)) => {},
+                _ = lifetime.changed() => {},
+            }
+            let _ = fence_socket.shutdown(std::net::Shutdown::Both);
+        });
+        *cached = Some(GuestConnection {
+            claim: claim.clone(),
+            fence,
+            sender: sender.clone(),
+        });
+        Ok(sender)
+    }
+
     fn fence(
         &self,
         current: &SlotState,
@@ -73,6 +124,7 @@ impl Supervisor {
                 "slot owner, epoch, or lifecycle changed".into(),
             ));
         }
+        self.fences.send_replace(());
         self.state.send_replace(next);
         Ok(())
     }
@@ -84,6 +136,18 @@ pub async fn run() -> anyhow::Result<()> {
     let identity = crate::identity::WorkloadIdentity::for_slot(&namespace, &pod_uid).await?;
     let tls = identity.slot_server_tls(&namespace)?;
     let health = Router::new()
+        .route(
+            "/metrics",
+            get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain; version=0.0.4; charset=utf-8",
+                    )],
+                    crate::metrics::global().render_latencies(),
+                )
+            }),
+        )
         .route("/livez", get(|| async { StatusCode::OK }))
         .route(
             "/readyz",
@@ -120,6 +184,8 @@ pub(super) async fn serve(
     let supervisor = Supervisor {
         state,
         gate: Arc::new(Mutex::new(())),
+        grpc: Default::default(),
+        fences: watch::channel(()).0,
     };
     let router = Router::new()
         .route("/slot/status", get(status))
@@ -218,6 +284,8 @@ async fn forward(
     State(supervisor): State<Supervisor>,
     mut request: Request<Body>,
 ) -> Result<Response, (StatusCode, String)> {
+    let admission =
+        crate::metrics::global().latency_timer(crate::metrics::Latency::SupervisorAdmission);
     #[cfg(test)]
     let started = std::time::Instant::now();
     // The status read and transport admission cannot overlap a sleep fence.
@@ -255,17 +323,12 @@ async fn forward(
         "real KVM proxy status: {:.2} ms cumulative",
         started.elapsed().as_secs_f64() * 1000.0
     );
-    let mut state = supervisor.state.subscribe();
     let socket = runner::sockets_directory().join("guest.vsock");
-    let stream = connect_vsock(&socket, GUEST_API_PORT)
-        .await
-        .map_err(lifecycle_error)?;
     #[cfg(test)]
     eprintln!(
         "real KVM proxy vsock: {:.2} ms cumulative",
         started.elapsed().as_secs_f64() * 1000.0
     );
-    drop(guard);
     let mut parts = request.uri().clone().into_parts();
     parts.scheme = Some(axum::http::uri::Scheme::HTTP);
     parts.authority = Some(axum::http::uri::Authority::from_static("nanoagent"));
@@ -275,24 +338,18 @@ async fn forward(
         .headers()
         .get("content-type")
         .is_some_and(|v| v.as_bytes().starts_with(b"application/grpc"));
-    let expected = claim.clone();
     if grpc {
-        let (mut sender, connection) =
-            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
-                .await
-                .map_err(|error| lifecycle_error(error.into()))?;
+        let mut sender = supervisor
+            .grpc_sender(&claim, &socket)
+            .await
+            .map_err(lifecycle_error)?;
+        drop(guard);
+        drop(admission);
         #[cfg(test)]
         eprintln!(
             "real KVM proxy HTTP/2: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        tokio::spawn(async move {
-            tokio::pin!(connection);
-            tokio::select! {
-                _ = &mut connection => {},
-                _ = state.wait_for(|state| !state.serves(&expected)) => {},
-            }
-        });
         let response = sender
             .send_request(request)
             .await
@@ -304,6 +361,15 @@ async fn forward(
         );
         Ok(response.map(Body::new))
     } else {
+        let mut state = supervisor.state.subscribe();
+        let lifetime = supervisor.fences.subscribe();
+        let mut driver_lifetime = lifetime.clone();
+        let expected = claim.clone();
+        let stream = connect_vsock(&socket, GUEST_API_PORT)
+            .await
+            .map_err(lifecycle_error)?;
+        drop(guard);
+        drop(admission);
         let downstream_upgrade = hyper::upgrade::on(&mut request);
         let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
@@ -314,6 +380,7 @@ async fn forward(
             tokio::select! {
                 _ = &mut connection => {},
                 _ = state.wait_for(|state| !state.serves(&expected)) => {},
+                _ = driver_lifetime.changed() => {},
             }
         });
         let mut response = sender
@@ -323,6 +390,7 @@ async fn forward(
         if response.status() == StatusCode::SWITCHING_PROTOCOLS {
             let upstream_upgrade = hyper::upgrade::on(&mut response);
             let mut state = supervisor.state.subscribe();
+            let mut lifetime = lifetime;
             tokio::spawn(async move {
                 if let (Ok(downstream), Ok(upstream)) =
                     tokio::join!(downstream_upgrade, upstream_upgrade)
@@ -332,6 +400,7 @@ async fn forward(
                     tokio::select! {
                         _ = tokio::io::copy_bidirectional(&mut downstream, &mut upstream) => {},
                         _ = state.wait_for(|state| !state.serves(&claim)) => {},
+                        _ = lifetime.changed() => {},
                     }
                 }
             });
@@ -343,6 +412,147 @@ async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn http2_reuses_vsock_and_closes_pending_requests_at_a_sleep_fence() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let directory = std::path::PathBuf::from(format!(
+            "/tmp/tengri-vsock-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let socket = directory.join("guest.vsock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let connections = Arc::new(AtomicUsize::new(0));
+        let accepts = connections.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                accepts.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut handshake = Vec::new();
+                    loop {
+                        let byte = stream.read_u8().await.unwrap();
+                        handshake.push(byte);
+                        if byte == b'\n' {
+                            break;
+                        }
+                    }
+                    assert_eq!(handshake, b"CONNECT 1024\n");
+                    stream.write_all(b"OK 1024\n").await.unwrap();
+                    let service = hyper::service::service_fn(
+                        |request: Request<hyper::body::Incoming>| async move {
+                            if request.uri().path() == "/pending" {
+                                futures::future::pending::<()>().await;
+                            }
+                            Ok::<_, std::convert::Infallible>(Response::new(Body::from("ok")))
+                        },
+                    );
+                    let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+        let claim = Claim {
+            microvm_id: "agent-a".into(),
+            microvm_uid: "owner-a".into(),
+            epoch: 7,
+        };
+        let (state, _) = watch::channel(SlotState::Awake {
+            claim: claim.clone(),
+        });
+        let supervisor = Supervisor {
+            state,
+            gate: Default::default(),
+            grpc: Default::default(),
+            fences: watch::channel(()).0,
+        };
+        for _ in 0..4 {
+            let mut sender = supervisor.grpc_sender(&claim, &socket).await.unwrap();
+            assert_eq!(
+                sender
+                    .send_request(
+                        Request::builder()
+                            .uri("http://nanoagent/ok")
+                            .body(Body::empty())
+                            .unwrap()
+                    )
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+        }
+        assert_eq!(connections.load(Ordering::SeqCst), 1);
+        let mut sender = supervisor.grpc_sender(&claim, &socket).await.unwrap();
+        let mut pending = tokio::spawn(async move {
+            sender
+                .send_request(
+                    Request::builder()
+                        .uri("http://nanoagent/pending")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut pending)
+                .await
+                .is_err()
+        );
+        let current = supervisor.state.borrow().clone();
+        supervisor
+            .fence(
+                &current,
+                &CommandRequest::Sleep {
+                    claim: claim.clone(),
+                },
+            )
+            .unwrap();
+        supervisor.state.send_replace(SlotState::Awake {
+            claim: claim.clone(),
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        supervisor.state.send_replace(SlotState::Awake {
+            claim: claim.clone(),
+        });
+        let mut sender = supervisor.grpc_sender(&claim, &socket).await.unwrap();
+        sender
+            .send_request(
+                Request::builder()
+                    .uri("http://nanoagent/ok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(connections.load(Ordering::SeqCst), 2);
+        let next = Claim { epoch: 8, ..claim };
+        supervisor.state.send_replace(SlotState::Awake {
+            claim: next.clone(),
+        });
+        let mut sender = supervisor.grpc_sender(&next, &socket).await.unwrap();
+        sender
+            .send_request(
+                Request::builder()
+                    .uri("http://nanoagent/ok")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(connections.load(Ordering::SeqCst), 3);
+        server.abort();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[tokio::test]
     async fn concurrent_guest_requests_wait_for_transport_admission() {
@@ -364,6 +574,8 @@ mod tests {
         let supervisor = Supervisor {
             state,
             gate: gate.clone(),
+            grpc: Default::default(),
+            fences: watch::channel(()).0,
         };
         let response = forward(State(supervisor), request);
         futures::pin_mut!(response);
@@ -384,6 +596,8 @@ mod tests {
         let supervisor = Supervisor {
             state,
             gate: Arc::new(Mutex::new(())),
+            grpc: Default::default(),
+            fences: watch::channel(()).0,
         };
         for claim in [
             Claim {
@@ -421,6 +635,8 @@ mod tests {
         let supervisor = Supervisor {
             state,
             gate: Arc::new(Mutex::new(())),
+            grpc: Default::default(),
+            fences: watch::channel(()).0,
         };
         for wrong in [
             Claim {

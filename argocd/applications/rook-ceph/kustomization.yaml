@@ -12,6 +12,7 @@ resources:
   - bayn-research-objectbucket.yaml
   - host-metrics-alloy-daemonset.yaml
   - storageclasses.yaml
+  - storage-network.yaml
   - tailscale-service-dashboard.yaml
   - ingressroute-ceph-k8s-private.yaml
   - rgw-tls-proxy.yaml
