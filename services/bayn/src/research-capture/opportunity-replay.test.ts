@@ -100,6 +100,7 @@ add(
 let projection = emptyStreamingProjection(bootstrap.epoch)
 let consumerSequence = 0
 let positions = native.cut.positions
+let activeCut: Parameters<typeof captureResearchOpportunity>[3] = null
 const arrivals = [
   ...historicalRawArrivals(native.snapshot, observedAtMs),
   ...[...native.cut.projection.features.values()].flat().map((feature) => ({
@@ -148,6 +149,8 @@ for (let ordinal = 0; schedule.coverageStartMs + ordinal * 60_000 < schedule.cov
     }
   }
   const at = ordinal === activeOrdinal ? observedAtMs : schedule.coverageStartMs + ordinal * 60_000
+  if (ordinal === activeOrdinal)
+    activeCut = { projection, consumerSequence, bootstrap, positions, deliveredPositions: positions }
   add(
     captureResearchOpportunity(
       schedule,
@@ -160,6 +163,7 @@ for (let ordinal = 0; schedule.coverageStartMs + ordinal * 60_000 < schedule.cov
             consumerSequence,
             bootstrap,
             positions,
+            deliveredPositions: positions,
           },
     ),
     at,
@@ -199,6 +203,40 @@ for (let ordinal = 0; schedule.coverageStartMs + ordinal * 60_000 < schedule.cov
     )
   }
 }
+const futureTopic = universe.topics.features
+const futurePosition = positions.find((position) => position.topic === futureTopic)
+if (futurePosition === undefined) throw new Error('Missing future feature partition')
+const futureOffset = String(BigInt(futurePosition.offset) + 4n)
+const futureRaw = Buffer.from('{')
+const futurePrevious = projection
+projection = incorporateMarketRecord(
+  projection,
+  { topic: futureTopic, partition: 0, offset: futureOffset, value: futureRaw.toString('utf8') },
+  universe,
+  schedule.coverageEndMs - 1,
+)
+add(
+  {
+    kind: 'market-record',
+    consumerEpoch: bootstrap.epoch,
+    consumerSequence: ++consumerSequence,
+    projectionSequence: projection.sequence,
+    topic: futureTopic,
+    partition: 0,
+    offset: futureOffset,
+    originalTransport: captureKafkaTransport(undefined),
+    rawValueSha256: sha256(futureRaw),
+    rawByteLength: futureRaw.byteLength,
+    tombstone: false,
+    bootstrap: false,
+    disposition: kafkaCaptureDisposition(futurePrevious, projection),
+  },
+  schedule.coverageEndMs - 1,
+  futureRaw,
+)
+positions = positions.map((position) =>
+  position.topic === futureTopic ? { ...position, offset: String(BigInt(futureOffset) + 1n) } : position,
+)
 add(
   {
     kind: 'consumer-interval-cut',
@@ -354,6 +392,23 @@ test.each(mutations)('resealing a changed %s does not make opportunity evidence 
       : row,
   )
   expect(Result.isFailure(seal(changed))).toBeTrue()
+})
+
+test('resealing future partition positions and matching snapshot hashes cannot borrow later rejected deliveries', () => {
+  if (activeCut === null) throw new Error('Missing active consumer cut')
+  const forged = captureResearchOpportunity(schedule, activeOrdinal, observedAtMs, {
+    ...activeCut,
+    positions,
+    deliveredPositions: positions,
+  })
+  const original = rows.find((row) => row.event.kind === 'research-opportunity' && row.event.ordinal === activeOrdinal)
+  if (original?.event.kind !== 'research-opportunity') throw new Error('Missing original opportunity')
+  expect(forged.snapshotHash).not.toBe(original.event.snapshotHash)
+  const changed = rows.map((row) => (row === original ? { ...row, event: forged } : row))
+  const result = seal(changed)
+  expect(
+    Result.isFailure(result) && result.failure instanceof ResearchCaptureFailure && result.failure.message,
+  ).toContain('positions differ from its delivered prefix')
 })
 
 test('missing scheduled opportunities remain explicit after all retained evidence is reproduced', () => {

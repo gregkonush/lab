@@ -57,6 +57,29 @@ test('an all-excluded opportunity retains exact holes instead of disappearing', 
   expect(event.candidates).toHaveLength(config.researchSchedule.protocol.candidateSymbols.length)
 })
 
+test('research snapshot provenance cannot borrow broker drain offsets beyond delivered records', () => {
+  const brokerPositions = fixture.cut.positions.map((position) => ({
+    ...position,
+    offset: String(BigInt(position.offset) + 10n),
+  }))
+  const cut = {
+    ...fixture.cut,
+    positions: brokerPositions,
+    bootstrap: {
+      ...fixture.cut.bootstrap,
+      partitions: fixture.cut.bootstrap.partitions.map((partition, index) => ({
+        ...partition,
+        endOffset: brokerPositions[index]?.offset ?? partition.endOffset,
+      })),
+    },
+  }
+  const event = captureResearchOpportunity(config, ordinal, observedAtMs, cut)
+  expect(event.status).toBe(ResearchOpportunityStatus.InputUnavailable)
+  expect(event.snapshotHash).toBeNull()
+  expect(event.inputCut?.positions).toEqual(fixture.cut.deliveredPositions)
+  expect(event.inputCut?.positions).not.toEqual(brokerPositions)
+})
+
 test('late slots never borrow a later snapshot and warmup/unavailable opportunities retain candidate identities', () => {
   const missed = captureResearchOpportunity(config, ordinal, observedAtMs + 1000, fixture.cut)
   expect(missed.status).toBe(ResearchOpportunityStatus.Missed)

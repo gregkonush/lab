@@ -303,6 +303,7 @@ export interface KafkaProjectionCut {
 }
 export interface KafkaProjectionRead extends KafkaProjectionCut {
   readonly consumerSequence: number
+  readonly deliveredPositions: readonly KafkaPartitionPosition[]
 }
 export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
@@ -330,6 +331,7 @@ export const makeKafkaMarketProjection = (
     const owner = yield* Effect.scope
     let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
     let projectionConsumerSequence = 0
+    let deliveredPositions = new Map<string, KafkaPartitionPosition>()
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
@@ -358,6 +360,7 @@ export const makeKafkaMarketProjection = (
         )
         projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
         projectionConsumerSequence = 0
+        deliveredPositions = new Map()
         ready = false
         bootstrap = undefined
         positions = []
@@ -444,6 +447,9 @@ export const makeKafkaMarketProjection = (
           partition: partition.partition,
           offset: partition.startOffset,
         }))
+        deliveredPositions = new Map(
+          positions.map((position) => [topicPartitionKey(position.topic, position.partition), { ...position }]),
+        )
         const assignedAtMs = clock.currentTimeMillisUnsafe()
         recordResearchCapture(
           capture,
@@ -609,6 +615,14 @@ export const makeKafkaMarketProjection = (
               arrivals.observe(availableAtMs, record.tombstone === true ? 0 : record.rawByteLength)
               const previousProjection = projection
               const previousSequence = projection.sequence
+              const deliveryKey = topicPartitionKey(record.topic, record.partition)
+              const priorDelivery = deliveredPositions.get(deliveryKey)
+              if (priorDelivery === undefined || BigInt(priorDelivery.offset) <= BigInt(record.offset))
+                deliveredPositions.set(deliveryKey, {
+                  topic: record.topic,
+                  partition: record.partition,
+                  offset: String(BigInt(record.offset) + 1n),
+                })
               if (invalidation === undefined && record.tombstone !== true)
                 projection = incorporateMarketRecord(projection, record, universe, availableAtMs)
               projectionConsumerSequence = consumerSequence
@@ -857,6 +871,9 @@ export const makeKafkaMarketProjection = (
           ? Effect.succeed({
               projection,
               consumerSequence: projectionConsumerSequence,
+              deliveredPositions: canonicalPositions([...deliveredPositions.values()]).map((position) => ({
+                ...position,
+              })),
               bootstrap,
               positions: positions.map((position, index) => {
                 const last = projection.offsets.get(topicPartitionKey(position.topic, position.partition))

@@ -164,7 +164,7 @@ export const captureResearchOpportunity = (
     consumerEpoch: cut.projection.epoch,
     consumerSequence: cut.consumerSequence,
     projectionSequence: cut.projection.sequence,
-    positions: cut.positions,
+    positions: cut.deliveredPositions,
   }
   const queryHash = canonicalHashV1(query)
   const inventory = diagnoseStreamingInputs(cut.projection, query)
@@ -180,7 +180,7 @@ export const captureResearchOpportunity = (
     symbol,
     evidence: { ...evidence, featureHash: matchingFeature === null ? null : canonicalHashV1(matchingFeature) },
   }))
-  const snapshot = constructStreamingSnapshot(cut, query)
+  const snapshot = constructStreamingSnapshot({ ...cut, positions: cut.deliveredPositions }, query)
   if (Result.isFailure(snapshot))
     return {
       ...base,

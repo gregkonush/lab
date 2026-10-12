@@ -250,6 +250,7 @@ test('projection cuts follow replaced positions and reject an invalidated epoch'
       yield* TestClock.adjust(1000)
       const replaced = yield* market.readForLiquidation
       expect(replaced.positions.find((row) => row.topic === 'quotes')?.offset).toBe('20')
+      expect(replaced.deliveredPositions.every((row) => row.offset === '0')).toBeTrue()
       transport.invalidated?.(new Error('replace test epoch'))
       expect(Result.isFailure(yield* market.readForLiquidation.pipe(Effect.result))).toBe(true)
       yield* TestClock.adjust(3000)
@@ -411,6 +412,7 @@ test.each([false, true])('capture observes dispositions and exact transport time
     )
   const transport = new FakeTransport()
   const payloads = [quote('AAPL'), Buffer.from([0x80]), quote('ZZZ'), quote('ZZZ')]
+  transport.drained = positions('99')
   transport.queue = payloads.map((value, index) => ({
     topic: 'quotes',
     partition: 0,
@@ -475,6 +477,8 @@ test.each([false, true])('capture observes dispositions and exact transport time
       })
       expect(cut.projection.sequence).toBe(3)
       expect(cut.consumerSequence).toBe(4)
+      expect(cut.positions.every((position) => position.offset === '99')).toBeTrue()
+      expect(cut.deliveredPositions.find((position) => position.topic === 'quotes')?.offset).toBe('3')
     }),
   )
   expect(transport.closeCount).toBe(1)

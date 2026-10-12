@@ -24,6 +24,10 @@ receipts, and query/snapshot hashes when available. Warmup, cutoff, global input
 remain explicit. A sampler delayed beyond the next slot records `MISSED` with no invented historical snapshot.
 Each borrowed input cut retains the consumer epoch, exact delivered-record sequence, projection sequence and partition
 positions. Delivered-record sequence distinguishes rejected or duplicate records that leave projection sequence unchanged.
+Research positions start at the assignment offsets and advance through every delivered record, including rejected
+and ignored records. They are separate from the SDK's drained broker cursor, which can include control offsets.
+Research snapshot hashes use the delivered positions. If that prefix does not cover the frozen bootstrap bounds,
+the opportunity retains unavailable input rather than borrowing broker provenance.
 Quote event timestamps retain native nanosecond precision.
 These reads never request inference, place an order, acquire another consumer or change the live position.
 
@@ -36,7 +40,8 @@ Optional capture failures invalidate research evidence without reversing an ackn
 duplicate/mismatched ordinals or timing joins. Before accepting any opportunity, replay reconstructs the native projection
 from its exact raw delivered-record prefix and recorded assignment/bootstrap. It reproduces the disposition, exclusions,
 minute holes, feature/quote receipts, momentum candidates and snapshot/query identities. Cut positions must cover incorporated
-coordinates within the final retained interval, and future or unobserved prefixes fail. No per-opportunity projection copies
+coordinates equal the successor of the highest delivered offset in each partition at that exact consumer sequence,
+including rejected records; future or unobserved prefixes fail. No per-opportunity projection copies
 are retained while replaying the interval. Missing ordinals remain `INVENTORY_INCOMPLETE`; uncommitted batches
 remain separate from usable timing witnesses. Export each returned timing as a private JSON file and pin its bytes
 for the matched study, together with the complete native execution-decision document whose content hash the timing names.

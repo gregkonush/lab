@@ -10,7 +10,7 @@ import {
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
 import type { StreamingUniverse } from '../market-data/streaming/raw-events'
-import { kafkaBootstrapComplete } from '../market-data/streaming/bootstrap'
+import { canonicalPositions } from '../market-data/streaming/bootstrap'
 import {
   emptyStreamingProjection,
   incorporateMarketRecord,
@@ -212,7 +212,6 @@ export const replayResearchCaptureInterval = (
         reference.consumerSequence < bootstrappedConsumerSequence ||
         reference.consumerSequence > cut.finalConsumerSequence ||
         inventory(reference.positions) !== expected ||
-        !kafkaBootstrapComplete(bootstrap, reference.positions) ||
         bootstrapped.sequence >= receipt.sequence ||
         bootstrapped.observedAtMs > Date.parse(receipt.event.observedAt)
       )
@@ -223,28 +222,25 @@ export const replayResearchCaptureInterval = (
       ])
     }
     let observedProjection = emptyStreamingProjection(cut.consumerEpoch, universe.topics.technicalFeatures)
+    const deliveredPositions = new Map(
+      bootstrap.partitions.map((partition) => [
+        topicPartitionKey(partition.topic, partition.partition),
+        { topic: partition.topic, partition: partition.partition, offset: partition.startOffset },
+      ]),
+    )
     const reproduceOpportunities = (consumerSequence: number, sequence: number, availableAtMs: number) =>
       Result.gen(function* () {
         for (const receipt of researchByConsumerSequence.get(consumerSequence) ?? []) {
           const reference = receipt.event.inputCut
           if (reference === null || schedule === null)
             return yield* Result.fail(fail('Research input cut has no registered schedule'))
+          const observedPositions = canonicalPositions([...deliveredPositions.values()])
+          if (canonicalHashV1(reference.positions) !== canonicalHashV1(observedPositions))
+            return yield* Result.fail(fail('Research input cut positions differ from its delivered prefix'))
           if (
             receipt.sequence <= sequence ||
             Date.parse(receipt.event.observedAt) < availableAtMs ||
-            reference.projectionSequence !== observedProjection.sequence ||
-            reference.positions.some((position, index) => {
-              const start = bootstrap.partitions[index]
-              const end = cut.drainedPositions[index]
-              const incorporated = observedProjection.offsets.get(topicPartitionKey(position.topic, position.partition))
-              return (
-                start === undefined ||
-                end === undefined ||
-                BigInt(position.offset) < BigInt(start.startOffset) ||
-                BigInt(position.offset) > BigInt(end.offset) ||
-                (incorporated !== undefined && BigInt(position.offset) <= BigInt(incorporated))
-              )
-            })
+            reference.projectionSequence !== observedProjection.sequence
           )
             return yield* Result.fail(
               fail('Research input cut borrows future records or contradicts its consumed prefix'),
@@ -253,7 +249,8 @@ export const replayResearchCaptureInterval = (
             consumerSequence,
             projection: observedProjection,
             bootstrap,
-            positions: reference.positions,
+            positions: observedPositions,
+            deliveredPositions: observedPositions,
           }).pipe(Result.mapError(fail))
         }
         researchByConsumerSequence.delete(consumerSequence)
@@ -307,6 +304,14 @@ export const replayResearchCaptureInterval = (
         },
       }
       cursor = yield* advanceHistoricalMarketCursor(cursor, arrival)
+      const deliveryKey = topicPartitionKey(event.topic, event.partition)
+      const priorDelivery = deliveredPositions.get(deliveryKey)
+      if (priorDelivery === undefined || BigInt(priorDelivery.offset) <= BigInt(event.offset))
+        deliveredPositions.set(deliveryKey, {
+          topic: event.topic,
+          partition: event.partition,
+          offset: String(BigInt(event.offset) + 1n),
+        })
       const timestampMs = restoreKafkaTransportTimestamp(event.originalTransport)
       observedProjection = incorporateMarketRecord(
         observedProjection,
