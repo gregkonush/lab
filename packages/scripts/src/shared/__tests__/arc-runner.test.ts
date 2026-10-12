@@ -129,9 +129,9 @@ describe('ARC Nix runner toolchain', () => {
   })
 
   it('keeps lab ARC runner concurrency capped', () => {
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 9')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 2')
     expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
     expect(arcApplication).not.toContain('arc-amd64-turin')
@@ -139,13 +139,13 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
-  it('keeps the five shared-label slots in one scale set and fits only two on current Ryzen memory', () => {
+  it('places nine shared-label slots as three Ryzen and six Turin runners', () => {
     const application = YAML.parseDocument(arcApplication)
     const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
     if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
     expect(pod.toJSON().topologySpreadConstraints).toEqual([
       {
-        maxSkew: 1,
+        maxSkew: 3,
         minDomains: 2,
         topologyKey: 'kubernetes.io/hostname',
         whenUnsatisfiable: 'DoNotSchedule',
@@ -160,11 +160,12 @@ describe('ARC Nix runner toolchain', () => {
       if (typeof memory !== 'string' || !/^\d+Gi$/.test(memory)) throw new Error('Expected explicit Gi memory request')
       return total + Number.parseInt(memory, 10)
     }, 0)
-    expect(request * 2 + 14.95).toBeLessThan(61.82)
-    const placements = [0, 1, 2, 3, 4, 5].filter(
-      (ryzen) => ryzen * request <= 61.82 && Math.abs(ryzen - (5 - ryzen)) <= 1,
+    expect(request * 3 + 11.94).toBeLessThan(61.82)
+    expect(request * 4).toBeGreaterThan(61.82)
+    const placements = Array.from({ length: 10 }, (_, count) => count).filter(
+      (ryzen) => ryzen * request + 11.94 <= 61.82 && Math.abs(ryzen - (9 - ryzen)) <= 3,
     )
-    expect(placements).toEqual([2])
+    expect(placements).toEqual([3])
     const config = YAML.parseDocument(
       readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
     )
