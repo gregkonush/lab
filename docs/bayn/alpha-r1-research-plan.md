@@ -78,6 +78,14 @@ formulas and implementation revisions, per-factor performance inputs/windows, gl
 source-availability and label cutoffs, description producer revision/prompt/settings, exact semantic descriptions
 and generated-memory bytes, response hashes and preparation attempt/cost identities.
 
+Include the complete resolved inference-policy hash in that same run contract and ID. Load the policy through
+validated runtime configuration at registration. Bind the serving/tokenizer/chat-template revisions, temperature,
+top-p/top-k/min-p, seed policy, penalties, reasoning mode, token budget, stop behavior, maximum selected factors and
+every other supported generation override. Resolve server defaults against the pinned serving profile before hashing.
+Preserve meaningful omitted/null distinctions. Reject unknown or unfrozen request keys. Validate each attempt's
+normalized policy against the registration before transmission, not only its request hash afterward. A runtime policy
+change creates a new run identity and follows the registered experiment budget. No post-result override or tuning.
+
 Use terminal outcomes for complete, rejected, cancelled, expired, ambiguous and unavailable attempts. An incomplete
 stream, missing usage or unknown engine outcome cannot silently become successful or free. Retain private payloads
 in the existing controlled evidence store. Logs contain identifiers and hashes, never request or response bodies.
@@ -104,6 +112,8 @@ results can replay without inference. Account for every transmitted attempt, inc
       repair missing original arrival or decision-feasibility evidence.
 - [ ] Freeze candidate sets, features, factor mapping, chronology, fee/slippage stresses, cost basis, train/validation/test
       sessions, label-overlap embargo, experiment count and rejection criteria before viewing evaluation outcomes.
+- [ ] Freeze the complete resolved Alpha-R1 inference policy from runtime configuration into the registration and
+      run identity. Bind maximum selected factors as well as generation parameters and the pinned serving defaults.
 - [ ] Freeze the factor-context recipe before evaluation. The [publisher's pipeline](https://github.com/FinStep-AI/Alpha-R1)
       builds semantic descriptions from single-factor performance and global market memory. Candidate IDs or raw numbers
       alone do not reproduce that interface. Bind formulas, performance windows, memory inputs and availability cutoffs.
@@ -118,7 +128,9 @@ results can replay without inference. Account for every transmitted attempt, inc
 
 **Verify:** Existing capture export/replay/session tests reject changed hashes, incomplete independent coverage and
 late evidence. Add rejection cases for changed descriptions, unbound producer identity, post-cutoff performance labels
-and future market-memory facts. A real PUT/GET and retained original-session replay establish input eligibility.
+and future market-memory facts. Changed decoding, reasoning, output limits or factor limits must change the run ID;
+an attempt with a different normalized policy must fail before transmission. A real PUT/GET and retained
+original-session replay establish input eligibility.
 Measure recorder queue, bytes and execution latency against capture-disabled baseline. Missing evidence leaves
 evaluation UNKNOWN.
 
@@ -141,6 +153,8 @@ report an economic comparison until input eligibility passes.
       performance/memory context. No generated code execution or free-form order interpretation.
 - [ ] Stream the pinned model with the server's limits. Start with one client request per worker process. The model's
       existing global admission bound handles overlapping deployments. Do not add a global research Virtual Object.
+- [ ] Materialize each request's generation fields only from its frozen inference policy. Compare the effective policy
+      hash before sending. Reject request-level overrides and defaults that differ from the registered serving profile.
 - [ ] Bound queue/retry time by the run's absolute deadline. Retry explicit pre-admission HTTP 429 responses only
       within the registered budget. Never automatically retry an ambiguous transmission.
 - [ ] Forward Effect interruption to HTTP cancellation and close the stream on deadline. Treat truncated output,
