@@ -87,6 +87,31 @@ do not sync its Kargo revision before its local class and memory headroom exist.
    Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during two concurrent Ryzen builds and three concurrent Turin builds.
    Its local scratch partition shares the physical NVMe with `/var`.
 
+## Live acceptance on 2026-10-12 UTC
+
+The migration's native checks found no application Ceph client or Bayn Pod on Ryzen. Kafka, NATS, Loki, Mimir,
+Tempo, Temporal dependencies, application databases, SPIRE, Restate, and the Coder workspace had moved to the
+100G hosts with their durable claims retained. Ceph's own Ryzen monitor remained in the three-monitor quorum.
+
+Bayn status, egress, and execution workers each spanned Altra and Turin. PostgreSQL's primary was on Altra with
+a synchronous standby on Turin. TigerBeetle replicas 0 and 1 were on Turin and replica 2 on Altra. Replica 1's
+existing local ledger was copied offline and verified before rebinding its retained PV; its PVC and replica
+identity were preserved. Native checks confirmed the original plan and epoch, exact reconciliation, and the
+existing capital grant. A temporary fail-closed execution hold during PostgreSQL switchover recovered through
+the existing controller policy and activation hook.
+
+The [five-slot ARC acceptance run](https://github.com/proompteng/lab/actions/runs/38207296252) completed five
+concurrent AMD64 jobs: two on Ryzen and three on Turin, with 57 seconds of overlap across all five. Each job
+verified Nix execution, a Docker build and container run, and its local XFS scratch volume. ARC retains two
+idle runners and scales to five jobs; five idle Pods are not required. Placement verification selects Pods
+whose component is `runner`, because ARC listeners also carry the scale-set label but have no scratch PVC.
+
+During that run Ryzen had at least 48.19GiB available memory, peaked at 3.06 CPU cores, and reported no node
+pressure or memory full-stall time. One native API-to-etcd GET timed out while PostgreSQL rolled, so the strict
+zero-error pressure check did not pass. This smoke test establishes the requested placement and concurrency;
+it does not qualify sustained heavy-build latency. Ceph read-latency and scrub alerts remained a separate
+operational issue at acceptance.
+
 ## Recover an interrupted rollout
 
 ### Transition existing required host separation

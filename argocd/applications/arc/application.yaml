@@ -11,7 +11,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-controller
-        skipCrds: false
         valuesObject:
           nodeSelector:
             kubernetes.io/arch: amd64
@@ -20,7 +19,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -150,7 +148,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-amd64
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -453,7 +450,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-analysis
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
