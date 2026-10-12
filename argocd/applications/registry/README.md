@@ -1,7 +1,7 @@
 # Private registry
 
 The registry keeps its existing single `registry-data` claim. HAProxy shares one
-10 MiB/s upload budget across every mutation using a constant stick-table key.
+20 MiB/s upload budget across every mutation using a constant stick-table key.
 Up to 32 blob requests can stream concurrently. Serializing them behind one
 writer makes cold image/cache uploads wait long enough for clients to disconnect.
 
@@ -18,7 +18,7 @@ do not change the claim or delete uploaded blobs.
 
 Validate the traffic boundary with the deployed HAProxy version in an isolated
 container. A slow upload holds its request open for eight seconds while three
-16 MiB uploads run. The fixture uses four proxy threads. The test checks digests,
+32 MiB uploads run. The fixture uses four proxy threads. The test checks digests,
 completion before the slow request, the aggregate upload budget, and concurrent
 read access.
 
