@@ -54,8 +54,11 @@ reconciliation. While held, Argo status is stale; use native workload readback.
 
 1. Keep the registry on its current node while a maintenance Pod shares the RWO
    claim. Add a temporary `nodeName` and set
-   `REGISTRY_STORAGE_MAINTENANCE_READONLY_ENABLED=true` on the registry container.
-   Wait for its `Recreate` rollout to finish.
+   `REGISTRY_STORAGE_MAINTENANCE_READONLY={"enabled":true}` on the registry
+   container. Supply the entire map value: Distribution 3.1.1 requires this map
+   when the mounted configuration has no `maintenance.readonly` section. Verify
+   the setting with the pinned image against an empty temporary filesystem before
+   the production restart. Wait for the `Recreate` rollout to finish.
 2. Require `GET /v2/` to return 200 and upload initiation
    (`POST /v2/ceph-smoke/registry-gc-check/blobs/uploads/`) to return 405.
    A 202 response means writes are still enabled: stop before collection.
