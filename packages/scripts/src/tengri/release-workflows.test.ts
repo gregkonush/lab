@@ -111,6 +111,7 @@ describe('Tengri image workflow', () => {
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: samples,
+            TENGRI_KVM_SECCOMP: resolve(repositoryRoot, 'devices/galactic/omni/tengri-runner-amd64.json'),
           },
         })
         expect(result.exitCode).not.toBe(0)
@@ -152,6 +153,7 @@ exit 0
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: '3',
+            TENGRI_KVM_SECCOMP: resolve(repositoryRoot, 'devices/galactic/omni/tengri-runner-amd64.json'),
           },
         })
         expect(result.exitCode === 0).toBe(receipt === 'present')

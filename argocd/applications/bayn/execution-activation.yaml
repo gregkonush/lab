@@ -21,6 +21,8 @@ spec:
         app.kubernetes.io/part-of: bayn
         app.kubernetes.io/version: ee60493eb5a9
     spec:
+      nodeSelector:
+        network.proompteng.ai/100g: "true"
       serviceAccountName: bayn
       automountServiceAccountToken: false
       enableServiceLinks: false
