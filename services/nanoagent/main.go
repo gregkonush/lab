@@ -256,6 +256,7 @@ func configureToolchainEnvironment(home string) error {
 	brew := filepath.Join(home, ".linuxbrew")
 	path := prependPath(filepath.Join(brew, "sbin"), os.Getenv("PATH"))
 	path = prependPath(filepath.Join(brew, "bin"), path)
+	path = prependPath("/opt/tengri/editor/bin", path)
 	path = prependPath(filepath.Join(prefix, "bin"), path)
 	for key, value := range map[string]string{
 		"BUN_INSTALL":         prefix,
