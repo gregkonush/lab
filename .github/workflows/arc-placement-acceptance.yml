@@ -30,15 +30,15 @@ jobs:
           - slot: turin-1
             labels: [arc-amd64, arc-amd64-turin]
             node: turin
-            filesystem: ext4
+            filesystem: xfs
           - slot: turin-2
             labels: [arc-amd64, arc-amd64-turin]
             node: turin
-            filesystem: ext4
+            filesystem: xfs
           - slot: turin-3
             labels: [arc-amd64, arc-amd64-turin]
             node: turin
-            filesystem: ext4
+            filesystem: xfs
     runs-on: ${{ matrix.labels }}
     env:
       EXPECTED_NODE: ${{ matrix.node }}
