@@ -42,7 +42,7 @@ spec:
       autoPromotionEnabled: true
     - stageSelector:
         name: hermes-toolchain
-      autoPromotionEnabled: false
+      autoPromotionEnabled: true
     - stageSelector:
         name: jangar
       autoPromotionEnabled: true
@@ -77,5 +77,8 @@ spec:
         name: restate
       autoPromotionEnabled: true
     - stageSelector:
-        name: rune
+        name: bayn-model
+      autoPromotionEnabled: true
+    - stageSelector:
+        name: temporal-worker
       autoPromotionEnabled: true

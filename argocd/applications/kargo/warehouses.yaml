@@ -24,7 +24,7 @@ spec:
           - apps/landing
           - packages/backend
           - packages/design
-          - services/tengri/proto
+          - services/tengri
           - nix/images/proompteng.nix
           - nix/images/bun-workspace-service.nix
           - nix/packages.nix
@@ -785,6 +785,7 @@ spec:
           - services/agents
           - charts/agents/crds
           - nix/images/agents.nix
+          - nix/verify-agents-shell-image-lifecycle.sh
           - nix/images/openai-codex-cli.nix
           - .github/workflows/nix-oci-build-common.yml
           - nix/oci-push.sh
@@ -864,13 +865,12 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         includePaths:
+          - apps/landing
           - services/tengri
           - services/nanoagent
           - .github/workflows/tengri-images.yml
           - packages/scripts/src/tengri
           - packages/scripts/src/shared/cli.ts
-          - packages/scripts/package.json
-          - bun.lock
           - argocd/applications/tengri
     - image:
         repoURL: registry.ide-newton.ts.net/lab/tengri
@@ -1117,7 +1117,7 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Warehouse
 metadata:
-  name: rune
+  name: bayn-model
   namespace: lab-delivery
   labels:
     delivery.proompteng.ai/managed-by: kargo
@@ -1126,12 +1126,44 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Tag == 'kargo-sha-' +
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.revision'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.revision'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Tag == 'kargo-sha-' +
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['org.opencontainers.image.revision'] + '-run-' +
+      imageFrom('registry.ide-newton.ts.net/lab/bayn-model').Annotations['ai.proompteng.github-actions-run-id']
+  subscriptions:
+    - image:
+        repoURL: registry.ide-newton.ts.net/lab/bayn-model
+        imageSelectionStrategy: NewestBuild
+        discoveryLimit: 20
+        strictSemvers: true
+        allowTagsRegexes:
+          - '^kargo-sha-[0-9a-f]{40}-run-[1-9][0-9]*$'
+        platform: linux/amd64
+        cacheByTag: true
+---
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: temporal-worker
+  namespace: lab-delivery
+  labels:
+    delivery.proompteng.ai/managed-by: kargo
+spec:
+  interval: 1m0s
+  freightCreationPolicy: Automatic
+  freightCreationCriteria:
+    expression: >-
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-run-id'] != nil &&
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-run-id'] != '' &&
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-build-conclusion'] == 'success' &&
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Tag == 'kargo-sha-' +
       commitFrom('git@github.com:proompteng/lab.git').ID + '-run-' +
-      imageFrom('registry.ide-newton.ts.net/lab/rune').Annotations['ai.proompteng.github-actions-run-id']
+      imageFrom('registry.ide-newton.ts.net/lab/temporal-worker').Annotations['ai.proompteng.github-actions-run-id']
   subscriptions:
     - git:
         repoURL: git@github.com:proompteng/lab.git
@@ -1140,13 +1172,14 @@ spec:
         discoveryLimit: 20
         strictSemvers: true
         includePaths:
-          - services/rune
-          - .github/workflows/rune-images.yml
-          - argocd/applications/rune
+          - services/temporal-worker
+          - .github/workflows/temporal-worker-images.yml
+          - argocd/applications/temporal
           - argocd/applications/kargo
           - argocd/applicationsets/platform.yaml
+          - packages/scripts/src/shared/__tests__/kargo.test.ts
     - image:
-        repoURL: registry.ide-newton.ts.net/lab/rune
+        repoURL: registry.ide-newton.ts.net/lab/temporal-worker
         imageSelectionStrategy: NewestBuild
         discoveryLimit: 20
         strictSemvers: true

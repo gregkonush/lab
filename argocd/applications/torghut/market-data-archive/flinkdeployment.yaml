@@ -18,6 +18,7 @@ spec:
   serviceAccount: torghut-runtime
   flinkConfiguration:
     kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
+    kubernetes.operator.job.restart.failed: "true"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/market-data-archive/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE

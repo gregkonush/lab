@@ -12,6 +12,7 @@ import {
   isTengriControlPlaneConfigured,
   issuePreviewSession,
   issueEditorSession,
+  issueBrowserSession,
   issueTerminalTicket,
   listAgents,
   listCodexModels,
@@ -20,7 +21,7 @@ import {
   moveFile,
   readFile,
   resolveCodexApproval,
-  revokeEditorSessions,
+  revokeDesktopPreviews,
   revokePreviewSession,
   resumeAgent,
   resumeCodexThread,
@@ -30,6 +31,7 @@ import {
   startCodexLogin,
   steerCodexTurn,
   terminateTerminal,
+  updatePowerSettings,
   writeFile,
 } from '@/lib/tengri/grpc'
 import {
@@ -103,6 +105,9 @@ export async function POST(request: Request) {
       case 'resume-agent':
         result = await resumeAgent(identity.subject, action.agentId)
         break
+      case 'update-power-settings':
+        result = await updatePowerSettings(identity.subject, action.agentId, action.power)
+        break
       case 'list-files':
         result = await listFiles(identity.subject, action.agentId, action.path)
         break
@@ -172,19 +177,38 @@ export async function POST(request: Request) {
         })
         break
       case 'resume-thread':
-        result = await resumeCodexThread(identity.subject, action.agentId, action.threadId, {
-          model: action.model,
-          reasoningEffort: action.reasoningEffort,
-        })
-        break
+        return await resumeCodexThread(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          {
+            model: action.model,
+            reasoningEffort: action.reasoningEffort,
+          },
+          request.signal,
+        )
       case 'send-turn':
-        result = await sendCodexTurn(identity.subject, action.agentId, action.threadId, action.text, {
-          model: action.model,
-          reasoningEffort: action.reasoningEffort,
-        })
+        result = await sendCodexTurn(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          action.text,
+          {
+            model: action.model,
+            reasoningEffort: action.reasoningEffort,
+          },
+          action.images,
+        )
         break
       case 'steer-turn':
-        result = await steerCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId, action.text)
+        result = await steerCodexTurn(
+          identity.subject,
+          action.agentId,
+          action.threadId,
+          action.turnId,
+          action.text,
+          action.images,
+        )
         break
       case 'interrupt-turn':
         await interruptCodexTurn(identity.subject, action.agentId, action.threadId, action.turnId)
@@ -200,8 +224,11 @@ export async function POST(request: Request) {
       case 'editor-session':
         result = await issueEditorSession(identity.subject, action.agentId, action.windowId)
         break
+      case 'browser-session':
+        result = await issueBrowserSession(identity.subject, action.agentId)
+        break
       case 'revoke-editor-sessions':
-        await revokeEditorSessions(identity.subject)
+        await revokeDesktopPreviews(identity.subject)
         result = null
         break
       case 'revoke-preview-session':
@@ -225,4 +252,11 @@ function snapshot(input: { authConfigured: boolean; controlPlaneConfigured: bool
     } satisfies TengriDesktopSnapshot,
     { headers: noStoreHeaders() },
   )
+}
+
+export function HEAD() {
+  return new Response(null, { status: 405, headers: { 'Cache-Control': 'no-store' } })
+}
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
 }

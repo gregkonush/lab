@@ -54,6 +54,27 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              authzed.com/cluster: ofz
+              authzed.com/cluster-component: spicedb
+      ports:
+        - protocol: TCP
+          port: 8443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app: istiod
+      ports:
+        - protocol: TCP
+          port: 15012
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
@@ -82,23 +103,21 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: nanoagent
-              app.kubernetes.io/component: microvm
+              app.kubernetes.io/name: tengri-slot
       ports:
         - protocol: TCP
-          port: 8080
+          port: 8443
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: tengri-microvm-guests
+  name: tengri-slots
   annotations:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: nanoagent
-      app.kubernetes.io/component: microvm
+      app.kubernetes.io/name: tengri-slot
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -106,6 +125,16 @@ spec:
             matchLabels:
               app.kubernetes.io/name: tengri
               app.kubernetes.io/component: control-plane
+      ports:
+        - protocol: TCP
+          port: 8443
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
       ports:
         - protocol: TCP
           port: 8080

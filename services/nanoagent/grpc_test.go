@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/coder/websocket"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,7 +27,7 @@ func rpcTestClient(t *testing.T, api *apiServer) (pb.NanoagentServiceClient, str
 	t.Helper()
 	api.evidence.MicroVMID = "interop-agent"
 	server := httptest.NewUnstartedServer(newHandler(api))
-	server.Config.Protocols = guestHTTPProtocols()
+	server.Config.Protocols = fixtureHTTPProtocols()
 	server.Start()
 	t.Cleanup(server.Close)
 	connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxGuestRPCBytes)))
@@ -41,6 +43,48 @@ func rpcTestContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer test-bootstrap-token")
+}
+
+func TestRPCBrowserMCPStatusReachesCodex(t *testing.T) {
+	api := testAPIServer(t)
+	api.codex, _ = readyCodexSupervisor(t)
+	writer := api.codex.stdin.(*codexWireWriter)
+	client, _ := rpcTestClient(t, api)
+	ctx := rpcTestContext(t)
+	type callResult struct {
+		response *pb.CodexResult
+		err      error
+	}
+	done := make(chan callResult, 1)
+	go func() {
+		response, err := client.CodexCall(ctx, &pb.CodexRequest{Method: "mcpServerStatus/list", ParamsJson: []byte(`{"limit":50}`)})
+		done <- callResult{response: response, err: err}
+	}()
+	var wire []byte
+	select {
+	case wire = <-writer.messages:
+	case result := <-done:
+		t.Fatalf("MCP status was rejected before reaching Codex: %v", result.err)
+	case <-ctx.Done():
+		t.Fatal("MCP status did not reach Codex")
+	}
+	var request codexRPCMessage
+	if err := json.Unmarshal(wire, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != "mcpServerStatus/list" || string(request.Params) != `{"limit":50}` {
+		t.Fatalf("Codex received a different request: %s", wire)
+	}
+	statusJSON := json.RawMessage(`{"data":[{"name":"tengri_browser","tools":{"computer":{"name":"computer","inputSchema":{"type":"object"}}}}]}`)
+	api.codex.resolveResponse(codexRPCMessage{ID: request.ID, Result: statusJSON})
+	select {
+	case result := <-done:
+		if result.err != nil || result.response == nil || !bytes.Equal(result.response.ResultJson, statusJSON) {
+			t.Fatalf("MCP status did not survive the guest RPC: %v, %v", result.response, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Codex status response did not reach the RPC caller")
+	}
 }
 
 func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
@@ -65,7 +109,7 @@ func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 		t.Fatalf("unauthorized request mutated workspace: %v", err)
 	}
 	info, err := client.GetInfo(ctx, &pb.Empty{})
-	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != 1 {
+	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != guestProtocolVersion {
 		t.Fatalf("authenticated info = %v, %v", info, err)
 	}
 	response, err := http.Get(address + "/healthz")
@@ -225,7 +269,39 @@ func TestRPCInteropServer(t *testing.T) {
 	api.codex.activeLogin = json.RawMessage(`{"loginId":"interop-login"}`)
 	api.codex.loginStartedAt = time.Now()
 	api.codex.loginGeneration = api.codex.generation
-	_, address := rpcTestClient(t, api)
+	fixture := newWorkloadFixture(t)
+	server := secureRPCTestServer(t, api, fixture)
+	address := server.URL
+	preview := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("preview leaked the bootstrap credential to the application")
+		}
+		if r.URL.Path != "/ws" {
+			_, _ = fmt.Fprint(w, "preview-over-mtls")
+			return
+		}
+		connection, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer connection.Close(websocket.StatusNormalClosure, "fixture complete")
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		kind, message, err := connection.Read(ctx)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := connection.Write(ctx, kind, append([]byte("guest:"), message...)); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(preview.Close)
+	previewURL, err := url.Parse(preview.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -242,7 +318,22 @@ func TestRPCInteropServer(t *testing.T) {
 			}
 		}
 	}()
-	fmt.Println("NANOAGENT_RPC_ADDR=" + address)
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	encoded, err := json.Marshal(map[string]string{"address": address, "workloadEndpoint": fixture.endpoint, "previewPort": previewURL.Port()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("NANOAGENT_RPC_ENDPOINT=" + string(encoded))
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if scanner.Text() == "rotate" {
+			fixture.rotate(t)
+		}
+	}
 	api.beginShutdown()
+}
+
+func fixtureHTTPProtocols() *http.Protocols {
+	protocols := guestHTTPProtocols()
+	protocols.SetUnencryptedHTTP2(true)
+	return protocols
 }
