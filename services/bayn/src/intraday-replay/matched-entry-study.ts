@@ -3,6 +3,7 @@ import type { MarketCalendarObservation, MarketCalendarSession } from '../broker
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { EntryTimingReceiptSchema } from '../research-capture/entry-timing'
+import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { JevPurpose } from '../jev/portfolio'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { observedQuoteAt } from '../market-data/streaming/projection'
@@ -91,6 +92,7 @@ export const MatchedEntryTimingSchema = Schema.Struct({
   decisionCommittedAt: UtcInstantSchema,
   deterministicSymbol: Schema.NullOr(StrictNonEmptyStringSchema),
   evidenceHash: Sha256Schema,
+  decisionEvidenceHash: Sha256Schema,
 })
 
 export enum MatchedArm {
@@ -398,6 +400,7 @@ export const runMatchedEntryStudy = (
       registration.capacityEvidenceHash,
       ...input.inventory.map((i) => i.evidenceHash),
       ...input.timings.map((entry) => entry.witness?.evidenceHash ?? null),
+      ...input.timings.map((entry) => entry.witness?.decisionEvidenceHash ?? null),
       ...input.costs.flatMap((c) => [c.inference?.evidenceHash ?? null, c.sharedOperating?.evidenceHash ?? null]),
     ]
     if (required.some((hash) => hash !== null && !witnessed.has(hash)))
@@ -481,7 +484,32 @@ export const runMatchedEntryStudy = (
         Schema.fromJsonString(EntryTimingReceiptSchema),
         strictParseOptions,
       )(bytes)
-      const { evidenceHash: _evidenceHash, ...claimed } = timing
+      const decisionFile = input.witnesses.find((candidate) => candidate.sha256 === timing.decisionEvidenceHash)
+      if (decisionFile === undefined)
+        return yield* new SignalStudyFailure({ message: 'Committed decision witness file is missing' })
+      const decisionBytes = yield* fs.readFileString(decisionFile.path)
+      if (sha256(decisionBytes) !== timing.decisionEvidenceHash)
+        return yield* new SignalStudyFailure({ message: 'Committed decision witness bytes differ' })
+      const decision = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(ExecutionDecisionDocumentSchema),
+        strictParseOptions,
+      )(decisionBytes)
+      const native = decision.strategyDecision
+      const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
+      if (
+        decision.contentHash !== retained.decisionHash ||
+        native?.schemaVersion !== 'bayn.jev-entry-target.v1' ||
+        native.evidence.batchPlan.batchId !== batch.plan.batchId ||
+        native.evidence.batchPlan.observationHash !== batch.plan.observationHash ||
+        decision.bindings.snapshotContentHash !== batch.snapshot.manifest.contentHash ||
+        intradayInstantNanos(decision.createdAt) > intradayInstantNanos(retained.decisionCommittedAt) ||
+        (yield* Effect.fromResult(canonicalHashV1Result(native.evidence.batchResult))) !==
+          (yield* Effect.fromResult(canonicalHashV1Result(studied?.batchResult)))
+      )
+        return yield* new SignalStudyFailure({
+          message: 'Timing receipt does not bind the committed native entry decision',
+        })
+      const { evidenceHash: _evidenceHash, decisionEvidenceHash: _decisionEvidenceHash, ...claimed } = timing
       const {
         schemaVersion: _version,
         sourceRevision,

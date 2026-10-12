@@ -111,6 +111,7 @@ test('projection cuts preserve current offsets and fresh advancing outputs', asy
       const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
       yield* TestClock.adjust(1000)
       const initial = yield* market.readForLiquidation
+      expect(initial.consumerSequence).toBe(0)
       const position = initial.positions.find((row) => row.topic === 'quotes')
       if (position === undefined) throw new Error('missing quote position')
       const offsets = initial.projection.offsets as Map<string, string>
@@ -473,6 +474,7 @@ test.each([false, true])('capture observes dispositions and exact transport time
         bootstrap: true,
       })
       expect(cut.projection.sequence).toBe(3)
+      expect(cut.consumerSequence).toBe(4)
     }),
   )
   expect(transport.closeCount).toBe(1)

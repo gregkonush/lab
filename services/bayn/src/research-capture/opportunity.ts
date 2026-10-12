@@ -4,14 +4,17 @@ import { JevProtocolSchema } from '../jev/protocol'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { jevMomentumEntryCandidates } from '../jev/trading-signals'
 import { diagnoseStreamingInputs } from '../market-data/streaming/inputs'
-import type { KafkaProjectionCut } from '../market-data/streaming/kafka'
+import type { KafkaProjectionRead } from '../market-data/streaming/kafka'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
+import { StreamingSnapshotEvidenceSchema } from '../market-data/streaming/evidence-schema'
 import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   Sha256Schema,
+  StrictNonEmptyStringSchema,
   SymbolSchema,
   UtcInstantSchema,
+  UtcOrderTimestampSchema,
 } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import type { ResearchCaptureSessionConfig } from './session-config'
@@ -72,7 +75,7 @@ const CandidateSchema = Schema.Struct({
       featureHash: Schema.NullOr(Sha256Schema),
       quote: Schema.NullOr(
         Schema.Struct({
-          eventAt: UtcInstantSchema,
+          eventAt: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
           ageMs: Schema.Finite,
           availableAtMs: NonNegativeIntegerSchema,
           sourceTopic: Schema.String,
@@ -95,7 +98,14 @@ export const ResearchOpportunitySchema = Schema.Struct({
   queryHash: Schema.NullOr(Sha256Schema),
   snapshotId: Schema.NullOr(Sha256Schema),
   snapshotHash: Schema.NullOr(Sha256Schema),
-  projectionSequence: Schema.NullOr(NonNegativeIntegerSchema),
+  inputCut: Schema.NullOr(
+    Schema.Struct({
+      consumerEpoch: StrictNonEmptyStringSchema,
+      consumerSequence: NonNegativeIntegerSchema,
+      projectionSequence: NonNegativeIntegerSchema,
+      positions: StreamingSnapshotEvidenceSchema.fields.positions,
+    }),
+  ),
   momentumSymbols: Schema.Array(SymbolSchema),
   candidates: Schema.Array(CandidateSchema),
 })
@@ -114,8 +124,7 @@ export const captureResearchOpportunity = (
   config: ResearchOpportunitySchedule,
   ordinal: number,
   observedAtMs: number,
-  cut: KafkaProjectionCut | null,
-  unavailableReason = 'Research projection is unavailable',
+  cut: KafkaProjectionRead | null,
 ): ResearchOpportunity => {
   const { protocol, pollIntervalMs } = config.researchSchedule
   const scheduledAtMs = config.coverageStartMs + ordinal * pollIntervalMs
@@ -128,7 +137,7 @@ export const captureResearchOpportunity = (
     queryHash: null,
     snapshotId: null,
     snapshotHash: null,
-    projectionSequence: null,
+    inputCut: null,
     momentumSymbols: [],
     candidates: protocol.candidateSymbols.map((symbol) => ({ symbol, evidence: null })),
   }
@@ -149,14 +158,21 @@ export const captureResearchOpportunity = (
     return { ...base, status: ResearchOpportunityStatus.Warmup, reason: 'Rolling lookback is not complete' }
   if (observedAtMs >= config.coverageEndMs - protocol.entryCutoffMinutesBeforeClose * 60_000)
     return { ...base, status: ResearchOpportunityStatus.Cutoff, reason: 'Native entry cutoff elapsed' }
-  if (cut === null) return { ...base, status: ResearchOpportunityStatus.InputUnavailable, reason: unavailableReason }
+  if (cut === null)
+    return { ...base, status: ResearchOpportunityStatus.InputUnavailable, reason: 'Research projection is unavailable' }
+  const inputCut = {
+    consumerEpoch: cut.projection.epoch,
+    consumerSequence: cut.consumerSequence,
+    projectionSequence: cut.projection.sequence,
+    positions: cut.positions,
+  }
   const queryHash = canonicalHashV1(query)
   const inventory = diagnoseStreamingInputs(cut.projection, query)
   if (Result.isFailure(inventory))
     return {
       ...base,
       queryHash,
-      projectionSequence: cut.projection.sequence,
+      inputCut,
       status: ResearchOpportunityStatus.InputUnavailable,
       reason: inventory.failure.message,
     }
@@ -170,7 +186,7 @@ export const captureResearchOpportunity = (
       ...base,
       queryHash,
       candidates,
-      projectionSequence: cut.projection.sequence,
+      inputCut,
       status: candidates.every((candidate) => candidate.evidence.eligibility.status === 'EXCLUDED')
         ? ResearchOpportunityStatus.NoEligibleCandidate
         : ResearchOpportunityStatus.InputUnavailable,
@@ -181,7 +197,7 @@ export const captureResearchOpportunity = (
     ...base,
     queryHash,
     candidates,
-    projectionSequence: cut.projection.sequence,
+    inputCut,
     snapshotId: snapshot.success.manifest.snapshotId,
     snapshotHash: snapshot.success.manifest.contentHash,
     momentumSymbols: Result.isSuccess(momentum) ? momentum.success.map(({ symbol }) => symbol) : [],
@@ -192,18 +208,18 @@ export const captureResearchOpportunity = (
   }
 }
 
-export const summarizeResearchSchedule = (receipts: readonly ResearchCaptureReceipt[]) =>
+export const prepareResearchSchedule = (receipts: readonly ResearchCaptureReceipt[]) =>
   Result.gen(function* () {
     const registrations = receipts.filter((receipt) => receipt.event.kind === 'research-schedule')
     const registration = registrations[0]
     const opportunities = receipts.filter((receipt) => receipt.event.kind === 'research-opportunity')
     if (registrations.length === 0 && opportunities.length === 0)
       return {
-        status: 'NOT_REGISTERED' as const,
+        schedule: null,
         expectedCount: 0,
         observedCount: 0,
         missingOrdinals: [],
-        opportunities: [],
+        opportunities: [] as (ResearchCaptureReceipt & { readonly event: ResearchOpportunity })[],
       }
     if (registrations.length !== 1 || registration?.event.kind !== 'research-schedule')
       return yield* Result.fail('Research capture must have one schedule registration')
@@ -231,7 +247,7 @@ export const summarizeResearchSchedule = (receipts: readonly ResearchCaptureRece
       return yield* Result.fail('Research schedule identity or session bounds differ')
     const expectedCount = Math.ceil((schedule.coverageEndMs - schedule.coverageStartMs) / schedule.pollIntervalMs)
     const seen = new Set<number>()
-    const retained: ResearchOpportunity[] = []
+    const retained: (ResearchCaptureReceipt & { readonly event: ResearchOpportunity })[] = []
     for (const receipt of opportunities) {
       if (receipt.event.kind !== 'research-opportunity') continue
       const event = receipt.event
@@ -258,7 +274,7 @@ export const summarizeResearchSchedule = (receipts: readonly ResearchCaptureRece
           (event.snapshotId === null ||
             event.snapshotHash === null ||
             event.queryHash === null ||
-            event.projectionSequence === null ||
+            event.inputCut === null ||
             event.candidates.some(({ evidence }) => evidence === null))) ||
         ([
           ResearchOpportunityStatus.Missed,
@@ -266,6 +282,7 @@ export const summarizeResearchSchedule = (receipts: readonly ResearchCaptureRece
           ResearchOpportunityStatus.Cutoff,
         ].includes(event.status) &&
           (event.queryHash !== null ||
+            event.inputCut !== null ||
             event.snapshotHash !== null ||
             event.snapshotId !== null ||
             event.candidates.some(({ evidence }) => evidence !== null)))
@@ -285,16 +302,32 @@ export const summarizeResearchSchedule = (receipts: readonly ResearchCaptureRece
           )
       )
         return yield* Result.fail('Research opportunity query differs from its registered protocol and observed clock')
-      retained.push(event)
+      retained.push({ ...receipt, event })
     }
     const missingOrdinals = Array.from({ length: expectedCount }, (_, ordinal) => ordinal).filter(
       (ordinal) => !seen.has(ordinal),
     )
     return {
-      status: missingOrdinals.length === 0 ? ('INVENTORY_COMPLETE' as const) : ('INVENTORY_INCOMPLETE' as const),
+      schedule,
       expectedCount,
       observedCount: seen.size,
       missingOrdinals,
       opportunities: retained,
     }
   })
+
+export const reproduceResearchOpportunity = (
+  schedule: typeof ResearchScheduleRegistrationSchema.Type,
+  opportunity: ResearchOpportunity,
+  cut: KafkaProjectionRead | null,
+) => {
+  const reproduced = captureResearchOpportunity(
+    { ...schedule, researchSchedule: { protocol: schedule.protocol, pollIntervalMs: schedule.pollIntervalMs } },
+    opportunity.ordinal,
+    Date.parse(opportunity.observedAt),
+    cut,
+  )
+  return canonicalHashV1(reproduced) === canonicalHashV1(opportunity)
+    ? Result.succeed(undefined)
+    : Result.fail(`Research opportunity ${opportunity.ordinal} differs from its captured input prefix`)
+}

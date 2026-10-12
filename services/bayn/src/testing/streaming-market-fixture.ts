@@ -167,6 +167,7 @@ export const streamingFixtureFromRaw = (
     }))
   const cut = {
     projection,
+    consumerSequence: raw.bars.length + raw.quotes.length + raw.trades.length + offset,
     positions,
     bootstrap: {
       schemaVersion: 'bayn.kafka-bootstrap.v1' as const,

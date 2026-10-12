@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { streamingFixture } from '../testing/streaming-market-fixture'
-import { captureResearchOpportunity, ResearchOpportunityStatus, summarizeResearchSchedule } from './opportunity'
+import { captureResearchOpportunity, ResearchOpportunityStatus, prepareResearchSchedule } from './opportunity'
 import { sessionConfig } from './session.test-support'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { makeJevEntryQuery } from '../jev/observation-query'
@@ -68,5 +68,5 @@ test('late slots never borrow a later snapshot and warmup/unavailable opportunit
   const unavailable = captureResearchOpportunity(config, ordinal, observedAtMs, null)
   expect(unavailable.status).toBe(ResearchOpportunityStatus.InputUnavailable)
   expect(unavailable.candidates).toHaveLength(config.researchSchedule.protocol.candidateSymbols.length)
-  expect(Result.getOrThrow(summarizeResearchSchedule([])).status).toBe('NOT_REGISTERED')
+  expect(Result.getOrThrow(prepareResearchSchedule([])).schedule).toBeNull()
 })

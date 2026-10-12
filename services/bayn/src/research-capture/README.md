@@ -22,6 +22,9 @@ close, independently of live holdings or model execution. Each receipt retains s
 times, all candidate identities, native eligibility/exclusions, exact missing minute timestamps, feature and quote
 receipts, and query/snapshot hashes when available. Warmup, cutoff, global input failure and all-candidate exclusion
 remain explicit. A sampler delayed beyond the next slot records `MISSED` with no invented historical snapshot.
+Each borrowed input cut retains the consumer epoch, exact delivered-record sequence, projection sequence and partition
+positions. Delivered-record sequence distinguishes rejected or duplicate records that leave projection sequence unchanged.
+Quote event timestamps retain native nanosecond precision.
 These reads never request inference, place an order, acquire another consumer or change the live position.
 
 Native entry evaluation records input readiness, deterministic selection and completed-batch timing. The writer-fenced
@@ -30,9 +33,14 @@ no new commitment. This clock bounds acknowledged persistence, not the database'
 Optional capture failures invalidate research evidence without reversing an acknowledged trading mutation.
 
 `replayResearchCaptureInterval` returns a verified `researchSchedule` inventory and `entryTimings`. It rejects
-duplicate/mismatched ordinals or timing joins. Missing ordinals remain `INVENTORY_INCOMPLETE`; uncommitted batches
+duplicate/mismatched ordinals or timing joins. Before accepting any opportunity, replay reconstructs the native projection
+from its exact raw delivered-record prefix and recorded assignment/bootstrap. It reproduces the disposition, exclusions,
+minute holes, feature/quote receipts, momentum candidates and snapshot/query identities. Cut positions must cover incorporated
+coordinates within the final retained interval, and future or unobserved prefixes fail. No per-opportunity projection copies
+are retained while replaying the interval. Missing ordinals remain `INVENTORY_INCOMPLETE`; uncommitted batches
 remain separate from usable timing witnesses. Export each returned timing as a private JSON file and pin its bytes
-for the matched study. Preserve the verified seal/frame chain alongside it. Complete inventory includes unavailable
+for the matched study, together with the complete native execution-decision document whose content hash the timing names.
+Preserve the verified seal/frame chain alongside it. Complete inventory includes unavailable
 and missed slots; it is not complete market evidence, controller coverage, or economic qualification. Existing seals
 remain `UNQUALIFIED` and controller coverage remains `UNKNOWN`.
 

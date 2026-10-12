@@ -301,11 +301,14 @@ export interface KafkaProjectionCut {
   readonly bootstrap: KafkaBootstrapEvidence
   readonly positions: readonly KafkaPartitionPosition[]
 }
+export interface KafkaProjectionRead extends KafkaProjectionCut {
+  readonly consumerSequence: number
+}
 export class KafkaMarketProjection extends Context.Service<
   KafkaMarketProjection,
   {
-    readonly read: Effect.Effect<KafkaProjectionCut, KafkaMarketFailure>
-    readonly readForLiquidation: Effect.Effect<KafkaProjectionCut, KafkaMarketFailure>
+    readonly read: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
+    readonly readForLiquidation: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
     readonly status: Effect.Effect<{
       readonly epoch: string
       readonly ready: boolean
@@ -326,6 +329,7 @@ export const makeKafkaMarketProjection = (
     const clock = yield* Clock.Clock
     const owner = yield* Effect.scope
     let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
+    let projectionConsumerSequence = 0
     let bootstrap: KafkaBootstrapEvidence | undefined
     let positions: readonly KafkaPartitionPosition[] = []
     let ready = false
@@ -353,6 +357,7 @@ export const makeKafkaMarketProjection = (
           }),
         )
         projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
+        projectionConsumerSequence = 0
         ready = false
         bootstrap = undefined
         positions = []
@@ -606,6 +611,7 @@ export const makeKafkaMarketProjection = (
               const previousSequence = projection.sequence
               if (invalidation === undefined && record.tombstone !== true)
                 projection = incorporateMarketRecord(projection, record, universe, availableAtMs)
+              projectionConsumerSequence = consumerSequence
               if (capture !== undefined) {
                 recordResearchCapture(
                   capture,
@@ -850,6 +856,7 @@ export const makeKafkaMarketProjection = (
         return (!requireHistory || ready) && bootstrap !== undefined && lastFailure === undefined
           ? Effect.succeed({
               projection,
+              consumerSequence: projectionConsumerSequence,
               bootstrap,
               positions: positions.map((position, index) => {
                 const last = projection.offsets.get(topicPartitionKey(position.topic, position.partition))

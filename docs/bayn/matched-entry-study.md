@@ -53,7 +53,7 @@ Quote size units, source timing and executable capacity need separate evidence; 
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `study`     | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches.                                                            |
 | `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too.                                                                                     |
-| `timings`   | Per entry `batchId`, a native timing witness or explicit `null`. The witness contains input readiness, deterministic completion, batch completion, decision commitment, selected momentum symbol and the timing file SHA-256. |
+| `timings`   | Per entry `batchId`, a native timing witness or explicit `null`. The witness contains input readiness, deterministic completion, batch completion, decision commitment, selected momentum symbol, the timing file SHA-256 `evidenceHash`, and the native execution-decision file SHA-256 `decisionEvidenceHash`. |
 | `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                                                                                    |
 | `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                                                                             |
 
@@ -84,7 +84,11 @@ Historical reports retain their original identities and must not be relabeled as
 
 Each timing witness points to a private `bayn.jev-entry-timing.v1` file produced from verified native capture by
 `replayResearchCaptureInterval`. The command reads and hashes that file, checks source revision, batch, observation
-and snapshot identities, clock order, retained batch completion and frozen momentum selection. An inline timing
+and snapshot identities, clock order, retained batch completion and frozen momentum selection. The required
+`decisionEvidenceHash` references the complete committed native execution-decision document exported read-only from
+the cycle store. The native decoder verifies its semantic and content identity; the study binds the timing receipt's
+`decisionHash` to that document's `contentHash`, its exact entry batch/result and snapshot, and requires creation before
+acknowledged commitment. Another valid decision for the same batch cannot replace the committed document. An inline timing
 claim cannot replace the retained file. Preserve the verified capture seal/frame chain and independent review
 receipt; a JSON hash alone cannot prove clocks were genuinely observed. Missing or uncommitted timing makes the
 comparison incomplete. Earlier captures without the producer cannot supply an immediate counterfactual.

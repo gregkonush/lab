@@ -22,8 +22,11 @@ class StreamingDiagnosticsFailure extends Data.TaggedError('StreamingDiagnostics
 }> {}
 
 export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol: string, observedAtMs: number) => {
-  const allBars = projection.bars.get(symbol) ?? []
+  const allBars = (projection.bars.get(symbol) ?? []).filter((entry) => entry.availableAtMs <= observedAtMs)
   const features = (projection.features.get(symbol) ?? []).filter((entry) => entry.availableAtMs <= observedAtMs)
+  const technicalFeatures = (projection.technicalFeatures.get(symbol) ?? []).filter(
+    (entry) => entry.availableAtMs <= observedAtMs,
+  )
   const matches = features.filter(({ value }) => {
     const bars = observedBarsAt(
       projection,
@@ -35,7 +38,7 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
     const match = featureMatchesBars(value, bars)
     return Result.isSuccess(match) && match.success
   })
-  const technicalMatches = (projection.technicalFeatures.get(symbol) ?? []).filter((candidate) => {
+  const technicalMatches = technicalFeatures.filter((candidate) => {
     if (!technicalReceiptAvailableAt(projection, candidate, observedAtMs)) return false
     const { value } = candidate
     const bars = observedBarsAt(
@@ -56,7 +59,7 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
       : {
           technical: {
             topic: projection.technicalTopic,
-            retainedFeatures: projection.technicalFeatures.get(symbol)?.length ?? 0,
+            retainedFeatures: technicalFeatures.length,
             matchedFeatures: technicalMatches.map(({ value, availableAtMs, topic, partition, offset }) => ({
               featureId: value.featureId,
               windowEndMs: value.material.windowEndMs,

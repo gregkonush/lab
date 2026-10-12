@@ -1,7 +1,7 @@
 import { Clock, Effect, Exit, Result, type Scope } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import type { KafkaMarketFailure, KafkaProjectionCut } from '../market-data/streaming/kafka'
+import type { KafkaMarketFailure, KafkaProjectionRead } from '../market-data/streaming/kafka'
 import type { StreamingUniverse } from '../market-data/streaming/raw-events'
 import {
   CaptureInvalidation,
@@ -18,7 +18,7 @@ import { captureResearchOpportunity, researchScheduleIdentity } from './opportun
 
 interface SessionProjection {
   readonly captureInterval: (request: CaptureIntervalRequest) => Effect.Effect<CaptureIntervalCut, KafkaMarketFailure>
-  readonly read: Effect.Effect<KafkaProjectionCut, KafkaMarketFailure>
+  readonly read: Effect.Effect<KafkaProjectionRead, KafkaMarketFailure>
 }
 type SessionState =
   | { readonly phase: 'waiting' | 'acquiring' }
