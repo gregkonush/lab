@@ -696,7 +696,7 @@ export const acquireNativeExecutionRuntime = (
     const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
     const capture =
       decodedCapture !== undefined && Result.isSuccess(decodedCapture)
-        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision).pipe(
+        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision, plan.parameterHash).pipe(
             Effect.catchCause(() =>
               Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
                 Effect.as(undefined),

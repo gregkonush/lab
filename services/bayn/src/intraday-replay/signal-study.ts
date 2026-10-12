@@ -4,10 +4,18 @@ import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
-import { decodeJevBatchResult, JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from '../jev/batch'
+import type { JevResponse } from '../jev/contract'
+import {
+  decodeJevBatchResult,
+  JevBatchPlanSchema,
+  JevBatchResultSchema,
+  JevCandidateResultStatus,
+  usableJevBatchInferences,
+} from '../jev/batch'
+import { JevOutcome } from '../jev/evidence'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { JevPurpose } from '../jev/portfolio'
-import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
+import { jevMomentumEntryCandidates, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
@@ -28,7 +36,8 @@ export enum SignalScreenRule {
 }
 
 export const signalStudyDefinition = {
-  schemaVersion: 'bayn.jev-signal-study-definition.v1',
+  schemaVersion: 'bayn.jev-signal-study-definition.v2',
+  factorBins: { probabilityEdges: [0, 0.25, 0.5, 0.65, 0.8, 1], setupQuality: 'floor of native score' },
   horizonMs: 15 * 60_000,
   entryBudgetMicros: '10000000000',
   entrySizing: 'Maximum whole shares whose limit-price notional plus entry fees fit the cash budget.',
@@ -38,7 +47,7 @@ export const signalStudyDefinition = {
     DETERMINISTIC_BREAKOUT:
       'Apply the retained momentum thresholds to every available candidate, ranked by exact benchmark-relative return then symbol.',
     RELATIVE_MOMENTUM:
-      'Strictly positive exact 30-minute return and benchmark-relative return, spread at most 5 bps, positive displayed sizes; rank by exact relative return then symbol.',
+      'Strictly positive exact 30-minute return and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
   },
   breakoutThresholds: {
     lookbackReturnBps: defaultIntradayMomentumProtocolDocument.minimumLookbackReturnBps,
@@ -90,7 +99,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
     const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(batch.observation, batch.batchPlan)
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* Result.fail(new SignalStudyFailure({ message: 'The study requires native Jev observations' }))
-    if (batch.batchResult !== null) yield* decodeJevBatchResult(plan, batch.batchResult)
+    const batchResult = batch.batchResult === null ? null : yield* decodeJevBatchResult(plan, batch.batchResult)
     const decidedAt = batch.batchResult?.completedAt ?? plan.expiresAt
     const native =
       batch.batchResult === null || observation.portfolio.purpose !== JevPurpose.Entry
@@ -128,11 +137,27 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(values, candidate.symbol, benchmark)
       const t = signalStudyDefinition.breakoutThresholds
       const liquid = values.quote.bidSize > 0 && values.quote.askSize > 0 && metrics.spreadBps <= t.spreadBps
-      const answer = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference.response.answers['action']
+      const inference = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference
+      const answer = inference?.response.answers['action']
+      const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)
+      const factors =
+        retained?.status === JevCandidateResultStatus.Resolved &&
+        retained.receipt?.outcome.status === JevOutcome.Received
+          ? retained.receipt.outcome.inference
+          : undefined
       signals.push({
         symbol: candidate.symbol,
         metrics,
         excessReturn,
+        factors:
+          factors === undefined
+            ? { status: 'UNAVAILABLE' as const }
+            : {
+                status: 'AVAILABLE' as const,
+                model: factors.response.model,
+                responseHash: factors.responseHash,
+                answers: factors.response.answers,
+              },
         enterProbability: answer?.type === 'choice' ? (answer.probabilities['enter'] ?? null) : null,
         breakout:
           liquid &&
@@ -141,7 +166,6 @@ export const prepareSignalStudyBatch = (input: unknown) =>
           excessReturn.numerator * 10_000n >= BigInt(t.excessReturnBps) * excessReturn.denominator &&
           metrics.breakoutBps >= t.breakoutBps &&
           metrics.rangeLocationPpm >= t.rangeLocationPpm,
-        relativeMomentum: liquid && values.bid + values.ask > 2n * values.reference && excessReturn.numerator > 0n,
       })
     }
     signals.sort((a, b) => {
@@ -159,7 +183,8 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         [SignalScreenRule.Jev]:
           native !== null && Result.isSuccess(native) ? (native.success.selectedSymbols[0] ?? null) : null,
         [SignalScreenRule.Breakout]: signals.find((entry) => entry.breakout)?.symbol ?? null,
-        [SignalScreenRule.RelativeMomentum]: signals.find((entry) => entry.relativeMomentum)?.symbol ?? null,
+        [SignalScreenRule.RelativeMomentum]:
+          (yield* jevMomentumEntryCandidates(snapshot, observation.protocol))[0]?.symbol ?? null,
       },
       signals: signals.map(({ excessReturn: _exact, ...signal }) => signal),
     }
@@ -167,6 +192,83 @@ export const prepareSignalStudyBatch = (input: unknown) =>
 
 type PreparedBatch = Result.Result.Success<ReturnType<typeof prepareSignalStudyBatch>>
 type Quote = ObservedMarketValue<IntradayQuote> | undefined
+
+type FactorEvidence =
+  | { readonly status: 'UNAVAILABLE' }
+  | {
+      readonly status: 'AVAILABLE'
+      readonly model: JevResponse['model']
+      readonly responseHash: string
+      readonly answers: JevResponse['answers']
+    }
+
+export const summarizeSignalFactorOutcomes = (
+  rows: readonly {
+    readonly observedAt: string
+    readonly symbol: string
+    readonly factors: FactorEvidence
+    readonly outcome: HypothesisOutcome
+  }[],
+) => {
+  const groups = new Map<
+    string,
+    { dimension: string; value: string; factor: string; bin: string; rows: (typeof rows)[number][] }
+  >()
+  const bin = (value: number) => {
+    const edges = signalStudyDefinition.factorBins.probabilityEdges
+    const index = edges.findIndex((upper, i) => i > 0 && (value < upper || upper === 1))
+    return `${edges[index - 1]}..${edges[index]}`
+  }
+  for (const row of rows) {
+    const factors: [string, string][] = [['coverage', 'all']]
+    if (row.factors.status === 'UNAVAILABLE') factors.push(['model', 'UNAVAILABLE'])
+    else
+      for (const [name, answer] of Object.entries(row.factors.answers)) {
+        if (answer.type === 'noul') factors.push([name, bin(answer.noul)])
+        else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
+        else {
+          factors.push([name, answer.choice])
+          if (name === 'action' && answer.probabilities['enter'] !== undefined)
+            factors.push(['enterProbability', bin(answer.probabilities['enter'])])
+        }
+      }
+    for (const [dimension, value] of [
+      ['all', 'all'],
+      ['day', row.observedAt.slice(0, 10)],
+      ['symbol', row.symbol],
+    ]) {
+      for (const [factor, valueBin] of factors) {
+        const key = JSON.stringify([dimension, value, factor, valueBin])
+        const group = groups.get(key) ?? {
+          dimension: dimension ?? '',
+          value: value ?? '',
+          factor,
+          bin: valueBin,
+          rows: [],
+        }
+        group.rows.push(row)
+        groups.set(key, group)
+      }
+    }
+  }
+  return [...groups.values()]
+    .map(({ rows: group, ...identity }) => {
+      const resolved = group.flatMap((row) => (row.outcome.status === 'RESOLVED' ? [row.outcome] : []))
+      return {
+        ...identity,
+        candidateCount: group.length,
+        resolvedCount: resolved.length,
+        unresolvedCount: group.filter((row) => row.outcome.status === 'UNRESOLVED').length,
+        noEntryFillCount: group.filter((row) => row.outcome.status === 'NO_ENTRY_FILL').length,
+        positiveCount: resolved.filter((outcome) => outcome.netExecutionReturnBps > 0).length,
+        meanExecutionReturnBpsAmongResolved:
+          resolved.length === 0
+            ? null
+            : resolved.reduce((total, outcome) => total + outcome.netExecutionReturnBps, 0) / resolved.length,
+      }
+    })
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+}
 
 export const studyIoc = (input: {
   readonly symbol: string
@@ -382,6 +484,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       readonly symbol: string
       readonly selectedBy: readonly SignalScreenRule[]
       readonly enterProbability: number | null
+      readonly factors: FactorEvidence
       readonly outcome: HypothesisOutcome
       readonly fills: readonly EconomicReplayFill[]
       readonly quoteHashes: readonly string[]
@@ -426,6 +529,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
           symbol: signal.symbol,
           selectedBy: Object.values(SignalScreenRule).filter((rule) => batch.selected[rule] === signal.symbol),
           enterProbability: signal.enterProbability,
+          factors: signal.factors,
         }
         if (exitAtMs >= Date.parse(session.closeAt) || exitAtMs > input.source.coverageEndMs) {
           rows.push({
@@ -490,7 +594,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       }
     })
     const report = {
-      schemaVersion: 'bayn.jev-signal-study.v1',
+      schemaVersion: 'bayn.jev-signal-study.v2',
       definition: signalStudyDefinition,
       definitionHash: yield* Effect.fromResult(canonicalHashV1Result(signalStudyDefinition)),
       inputHash: yield* Effect.fromResult(canonicalHashV1Result(input)),
@@ -511,6 +615,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
         exclusions: batch.plan.candidates.filter((candidate) => candidate.status === 'EXCLUDED'),
       })),
       summary,
+      factorOutcomes: summarizeSignalFactorOutcomes(rows),
       rows,
     }
     return { ...report, reportHash: yield* Effect.fromResult(canonicalHashV1Result(report)) }

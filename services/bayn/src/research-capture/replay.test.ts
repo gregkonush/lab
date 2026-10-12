@@ -685,7 +685,10 @@ test('original interval uses the existing snapshot and mechanical control-study 
         const { verification: _verification, ...build } = runtimeConfig.build
         const report = yield* runControlStudy(
           {
-            schemaVersion: 'bayn.control-study-input.v2',
+            schemaVersion: 'bayn.control-study-input.v7',
+            entry: 'DETERMINISTIC',
+            turnoverPolicy: 'IMMEDIATE_ADJUSTMENT',
+
             management: ControlManagementMode.Mechanical,
             decisionLatencyMs: 1000,
             repeatedTargetWeightPpm: 100000,
