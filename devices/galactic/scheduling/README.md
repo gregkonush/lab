@@ -40,8 +40,11 @@ remain eligible on Ryzen. The monitor placement retains all three hosts with
 4. Check Altra and Turin NIC temperatures and run the [100G routing acceptance](../network/README.md).
    The 2026-10-11 observation put Altra's NIC at its reported 105C critical threshold. Resolve that cooling gate before
    adding client traffic. A negotiated 100G link alone does not establish safe sustained operation.
-5. Verify memory requests and local filesystem free space before moving runners. The 2026-10-11 snapshot had about
-   61.8Gi allocatable on Ryzen and 25.8Gi of non-Ceph Pod requests. Two ARC runners add 32Gi; a third does not fit.
+5. Repartition Ryzen's CPU/GPU memory through the [Bosgame procedure](../../ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation)
+   before moving runners. The unit has 128GiB installed, with 64GiB currently reserved for its idle GPU. An 8GiB GPU
+   allocation is expected to leave about 117.8GiB allocatable. After application Ceph clients and all Bayn components
+   leave Ryzen, the 2026-10-11 inventory projects about 94.95GiB and 27.78 logical CPUs for retained workloads plus
+   five runners. Verify post-reboot capacity, fresh requests, and local filesystem free space before promotion.
 
 Three Ceph-backed database clusters, SPIRE server, and Restate retain three replicas but use preferred host separation
 because only two application storage-client hosts remain. Bayn and Torghut PostgreSQL retain their AMD64 restriction,
@@ -75,7 +78,8 @@ merging the runner move before its local class and memory headroom exist can rem
 8. Run `python3 devices/galactic/scheduling/verify-placement.py --context galactic-lan --verify`.
    Require no application Ceph client on Ryzen, an AMD64 runner using only its local scratch claim, and the Ryzen monitor in quorum.
    Execute a non-publishing AMD64 CI job that writes scratch files, builds and runs a container, and executes Nix binaries.
-   Check Ryzen etcd latency during two concurrent builds. Its local scratch partition shares the physical NVMe with `/var`.
+   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during five concurrent builds.
+   Its local scratch partition shares the physical NVMe with `/var`.
 
 ## Recover an interrupted rollout
 

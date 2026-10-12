@@ -38,13 +38,20 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 ## AMD64 capacity
 
-The `arc-amd64` scale set uses `minRunners: 1` and `maxRunners: 2`. Each runner reserves 16Gi across the runner and DinD.
-Ryzen has about 61.8Gi allocatable despite its 128GB physical RAM. On 2026-10-11, non-Ceph workloads reserved about
-25.8Gi. Two runners add 32Gi, leaving about 4Gi for request headroom after the Ceph clients move away. Three runners
-would exceed allocatable memory. Recheck requests and actual concurrent-build usage before raising the cap.
+The `arc-amd64` scale set retains `minRunners: 1` and `maxRunners: 5`. Each runner reserves 16Gi and four logical CPUs
+across the runner and DinD. Ryzen has 128GiB installed, but its current 64GiB firmware GPU allocation leaves only
+61.8GiB allocatable to Kubernetes. That split cannot accommodate five runners.
+
+Before moving the scale set, reduce the GPU allocation to 8GiB, or 16GiB if 8GiB is unavailable, through the
+[Bosgame memory procedure](../../../devices/ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
+Verify the actual post-reboot allocatable memory. The 2026-10-11 inventory projected 14.95GiB and 7.78 logical CPUs
+for workloads remaining after all application Ceph clients and Bayn components leave Ryzen. Five runners bring the
+request total to about 94.95GiB and 27.78 logical CPUs, below the estimated 117.8GiB memory and current 31.95 logical
+CPU capacity with an 8GiB GPU allocation. These are scheduling reservations, not measured five-build throughput.
+The combined container memory limits are 32Gi per runner Pod; concurrent bursts can still exhaust host memory.
 
 Apply the new local class and complete the [Ryzen placement rollout](../../../devices/galactic/scheduling/README.md)
-before promoting the runner configuration through Kargo. Existing busy runners must finish normally.
+and the memory repartition before promoting the runner configuration through Kargo. Existing busy runners must finish normally.
 The compute-local toleration is explicit in the runner template so startup does not depend on admission mutation.
 The ARM64 scale sets retain their existing placement and capacity.
 

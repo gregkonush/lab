@@ -161,7 +161,7 @@ spec:
           scaleSetLabels:
             - arc-amd64
           minRunners: 1
-          maxRunners: 2
+          maxRunners: 5
           listenerTemplate:
             spec:
               nodeSelector:
