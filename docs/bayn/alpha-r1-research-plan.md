@@ -73,6 +73,11 @@ Define these types with Effect Schema at the boundary. Paths proposed below are 
 | Expense quote     | Attempt identity, usage evidence hash, effective cost-basis hash, source evidence, integer currency amount or explicit unknown coverage, deterministic journal identity                                               |
 | Comparison result | Registered arm, original availability timeline, retained decisions, feasible arrival times, fills, fees, cost coverage, inventory/close state, exclusions and evaluation-window identity                              |
 
+Include a factor-context manifest hash in the research run contract and its derived ID. That manifest binds factor
+formulas and implementation revisions, per-factor performance inputs/windows, global market-memory inputs,
+source-availability and label cutoffs, description producer revision/prompt/settings, exact semantic descriptions
+and generated-memory bytes, response hashes and preparation attempt/cost identities.
+
 Use terminal outcomes for complete, rejected, cancelled, expired, ambiguous and unavailable attempts. An incomplete
 stream, missing usage or unknown engine outcome cannot silently become successful or free. Retain private payloads
 in the existing controlled evidence store. Logs contain identifiers and hashes, never request or response bodies.
@@ -99,12 +104,23 @@ results can replay without inference. Account for every transmitted attempt, inc
       repair missing original arrival or decision-feasibility evidence.
 - [ ] Freeze candidate sets, features, factor mapping, chronology, fee/slippage stresses, cost basis, train/validation/test
       sessions, label-overlap embargo, experiment count and rejection criteria before viewing evaluation outcomes.
+- [ ] Freeze the factor-context recipe before evaluation. The [publisher's pipeline](https://github.com/FinStep-AI/Alpha-R1)
+      builds semantic descriptions from single-factor performance and global market memory. Candidate IDs or raw numbers
+      alone do not reproduce that interface. Bind formulas, performance windows, memory inputs and availability cutoffs.
+- [ ] Use the existing approved Flamingo model as the first description producer. Pin its exact revision, prompt,
+      generation settings and output validation. Retain exact descriptions and market-memory bytes, input/output hashes
+      and preparation attempt identities. Do not add the upstream OpenRouter dependency or a fallback producer.
+- [ ] For each decision, freeze a context manifest before Alpha-R1 inference. Performance labels must mature before
+      its feature cutoff. Global memory may contain only evidence available then. Validate source coordinates and label
+      windows against the registered split. No held-out outcomes, later summaries or regenerated retrospective text.
 - [ ] Resolve any new credential destination or permission in a concrete reviewed configuration before activation.
       Existing approved capture storage is already wired. A new worker's access is a separate destination.
 
 **Verify:** Existing capture export/replay/session tests reject changed hashes, incomplete independent coverage and
-late evidence. A real PUT/GET and retained original-session replay establish input eligibility. Measure recorder
-queue, bytes and execution latency against capture-disabled baseline. Missing evidence leaves evaluation UNKNOWN.
+late evidence. Add rejection cases for changed descriptions, unbound producer identity, post-cutoff performance labels
+and future market-memory facts. A real PUT/GET and retained original-session replay establish input eligibility.
+Measure recorder queue, bytes and execution latency against capture-disabled baseline. Missing evidence leaves
+evaluation UNKNOWN.
 
 **Output:** An immutable eligible-input inventory and study registration, or an exact missing-evidence report. Do not
 report an economic comparison until input eligibility passes.
@@ -120,7 +136,9 @@ report an economic comparison until input eligibility passes.
 - [ ] Bind `BaynResearchRun` to a dedicated endpoint and deployment using the pinned Restate SDK and Effect cohort.
       Reuse the existing native HTTP/2 identity verification and telemetry adapters without registering execution handlers.
 - [ ] Read only the frozen capture manifest and approved evidence. Compute and validate the exact candidate factor
-      pool before requesting Alpha-R1. No generated code execution or free-form order interpretation.
+      pool and factor-context manifest before requesting Alpha-R1. Construct its semantic description block from those
+      exact retained bytes in the pinned prompt format. Never regenerate descriptions during replay or invent missing
+      performance/memory context. No generated code execution or free-form order interpretation.
 - [ ] Stream the pinned model with the server's limits. Start with one client request per worker process. The model's
       existing global admission bound handles overlapping deployments. Do not add a global research Virtual Object.
 - [ ] Bound queue/retry time by the run's absolute deadline. Retry explicit pre-admission HTTP 429 responses only
@@ -152,6 +170,8 @@ client cancellation to zero model work and independent execution-controller prog
       hardware/infrastructure cost and research overhead. Avoid counting the same energy or infrastructure expense twice.
 - [ ] Meter GPU wall time and actual completed-stream usage. Choose and document allocation for idle and shared GPU
       time. Power snapshots and token counts alone do not establish per-request energy or a dollar cost.
+- [ ] Include Flamingo description and market-memory preparation attempts in research expense coverage. Identify
+      shared preparation allocations explicitly so comparing several arms cannot charge or omit the same cost twice.
 - [ ] Quote and post through the existing deterministic journal and `USD_PICO` expense ledger. Run research projection
       with its own scoped clients outside execution transactions. Keep balances and evidence coverage reconcilable.
 - [ ] Retain partial/unknown coverage for interrupted, ambiguous or unpriced attempts. A known subset of cost cannot
