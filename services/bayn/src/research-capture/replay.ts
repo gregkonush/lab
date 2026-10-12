@@ -11,6 +11,8 @@ import {
 } from '../market-data/streaming/historical'
 import type { StreamingUniverse } from '../market-data/streaming/raw-events'
 import { strictParseOptions } from '../schemas'
+import { assembleEntryTimingReceipts } from './entry-timing'
+import { summarizeResearchSchedule } from './opportunity'
 import {
   CaptureIntervalRequestSchema,
   ResearchCaptureFailure,
@@ -270,6 +272,12 @@ export const replayResearchCaptureInterval = (
       qualification: verified.seal.qualification,
       controllerReceipts: within.filter((receipt) => receipt.event.kind === 'controller-pass'),
       controllerCoverage: 'UNKNOWN' as const,
+      entryTimings: yield* assembleEntryTimingReceipts(verified.seal.sourceRevision, receipts).pipe(
+        Result.mapError((cause) => fail('Cannot join native entry timing receipts', cause)),
+      ),
+      researchSchedule: yield* summarizeResearchSchedule(receipts).pipe(
+        Result.mapError((cause) => fail('Cannot verify research schedule inventory', cause)),
+      ),
     }
   })
 

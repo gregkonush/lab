@@ -132,7 +132,8 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     capacityEvidenceHash: null,
   }
   const input = {
-    schemaVersion: 'bayn.matched-entry-input.v1',
+    schemaVersion: 'bayn.matched-entry-input.v2',
+    timings: [{ batchId: batch.batchPlan.batchId, witness: null }],
     witnesses: [],
     study: {
       schemaVersion: 'bayn.jev-signal-study-input.v1',
@@ -150,6 +151,67 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
   }
   return { body, input, registration, receipt: retainedReplayCaptureFixture(completeSource) }
 }
+
+test('witnessed immediate and delayed arms on the same symbol keep independent fills and hold clocks', async () => {
+  const data = fixture(5100)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.gz`
+      yield* fs.writeFile(arrivals, gzipSync(data.body))
+      const batch = data.input.study.batches[0]
+      if (batch === undefined) throw new Error('Missing native batch')
+      const at = Date.parse(batch.observation.observedAt)
+      const clocks = {
+        inputAvailableAt: batch.observation.observedAt,
+        deterministicSelectedAt: batch.observation.observedAt,
+        deterministicSymbol: 'AAPL',
+        batchCompletedAt: batch.batchResult.completedAt,
+        decisionCommittedAt: new Date(at + 5100).toISOString(),
+      }
+      const timingBytes = JSON.stringify({
+        schemaVersion: 'bayn.jev-entry-timing.v1',
+        sourceRevision: data.registration.sourceRevision,
+        batchId: batch.batchPlan.batchId,
+        observationHash: batch.batchPlan.observationHash,
+        snapshotHash: batch.observation.manifest.contentHash,
+        decisionHash: 'a'.repeat(64),
+        ...clocks,
+      })
+      const evidenceHash = sha256(timingBytes)
+      const path = `${directory}/timing.json`
+      yield* fs.writeFileString(path, timingBytes)
+      const input = {
+        ...data.input,
+        witnesses: [{ path, sha256: evidenceHash }],
+        timings: [{ batchId: batch.batchPlan.batchId, witness: { ...clocks, evidenceHash } }],
+      }
+      const report = yield* runMatchedEntryStudy(input, data.registration, arrivals, data.receipt)
+      const pair = report.pairs[0]
+      expect(pair?.timingAvailable).toBe(true)
+      expect(pair?.immediateMomentum?.fills[0]?.observedAt).toBe(new Date(at + 100).toISOString())
+      expect(pair?.delayedMomentum?.fills[0]?.observedAt).toBe(new Date(at + 5200).toISOString())
+      expect(pair?.immediateMomentum?.fills[0]?.priceMicros).not.toBe(pair?.delayedMomentum?.fills[0]?.priceMicros)
+      expect(pair?.jev).toEqual(pair?.delayedMomentum)
+      expect(pair?.immediateMomentum?.episodes[0]?.exitedAtMs).not.toBe(pair?.delayedMomentum?.episodes[0]?.exitedAtMs)
+      const changed = {
+        ...input,
+        timings: [
+          {
+            batchId: batch.batchPlan.batchId,
+            witness: { ...clocks, evidenceHash, deterministicSelectedAt: new Date(at - 1).toISOString() },
+          },
+        ],
+      }
+      expect(
+        Result.isFailure(
+          yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(Effect.result),
+        ),
+      ).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
 
 test('offline command reproduces native observations, prices shared lifecycle once, hashes report and refuses overwrite', async () => {
   const data = fixture()
@@ -268,15 +330,15 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v2')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v3')
       expect(report.pairs).toHaveLength(1)
-      expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.momentum)
+      expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
       expect(report.pairs[0]?.jev?.episodes[0]?.exitedAtMs).toBe(
         Date.parse(report.observations[0]?.decidedAt ?? '') + 100 + 15 * 60_000 + 100,
       )
       expect(report.summary.completion).toBe('INCOMPLETE')
-      expect(report.summary.means.incrementalBudgetReturnBps).toBeNull()
+      expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
       expect(JSON.parse(yield* fs.readFileString(outputPath))).toEqual(report)

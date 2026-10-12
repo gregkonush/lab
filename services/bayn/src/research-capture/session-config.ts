@@ -4,6 +4,7 @@ import { canonicalHashV1Result } from '../hash'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { CaptureSessionDeclarationSchema, ResearchCaptureFailure, ResearchCaptureIdSchema } from './capture'
+import { ResearchScheduleSchema } from './opportunity'
 
 export const ResearchCaptureSessionConfigSchema = Schema.Struct({
   captureId: ResearchCaptureIdSchema,
@@ -13,6 +14,7 @@ export const ResearchCaptureSessionConfigSchema = Schema.Struct({
     ...SnapshotCalendarSchema.fields,
     sessions: SnapshotCalendarSchema.fields.sessions.check(Schema.isMaxLength(366)),
   }),
+  researchSchedule: ResearchScheduleSchema,
 }).check(
   Schema.makeFilter(
     (value) => {

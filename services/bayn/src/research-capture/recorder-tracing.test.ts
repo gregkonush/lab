@@ -51,7 +51,13 @@ const events = (span: Tracer.NativeSpan) => span.events.map(([name]) => name)
 test('a session claim retains SQL-before-object ordering and its own persistence span', async () => {
   const saved = fixture()
   const order: string[] = []
-  const { captureId: _id, sessionDate: _date, calendar: _calendar, ...session } = sessionConfig
+  const {
+    captureId: _id,
+    sessionDate: _date,
+    calendar: _calendar,
+    researchSchedule: _schedule,
+    ...session
+  } = sessionConfig
   await run(
     Effect.gen(function* () {
       yield* TestClock.setTime(sessionStart)

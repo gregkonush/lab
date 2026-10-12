@@ -37,6 +37,7 @@ import {
 } from '../market-data/streaming/kafka'
 import { makeResearchCapturePostgresStore } from '../db/research-capture-postgres'
 import type { ResearchCaptureSession } from '../research-capture/session'
+import { ActiveResearchCapture } from '../research-capture/observer'
 import { researchCaptureS3Config } from '../research-capture/session-config'
 import { makeS3ResearchCaptureObjectStore } from '../research-capture/s3'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
@@ -199,6 +200,7 @@ export const AutonomousWorkerApplicationResourcesLive = (
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
+    Layer.succeed(ActiveResearchCapture, capture?.observer),
     WorkerMarketDataLive(plan, postgres, capture, prewarmedProjection),
     postgres,
     journal,

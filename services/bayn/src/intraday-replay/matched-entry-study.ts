@@ -1,7 +1,8 @@
-import { Effect, Result, Schema } from 'effect'
+import { Effect, FileSystem, Result, Schema } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca/model'
 
-import { canonicalHashV1Result } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
+import { EntryTimingReceiptSchema } from '../research-capture/entry-timing'
 import { JevPurpose } from '../jev/portfolio'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { observedQuoteAt } from '../market-data/streaming/projection'
@@ -39,21 +40,21 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v2',
+  schemaVersion: 'bayn.matched-entry-definition.v3',
   sourceComparison: 'bayn.matched-model-input-material.v2',
   sessions: 5,
   minimumDifferentSelections: 20,
   budgetMicros: '10000000000',
   pollIntervalMs: 5000,
-  rules: [SignalScreenRule.Jev, SignalScreenRule.RelativeMomentum],
+  rules: ['JEV_FILTERED', 'DELAYED_MOMENTUM', 'IMMEDIATE_MOMENTUM'],
   lifecycle:
     'One IOC entry; same whole-share budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute close window and persistent reducing IOC retries. No model management.',
   comparison:
-    'Per-opportunity net micro-USD divided by the fixed budget. Include abstentions and unfilled entries as zero execution P&L; unknown model answers and unresolved lifecycles are missing, never zero.',
+    'Immediate momentum starts at witnessed deterministic completion. Delayed momentum and Jev start at witnessed decision commitment. Selection is Jev minus delayed momentum; delay is delayed minus immediate; total is Jev minus immediate. Per-opportunity net micro-USD divided by the fixed budget. Include abstentions and unfilled entries as zero execution P&L; unknown model answers and unresolved lifecycles are missing, never zero.',
   costs:
     'Every batch pays its witnessed entry-inference cost on JEV including abstentions. Shared allocated operating cost is charged equally per opportunity. Stress adds ten bps per filled leg.',
   falsification:
-    'With complete prospective evidence and at least twenty different selections, nonpositive Jev net budget return or paired increment in either base or ten-bp stress stops this entry hypothesis. Positive results only justify the separate frozen portfolio acceptance test.',
+    'With complete prospective evidence and at least twenty different selections, nonpositive Jev net budget return or total increment over immediate momentum in either base or ten-bp stress stops this entry hypothesis. Positive results only justify the separate frozen portfolio acceptance test.',
   limitations: [
     'Overlapping opportunity labels are not a portfolio, frequency, capacity estimate or economic qualification.',
     'Naturally retained flat-entry batches are endogenous to the current strategy. Missing opportunities while holding are outside the estimand.',
@@ -83,8 +84,24 @@ const WitnessedCost = Schema.NullOr(
     unresolvedCount: NonNegativeIntegerSchema,
   }),
 )
+export const MatchedEntryTimingSchema = Schema.Struct({
+  inputAvailableAt: UtcInstantSchema,
+  deterministicSelectedAt: UtcInstantSchema,
+  batchCompletedAt: UtcInstantSchema,
+  decisionCommittedAt: UtcInstantSchema,
+  deterministicSymbol: Schema.NullOr(StrictNonEmptyStringSchema),
+  evidenceHash: Sha256Schema,
+})
+
+export enum MatchedArm {
+  Jev = 'JEV_FILTERED',
+  DelayedMomentum = 'DELAYED_MOMENTUM',
+  ImmediateMomentum = 'IMMEDIATE_MOMENTUM',
+}
+
 export const MatchedStudyInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.matched-entry-input.v1'),
+  schemaVersion: Schema.Literal('bayn.matched-entry-input.v2'),
+  timings: Schema.Array(Schema.Struct({ batchId: Sha256Schema, witness: Schema.NullOr(MatchedEntryTimingSchema) })),
   witnesses: Schema.Array(Schema.Struct({ sha256: Sha256Schema, path: StrictNonEmptyStringSchema })),
   study: SignalStudyInputSchema,
   inventory: Schema.Array(
@@ -181,7 +198,9 @@ export interface MatchedPair {
   readonly momentumSymbol: string | null
   readonly modelAvailable: boolean
   readonly jev: Outcome | null
-  readonly momentum: Outcome | null
+  readonly delayedMomentum: Outcome | null
+  readonly immediateMomentum: Outcome | null
+  readonly timingAvailable: boolean
   readonly inferenceCostMicros: string | null
   readonly sharedOperatingCostMicros: string | null
 }
@@ -204,35 +223,56 @@ export const summarizeMatchedPairs = (
   if (pairs.length === 0) problems.push('no-entry-observations')
   const paired = pairs.map((pair) => {
     const jevExecution = executionPnl(pair.jevSymbol, pair.jev)
-    const momentumExecution = executionPnl(pair.momentumSymbol, pair.momentum)
+    const delayedExecution = executionPnl(pair.momentumSymbol, pair.delayedMomentum)
+    const immediateExecution = executionPnl(pair.momentumSymbol, pair.immediateMomentum)
     const complete =
       pair.modelAvailable &&
+      pair.timingAvailable &&
       jevExecution !== null &&
-      momentumExecution !== null &&
+      delayedExecution !== null &&
+      immediateExecution !== null &&
       pair.inferenceCostMicros !== null &&
       pair.sharedOperatingCostMicros !== null
     if (!complete) problems.push(`incomplete-pair:${pair.batchId}`)
+    const shared = BigInt(pair.sharedOperatingCostMicros ?? '0')
     const jev =
-      complete && jevExecution !== null
-        ? jevExecution - BigInt(pair.inferenceCostMicros ?? '0') - BigInt(pair.sharedOperatingCostMicros ?? '0')
-        : null
-    const momentum =
-      complete && momentumExecution !== null ? momentumExecution - BigInt(pair.sharedOperatingCostMicros ?? '0') : null
+      complete && jevExecution !== null ? jevExecution - BigInt(pair.inferenceCostMicros ?? '0') - shared : null
+    const delayed = complete && delayedExecution !== null ? delayedExecution - shared : null
+    const immediate = complete && immediateExecution !== null ? immediateExecution - shared : null
+    const delta = (left: bigint | null, right: bigint | null) =>
+      left === null || right === null ? null : String(left - right)
+    const stressedJev = jev === null ? null : jev - stress(pair.jev)
+    const stressedDelayed = delayed === null ? null : delayed - stress(pair.delayedMomentum)
+    const stressedImmediate = immediate === null ? null : immediate - stress(pair.immediateMomentum)
     return {
       batchId: pair.batchId,
       jevNetMicros: jev === null ? null : String(jev),
-      momentumNetMicros: momentum === null ? null : String(momentum),
-      incrementalMicros: jev === null || momentum === null ? null : String(jev - momentum),
-      stressedJevNetMicros: jev === null ? null : String(jev - stress(pair.jev)),
-      stressedIncrementalMicros:
-        jev === null || momentum === null ? null : String(jev - momentum - stress(pair.jev) + stress(pair.momentum)),
+      delayedMomentumNetMicros: delayed === null ? null : String(delayed),
+      immediateMomentumNetMicros: immediate === null ? null : String(immediate),
+      selectionMicros: delta(jev, delayed),
+      delayMicros: delta(delayed, immediate),
+      totalMicros: delta(jev, immediate),
+      stressedJevNetMicros: stressedJev === null ? null : String(stressedJev),
+      stressedSelectionMicros: delta(stressedJev, stressedDelayed),
+      stressedDelayMicros: delta(stressedDelayed, stressedImmediate),
+      stressedTotalMicros: delta(stressedJev, stressedImmediate),
     }
   })
   const differentSelections = pairs.filter((p) => p.modelAvailable && p.jevSymbol !== p.momentumSymbol).length
   if (differentSelections < matchedEntryDefinition.minimumDifferentSelections)
     problems.push('insufficient-different-selections')
   const complete = problems.length === 0
-  const mean = (field: 'jevNetMicros' | 'incrementalMicros' | 'stressedJevNetMicros' | 'stressedIncrementalMicros') =>
+  const mean = (
+    field:
+      | 'jevNetMicros'
+      | 'selectionMicros'
+      | 'delayMicros'
+      | 'totalMicros'
+      | 'stressedJevNetMicros'
+      | 'stressedSelectionMicros'
+      | 'stressedDelayMicros'
+      | 'stressedTotalMicros',
+  ) =>
     !complete
       ? null
       : (Number(paired.reduce((sum, pair) => sum + BigInt(pair[field] ?? '0'), 0n)) /
@@ -241,9 +281,13 @@ export const summarizeMatchedPairs = (
         10_000
   const means = {
     jevNetBudgetReturnBps: mean('jevNetMicros'),
-    incrementalBudgetReturnBps: mean('incrementalMicros'),
+    selectionBudgetReturnBps: mean('selectionMicros'),
+    delayBudgetReturnBps: mean('delayMicros'),
+    totalBudgetReturnBps: mean('totalMicros'),
     stressedJevNetBudgetReturnBps: mean('stressedJevNetMicros'),
-    stressedIncrementalBudgetReturnBps: mean('stressedIncrementalMicros'),
+    stressedSelectionBudgetReturnBps: mean('stressedSelectionMicros'),
+    stressedDelayBudgetReturnBps: mean('stressedDelayMicros'),
+    stressedTotalBudgetReturnBps: mean('stressedTotalMicros'),
   }
   return {
     completion: complete ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
@@ -251,7 +295,12 @@ export const summarizeMatchedPairs = (
       ? MatchedRecommendation.Inconclusive
       : registration.dataRole === MatchedDataRole.Development
         ? MatchedRecommendation.DevelopmentOnly
-        : Object.values(means).some((value) => value !== null && value <= 0)
+        : [
+              means.jevNetBudgetReturnBps,
+              means.totalBudgetReturnBps,
+              means.stressedJevNetBudgetReturnBps,
+              means.stressedTotalBudgetReturnBps,
+            ].some((value) => value !== null && value <= 0)
           ? MatchedRecommendation.Stop
           : MatchedRecommendation.TestPortfolio,
     differentSelections,
@@ -348,6 +397,7 @@ export const runMatchedEntryStudy = (
       registration.latencyEvidenceHash,
       registration.capacityEvidenceHash,
       ...input.inventory.map((i) => i.evidenceHash),
+      ...input.timings.map((entry) => entry.witness?.evidenceHash ?? null),
       ...input.costs.flatMap((c) => [c.inference?.evidenceHash ?? null, c.sharedOperating?.evidenceHash ?? null]),
     ]
     if (required.some((hash) => hash !== null && !witnessed.has(hash)))
@@ -412,6 +462,63 @@ export const runMatchedEntryStudy = (
       )
         problems.push(`source-does-not-cover-session:${session.date}`)
     }
+    const timings = new Map<string, typeof MatchedEntryTimingSchema.Type>()
+    const timingIds = new Set<string>()
+    for (const entry of input.timings) {
+      const batch = entries.find((candidate) => candidate.plan.batchId === entry.batchId)
+      if (timingIds.has(entry.batchId) || batch === undefined)
+        return yield* new SignalStudyFailure({ message: 'Duplicate or unmatched timing witness' })
+      timingIds.add(entry.batchId)
+      if (entry.witness === null) continue
+      const timing = entry.witness
+      const file = input.witnesses.find((candidate) => candidate.sha256 === timing.evidenceHash)
+      if (file === undefined) return yield* new SignalStudyFailure({ message: 'Timing witness file is missing' })
+      const fs = yield* FileSystem.FileSystem
+      const bytes = yield* fs.readFileString(file.path)
+      if (sha256(bytes) !== timing.evidenceHash)
+        return yield* new SignalStudyFailure({ message: 'Timing witness bytes differ' })
+      const retained = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(EntryTimingReceiptSchema),
+        strictParseOptions,
+      )(bytes)
+      const { evidenceHash: _evidenceHash, ...claimed } = timing
+      const {
+        schemaVersion: _version,
+        sourceRevision,
+        batchId,
+        observationHash,
+        snapshotHash,
+        decisionHash: _decisionHash,
+        ...actualTiming
+      } = retained
+      if (
+        sourceRevision !== registration.sourceRevision ||
+        batchId !== batch.plan.batchId ||
+        observationHash !== batch.plan.observationHash ||
+        snapshotHash !== batch.snapshot.manifest.contentHash ||
+        (yield* Effect.fromResult(canonicalHashV1Result(claimed))) !==
+          (yield* Effect.fromResult(canonicalHashV1Result(actualTiming)))
+      )
+        return yield* new SignalStudyFailure({ message: 'Timing receipt belongs to another batch, source or clock' })
+      const times = [
+        batch.observation.observedAt,
+        timing.inputAvailableAt,
+        timing.deterministicSelectedAt,
+        timing.batchCompletedAt,
+        timing.decisionCommittedAt,
+      ].map(intradayInstantNanos)
+      if (
+        times.some((time, index) => index > 0 && time < (times[index - 1] ?? 0n)) ||
+        timing.batchCompletedAt !==
+          input.study.batches.find((entry) => entry.batchPlan.batchId === batch.plan.batchId)?.batchResult
+            ?.completedAt ||
+        timing.deterministicSymbol !== batch.selected[SignalScreenRule.RelativeMomentum]
+      )
+        return yield* new SignalStudyFailure({ message: 'Timing witness differs from the frozen selection or batch' })
+      timings.set(entry.batchId, timing)
+    }
+    for (const batch of entries)
+      if (!timings.has(batch.plan.batchId)) problems.push(`missing-entry-timing:${batch.plan.batchId}`)
     const costs = new Map<string, (typeof input.costs)[number]>()
     for (const cost of input.costs) {
       if (costs.has(cost.batchId) || !entries.some((b) => b.plan.batchId === cost.batchId))
@@ -450,16 +557,37 @@ export const runMatchedEntryStudy = (
       if (session === undefined) return yield* new SignalStudyFailure({ message: 'Missing matched session' })
       const states = new Map<string, MatchedLifecycle>()
       results.set(batch.plan.batchId, states)
-      const symbols = new Set([batch.selected[SignalScreenRule.Jev], batch.selected[SignalScreenRule.RelativeMomentum]])
-      for (const symbol of symbols) {
+      const timing = timings.get(batch.plan.batchId)
+      const arms = [
+        {
+          arm: MatchedArm.Jev,
+          symbol: batch.selected[SignalScreenRule.Jev],
+          at: timing?.decisionCommittedAt ?? batch.decidedAt,
+        },
+        {
+          arm: MatchedArm.DelayedMomentum,
+          symbol: batch.selected[SignalScreenRule.RelativeMomentum],
+          at: timing?.decisionCommittedAt ?? batch.decidedAt,
+        },
+        ...(timing === undefined
+          ? []
+          : [
+              {
+                arm: MatchedArm.ImmediateMomentum,
+                symbol: timing.deterministicSymbol,
+                at: timing.deterministicSelectedAt,
+              },
+            ]),
+      ]
+      for (const { arm, symbol, at } of arms) {
         if (symbol === null) continue
-        states.set(symbol, yield* Effect.fromResult(createMatchedLifecycle(matchedEntryDefinition.budgetMicros)))
+        states.set(arm, yield* Effect.fromResult(createMatchedLifecycle(matchedEntryDefinition.budgetMicros)))
         const terms: MatchedTerms = {
           symbol,
           protocol: batch.observation.protocol,
           assumptions: input.study.assumptions,
           entryBudgetMicros: matchedEntryDefinition.budgetMicros,
-          decidedAtMs: Date.parse(batch.decidedAt),
+          decidedAtMs: Date.parse(at),
           cutoffMs: Date.parse(session.closeAt) - 5 * 60_000,
           closeMs: Date.parse(session.closeAt),
         }
@@ -467,7 +595,7 @@ export const runMatchedEntryStudy = (
           add(
             atMs,
             Effect.gen(function* () {
-              const state = states.get(symbol)
+              const state = states.get(arm)
               if (state === undefined)
                 return yield* new SignalStudyFailure({ message: 'Missing matched lifecycle state' })
               if (kind === MatchedEvent.Poll && state.exit !== null) return
@@ -478,7 +606,7 @@ export const runMatchedEntryStudy = (
               )
                 return
               states.set(
-                symbol,
+                arm,
                 yield* Effect.fromResult(
                   stepMatchedLifecycle(state, terms, {
                     kind,
@@ -512,8 +640,8 @@ export const runMatchedEntryStudy = (
       const states = results.get(batch.plan.batchId)
       const jevSymbol = batch.selected[SignalScreenRule.Jev]
       const momentumSymbol = batch.selected[SignalScreenRule.RelativeMomentum]
-      const finish = (symbol: string | null) => {
-        const state = symbol === null ? undefined : states?.get(symbol)
+      const finish = (arm: MatchedArm) => {
+        const state = states?.get(arm)
         return state === undefined ? null : finishMatchedLifecycle(state)
       }
       const cost = costs.get(batch.plan.batchId)
@@ -522,16 +650,22 @@ export const runMatchedEntryStudy = (
         sessionDate: batch.snapshot.manifest.sessionDate,
         jevSymbol,
         momentumSymbol,
-        modelAvailable: batch.modelStatus === 'AVAILABLE',
-        jev: finish(jevSymbol),
-        momentum: finish(momentumSymbol),
+        modelAvailable:
+          batch.modelStatus === 'AVAILABLE' &&
+          Date.parse(timings.get(batch.plan.batchId)?.decisionCommittedAt ?? batch.decidedAt) <
+            Date.parse(batch.plan.expiresAt),
+        timingAvailable: timings.has(batch.plan.batchId),
+        timing: timings.get(batch.plan.batchId) ?? null,
+        jev: finish(MatchedArm.Jev),
+        delayedMomentum: finish(MatchedArm.DelayedMomentum),
+        immediateMomentum: finish(MatchedArm.ImmediateMomentum),
         inferenceCostMicros: cost?.inference?.unresolvedCount === 0 ? cost.inference.costMicros : null,
         sharedOperatingCostMicros:
           cost?.sharedOperating?.unresolvedCount === 0 ? cost.sharedOperating.costMicros : null,
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v2',
+      schemaVersion: 'bayn.matched-entry-study.v3',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,

@@ -10,6 +10,8 @@ import { researchCaptureObjectKey, verifyResearchCaptureExportPrefix } from './e
 import { makeResearchCaptureSession } from './session'
 import { decodeResearchCaptureSessionConfig, researchCaptureSessionConfig } from './session-config'
 import { sessionConfig, sessionMemory, sessionStart, sessionUniverse } from './session.test-support'
+import { decodeResearchCaptureChunk } from './capture'
+import { summarizeResearchSchedule } from './opportunity'
 
 const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
@@ -100,6 +102,7 @@ test('one successful native cut closes once while the worker remains alive and e
       const { saved, session } = yield* start()
       let cuts = 0
       session.bind({
+        read: Effect.fail(new KafkaMarketFailure({ operation: 'read', message: 'No snapshot in cut fixture' })),
         captureInterval: (request) =>
           Effect.sync(() => {
             cuts++
@@ -155,6 +158,26 @@ test('one successful native cut closes once while the worker remains alive and e
       expect(Result.isSuccess(verified) && verified.success.exportVerified).toBe(true)
       expect(Result.isSuccess(verified) && verified.success.complete).toBe(false)
       expect(saved.chunks[0]?.payload).toContain('session-attempt')
+      const receipts = saved.chunks.flatMap((chunk) => Result.getOrThrow(decodeResearchCaptureChunk(chunk)).receipts)
+      const research = Result.getOrThrow(summarizeResearchSchedule(receipts))
+      expect(research.status).toBe('INVENTORY_COMPLETE')
+      expect(research.expectedCount).toBe(10)
+      expect(research.observedCount).toBe(10)
+      expect(research.missingOrdinals).toEqual([])
+      expect(
+        Result.isFailure(
+          summarizeResearchSchedule(
+            receipts.filter((receipt) => receipt.event.kind !== 'research-opportunity' || receipt.event.ordinal !== 3),
+          ),
+        ),
+      ).toBeFalse()
+      expect(
+        Result.getOrThrow(
+          summarizeResearchSchedule(
+            receipts.filter((receipt) => receipt.event.kind !== 'research-opportunity' || receipt.event.ordinal !== 3),
+          ),
+        ).missingOrdinals,
+      ).toEqual([3])
     }),
   ))
 
@@ -165,6 +188,7 @@ test.each(['failed-cut', 'stalled-cut', 'missing-bootstrap', 'replacement', 'inv
       Effect.gen(function* () {
         const { saved, session } = yield* start(sessionMemory(), scenario !== 'missing-bootstrap')
         session.bind({
+          read: Effect.fail(new KafkaMarketFailure({ operation: 'read', message: 'No snapshot in cut fixture' })),
           captureInterval: () =>
             scenario === 'stalled-cut'
               ? Effect.never
