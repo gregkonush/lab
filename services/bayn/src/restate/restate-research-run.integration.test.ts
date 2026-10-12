@@ -4,8 +4,15 @@ import { Config, Effect, Option, Redacted, Result } from 'effect'
 import * as restate from '@restatedev/restate-sdk'
 import { NodeHttpClient } from '@effect/platform-node'
 
-import { hashResearch, ResearchOutcome, researchRequest, sealResearchReceipt } from '../research-inference/contract'
-import { researchFixture } from '../research-inference/test-support'
+import {
+  hashResearch,
+  ResearchOutcome,
+  researchRequest,
+  researchServingIdentity,
+  sealResearchReceipt,
+} from '../research-inference/contract'
+import { fullTokenBudgetStreamFixture, researchFixture } from '../research-inference/test-support'
+import { sha256 } from '../hash'
 import { submitResearch } from '../research-inference/submission'
 import { approveResearchRun } from '../research-inference/approval'
 import { makeBaynResearchRun } from './restate-research-run'
@@ -29,24 +36,26 @@ integration('real Restate research Workflow', () => {
     const id = Result.getOrThrow(hashResearch(run))
     const approvalKey = Redacted.make('7'.repeat(64))
     const approval = Result.getOrThrow(approveResearchRun(run, approvalKey))
+    const stream = fullTokenBudgetStreamFixture()
     const retained = Result.getOrThrow(
       sealResearchReceipt(run, {
         runId: id,
         requestHash: Result.getOrThrow(hashResearch(researchRequest(run))),
         startedAtMs: 0,
         completedAtMs: 1000,
-        firstTokenAtMs: null,
-        outcome: ResearchOutcome.Expired,
-        httpStatus: null,
-        servingIdentity: null,
-        serverRequestId: null,
-        responseHash: null,
-        responseText: '',
-        responseBase64: '',
-        usage: null,
-        factors: [],
+        firstTokenAtMs: 1,
+        outcome: ResearchOutcome.Complete,
+        httpStatus: 200,
+        servingIdentity: researchServingIdentity(run.policy),
+        serverRequestId: 'chatcmpl-synthetic',
+        responseHash: sha256(stream),
+        responseText: '<alpha_list>alpha001</alpha_list>',
+        responseBase64: Buffer.from(stream).toString('base64'),
+        usage: { prompt_tokens: 10, completion_tokens: 4096, total_tokens: 4106 },
+        factors: ['alpha001'],
       }),
     )
+    expect(Buffer.byteLength(JSON.stringify(retained))).toBeGreaterThan(786432)
     const invoke = async (key: string) => {
       const response = await fetch(`${ingress}/restate/call/BaynResearchRun/${key}/run`, {
         method: 'POST',

@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { inferResearch, makeResearchStreamDecoder } from './client'
-import { hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
-import { researchFixture, streamFixture } from './test-support'
+import { hashResearch, maximumResearchStreamBytes, ResearchOutcome, researchServingIdentity } from './contract'
+import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
 
 const fixture = researchFixture()
 const id = Result.getOrThrow(hashResearch(fixture))
@@ -57,6 +57,16 @@ describe('bounded native inference stream', () => {
     const decoder = makeResearchStreamDecoder({ ...fixture, policy: { ...fixture.policy, max_tokens: 20 } })
     Result.getOrThrow(decoder.push(encode(streamFixture()), 10))
     expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
+  })
+  test('retains all 4096 cumulative-usage frames within the approved token budget', () => {
+    const decoder = makeResearchStreamDecoder(fixture)
+    const bytes = encode(fullTokenBudgetStreamFixture())
+    expect(bytes.length).toBeGreaterThan(262144)
+    for (let offset = 0; offset < bytes.length; offset += 8192)
+      Result.getOrThrow(decoder.push(bytes.subarray(offset, offset + 8192), 10))
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
+    expect(decoder.snapshot().usage?.completion_tokens).toBe(4096)
+    expect(Buffer.from(decoder.snapshot().responseBase64, 'base64')).toEqual(Buffer.from(bytes))
   })
   test.each([
     [
@@ -135,7 +145,9 @@ describe('bounded native inference stream', () => {
     expect(result.servingIdentity).toEqual(identity)
   })
   test('bounds retained response memory', () =>
-    expect(Result.isFailure(makeResearchStreamDecoder(fixture).push(new Uint8Array(262145), 10))).toBe(true))
+    expect(
+      Result.isFailure(makeResearchStreamDecoder(fixture).push(new Uint8Array(maximumResearchStreamBytes + 1), 10)),
+    ).toBe(true))
   test('never transmits an expired request', async () => {
     let calls = 0
     const http = HttpClient.make((request) => {

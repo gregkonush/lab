@@ -11,10 +11,11 @@ import {
   researchServingIdentity,
   researchRequest,
   sealResearchReceipt,
+  maximumResearchStreamBytes,
   type ResearchRun,
 } from './contract'
 
-const maximumBytes = 262144
+const maximumRequestBytes = 262144
 const TokenCount = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 const ChunkSchema = Schema.Struct({
   id: Schema.optionalKey(Schema.String),
@@ -122,8 +123,8 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
   const push = (bytes: Uint8Array, now: number) =>
     Result.gen(function* () {
       totalBytes += bytes.length
-      if (totalBytes > maximumBytes)
-        return yield* Result.fail(new ResearchError({ message: 'Research stream exceeds 256 KiB' }))
+      if (totalBytes > maximumResearchStreamBytes)
+        return yield* Result.fail(new ResearchError({ message: 'Research stream exceeds 2 MiB' }))
       received.push(new Uint8Array(bytes))
       pending += yield* Result.try({
         try: () => decoder.decode(bytes, { stream: true }),
@@ -197,7 +198,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
     const response = yield* Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
       const body = JSON.stringify(request)
-      if (Buffer.byteLength(body) > maximumBytes)
+      if (Buffer.byteLength(body) > maximumRequestBytes)
         return yield* new ResearchError({ message: 'Research request exceeds 256 KiB' })
       const incoming = yield* http.execute(
         HttpClientRequest.post(endpoint).pipe(
