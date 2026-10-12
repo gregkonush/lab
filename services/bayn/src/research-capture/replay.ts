@@ -1,7 +1,7 @@
 import { gzipSync } from 'node:zlib'
 import { Effect, Result, Schema } from 'effect'
 
-import { canonicalHashV1Result, sha256 } from '../hash'
+import { canonicalHashV1, canonicalHashV1Result, sha256 } from '../hash'
 import { validateBacktestSourceManifest, validateBacktestSourceReceipt } from '../intraday-replay/source'
 import {
   advanceHistoricalMarketCursor,
@@ -10,11 +10,20 @@ import {
   type HistoricalMarketCursor,
 } from '../market-data/streaming/historical'
 import type { StreamingUniverse } from '../market-data/streaming/raw-events'
+import { canonicalPositions } from '../market-data/streaming/bootstrap'
+import {
+  emptyStreamingProjection,
+  incorporateMarketRecord,
+  topicPartitionKey,
+} from '../market-data/streaming/projection'
 import { strictParseOptions } from '../schemas'
+import { assembleEntryTimingReceipts } from './entry-timing'
+import { prepareResearchSchedule, reproduceResearchOpportunity } from './opportunity'
 import {
   CaptureIntervalRequestSchema,
   ResearchCaptureFailure,
   maximumResearchCaptureChunkBytes,
+  restoreKafkaTransportTimestamp,
   type CaptureIntervalRequest,
   type ResearchCaptureBytes,
 } from './capture'
@@ -50,6 +59,9 @@ export const replayResearchCaptureInterval = (
       receipts.push(...bytes.chunk.receipts)
       for (const [sequence, raw] of bytes.rawValues) rawBySequence.set(sequence, raw)
     }
+    const research = yield* prepareResearchSchedule(receipts).pipe(
+      Result.mapError((cause) => fail('Cannot verify research schedule inventory', cause)),
+    )
     const cuts = receipts.filter(
       (receipt) => receipt.event.kind === 'consumer-interval-cut' && receipt.event.intervalId === requested.intervalId,
     )
@@ -84,6 +96,19 @@ export const replayResearchCaptureInterval = (
     )
       return yield* Result.fail(fail('Capture interval lacks its unique native assignment and bootstrap'))
     const bootstrap = assignment.event.bootstrap
+    const schedule = research.schedule
+    if (
+      schedule !== null &&
+      (schedule.coverageStartMs !== requested.coverageStartMs ||
+        schedule.coverageEndMs !== requested.coverageEndMs ||
+        schedule.protocol.universeId !== universe.universeId ||
+        schedule.protocol.universeSymbolHash !== universe.universeSymbolHash ||
+        canonicalHashV1(schedule.protocol.universe) !== canonicalHashV1(universe.symbols) ||
+        Object.entries(schedule.protocol.sourceTopics).some(
+          ([key, topic]) => universe.topics[key as keyof typeof universe.topics] !== topic,
+        ))
+    )
+      return yield* Result.fail(fail('Research schedule differs from the independently selected capture interval'))
     const expected = inventory(requested.expectedPartitions)
     const topics = Object.values(universe.topics)
     if (
@@ -129,6 +154,12 @@ export const replayResearchCaptureInterval = (
     const within = receipts.filter(
       (receipt) => receipt.sequence > assignment.sequence && receipt.sequence < cutReceipt.sequence,
     )
+    const bootstrapped = within.find(
+      (receipt) =>
+        receipt.event.kind === 'consumer-boundary' &&
+        receipt.event.phase === 'BOOTSTRAPPED' &&
+        receipt.event.consumerEpoch === cut.consumerEpoch,
+    )
     if (
       within.some(
         (receipt) =>
@@ -138,12 +169,7 @@ export const replayResearchCaptureInterval = (
             receipt.event.phase === 'STOPPED' ||
             receipt.event.phase === 'STARTED'),
       ) ||
-      !within.some(
-        (receipt) =>
-          receipt.event.kind === 'consumer-boundary' &&
-          receipt.event.phase === 'BOOTSTRAPPED' &&
-          receipt.event.consumerEpoch === cut.consumerEpoch,
-      )
+      bootstrapped === undefined
     )
       return yield* Result.fail(fail('Capture interval crosses a failed, incomplete or changed consumer epoch'))
     const markets = receipts.filter(
@@ -156,6 +182,9 @@ export const replayResearchCaptureInterval = (
       return yield* Result.fail(
         fail('Capture interval omits delivered records or has no replayable market observations'),
       )
+    const bootstrapLastMarket = markets.findLast((receipt) => receipt.sequence < bootstrapped.sequence)
+    const bootstrappedConsumerSequence =
+      bootstrapLastMarket?.event.kind === 'market-record' ? bootstrapLastMarket.event.consumerSequence : 0
     const deliveryModel = {
       schemaVersion: 'bayn.original-capture-arrivals.v1' as const,
       description:
@@ -168,6 +197,65 @@ export const replayResearchCaptureInterval = (
       finalConsumerSequence: cut.finalConsumerSequence,
     }
     const events: HistoricalMarketArrival[] = []
+    const researchByConsumerSequence = new Map<number, typeof research.opportunities>()
+    for (const receipt of research.opportunities) {
+      if (receipt.sequence >= cutReceipt.sequence)
+        return yield* Result.fail(fail('Research opportunity is outside the retained interval cut'))
+      const reference = receipt.event.inputCut
+      if (reference === null) {
+        if (schedule !== null)
+          yield* reproduceResearchOpportunity(schedule, receipt.event, null).pipe(Result.mapError(fail))
+        continue
+      }
+      if (
+        reference.consumerEpoch !== cut.consumerEpoch ||
+        reference.consumerSequence < bootstrappedConsumerSequence ||
+        reference.consumerSequence > cut.finalConsumerSequence ||
+        inventory(reference.positions) !== expected ||
+        bootstrapped.sequence >= receipt.sequence ||
+        bootstrapped.observedAtMs > Date.parse(receipt.event.observedAt)
+      )
+        return yield* Result.fail(fail('Research opportunity has no preceding complete native consumer cut'))
+      researchByConsumerSequence.set(reference.consumerSequence, [
+        ...(researchByConsumerSequence.get(reference.consumerSequence) ?? []),
+        receipt,
+      ])
+    }
+    let observedProjection = emptyStreamingProjection(cut.consumerEpoch, universe.topics.technicalFeatures)
+    const deliveredPositions = new Map(
+      bootstrap.partitions.map((partition) => [
+        topicPartitionKey(partition.topic, partition.partition),
+        { topic: partition.topic, partition: partition.partition, offset: partition.startOffset },
+      ]),
+    )
+    const reproduceOpportunities = (consumerSequence: number, sequence: number, availableAtMs: number) =>
+      Result.gen(function* () {
+        for (const receipt of researchByConsumerSequence.get(consumerSequence) ?? []) {
+          const reference = receipt.event.inputCut
+          if (reference === null || schedule === null)
+            return yield* Result.fail(fail('Research input cut has no registered schedule'))
+          const observedPositions = canonicalPositions([...deliveredPositions.values()])
+          if (canonicalHashV1(reference.positions) !== canonicalHashV1(observedPositions))
+            return yield* Result.fail(fail('Research input cut positions differ from its delivered prefix'))
+          if (
+            receipt.sequence <= sequence ||
+            Date.parse(receipt.event.observedAt) < availableAtMs ||
+            reference.projectionSequence !== observedProjection.sequence
+          )
+            return yield* Result.fail(
+              fail('Research input cut borrows future records or contradicts its consumed prefix'),
+            )
+          yield* reproduceResearchOpportunity(schedule, receipt.event, {
+            consumerSequence,
+            projection: observedProjection,
+            bootstrap,
+            positions: observedPositions,
+            deliveredPositions: observedPositions,
+          }).pipe(Result.mapError(fail))
+        }
+        researchByConsumerSequence.delete(consumerSequence)
+      })
+    yield* reproduceOpportunities(0, assignment.sequence, assignment.observedAtMs)
     let cursor: HistoricalMarketCursor = yield* createHistoricalMarketCursor(
       yield* canonicalHashV1Result(deliveryModel),
       universe,
@@ -216,8 +304,26 @@ export const replayResearchCaptureInterval = (
         },
       }
       cursor = yield* advanceHistoricalMarketCursor(cursor, arrival)
+      const deliveryKey = topicPartitionKey(event.topic, event.partition)
+      const priorDelivery = deliveredPositions.get(deliveryKey)
+      if (priorDelivery === undefined || BigInt(priorDelivery.offset) <= BigInt(event.offset))
+        deliveredPositions.set(deliveryKey, {
+          topic: event.topic,
+          partition: event.partition,
+          offset: String(BigInt(event.offset) + 1n),
+        })
+      const timestampMs = restoreKafkaTransportTimestamp(event.originalTransport)
+      observedProjection = incorporateMarketRecord(
+        observedProjection,
+        { ...arrival.record, ...(timestampMs === undefined ? {} : { timestampMs }) },
+        universe,
+        receipt.observedAtMs,
+      )
+      yield* reproduceOpportunities(event.consumerSequence, receipt.sequence, receipt.observedAtMs)
       events.push(arrival)
     }
+    if (researchByConsumerSequence.size !== 0)
+      return yield* Result.fail(fail('Research opportunity references an uncaptured consumer prefix'))
     const bytes = yield* Result.try({
       try: () => gzipSync(events.map((event) => JSON.stringify(event)).join('\n') + '\n'),
       catch: (cause) => fail('Cannot encode original replay arrivals', cause),
@@ -270,6 +376,21 @@ export const replayResearchCaptureInterval = (
       qualification: verified.seal.qualification,
       controllerReceipts: within.filter((receipt) => receipt.event.kind === 'controller-pass'),
       controllerCoverage: 'UNKNOWN' as const,
+      entryTimings: yield* assembleEntryTimingReceipts(verified.seal.sourceRevision, receipts).pipe(
+        Result.mapError((cause) => fail('Cannot join native entry timing receipts', cause)),
+      ),
+      researchSchedule: {
+        status:
+          schedule === null
+            ? ('NOT_REGISTERED' as const)
+            : research.missingOrdinals.length === 0
+              ? ('INVENTORY_COMPLETE' as const)
+              : ('INVENTORY_INCOMPLETE' as const),
+        expectedCount: research.expectedCount,
+        observedCount: research.observedCount,
+        missingOrdinals: research.missingOrdinals,
+        opportunities: research.opportunities.map(({ event }) => event),
+      },
     }
   })
 

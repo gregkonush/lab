@@ -1,5 +1,6 @@
 import { Effect } from 'effect'
 import { canonicalHashV1 } from '../hash'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import type { StreamingUniverse } from '../market-data/streaming/raw-events'
 import { ResearchCaptureFailure, type ResearchCaptureBytes } from './capture'
 import type { ResearchCaptureObject, ResearchCaptureObjectStore } from './export'
@@ -8,10 +9,10 @@ import type { ResearchCaptureSessionConfig } from './session-config'
 
 export const sessionStart = Date.parse('2026-10-05T13:29:50.000Z')
 export const sessionUniverse: StreamingUniverse = {
-  universeId: 'session-fixture',
-  universeSymbolHash: '0'.repeat(64),
-  symbols: ['AAPL'],
-  topics: { bars: 'bars', quotes: 'quotes', trades: 'trades', features: 'features' },
+  universeId: defaultJevProtocolDocument.universeId,
+  universeSymbolHash: defaultJevProtocolDocument.universeSymbolHash,
+  symbols: defaultJevProtocolDocument.universe,
+  topics: { ...defaultJevProtocolDocument.sourceTopics, features: 'features' },
 }
 const calendar = {
   schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
@@ -21,6 +22,7 @@ const calendar = {
   sessions: [{ date: '2026-10-05', openAt: '2026-10-05T13:30:00.000Z', closeAt: '2026-10-05T13:30:10.000Z' }],
 } as const
 export const sessionConfig: ResearchCaptureSessionConfig = {
+  researchSchedule: { protocol: defaultJevProtocolDocument, pollIntervalMs: 1000 },
   captureId: 'one-session',
   intervalId: 'regular-session',
   startAtMs: sessionStart,

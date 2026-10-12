@@ -13,6 +13,44 @@ Supply the retained calendar observation, snapshot ID, observation timestamp, no
 Validation recomputes the calendar hash and requires the interval to match that session's exact open and close.
 The calendar is supplied evidence; the worker does not fetch a calendar or choose another date.
 
+The configuration also requires `researchSchedule: { protocol, pollIntervalMs }`. Bind the reviewed native Jev
+protocol and an integer cadence from 1,000 to 60,000 ms before capture starts. Its universe and source topics must
+match the acquired worker, and its complete canonical protocol hash must match the active strategy's parameter hash
+from the application plan. A mismatch stops capture before object acquisition or SQL writes. Older configurations
+without this registration are invalid and start no capture.
+
+The existing scoped session timer records one `research-opportunity` for every open-anchored ordinal strictly before
+close, independently of live holdings or model execution. Each receipt retains scheduled and actual observation
+times, all candidate identities, native eligibility/exclusions, exact missing minute timestamps, feature and quote
+receipts, and query/snapshot hashes when available. Warmup, cutoff, global input failure and all-candidate exclusion
+remain explicit. A sampler delayed beyond the next slot records `MISSED` with no invented historical snapshot.
+Each borrowed input cut retains the consumer epoch, exact delivered-record sequence, projection sequence and partition
+positions. Delivered-record sequence distinguishes rejected or duplicate records that leave projection sequence unchanged.
+Research positions start at the assignment offsets and advance through every delivered record, including rejected
+and ignored records. They are separate from the SDK's drained broker cursor, which can include control offsets.
+Research snapshot hashes use the delivered positions. If that prefix does not cover the frozen bootstrap bounds,
+the opportunity retains unavailable input rather than borrowing broker provenance.
+Quote event timestamps retain native nanosecond precision.
+These reads never request inference, place an order, acquire another consumer or change the live position.
+
+Native entry evaluation records input readiness, deterministic selection and completed-batch timing. The writer-fenced
+cycle store records decision timing only after the transaction acknowledgement; rollback and idempotent rebind emit
+no new commitment. This clock bounds acknowledged persistence, not the database's internal commit instant.
+Optional capture failures invalidate research evidence without reversing an acknowledged trading mutation.
+
+`replayResearchCaptureInterval` returns a verified `researchSchedule` inventory and `entryTimings`. It rejects
+duplicate/mismatched ordinals or timing joins. Before accepting any opportunity, replay reconstructs the native projection
+from its exact raw delivered-record prefix and recorded assignment/bootstrap. It reproduces the disposition, exclusions,
+minute holes, feature/quote receipts, momentum candidates and snapshot/query identities. Cut positions must cover incorporated
+coordinates equal the successor of the highest delivered offset in each partition at that exact consumer sequence,
+including rejected records; future or unobserved prefixes fail. No per-opportunity projection copies
+are retained while replaying the interval. Missing ordinals remain `INVENTORY_INCOMPLETE`; uncommitted batches
+remain separate from usable timing witnesses. Export each returned timing as a private JSON file and pin its bytes
+for the matched study, together with the complete native execution-decision document whose content hash the timing names.
+Preserve the verified seal/frame chain alongside it. Complete inventory includes unavailable
+and missed slots; it is not complete market evidence, controller coverage, or economic qualification. Existing seals
+remain `UNQUALIFIED` and controller coverage remains `UNKNOWN`.
+
 `startAtMs` is the earliest admission time on the selected UTC session date. `bootstrapDeadlineMs` is the latest time
 at which the existing lazy worker may begin the attempt. Both precede the session open. The worker must finish bootstrap
 by `coverageStartMs`. Before `startAtMs`, the session timer acquires no client and writes no evidence. If the worker

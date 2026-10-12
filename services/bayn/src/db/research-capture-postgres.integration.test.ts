@@ -94,7 +94,13 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
   run(
     Effect.gen(function* () {
       const { sql, store, chunk } = yield* fixture
-      const { captureId: _captureId, calendar: _calendar, sessionDate: _sessionDate, ...session } = sessionConfig
+      const {
+        captureId: _captureId,
+        calendar: _calendar,
+        sessionDate: _sessionDate,
+        researchSchedule: _schedule,
+        ...session
+      } = sessionConfig
       const now = yield* Clock.currentTimeMillis
       const options = {
         captureId: chunk.captureId,
