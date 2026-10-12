@@ -1317,6 +1317,10 @@ original-input eligibility, deadline/cancellation, ambiguous recovery and comple
 The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research) defines the approved restricted
 database identity, separate run-approval credential and normal Kargo release path. The source includes no broker or capital capability in the research server.
 
+The pinned vLLM endpoint supplies cumulative usage on streaming chunks. The decoder requires stable prompt counts,
+nondecreasing completion counts within the approved budget, and one final usage summary after normal generation
+finish. Intermediate counts never substitute for that final summary or complete stream termination.
+
 The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
 Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
 Submission requires `BAYN_RESEARCH_APPROVAL_KEY` from the approved secret-management path. The CLI signs the exact

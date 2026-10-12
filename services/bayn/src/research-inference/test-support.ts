@@ -69,8 +69,30 @@ export const researchFixture = () =>
   )
 export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>') =>
   [
-    { id: 'chatcmpl-synthetic', model: alphaModel, choices: [{ index: 0, delta: { content }, finish_reason: null }] },
-    { id: 'chatcmpl-synthetic', model: alphaModel, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+      usage: { prompt_tokens: 10, completion_tokens: 0, total_tokens: 10 },
+    },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: { reasoning: 'thinking' }, finish_reason: null }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+      usage: { prompt_tokens: 10, completion_tokens: 19, total_tokens: 29 },
+    },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    },
     {
       id: 'chatcmpl-synthetic',
       model: alphaModel,

@@ -8,8 +8,14 @@ import { researchFixture, streamFixture } from './test-support'
 const fixture = researchFixture()
 const id = Result.getOrThrow(hashResearch(fixture))
 const encode = (text: string) => new TextEncoder().encode(text)
+const finalUsageFrame = `data: ${JSON.stringify({
+  id: 'chatcmpl-synthetic',
+  model: fixture.policy.model,
+  choices: [],
+  usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+})}\n\n`
 describe('bounded native inference stream', () => {
-  test('decodes UTF-8 and SSE split at every byte with CRLF boundaries', () => {
+  test('decodes pinned cumulative-usage SSE split at every byte with CRLF boundaries', () => {
     const decoder = makeResearchStreamDecoder(fixture)
     for (const byte of encode(streamFixture().replaceAll('\n', '\r\n')))
       Result.getOrThrow(decoder.push(new Uint8Array([byte]), 10))
@@ -51,6 +57,26 @@ describe('bounded native inference stream', () => {
     const decoder = makeResearchStreamDecoder({ ...fixture, policy: { ...fixture.policy, max_tokens: 20 } })
     Result.getOrThrow(decoder.push(encode(streamFixture()), 10))
     expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
+  })
+  test.each([
+    [
+      'decreasing completion usage',
+      streamFixture().replace('"completion_tokens":19,"total_tokens":29', '"completion_tokens":1,"total_tokens":11'),
+    ],
+    [
+      'changed prompt usage',
+      streamFixture().replace(
+        '"prompt_tokens":10,"completion_tokens":19,"total_tokens":29',
+        '"prompt_tokens":11,"completion_tokens":19,"total_tokens":30',
+      ),
+    ],
+    ['missing final usage', streamFixture().replace(finalUsageFrame, '')],
+    ['premature final usage', finalUsageFrame + streamFixture()],
+    ['duplicate final usage', streamFixture().replace('data: [DONE]', finalUsageFrame + 'data: [DONE]')],
+  ])('rejects %s', (_name, text) => {
+    const decoder = makeResearchStreamDecoder(fixture)
+    const pushed = decoder.push(encode(text), 10)
+    expect(Result.isFailure(pushed) || Result.isFailure(decoder.complete())).toBe(true)
   })
   test.each([null, 'model', 'checkpoint', 'servingImage', 'tokenizerRevision', 'chatTemplateRevision'] as const)(
     'rejects missing or mismatched serving attestation: %s',

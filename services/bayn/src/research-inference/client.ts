@@ -47,6 +47,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
   let firstTokenAtMs: number | null = null
   let serverRequestId: string | null = null
   let usage: typeof ChunkSchema.Type.usage = null
+  let finalUsage = false
   const decoder = new TextDecoder('utf-8', { fatal: true })
   const consume = (frame: string, now: number) =>
     Result.gen(function* () {
@@ -76,14 +77,27 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         serverRequestId = chunk.id
       }
       if (chunk.usage !== undefined && chunk.usage !== null) {
-        if (usage !== null && usage !== undefined)
-          return yield* Result.fail(new ResearchError({ message: 'Research stream repeated usage' }))
+        if (finalUsage)
+          return yield* Result.fail(new ResearchError({ message: 'Research stream continued after final usage' }))
         if (chunk.usage.total_tokens !== chunk.usage.prompt_tokens + chunk.usage.completion_tokens)
           return yield* Result.fail(new ResearchError({ message: 'Research token usage does not add up' }))
         if (chunk.usage.completion_tokens > run.policy.max_tokens)
           return yield* Result.fail(
             new ResearchError({ message: 'Research completion exceeds its approved token budget' }),
           )
+        if (
+          usage !== null &&
+          usage !== undefined &&
+          (chunk.usage.prompt_tokens !== usage.prompt_tokens || chunk.usage.completion_tokens < usage.completion_tokens)
+        )
+          return yield* Result.fail(
+            new ResearchError({ message: 'Research cumulative token usage changed or decreased' }),
+          )
+        if (chunk.choices.length === 0) {
+          if (!finished)
+            return yield* Result.fail(new ResearchError({ message: 'Research final usage precedes generation finish' }))
+          finalUsage = true
+        }
         usage = chunk.usage
       }
       if (chunk.choices.length > 1)
@@ -146,6 +160,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         !finished ||
         !done ||
         !modelObserved ||
+        !finalUsage ||
         usage === null ||
         usage === undefined ||
         serverRequestId === null
