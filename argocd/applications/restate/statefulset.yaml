@@ -39,14 +39,16 @@ spec:
               app: restate
           maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: DoNotSchedule
+          whenUnsatisfiable: ScheduleAnyway
       affinity:
         podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app: restate
-              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: restate
+                topologyKey: kubernetes.io/hostname
       initContainers:
         - name: snapshot-scale-up-gate
           image: docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595

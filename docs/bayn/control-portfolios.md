@@ -1,9 +1,15 @@
 # Full-session development control portfolios
 
-`services/bayn/tools/control-study.ts` evaluates deterministic controls over complete retained sessions. Each
+`bayn-control-study` evaluates deterministic controls over complete retained sessions. Each
 portfolio owns cash, inventory, execution fees, daily turnover, exit triggers, and completed position episodes.
 It evaluates opportunities from its own position state, including periods when the original Jev replay held a
 position. It never synthesizes Jev responses or supplies production trading authority.
+
+The Bayn image installs this command and its compiled Node entry point. For local work, build the component and run
+`node services/bayn/dist/control-study-command.js` with the same flags. The former source-tree tool is removed.
+`--help` requires no credentials. `--mode preflight` verifies the supplied source and writes coverage diagnostics
+without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
+Installing the command does not schedule a capture, run a study, or qualify the input.
 
 This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). Management must be selected explicitly: `MECHANICAL`
@@ -171,6 +177,19 @@ The management pass advances its deadline clock without reading historical sourc
 the source and equity marks catch up to that clock, including on failure. Replay parsing time never becomes model
 latency or changes the management deadline.
 
+Jev management definition `bayn.control-study-definition.v9` bounds the complete observation, inference and journal
+pass using the independent provider clock. Its deadline is the earlier of model validity and the first-fill maximum
+hold. Cancellation waits for cleanup and retains its elapsed time. A hold or model exit cannot commit at or after
+that deadline; the session then rechecks its mechanical exit. Received usage stays priced even when receipt
+persistence crosses the deadline; interrupted calls without usage remain unknown. Existing Jev reports retain
+their original bytes and identities. Run a new registered study with the corrected executable and definition for
+comparisons. Mechanical definitions and reports are unchanged by this correction.
+Journal operations retain their serial permit and scoped file cleanup without masking the complete operation from
+cancellation. Interruption can leave an uncertain durable prefix, so it permanently invalidates that journal and
+forbids further observation, batch or request work. Preserve the interrupted directory and start a new registered
+experiment; never resume it or infer a successful write from an existing file. Received-call retention and file
+finalizers still drain before management returns, and their elapsed time remains measured.
+
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
 mark records broker equity and net equity after cumulative external expenses separately. Broker equity and its
@@ -258,7 +277,7 @@ The empty object above is a placeholder for the validated native document. Freez
 scenarios before viewing their outcomes. Preserve negative and incomplete results.
 
 ```sh
-bun services/bayn/tools/control-study.ts \
+bayn-control-study \
   --input /absolute/path/control-input.json \
   --input-sha256 <sha256-of-input-bytes> \
   --arrivals /absolute/path/arrivals.ndjson.gz \

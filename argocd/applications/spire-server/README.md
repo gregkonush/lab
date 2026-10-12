@@ -29,25 +29,24 @@ The server authenticates agents with Kubernetes projected service account tokens
 root, and `SYS_PTRACE`, and query the secure kubelet endpoint. The SPIFFE CSI driver mounts the node's Workload API socket
 into the registered application Pods.
 
-Firecracker guest processes use their own rootless agent under `galactic-guests`. Only `tengri:nanoagent` PSATs for
-audience `spire-server` are accepted, and the agent ID contains its attested Pod UID. Tengri creates a `ClusterStaticEntry`
-whose parent is that agent and whose selector is `unix:uid:1000`; a Kubernetes admission policy prevents unrelated or
-privileged registrations. A host `ClusterSPIFFEID` cannot describe this VM-local Unix process, because that controller
-adds a host Kubernetes Pod selector to every registration.
+Prepared Tengri slots authenticate their host supervisor with a Pod-UID-specific `ClusterSPIFFEID`. Their Nanoagent
+uses a private slot credential over vsock. Guest processes do not receive a Kubernetes API token or a SPIRE agent.
+The old `galactic-guests` PSAT profile, guest bundle publisher and ConfigMap, token/registration RBAC, and static-entry
+admission resources were retired after the approved old guests and their storage writers were fenced. Host `galactic`
+attestation and `spire-system/spire-bundle` publication remain configured.
 
 The Kubernetes Service exposes SPIRE gRPC only on port 443 and forwards it to the Pod listener on 8081.
-Guest clients use Service port 443. The temporary listener-port alias has been removed.
+The temporary listener-port alias has been removed.
 
 Tengri's gRPC port requires mesh mTLS and admits only the Proompteng service-account principal. The applications also
 verify exact SPIFFE peers and retain owner-bound request authorization. Public health/bootstrap and preview ports
 remain outside mesh mTLS for the existing Traefik routes and retain their application authentication and network
-policies. Firecracker guests use their VM-local SPIRE agent and direct application mTLS; they do not receive host
-Istio sidecars or a shared service-account identity in place of their Pod-specific identity.
+policies. The slot supervisor verifies the controller's exact SPIFFE identity and the owner-bound slot claim before
+forwarding an operation over its private guest connection. Guest execution does not share the supervisor's Workload
+API mount or private key.
 
-This Application pre-creates `tengri/spire-guest-bundle` and name-restricted publisher RBAC at sync wave -1. The server's
-built-in bundle publisher preserves `spire-system/spire-bundle` and also writes public PEM authorities to the guest
-ConfigMap. ApplicationSet ignores only the generated `/data` field; namespace creation remains owned by the Tengri
-Application. No signing keys or workload private keys enter these ConfigMaps.
+The server's built-in bundle publisher writes the host trust bundle to `spire-system/spire-bundle`. No signing keys or
+workload private keys enter that ConfigMap. Namespace creation remains owned by the platform ApplicationSet.
 
 ## Talos configuration
 
@@ -62,12 +61,25 @@ the agents through a reviewed GitOps pod-template change so they load the replac
 
 ## Persistence and availability
 
-One server stores its SQLite database and signing keys on a 1 GiB `rook-ceph-block` PVC. The StatefulSet retains its
-PVC when removed or scaled down. Namespace and CRD pruning are disabled. This is a single-server deployment;
-server downtime prevents new issuance and renewal, while previously issued credentials remain valid until expiry.
-Multiple server replicas require a shared supported database before increasing the replica count.
+Three SPIRE servers share the dedicated `spire-db` PostgreSQL datastore through its primary Service. The CloudNativePG
+cluster has three PostgreSQL 18.6 instances on distinct hosts, one synchronous standby, generated application
+credentials, automatic primary failover, and daily Ceph volume-snapshot backups. The connection validates the server
+certificate and hostname with the CNPG CA; no password is stored in Git or the server ConfigMap. No Prometheus server
+is introduced.
+
+SPIRE Pods also require distinct hosts and have a disruption budget keeping two servers available. Each server retains
+its own signing keys on a 1 GiB `rook-ceph-block` PVC in the existing `proompteng.ai` subdirectory. The StatefulSet retains
+PVCs when removed or scaled down. Namespace, datastore, and CRD pruning remain disabled. PostgreSQL stores the shared
+registrations, attested agents, and trust bundles; it does not replace the signing-key volumes.
+
+This configuration is the activation layer and must not reconcile until the offline SQLite import has committed and
+the original signing-key volume is preserved. See [the migration procedure](migrate/README.md) for database preparation,
+the maintenance window, activation order, failover verification, and recovery boundaries.
 
 ## Validation and recovery
+
+The following trust-domain cutover notes describe the earlier migration. The PostgreSQL HA cutover preserves the
+current trust domain, imports its existing datastore, and reuses the existing signing-key directory instead of resetting it.
 
 The hard trust-domain cutover starts SPIRE with an empty `proompteng.ai` subdirectory on its retained server PVC.
 An unprivileged init container prepares the directory, and the server mounts it as its complete data directory.

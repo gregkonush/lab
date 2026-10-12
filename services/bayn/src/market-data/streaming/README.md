@@ -105,6 +105,24 @@ have been removed. See the [backtest workflow](../../../README.md#replay-and-bac
 
 ## Session measurements
 
+Native execution provides telemetry while acquiring its worker resources, so Kafka bootstrap, supervision and
+measurement fibers inherit the JSON logger and trace exporter. Retained projection measurements are one JSON line
+per sample rather than multiline console fragments.
+
+`Streaming market snapshot rejected` retains `bayn.market-snapshot-failure.v1` diagnostics for a rejected observation:
+the query window and observation time, query-bound symbol and topic, exact millisecond or nanosecond event and
+ingestion times, and the publication delay and governing bound when available. The allowlist excludes raw payloads,
+exception messages, arbitrary failure facts and credentials. Missing fields remain unknown. These warnings preserve
+the original typed failure and trading eligibility; late benchmark bars continue to block the observation.
+When a required rolling feature is unavailable, the same warning retains its definition identity and exact query
+window, together with expected and observed minute-bar counts and the ordered missing minute timestamps. This coverage
+is selected from the rejected observation's actual consumer cut, including its local arrival-time bound; it is not a
+later periodic coverage sample. A complete bar window with no matching observed feature reports an empty missing list.
+Only this rejection branch computes the missing list, which the validated query bounds to at most 30 minutes. No
+additional feed, archive, database or broker request is made, and these diagnostics do not supply a replacement bar.
+Coverage is computed at the live logging boundary; decision failure facts and frozen replay report identities retain
+their original contents.
+
 Each worker logs `Kafka feature incorporated` for accepted features before join-history retention can discard them.
 Retries of retained semantic IDs do not create another receipt; deduplicate by epoch and feature ID when aggregating. The
 `bayn.feature-availability.v1` record binds the feature ID and Kafka coordinates to its actual local receipt time,
@@ -116,7 +134,36 @@ the session's expected windows so absent arrivals remain missing coverage rather
 
 Every 30 seconds, `Kafka market projection measurements` reports the queue high-water mark and observed depth,
 per-partition incorporated and sampled end offsets, raw quote/trade ages, current-window bar coverage, feature matches,
-and unmatched feature revisions. Offset lag is an exact decimal string and includes Kafka control-record positions;
+and unmatched feature revisions. `consumerSequence` counts records delivered to the incorporation owner, including
+ignored and rejected records; `sequence` counts unique incorporated coordinates. `consumerKnownRawBytes` sums exact
+Kafka value byte lengths before UTF-8 decoding, excluding keys, headers, compression and protocol overhead.
+`consumerUnknownRawByteLengthRecords` counts delivered non-tombstone records without a valid length; their sizes
+remain unknown. Tombstones contribute zero value bytes. These cumulative counters reset with each consumer epoch.
+Compute interval rates from counter differences within the same epoch and the actual `observedAtMs` difference.
+Thirty-second samples do not prove peak rates, continuity or original-session capture coverage. Payload lengths
+remain available with capture disabled; hashing and raw-byte retention run only when requested by the capture observer.
+
+The same periodic log includes `arrivalEnvelope` (`bayn.kafka-arrival-envelope.v1`). It reuses each record's existing
+incorporation-boundary millisecond timestamp and exact raw value length, keeping four fixed scalar accumulators for
+1, 10, 100 and 1000 ms bins. No payload, per-record log, additional clock sample or storage operation is added.
+Within the measured epoch, `maximumAlignedWindowRecords` is a lower bound on the largest count in any window of
+that width; `maximumWindowRecordsUpperBound` is the conservative upper bound from two adjacent aligned bins. The
+two values bracket the exact rolling maximum; the upper bound can overcount a boundary-spanning window. Known-byte
+lower bounds and complete raw-byte upper bounds follow the same rule. One unknown non-tombstone length makes every
+raw-byte upper bound null for that epoch. Tombstones count as one record and zero value bytes.
+`Kafka market projection arrival measurements finalized` emits the final measured prefix once when the consumer
+scope closes, including failed epochs that ended before their first periodic report. Finalization of this diagnostic
+does not assert successful consumer closure or complete source coverage.
+
+Clock regression, an invalid clock or unsafe counter arithmetic permanently invalidates the envelope and makes its
+upper bounds null, retaining only the measured prefix. The observer never changes projection or trading behavior.
+It resets with the consumer epoch, includes bootstrap and ignored/rejected records reaching the timestamp boundary,
+and does not sample records discarded before that boundary after invalidation. An empty epoch is no workload
+measurement. These observed bounds exclude keys, headers, framing, SQL metadata, replication and runtime memory;
+they neither predict future arrivals nor prove continuity, capture capacity or complete session coverage. Correlate
+them with same-operation object/SQL phase timings before choosing a bounded capacity workload.
+
+Offset lag is an exact decimal string and includes Kafka control-record positions;
 it is not a market-message count. A failed end-offset lookup produces null lag with allowlisted SDK and broker error
 codes; raw exception messages are omitted. Missing
 symbols have null event ages. These measurements describe input coverage; the existing snapshot, calendar, strategy,

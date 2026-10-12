@@ -1658,6 +1658,14 @@ class ForwarderApp(
     onCompletion: ((Exception?) -> Unit)? = null,
   ) {
     val delivery = kafkaDeliveryObservation(env, marketDataChannel)
+    // Kafka retains callbacks until delivery completes. Capture only the acknowledgement
+    // identity, never the decoded envelope/payload while the producer is backpressured.
+    val deliveredBar =
+      if (config.enableBarsBackfill && feed === coreMarketDataFeed && env.channel in listOf("bars", "updatedBars")) {
+        BarIdentity(env.symbol, env.eventTs)
+      } else {
+        null
+      }
     val payload = json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
     val start = System.nanoTime()
@@ -1669,9 +1677,7 @@ class ForwarderApp(
           metrics.kafkaSendErrors.increment()
           recordKafkaFailure(exception, topic, feed)
         } else {
-          if (config.enableBarsBackfill && feed === coreMarketDataFeed && env.channel in listOf("bars", "updatedBars")) {
-            barRecovery.recordDelivered(env.symbol, env.eventTs)
-          }
+          deliveredBar?.let { barRecovery.recordDelivered(it.symbol, it.eventAt) }
           metrics.recordKafkaProduceSuccess(topic)
           feed?.channelFreshness?.recordKafkaSuccess(
             delivery.channel,
@@ -2262,18 +2268,21 @@ internal fun isRegularMarketSession(
 fun main() =
   runBlocking {
     try {
-      val cfg = ForwarderConfig.fromEnv()
-      val app = ForwarderApp(cfg)
-      val health = HealthServer(app, cfg)
-      health.start()
-      val job = app.start()
-      Runtime.getRuntime().addShutdownHook(
-        Thread {
-          health.stop()
-          app.stop()
-        },
-      )
-      job.join()
+      observeJvmMetrics(Metrics.registry).use { jvmMetrics ->
+        val cfg = ForwarderConfig.fromEnv()
+        val app = ForwarderApp(cfg)
+        val health = HealthServer(app, cfg)
+        health.start()
+        val job = app.start()
+        Runtime.getRuntime().addShutdownHook(
+          Thread {
+            jvmMetrics.close()
+            health.stop()
+            app.stop()
+          },
+        )
+        job.join()
+      }
     } catch (e: Exception) {
       logger.error(e) { "forwarder failed to start" }
       exitProcess(1)

@@ -47,6 +47,15 @@ performance counters against the manager's inventory of up OSDs.
 
 ## Diagnose the bottleneck
 
+The objectstore gateways use Beast with `tcp_nodelay=1` through `gateway.rgwCommandFlags.rgw_frontends` in
+`argocd/applications/rook-ceph/cluster-values.yaml`. The explicit frontend retains Rook's existing container port
+8080 behind Service port 80; update that override when changing gateway listeners. Ceph's
+[frontend option](https://docs.ceph.com/en/tentacle/radosgw/frontends/#tcp-nodelay) disables Nagle's packet batching.
+Compare exact-byte S3 readback's response-header and body-completion times before and after rollout. A short successful
+read does not qualify sustained original capture capacity or resolve slow backend PUT acknowledgement. Preserve the
+native write deadline and unknown-outcome handling. Rook rolls the two gateways one at a time; verify both effective
+frontend arguments, ready endpoints, existing client writes and fresh telemetry before accepting the change.
+
 The recording rules use seconds, ratios, and queue depth, not milliseconds or percentages. Useful queries are:
 
 ```promql
@@ -75,14 +84,21 @@ or negative link speeds produce no utilization ratio. Weighted disk I/O time est
 disk busy time alone does not establish saturation on a parallel NVMe device.
 
 Correlate `node` with `ceph osd metadata` before attributing an OSD to an HDD or its shared NVMe DB device.
-Do not infer per-application latency from a shared OSD metric. Existing pod-level RBD I/O series identify noisy
-clients; application histograms or a separately authorized disposable-PVC benchmark establish application tails.
+Do not infer per-application latency from a shared OSD metric. The host agent retains kernel `rbd` device counters
+alongside physical disks under `job="node-storage"`. These identify client-volume work after mapping the device to a PVC.
+Resolve the PVC's PV and its CSI `volumeAttributes.imageName`, then match that image to the host's
+`/sys/bus/rbd/devices/*/name` and `block/rbd*`. The agent's read-only sysfs mount exposes these paths under `/host/sys`.
+Archive that mapping with a timestamp during each session and after a remount; `rbd` device numbers are temporary.
+Keep client RBD and physical OSD disk measurements separate when calculating totals. Correlate the SQL trace's
+backend PID and lifetime with PostgreSQL waits for a specific stall. Application histograms or a separately authorized
+disposable-PVC benchmark establish application tails; block counters remain sampled storage context.
 
 ## Remove stale recovery overrides
 
 Ceph's monitor configuration database is persistent. Removing an entry from GitOps is not proof that an old live
 override has disappeared. The normal source configuration deliberately omits the five keys below. The mClock
-profile remains `high_client_ops`, with the measured per-OSD IOPS values unchanged.
+profile remains `custom`, with the measured per-OSD IOPS values unchanged. Preserve the committed scheduler shares and
+scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
 
 Before the one-time authorized cleanup, save the relevant rows from `ceph config dump -f json` and each OSD's
 effective configuration outside Git. Require `HEALTH_OK`, all OSDs up/in, and all PGs active+clean with no recovery,
@@ -103,7 +119,7 @@ values are `osd_mclock_override_recovery_settings=false`, `osd_recovery_max_acti
 `osd_recovery_max_active_hdd=3`, `osd_max_backfills=1`, and `osd_scrub_sleep=0`.
 The zero generic recovery value selects the media-specific defaults; it does not disable recovery.
 
-The scrub window remains 08:00-12:00 UTC with `osd_max_scrubs=1`. mClock disables `osd_scrub_sleep`, so retaining
+Scrubs remain eligible all day with `osd_max_scrubs=3`. mClock disables `osd_scrub_sleep`, so retaining
 `0.1` would misrepresent the effective behavior. Removing these overrides is configuration hygiene, not a claim of
 measured throughput gain. Do not alter IOPS capacities without a separately controlled calibration.
 

@@ -80,7 +80,11 @@ the cluster template first installs an explicit `RegistryMirrorConfig` whose `na
 reference host, including port. Talos honors that mirror for its own installer pull as well as containerd pulls. A
 direct pull of the same host without the mirror defaults to HTTPS and is not an equivalent test.
 
-Never commit the raw or rendered templates. Delete both temporary files after the operation. Follow the current
+Never commit the raw or rendered templates. Delete both temporary files after the operation.
+Do not print full machine configurations or Omni's `redactedcurrentmachineconfig` field. Extension environment
+values can still contain credentials. Select only the network or status fields needed for the check.
+
+Follow the current
 [Talos 1.14 and Kubernetes 1.37 release procedure](../releases/README.md) for preflight, runtime proof, and recovery.
 `docs/runbooks/talos-latest-upgrade-plan.md` retains historical evidence and the referenced hardware-recovery procedures.
 
@@ -92,6 +96,24 @@ trigger an immediate trim. After initial enablement, run one filesystem trim aga
 scratch volume and verify completed discards, runner startup, and CI behavior.
 
 ## PodCIDR maintenance checks
+
+The cluster-wide `30-galactic-neighbor-cache` patch sets the IPv4 neighbor garbage-collection thresholds to
+4,096 / 8,192 / 16,384 entries. The 1,024-entry kernel maximum was exhausted on Turin after the pod-density increase,
+causing `arp_cache: neighbor table overflow!`, DNS send errors, and intermittent application connections. The higher
+thresholds retain headroom for the host and pod network namespaces. They do not change routes or MTUs.
+
+Apply this patch through the secret-safe render, validate, dry-run, and Omni sync procedure above. It is a live sysctl
+change: validate the full resulting machine configurations and require a Talos `--mode no-reboot --dry-run` to accept
+only these three settings before syncing. Verify `/proc/sys/net/ipv4/neigh/default/gc_thresh{1,2,3}` on all three hosts,
+then sample `/proc/net/stat/arp_cache` before and after DNS and application checks. Its `entries` value is repeated on
+each CPU row; take one value rather than summing it. Sum per-CPU `table_fulls` counters and require no new events.
+Exercise A and AAAA queries through both CoreDNS endpoints and the DNS Service from existing pods, then verify the
+affected application path. Pod readiness and one successful lookup do not establish recovery. A rollback restores
+the previous thresholds through the same Omni workflow and can reproduce the outage while neighbor demand is high.
+
+The [100G pod routes](../network/pod-100g-routing.md) depend on the exact current PodCIDRs. Before any Node
+re-registration, update those routes and their source rules with the replacement allocation. Run
+`python3 devices/galactic/network/verify-pod-routing.py --preflight` before a network sync.
 
 Turin and Altra have re-registered with distinct `/23` PodCIDRs. The template sets both to `maxPods: 500` and requests
 `/23` allocations for newly registered Nodes. Apply each target's 500-pod cap through the render, validate, dry-run,

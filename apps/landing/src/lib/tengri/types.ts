@@ -1,4 +1,5 @@
 import type { TengriCodexOptions } from './codex-models'
+import type { TengriPowerSettings } from './schemas'
 
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
@@ -18,20 +19,20 @@ export type TengriCondition = {
 
 export type TengriAgent = {
   id: string
+  uid: string
   displayName: string
   phase: AgentPhase
   architecture: AgentArchitecture
   cpuMillis: number
   memoryMib: number
   workspaceGib: number
+  power: TengriPowerSettings
   nodeName: string
   message: string
   createdAt: string
   readyAt: string
   lastActivityAt: string
   idleDeadline: string
-  expiresAt: string
-  pendingImage?: string
   conditions: TengriCondition[]
 }
 
@@ -153,6 +154,7 @@ export type TengriAction =
   | { action: 'delete-agent'; agentId: string }
   | { action: 'sleep-agent'; agentId: string }
   | { action: 'resume-agent'; agentId: string }
+  | { action: 'update-power-settings'; agentId: string; power: TengriPowerSettings }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
   | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }
@@ -199,5 +201,6 @@ export type TengriAction =
     }
   | { action: 'preview-session'; agentId: string; port: number; path: string; fragment: string }
   | { action: 'editor-session'; agentId: string; windowId: string }
+  | { action: 'browser-session'; agentId: string }
   | { action: 'revoke-editor-sessions' }
   | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken?: string }

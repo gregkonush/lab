@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Result, Schema } from 'effect'
+import { Clock, Result, Schema } from 'effect'
 
 import { maximumConsistencyDelayMs } from '../execution/mutations'
 import {
@@ -35,7 +35,7 @@ import {
   type ResearchCaptureEvent,
   type ResearchCaptureObserver,
 } from '../research-capture/capture'
-import { strictParseOptions } from '../schemas'
+import { Sha256Schema, strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 
 const stateKey = 'controller'
@@ -127,7 +127,28 @@ interface ExecutionAdvanceFailureDiagnostic {
   readonly failureTag: string
 }
 
+const executionAdvanceFailureMetadataKey = 'bayn.execution-advance-failure.v1'
+const FailureLabelSchema = Schema.NonEmptyString.check(Schema.isMaxLength(80))
+const ExecutionAdvanceFailureDiagnosticSchema = Schema.fromJsonString(
+  Schema.Struct({
+    failureCauseCategory: Schema.optionalKey(FailureLabelSchema),
+    failureCauseOperation: Schema.optionalKey(FailureLabelSchema),
+    failureCauseTag: Schema.optionalKey(FailureLabelSchema),
+    failureFingerprint: Sha256Schema,
+    failureMessage: Schema.NonEmptyString.check(Schema.isMaxLength(240)),
+    failureOperation: FailureLabelSchema,
+    failureTag: FailureLabelSchema,
+  }),
+)
+
 const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFailureDiagnostic => {
+  if (cause instanceof restate.TerminalError) {
+    const retained = Schema.decodeUnknownResult(
+      ExecutionAdvanceFailureDiagnosticSchema,
+      strictParseOptions,
+    )(cause.metadata?.[executionAdvanceFailureMetadataKey])
+    if (Result.isSuccess(retained)) return retained.success
+  }
   const candidate =
     typeof cause === 'object' && cause !== null
       ? (cause as {
@@ -148,7 +169,9 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
         })
       : undefined
   const knownTag =
-    candidate?._tag === 'TransientExecutionFailure' || candidate?._tag === 'NativeExecutionRuntimeError'
+    candidate?._tag === 'TransientExecutionFailure' ||
+    candidate?._tag === 'NativeExecutionRuntimeError' ||
+    candidate?._tag === 'OperationalError'
       ? candidate._tag
       : undefined
   const failureTag =
@@ -159,9 +182,11 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
       ? candidate.operation.slice(0, 80)
       : 'unclassified'
   const failureMessage =
-    knownTag !== undefined && typeof candidate?.message === 'string'
-      ? candidate.message.slice(0, 240)
-      : 'execution advance rejected with an unclassified failure'
+    knownTag === 'OperationalError'
+      ? 'execution advance rejected an operational check'
+      : knownTag !== undefined && typeof candidate?.message === 'string'
+        ? candidate.message.slice(0, 240)
+        : 'execution advance rejected with an unclassified failure'
   const fingerprintMaterial =
     cause instanceof Error
       ? `${cause.name}:${cause.message}:${cause.stack ?? ''}`
@@ -177,6 +202,18 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
     failureOperation,
     failureTag,
   }
+}
+
+/** Restate records failures as TerminalError; preserve bounded domain diagnostics before the durable boundary. */
+const executionAdvanceRunFailure = (cause: unknown): unknown => {
+  const failure = executionAdvanceFailureDiagnostic(cause)
+  if (!['TransientExecutionFailure', 'NativeExecutionRuntimeError', 'OperationalError'].includes(failure.failureTag)) {
+    return cause
+  }
+  return new restate.TerminalError(failure.failureMessage, {
+    errorCode: cause instanceof restate.TerminalError ? cause.code : 500,
+    metadata: { [executionAdvanceFailureMetadataKey]: JSON.stringify(failure) },
+  })
 }
 
 type ControllerObjectState = { readonly controller: ExecutionControllerState }
@@ -352,19 +389,19 @@ const scheduleTick = (
   capture?: ResearchCaptureObserver,
 ): void => {
   let idempotencyKey: string
-  if (sourceCatchUpRevision !== undefined) {
-    idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
-      state.epoch,
-      state.nextSequence,
-      attempt,
-      sourceCatchUpRevision,
-    )
-  } else if (retryWindowHash !== undefined) {
+  if (retryWindowHash !== undefined) {
     idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
       state.epoch,
       state.nextSequence,
       attempt,
       retryWindowHash,
+    )
+  } else if (sourceCatchUpRevision !== undefined) {
+    idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
+      state.epoch,
+      state.nextSequence,
+      attempt,
+      sourceCatchUpRevision,
     )
   } else {
     idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
@@ -434,6 +471,7 @@ export const makeBaynExecutionController = (
   config: ExecutionControllerConfig & { readonly activationAuthorizationHash: string },
   runtime: NativeExecutionRuntime,
   hooks: readonly restate.HooksProvider[] = [],
+  transportClock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
   const capture = runtime.capture
   type PassReceipt = Extract<ResearchCaptureEvent, { readonly kind: 'controller-pass' }>
@@ -492,10 +530,9 @@ export const makeBaynExecutionController = (
               planHash: decision.state.planHash,
               sourceRevision: decision.state.sourceRevision,
             })
-          } else if (decision.state.sourceRevision !== config.sourceRevision) {
-            // A plan-compatible worker revision normally inherits the already-scheduled next tick. If that delivery
-            // was paused or cancelled, replaying activation is the only durable recovery signal available. Sending
-            // the current sequence again is safe because its Restate idempotency key is deterministic.
+          } else {
+            // A new activation must wake a delayed controller even on the same revision. Bind the probe to this
+            // invocation so a previous exhausted probe cannot deduplicate an explicit recovery attempt.
             scheduleTick(
               ctx,
               decision.state,
@@ -503,11 +540,11 @@ export const makeBaynExecutionController = (
               0,
               undefined,
               config.sourceRevision,
-              undefined,
+              sha256(ctx.request().id),
               undefined,
               capture,
             )
-            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller scheduled a source catch-up pass', {
+            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller scheduled an activation recovery pass', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
               invocationId: ctx.request().id,
@@ -564,10 +601,14 @@ export const makeBaynExecutionController = (
           try {
             stepResult = await ctx.run(
               'advance Bayn execution once',
-              () => {
+              async () => {
                 runtimeAttempted = true
                 capturePass(ctx, tick, 'STARTED', { commandIssuedAt: decision.command.issuedAt, runtimeAttempted })
-                return runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
+                try {
+                  return await runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
+                } catch (cause) {
+                  throw executionAdvanceRunFailure(cause)
+                }
               },
               executionControllerAdvanceRunOptions,
             )
@@ -699,17 +740,16 @@ export const makeBaynExecutionController = (
             runtimeAttempted,
           })
           if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
-          scheduleTick(
-            ctx,
-            completed,
-            result.outcome.nextDelayMs,
-            0,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            capture,
-          )
+          // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
+          // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
+          // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
+          const scheduleAt =
+            result.outcome.nextWakeAt === undefined ? undefined : transportClock.currentTimeMillisUnsafe()
+          const completionDelay =
+            completed.nextDueAt === undefined || scheduleAt === undefined
+              ? result.outcome.nextDelayMs
+              : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
+          scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined, capture)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             controllerKey: ctx.key,
             epoch: completed.epoch,
@@ -812,10 +852,14 @@ export const makeBaynExecutionController = (
           )
             throw terminal('execution controller deployment activation requires a fresh published broker observation')
           const activation = bindDeploymentActivation(activationState ?? null, request, config)
+          const completionBinding = {
+            ...activation,
+            firstSequence: Math.max(activation.firstSequence, state?.nextSequence ?? 0),
+          }
           let activated: ExecutionControllerState | null = await client.activate(activation)
           const maximumAttempts = executionControllerDeploymentCompletionMaximumAttempts(config.operationTimeoutMs)
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-            if (executionControllerSuccessorPassCompleted(activated, activation)) return activated
+            if (executionControllerSuccessorPassCompleted(activated, completionBinding)) return activated
             if (attempt === maximumAttempts) {
               throw terminal(
                 'execution controller deployment activation did not observe a completed durable successor pass',

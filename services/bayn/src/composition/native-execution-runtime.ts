@@ -49,8 +49,13 @@ import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../resta
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'
-import { AutonomousWorkerApplicationResourcesLive, ExecutionControllerStatusResourceLive } from './resources'
-import { makeResearchCaptureSession } from '../research-capture/session'
+import {
+  AutonomousWorkerApplicationResourcesLive,
+  ExecutionControllerStatusResourceLive,
+  WorkerMarketProjectionLive,
+} from './resources'
+import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+import { makeResearchCaptureSession, type ResearchCaptureSession } from '../research-capture/session'
 import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
@@ -344,6 +349,9 @@ const replayProjectedAdvance = (
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
         nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
+        ...(status.lastPass?.result === 'SUCCESS' && status.lastPass.nextWakeAt !== undefined
+          ? { nextWakeAt: status.lastPass.nextWakeAt }
+          : {}),
       },
     }),
     projectionFailure,
@@ -404,7 +412,11 @@ const advanceAndProject = (
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
-          nextDelayMs: outcome.nextDelayMs,
+          nextDelayMs:
+            outcome.nextWakeAt === undefined
+              ? outcome.nextDelayMs
+              : Math.min(outcome.nextDelayMs, Math.max(1, Date.parse(outcome.nextWakeAt) - Date.parse(completedAt))),
+          ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
         },
       }),
     ),
@@ -421,7 +433,7 @@ const advanceAndProject = (
           lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,
           completedAt,
-          nextDueAt: new Date(Date.parse(completedAt) + outcome.nextDelayMs).toISOString(),
+          nextDueAt: new Date(Date.parse(completedAt) + step.outcome.nextDelayMs).toISOString(),
           lastPass: outcome.observation,
         })
         .pipe(
@@ -660,6 +672,18 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   }
 }
 
+export const prewarmNativeMarketProjection = <E, R>(
+  capture: ResearchCaptureSession | undefined,
+  projection: Layer.Layer<KafkaMarketProjection, E, R>,
+) =>
+  // A configured capture retains its existing lazy recorder/consumer ownership and bootstrap evidence.
+  capture !== undefined
+    ? Effect.succeed(null)
+    : Layer.build(projection).pipe(
+        Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+        Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
+      )
+
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   previousBinding?: ExecutionControllerBinding,
@@ -682,15 +706,16 @@ export const acquireNativeExecutionRuntime = (
         : undefined
     if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
       yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
-    const sharedResources = Layer.mergeAll(
-      AutonomousWorkerApplicationResourcesLive(plan, capture),
+    const prewarmedProjection = yield* prewarmNativeMarketProjection(capture, WorkerMarketProjectionLive(plan))
+    const sharedResources = Layer.merge(
+      AutonomousWorkerApplicationResourcesLive(plan, capture, prewarmedProjection ?? undefined),
       ExecutionControllerStatusResourceLive(plan.config),
-      makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
-    )
+    ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
     const executionResources = Layer.merge(
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
+    // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
     // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
     // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
