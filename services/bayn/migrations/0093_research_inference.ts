@@ -23,6 +23,12 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX research_inference_receipts_pending ON research_inference_receipts (run_id) WHERE verified_at IS NULL`
   yield* sql`CREATE FUNCTION verify_research_expense_once() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
+      IF TG_OP = 'INSERT' THEN
+        IF NEW.verified_at IS NOT NULL THEN
+          RAISE EXCEPTION 'research receipt must start expense-unverified';
+        END IF;
+        RETURN NEW;
+      END IF;
       IF OLD.verified_at IS NOT NULL OR NEW.verified_at IS NULL OR
         ROW(NEW.run_id, NEW.receipt_hash, NEW.payload, NEW.created_at) IS DISTINCT FROM
         ROW(OLD.run_id, OLD.receipt_hash, OLD.payload, OLD.created_at) THEN
@@ -31,7 +37,7 @@ export default Effect.gen(function* () {
       RETURN NEW;
     END;
   $$`
-  yield* sql`CREATE TRIGGER research_inference_receipts_verify_once BEFORE UPDATE ON research_inference_receipts
+  yield* sql`CREATE TRIGGER research_inference_receipts_verify_once BEFORE INSERT OR UPDATE ON research_inference_receipts
     FOR EACH ROW EXECUTE FUNCTION verify_research_expense_once()`
   yield* sql`CREATE TRIGGER research_inference_runs_immutable BEFORE UPDATE OR DELETE ON research_inference_runs
     FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()`

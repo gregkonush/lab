@@ -42,6 +42,27 @@ integration('research attempt durability with real PostgreSQL', () => {
   afterAll(async () => {
     if (runtime !== undefined) await runtime.dispose()
   })
+  test('rejects a receipt inserted as already expense-verified', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const run = { ...researchFixture(), attempt: 3 }
+        const runId = Result.getOrThrow(hashResearch(run))
+        yield* makeResearchStore(sql).claim(runId, run)
+        const receiptHash = '9'.repeat(64)
+        const payload = {
+          schemaVersion: 'bayn.research-receipt.v1',
+          runId,
+          receiptHash,
+          qualification: 'UNQUALIFIED',
+        }
+        const inserted = yield* sql`INSERT INTO research_inference_receipts (run_id, receipt_hash, payload, verified_at)
+          VALUES (${runId}, ${receiptHash}, ${sql.json(payload)}, transaction_timestamp())`.pipe(Effect.result)
+        expect(Result.isFailure(inserted)).toBe(true)
+        expect(yield* makeResearchStore(sql).read(runId)).toBeUndefined()
+      }),
+    )
+  })
   test('replays a retained receipt without inference and never resends a claimed crash tail', async () => {
     let calls = 0
     const model = Bun.serve({
