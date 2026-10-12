@@ -18,27 +18,34 @@ type Client = proto::nanoagent_service_client::NanoagentServiceClient<Channel>;
 pub struct RpcClient {
     client: Client,
     authorization: MetadataValue<tonic::metadata::Ascii>,
+    claim: Option<crate::slot::Claim>,
 }
 
 impl RpcClient {
-    pub fn new(address: &str, token: &str) -> Result<Self, GuestError> {
-        let endpoint = Channel::from_shared(address.to_owned())
-            .map_err(|_| GuestError::Api {
-                status: StatusCode::BAD_GATEWAY,
-                message: "Invalid Nanoagent address".into(),
-            })?
-            .connect_timeout(GUEST_CONNECT_TIMEOUT);
+    pub fn new(channel: Channel, token: &str) -> Result<Self, GuestError> {
         let authorization =
             MetadataValue::try_from(format!("Bearer {token}")).map_err(|_| GuestError::Api {
                 status: StatusCode::UNAUTHORIZED,
                 message: "Invalid Nanoagent credentials".into(),
             })?;
         Ok(Self {
-            client: Client::new(endpoint.connect_lazy())
+            client: Client::new(channel)
                 .max_decoding_message_size(MAX_GUEST_JSON_BYTES)
                 .max_encoding_message_size(MAX_GUEST_JSON_BYTES),
             authorization,
+            claim: None,
         })
+    }
+
+    #[cfg(test)]
+    pub fn fixture(address: &str, token: &str) -> Result<Self, GuestError> {
+        Self::new(
+            Channel::from_shared(address.to_owned())
+                .map_err(anyhow::Error::from)?
+                .connect_timeout(GUEST_CONNECT_TIMEOUT)
+                .connect_lazy(),
+            token,
+        )
     }
 
     fn request<T>(&self, value: T, timeout: Option<Duration>) -> Request<T> {
@@ -46,13 +53,23 @@ impl RpcClient {
         request
             .metadata_mut()
             .insert("authorization", self.authorization.clone());
+        if let Some(claim) = &self.claim {
+            request.metadata_mut().insert(
+                crate::slot::supervisor::CLAIM_UID_HEADER,
+                claim.microvm_uid.parse().expect("validated claim UID"),
+            );
+            request.metadata_mut().insert(
+                crate::slot::supervisor::CLAIM_EPOCH_HEADER,
+                claim.epoch.to_string().parse().expect("numeric epoch"),
+            );
+        }
         if let Some(timeout) = timeout {
             request.set_timeout(timeout);
         }
         request
     }
 
-    pub async fn verify_identity(&self, agent_id: &str) -> Result<(), GuestError> {
+    pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {
         let info = self
             .client
             .clone()
@@ -64,17 +81,21 @@ impl RpcClient {
                 } else { rpc_error(error) }
             })?
             .into_inner();
-        if info.microvm_id != agent_id {
+        if info.microvm_id != pod_uid {
             return Err(GuestError::Api {
                 status: StatusCode::BAD_GATEWAY,
-                message: "Nanoagent identity does not match the requested MicroVM".into(),
+                message: "Nanoagent identity does not match the current guest Pod".into(),
             });
         }
-        if info.protocol_version != 1 {
+        if info.protocol_version != 2 {
             return Err(GuestError::Api { status: StatusCode::BAD_GATEWAY,
                 message: "Nanoagent uses an unsupported guest protocol version. Sleep and resume the agent to use the current guest image.".into() });
         }
         Ok(())
+    }
+
+    pub fn bind_claim(&mut self, claim: crate::slot::Claim) {
+        self.claim = Some(claim);
     }
 
     pub async fn open_editor(&self) -> Result<(), GuestError> {
@@ -89,6 +110,22 @@ impl RpcClient {
             return Err(GuestError::Api {
                 status: StatusCode::BAD_GATEWAY,
                 message: "Nanoagent returned an unexpected editor port".into(),
+            });
+        }
+        Ok(())
+    }
+    pub async fn open_browser(&self) -> Result<(), GuestError> {
+        let result = self
+            .client
+            .clone()
+            .open_browser(self.request(proto::Empty {}, Some(Duration::from_secs(300))))
+            .await
+            .map_err(rpc_error)?
+            .into_inner();
+        if result.port != u32::from(BROWSER_PORT) {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message: "Nanoagent returned an unexpected browser port".into(),
             });
         }
         Ok(())
@@ -322,7 +359,7 @@ impl RpcClient {
             .map_err(rpc_error)?;
         Ok(())
     }
-    pub(super) async fn codex_call(
+    pub(crate) async fn codex_call(
         &self,
         method: &str,
         params: Value,

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 
+import { Glob } from 'bun'
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
 
@@ -106,7 +107,11 @@ const criteriaExpression = (mode: FreightCriteria, images: readonly string[], fr
   return clauses[0] ?? ''
 }
 
-const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = gitRepo): string => {
+const receiptCriteriaExpression = (
+  images: readonly string[],
+  freightGitRepo: string,
+  sourceFromImage: boolean,
+): string => {
   const receiptImage = images.length === 1 ? images[0] : images[1]
   if (!receiptImage) return ''
 
@@ -116,6 +121,13 @@ const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = g
     `${receipt}.Annotations['${buildRunIdAnnotation}'] != ''`,
     `${receipt}.Annotations['${buildConclusionAnnotation}'] == 'success'`,
   ]
+  const source = sourceFromImage
+    ? `${receipt}.Annotations['org.opencontainers.image.revision']`
+    : `commitFrom('${freightGitRepo}').ID`
+  if (sourceFromImage) {
+    clauses.push(`${source} != nil`, `${source} != ''`)
+    clauses.push(`${receipt}.Annotations['org.opencontainers.image.source'] == '${imageSourceRepo}'`)
+  }
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     const candidate = `imageFrom('${image}')`
     clauses.push(
@@ -124,7 +136,7 @@ const receiptCriteriaExpression = (images: readonly string[], freightGitRepo = g
     clauses.push(`${candidate}.Annotations['${buildConclusionAnnotation}'] == 'success'`)
   }
   clauses.push(
-    `${receipt}.Tag == 'kargo-sha-' + commitFrom('${freightGitRepo}').ID + '-run-' + ${receipt}.Annotations['${buildRunIdAnnotation}']`,
+    `${receipt}.Tag == 'kargo-sha-' + ${source} + '-run-' + ${receipt}.Annotations['${buildRunIdAnnotation}']`,
   )
   for (const image of images.filter((candidate) => candidate !== receiptImage)) {
     clauses.push(`imageFrom('${image}').Tag == ${receipt}.Tag`)
@@ -166,19 +178,27 @@ const expected = {
       'nix/toolchain-doctor.sh',
     ],
   },
-  rune: {
+  'temporal-worker': {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
     tagRegex: runQualifiedTagRegex,
-    images: [imageRepo('rune')],
-    apps: ['rune'],
+    images: [imageRepo('temporal-worker')],
+    apps: ['temporal'],
     includePaths: [
-      'services/rune',
-      '.github/workflows/rune-images.yml',
-      'argocd/applications/rune',
+      'services/temporal-worker',
+      '.github/workflows/temporal-worker-images.yml',
+      'argocd/applications/temporal',
       'argocd/applications/kargo',
       'argocd/applicationsets/platform.yaml',
+      'packages/scripts/src/shared/__tests__/kargo.test.ts',
     ],
+  },
+  'bayn-model': {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('bayn-model')],
+    apps: ['bayn-model'],
   },
   restate: {
     creationCriteria: 'single',
@@ -246,7 +266,7 @@ const expected = {
       'apps/landing',
       'packages/backend',
       'packages/design',
-      'services/tengri/proto',
+      'services/tengri',
       'nix/images/proompteng.nix',
       ...productImageCommonInputs,
       'argocd/applications/proompteng',
@@ -528,6 +548,7 @@ const expected = {
       'services/agents',
       'charts/agents/crds',
       'nix/images/agents.nix',
+      'nix/verify-agents-shell-image-lifecycle.sh',
       'nix/images/openai-codex-cli.nix',
       '.github/workflows/nix-oci-build-common.yml',
       'nix/oci-push.sh',
@@ -555,13 +576,12 @@ const expected = {
     images: [imageRepo('tengri'), imageRepo('nanoagent')],
     apps: ['tengri'],
     includePaths: [
+      'apps/landing',
       'services/tengri',
       'services/nanoagent',
       '.github/workflows/tengri-images.yml',
       'packages/scripts/src/tengri',
       'packages/scripts/src/shared/cli.ts',
-      'packages/scripts/package.json',
-      'bun.lock',
       'argocd/applications/tengri',
     ],
   },
@@ -649,6 +669,68 @@ describe('Kargo direct-push GitOps contract', () => {
         {
           vars: { imageRepo: imageRepo('torghut'), gitRepo },
           imageFrom: (repo: string) => images[repo],
+          commitFrom: () => ({ ID: filteredAncestor }),
+        },
+        { timeout: 100 },
+      ),
+    ).toBe(source)
+  })
+
+  it('promotes the tested Bayn model image revision after a stack ends beyond its last owned path', () => {
+    const source = '21c7541cea499b753c4003bab998ac1e2818239b'
+    const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
+    const run = '37271710194'
+    const warehouse = byName(warehouses).get('bayn-model')
+    const expression = warehouse?.spec?.freightCreationCriteria?.expression
+    const image = {
+      Tag: `kargo-sha-${source}-run-${run}`,
+      Annotations: {
+        'org.opencontainers.image.revision': source,
+        'org.opencontainers.image.source': imageSourceRepo,
+        [buildRunIdAnnotation]: run,
+        [buildConclusionAnnotation]: 'success',
+      },
+    }
+    const evaluate = (input: { Tag: string; Annotations: Record<string, string> }) =>
+      runInNewContext(
+        expression,
+        {
+          nil: undefined,
+          imageFrom: () => input,
+          commitFrom: () => ({ ID: filteredAncestor }),
+        },
+        { timeout: 100 },
+      )
+
+    expect(evaluate(image)).toBe(true)
+    expect(evaluate({ ...image, Tag: `kargo-sha-${filteredAncestor}-run-${run}` })).toBe(false)
+    for (const [key, value] of [
+      ['org.opencontainers.image.revision', filteredAncestor],
+      ['org.opencontainers.image.revision', ''],
+      ['org.opencontainers.image.source', 'https://github.com/other/repository'],
+      [buildRunIdAnnotation, '42'],
+      [buildRunIdAnnotation, ''],
+      [buildConclusionAnnotation, 'failure'],
+    ]) {
+      expect(evaluate({ ...image, Annotations: { ...image.Annotations, [key]: value } })).toBe(false)
+    }
+    for (const key of ['org.opencontainers.image.revision', buildRunIdAnnotation]) {
+      const annotations: Record<string, string> = { ...image.Annotations }
+      delete annotations[key]
+      expect(evaluate({ ...image, Annotations: annotations })).toBe(false)
+    }
+
+    const stage = byName(stages).get('bayn-model')
+    const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
+      (step: Record<string, any>) => step.uses === 'git-clone',
+    )
+    const sourceExpression = clone.config.checkout[0].commit.slice(3, -2).trim()
+    expect(
+      runInNewContext(
+        sourceExpression,
+        {
+          vars: { imageRepo: imageRepo('bayn-model'), gitRepo },
+          imageFrom: () => image,
           commitFrom: () => ({ ID: filteredAncestor }),
         },
         { timeout: 100 },
@@ -749,9 +831,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('points every enrolled Argo Application at its exact authorized Kargo branch', () => {
     const applications = new Map(applicationSetElements.map((element) => [element.name as string, element]))
-    const expectedApplications = Object.entries(expected)
-      .filter(([stageName]) => stageName !== 'hermes-toolchain')
-      .map(([, contract]) => contract)
+    const expectedApplications = Object.values(expected)
       .flatMap((contract) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
@@ -760,11 +840,7 @@ describe('Kargo direct-push GitOps contract', () => {
       .sort()
     expect(kargoApplications).toEqual(expectedApplications)
 
-    expect(applications.get('hermes')?.targetRevision).toBe('main')
-    expect(applications.get('hermes')?.annotations?.['kargo.akuity.io/authorized-stage']).toBeUndefined()
-
     for (const [stageName, contract] of Object.entries(expected)) {
-      if (stageName === 'hermes-toolchain') continue
       for (const applicationName of contract.apps) {
         expect(applications.get(applicationName)?.targetRevision).toBe(`kargo/${stageName}`)
         expect(applications.get(applicationName)?.annotations?.['kargo.akuity.io/authorized-stage']).toBe(
@@ -787,6 +863,7 @@ describe('Kargo direct-push GitOps contract', () => {
       const contract = expected[stageName as keyof typeof expected]
       const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
       const warehouse = warehouseMap.get(stageName)
+      const sourceFromImage = contract.creationCriteria === 'image-revision'
       expect(warehouse).toBeDefined()
       expect(warehouse?.metadata?.namespace).toBe('lab-delivery')
       expect(warehouse?.spec?.interval).toBe('1m0s')
@@ -797,14 +874,13 @@ describe('Kargo direct-push GitOps contract', () => {
       } else {
         const baseCriteria = criteriaExpression(contract.creationCriteria, contract.images, freightGitRepo)
         if ('requiresBuildReceipt' in contract && contract.requiresBuildReceipt) {
-          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo))
+          expect(criteria?.expression).toBe(receiptCriteriaExpression(contract.images, freightGitRepo, sourceFromImage))
         } else {
           expect(criteria?.expression).toBe(baseCriteria)
         }
       }
 
       const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
-      const sourceFromImage = contract.creationCriteria === 'image-revision'
       expect(subscriptions).toHaveLength(contract.images.length + (sourceFromImage ? 0 : 1))
       const git = subscriptions.find((subscription) => subscription.git)?.git
       if (sourceFromImage) {
@@ -869,14 +945,47 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('aligns Rune source discovery with both image build triggers', () => {
-    const warehouse = byName(warehouses).get('rune')
+  it('aligns Temporal worker source discovery with both image build triggers', () => {
+    const warehouse = byName(warehouses).get('temporal-worker')
     const sourcePaths = warehouse.spec.subscriptions.find((subscription: { git?: unknown }) => subscription.git).git
       .includePaths
-    const workflow = YAML.parse(readFileSync('.github/workflows/rune-images.yml', 'utf8'))
+    const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
       expect(sourcePaths).toEqual(buildPaths)
+    }
+  })
+
+  it('tests the exact pinned Bayn vLLM server used beside the promoted provisioner', () => {
+    const deployment = YAML.parse(readRepoFile('argocd/applications/bayn-model/deployment.yaml'))
+    const workflow = YAML.parse(readRepoFile('.github/workflows/bayn-model-images.yml'))
+    const servingContract = workflow.jobs.build.steps.find(
+      (step: { env?: { VLLM_IMAGE?: string } }) => step.env?.VLLM_IMAGE !== undefined,
+    )
+    expect(servingContract.env.VLLM_IMAGE).toBe(deployment.spec.template.spec.containers[0].image)
+    expect(deployment.spec.template.spec.initContainers[0].image).toBe(`${imageRepo('bayn-model')}:unpromoted`)
+    expect(deployment.spec.template.spec.containers[0].command).toEqual(['python3', '/opt/bayn-model/serve.py'])
+  })
+
+  it.each(['pull_request', 'push'])('limits Bayn model %s builds to its owned inputs', (event) => {
+    const workflow = YAML.parse(readRepoFile('.github/workflows/bayn-model-images.yml'))
+    const paths = workflow.on[event].paths.map((path: string) => new Glob(path))
+    const triggersBuild = (path: string) => paths.some((glob: Glob) => glob.match(path))
+
+    for (const path of [
+      'services/bayn-model/Dockerfile',
+      '.github/workflows/bayn-model-images.yml',
+      'argocd/applications/bayn-model/deployment.yaml',
+    ]) {
+      expect(triggersBuild(path), path).toBe(true)
+    }
+    for (const path of [
+      'argocd/applications/kargo/warehouses.yaml',
+      'argocd/applications/kargo/stages.yaml',
+      'argocd/applicationsets/platform.yaml',
+      'services/agents/src/server/agents-shell/runner.ts',
+    ]) {
+      expect(triggersBuild(path), path).toBe(false)
     }
   })
 
@@ -918,9 +1027,7 @@ describe('Kargo direct-push GitOps contract', () => {
 
     const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
-    for (const policy of projectPolicies) {
-      expect(policy.autoPromotionEnabled).toBe(policy.stageSelector?.name !== 'hermes-toolchain')
-    }
+    expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]
@@ -971,10 +1078,10 @@ describe('Kargo direct-push GitOps contract', () => {
       })
       expect(push?.config?.force).toBeUndefined()
 
-      if (['jangar', 'symphony', 'torghut'].includes(stageName)) {
+      if (['jangar', 'symphony', 'torghut', 'bayn-model'].includes(stageName)) {
         const commit = steps.find((step) => step.uses === 'git-commit')
         expect(commit?.config?.message).toContain(
-          stageName === 'torghut'
+          contract.creationCriteria === 'image-revision'
             ? "Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
             : 'Source commit: ${{ commitFrom(vars.gitRepo).ID }}',
         )
@@ -988,7 +1095,7 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(clone?.config?.checkout).toEqual([
         {
           commit:
-            stageName === 'torghut'
+            contract.creationCriteria === 'image-revision'
               ? "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}"
               : `\${{ commitFrom(vars.${freightRepoVariable}).ID }}`,
           path: '${{ vars.srcPath }}',
@@ -1005,7 +1112,7 @@ describe('Kargo direct-push GitOps contract', () => {
               ? '1h15m0s'
               : ['forgejo', 'devbox'].includes(stageName)
                 ? '45m0s'
-                : stageName === 'rune'
+                : stageName === 'bayn-model'
                   ? '4h0m0s'
                   : '20m0s',
         errorThreshold: 3,
@@ -1110,6 +1217,14 @@ describe('Kargo direct-push GitOps contract', () => {
         expect.arrayContaining(keys),
       )
     }
+    expectYamlUpdate(
+      'arc-runner',
+      './out/argocd/applications/arc/application.yaml',
+      [1, 2, 3].flatMap((index) => [
+        `spec.sources.${index}.helm.valuesObject.template.spec.initContainers.0.image`,
+        `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`,
+      ]),
+    )
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [
       'spec.template.spec.containers.0.env.6.value',
     ])

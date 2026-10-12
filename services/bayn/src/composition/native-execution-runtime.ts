@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Option,
   Ref,
   Result,
   Scope,
@@ -15,7 +16,12 @@ import {
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
-import type { RetainedAutonomousCyclePassObservation } from '../cycle/runner/pass-observation'
+import {
+  maximumRetainedJevObservationReferences,
+  type RetainedAutonomousCyclePassObservation,
+} from '../cycle/runner/pass-observation'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { JevBatchStore } from '../jev/batch-evaluation'
 import {
   ExecutionControllerOutcome,
   ExecutionControllerStatusStore,
@@ -43,7 +49,14 @@ import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../resta
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
 import { makeAutonomousServiceRuntime } from './autonomous-runtime'
-import { AutonomousWorkerApplicationResourcesLive, ExecutionControllerStatusResourceLive } from './resources'
+import {
+  AutonomousWorkerApplicationResourcesLive,
+  ExecutionControllerStatusResourceLive,
+  WorkerMarketProjectionLive,
+} from './resources'
+import { KafkaMarketProjection } from '../market-data/streaming/kafka'
+import { makeResearchCaptureSession, type ResearchCaptureSession } from '../research-capture/session'
+import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -110,7 +123,69 @@ const bindRecoveryFirstCycleDriver = (
 ): Effect.Effect<BoundRecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.context<RecoveryFirstRuntime>().pipe(
     Effect.map((context) => ({
-      advance: Effect.provideContext(driver.advance, context),
+      advance: Effect.gen(function* () {
+        const hashes = new Set<string>()
+        let complete = true
+        const observe = <A, E, R>(effect: Effect.Effect<A, E, R>, reference: (value: A) => string | null) =>
+          effect.pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                try {
+                  if (Exit.isFailure(exit)) {
+                    complete = false
+                    return
+                  }
+                  const hash = reference(exit.value)
+                  if (hash === null) return
+                  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+                    complete = false
+                    return
+                  }
+                  if (hashes.has(hash)) return
+                  if (hashes.size === maximumRetainedJevObservationReferences) {
+                    complete = false
+                    return
+                  }
+                  hashes.add(hash)
+                } catch {
+                  // Evidence collection must not change the store result or trading behavior.
+                  complete = false
+                }
+              }),
+            ),
+          )
+        let observedContext = context
+        const observations = Context.getOption(context, CandidateObservationStore)
+        if (Option.isSome(observations)) {
+          const store = observations.value
+          observedContext = Context.add(observedContext, CandidateObservationStore, {
+            record: (observation) =>
+              observe(store.record(observation), () =>
+                observation.payload.schemaVersion === 'bayn.jev-observation.v1' ? observation.contentHash : null,
+              ),
+            latestJevWindowEnd: (input) => observe(store.latestJevWindowEnd(input), () => null),
+          })
+        } else complete = false
+        const batches = Context.getOption(context, JevBatchStore)
+        if (Option.isSome(batches)) {
+          const store = batches.value
+          observedContext = Context.add(observedContext, JevBatchStore, {
+            read: (batchId) =>
+              observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
+            pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
+            begin: (plan) => observe(store.begin(plan), (batch) => batch.plan.observationHash),
+            finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
+          })
+        } else complete = false
+        const advanced = yield* Effect.provideContext(driver.advance, observedContext)
+        return {
+          ...advanced,
+          observation: {
+            ...advanced.observation,
+            jevObservationReferences: { hashes: [...hashes].sort(), complete },
+          },
+        }
+      }),
       nextDelayMs: driver.nextDelayMs,
     })),
   )
@@ -274,6 +349,9 @@ const replayProjectedAdvance = (
         _tag: status.lastOutcome,
         receiptHash: status.lastReceiptHash,
         nextDelayMs: Date.parse(status.nextDueAt) - Date.parse(status.completedAt),
+        ...(status.lastPass?.result === 'SUCCESS' && status.lastPass.nextWakeAt !== undefined
+          ? { nextWakeAt: status.lastPass.nextWakeAt }
+          : {}),
       },
     }),
     projectionFailure,
@@ -334,7 +412,11 @@ const advanceAndProject = (
         outcome: {
           _tag: controllerOutcome(outcome._tag),
           receiptHash: outcome.receiptHash,
-          nextDelayMs: outcome.nextDelayMs,
+          nextDelayMs:
+            outcome.nextWakeAt === undefined
+              ? outcome.nextDelayMs
+              : Math.min(outcome.nextDelayMs, Math.max(1, Date.parse(outcome.nextWakeAt) - Date.parse(completedAt))),
+          ...(outcome.nextWakeAt === undefined ? {} : { nextWakeAt: outcome.nextWakeAt }),
         },
       }),
     ),
@@ -351,7 +433,7 @@ const advanceAndProject = (
           lastOutcome: controllerOutcome(outcome._tag),
           lastReceiptHash: outcome.receiptHash,
           completedAt,
-          nextDueAt: new Date(Date.parse(completedAt) + outcome.nextDelayMs).toISOString(),
+          nextDueAt: new Date(Date.parse(completedAt) + step.outcome.nextDelayMs).toISOString(),
           lastPass: outcome.observation,
         })
         .pipe(
@@ -590,6 +672,18 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   }
 }
 
+export const prewarmNativeMarketProjection = <E, R>(
+  capture: ResearchCaptureSession | undefined,
+  projection: Layer.Layer<KafkaMarketProjection, E, R>,
+) =>
+  // A configured capture retains its existing lazy recorder/consumer ownership and bootstrap evidence.
+  capture !== undefined
+    ? Effect.succeed(null)
+    : Layer.build(projection).pipe(
+        Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+        Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
+      )
+
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   previousBinding?: ExecutionControllerBinding,
@@ -598,15 +692,30 @@ export const acquireNativeExecutionRuntime = (
     const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
     const config: ExecutionControllerConfig =
       previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
-    const sharedResources = Layer.mergeAll(
-      AutonomousWorkerApplicationResourcesLive(plan),
+    const requestedCapture = yield* researchCaptureSessionConfig.pipe(Effect.result)
+    const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
+    const capture =
+      decodedCapture !== undefined && Result.isSuccess(decodedCapture)
+        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision).pipe(
+            Effect.catchCause(() =>
+              Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
+                Effect.as(undefined),
+              ),
+            ),
+          )
+        : undefined
+    if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
+      yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
+    const prewarmedProjection = yield* prewarmNativeMarketProjection(capture, WorkerMarketProjectionLive(plan))
+    const sharedResources = Layer.merge(
+      AutonomousWorkerApplicationResourcesLive(plan, capture, prewarmedProjection ?? undefined),
       ExecutionControllerStatusResourceLive(plan.config),
-      makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
-    )
+    ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
     const executionResources = Layer.merge(
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
     )
+    // Kafka is independently supervised in the server scope; bootstrap readiness still gates signal reads.
     // Bootstrap publishes the independent broker observation before activating this lazy execution driver.
     // Endpoint registration itself neither acquires trading state nor grants execution authority.
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
@@ -618,14 +727,12 @@ export const acquireNativeExecutionRuntime = (
     const logManaged = yield* ownManagedRuntime(
       ManagedRuntime.make(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
     )
-    return {
-      config,
-      runtime: makeRecoveringManagedNativeExecutionRuntimeAdapter(
-        managed,
-        executionResources,
-        projectionManaged,
-        logManaged,
-        config.planHash,
-      ),
-    }
+    const runtime = makeRecoveringManagedNativeExecutionRuntimeAdapter(
+      managed,
+      executionResources,
+      projectionManaged,
+      logManaged,
+      config.planHash,
+    )
+    return { config, runtime: capture === undefined ? runtime : { ...runtime, capture: capture.observer } }
   })

@@ -279,8 +279,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = "sha256-UWRGuYz1BvRO9oOfal83Cmuc2cFNmYXqdia2zdo4BWc=";
-    aarch64-linux = "sha256-09vbtE1Q3IkbOErjZGDlQ4PGqUa166xZGfjyNfiUMDg=";
+    x86_64-linux = "sha256-fMphknoA/YqMV+dVSwMqmr26uz7EgNAO6C3zae2rJOU=";
+    aarch64-linux = "sha256-+dMRQyNVFtJX4R+Y4xQHzESLVFmCDreEtVXWe75rd+Q=";
   };
 
   installFilters = [
@@ -369,13 +369,14 @@ let
 
     linkBunIsolatedPackage() {
       local package_name="$1"
-      local target_path="$2"
+      local package_version="$2"
+      local target_path="$3"
       local package_path
       local relative_package_path
 
-      package_path="$(find "$out/app/node_modules/.bun" -path "*/node_modules/$package_name" -type d -print -quit)"
-      if [ -z "$package_path" ]; then
-        echo "Bun isolated package not found in runtime image: $package_name" >&2
+      package_path="$out/app/node_modules/.bun/$package_name@$package_version/node_modules/$package_name"
+      if [ ! -d "$package_path" ]; then
+        echo "Bun isolated package not found in runtime image: $package_name@$package_version" >&2
         exit 1
       fi
       relative_package_path="$(realpath --relative-to="$(dirname "$target_path")" "$package_path")"
@@ -401,7 +402,12 @@ let
       "$out/app/services/agents/scripts/agents-shell-entrypoint.sh" \
       "$out/app/services/agents/scripts/install-agents-shell-pstack.sh"
     mkdir -p "$out/app/packages/agent-contracts/node_modules"
-    linkBunIsolatedPackage "effect" "$out/app/packages/agent-contracts/node_modules/effect"
+    contracts_effect_version="$(bun -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).dependencies.effect)' "$out/app/packages/agent-contracts/package.json")"
+    linkBunIsolatedPackage "effect" "$contracts_effect_version" "$out/app/packages/agent-contracts/node_modules/effect"
+    bun -e 'const fs = require("node:fs"); const root = process.argv[1]; const expected = JSON.parse(fs.readFileSync(root + "/package.json", "utf8")).dependencies.effect; const actual = JSON.parse(fs.readFileSync(root + "/node_modules/effect/package.json", "utf8")).version; if (actual !== expected) throw new Error("agent-contracts Effect runtime mismatch")' "$out/app/packages/agent-contracts"
+    bun "$out/app/packages/temporal-bun-sdk/scripts/verify-promise-consumer.ts" \
+      "$out/app/services/agents" --compiled
+    bun "$out/app/services/agents/scripts/verify-built-server.ts" "$out/app/services/agents"
   '';
 
   scriptWrapper =
@@ -435,7 +441,16 @@ let
     yq
   ] ++ cxTools;
 
+  # Repo-installed CLI shims commonly use #!/usr/bin/env. Nix store PATH entries alone
+  # do not provide the absolute interpreter path required by the kernel.
+  agentsShellInterpreterCompat = pkgs.runCommand "agents-shell-interpreter-compat" { } ''
+    mkdir -p "$out/usr/bin"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+    "$out/usr/bin/env" --version >/dev/null
+  '';
+
   agentsShellContents = commonContents ++ [
+    agentsShellInterpreterCompat
     applyPatch
     pstackBundle
     pkgs.gh
@@ -443,6 +458,7 @@ let
     pkgs.procps
     pkgs.python3
     pkgs.ripgrep
+    pkgs.tini
     pkgs.uv
     pkgs.wget
   ];
@@ -660,6 +676,9 @@ in
     serviceName = "agents-shell";
     imageName = "agents-shell";
     command = [
+      "tini"
+      "-g"
+      "--"
       "bash"
       "./scripts/agents-shell-entrypoint.sh"
     ];
@@ -669,7 +688,7 @@ in
       "AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true"
       "AGENTS_RUNTIME_SERVICE=agents-shell"
       "AGENTS_SHELL_WORKSPACE_ROOT=/workspace"
-      "AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl"
+      "AGENTS_SHELL_AUDIT_LOG_PATH="
       "AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai"
       "AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master"
       "AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents"

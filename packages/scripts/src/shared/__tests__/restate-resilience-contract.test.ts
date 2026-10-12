@@ -12,7 +12,13 @@ test('Restate image promotion requires both native fault proofs and uploaded rel
   const publish = workflow.jobs.publish
   const mainOnly = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
   expect(workflow.on.push.branches).toEqual(['main'])
-  expect(workflow.on.pull_request.paths).toEqual(workflow.on.push.paths)
+  expect(workflow.on.pull_request.paths).toEqual([
+    '.github/actions/affected-inputs/**',
+    'packages/scripts/src/ci/**',
+    ...workflow.on.push.paths,
+  ])
+  expect(build.needs).toBe('changes')
+  expect(build.if).toBe("needs.changes.outputs.changed == 'true'")
   expect(build.strategy.matrix.include.map((entry: { architecture: string }) => entry.architecture).sort()).toEqual([
     'amd64',
     'arm64',
@@ -89,10 +95,21 @@ test('Restate cluster preserves the 1.7.9 storage contract while Kargo owns runt
   expect(env.get('RESTATE_WORKER__STORAGE__ALWAYS_COMMIT_IN_BACKGROUND')).toBe('true')
   expect(statefulSet.spec.template.spec.terminationGracePeriodSeconds).toBe(90)
   expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].topologyKey).toBe('kubernetes.io/hostname')
-  expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('DoNotSchedule')
+  expect(statefulSet.spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable).toBe('ScheduleAnyway')
   expect(
     statefulSet.spec.template.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution,
-  ).toHaveLength(1)
+  ).toBeUndefined()
+  expect(
+    statefulSet.spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution,
+  ).toEqual([
+    {
+      weight: 100,
+      podAffinityTerm: {
+        labelSelector: { matchLabels: { app: 'restate' } },
+        topologyKey: 'kubernetes.io/hostname',
+      },
+    },
+  ])
   expect(env.get('RESTATE_AUTO_PROVISION')).toBe('false')
   expect(env.get('RESTATE_METADATA_CLIENT__ADDRESSES')).toBe(
     '["http://restate-0.restate-cluster:5122","http://restate-1.restate-cluster:5122","http://restate-2.restate-cluster:5122"]',

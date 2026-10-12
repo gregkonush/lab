@@ -74,6 +74,12 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
+Bayn model provisioning also takes its source commit from the built image. Its Warehouse requires the repository's source annotation,
+a nonempty revision, and a successful build receipt whose run-qualified tag matches both the revision and run ID.
+The Stage checks out that verified image revision. Only Bayn model source, workflow, and deployment paths trigger its
+image build; shared Kargo and platform ApplicationSet changes do not rebuild its provisioning image. There is no independent Git
+subscription to select an earlier commit when an atomic push ends beyond the last Bayn model path change.
+
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
 affected resources. For Kargo-managed applications, verify the eligible image, selected Freight, and the authorized

@@ -3,6 +3,9 @@ kind: Role
 metadata:
   name: tengri
 rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create, delete, get, list, patch, update, watch]
   - apiGroups: [runtime.proompteng.ai]
     resources: [microvms]
     verbs: [create, delete, get, list, patch, watch]

@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use axum::{
     Router,
@@ -19,17 +15,12 @@ use futures::{SinkExt, StreamExt};
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{Api, Client, api::ListParams};
 use rand::distr::{Alphanumeric, SampleString};
-use reqwest::redirect::Policy;
 use serde::Deserialize;
-use tokio::{
-    net::TcpStream,
-    sync::{Mutex, OnceCell},
-};
+use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
     tungstenite::{
-        Error as TungsteniteError, Message as TungsteniteMessage, client::IntoClientRequest,
-        protocol::WebSocketConfig,
+        Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
     },
 };
 
@@ -50,7 +41,6 @@ const MAX_WEBSOCKET_WRITE_BUFFER: usize = 16 << 20;
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 const PREVIEW_COOKIE: &str = "__Host-tengri_preview";
 const NANOAGENT_AUTH_FAILURE_HEADER: &str = "x-tengri-nanoagent-auth-failure";
-const NANOAGENT_AUTH_FAILURE_HEADER_VALUE: &[u8] = b"1";
 const PREVIEW_SESSION_LABEL_LENGTH: usize = 24;
 const PREVIEW_SESSION_MARKER: &str = "{session}";
 const TERMINAL_TICKET_PROTOCOL_PREFIX: &str = "tengri.ticket.";
@@ -58,17 +48,6 @@ type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 mod terminal_rpc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UpstreamWebSocketError {
-    StaleGuestBinding,
-    PreserveGuestBinding,
-}
-
-impl UpstreamWebSocketError {
-    fn invalidates_guest_binding(self) -> bool {
-        self == Self::StaleGuestBinding
-    }
-}
 const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
   const token = decodeURIComponent(window.location.hash.slice(1));
   const target = window.location.pathname === '/_tengri/editor/open' ? '/' : window.location.pathname + window.location.search;
@@ -154,10 +133,10 @@ pub struct GatewayState {
     pub client: Client,
     pub namespace: String,
     pub tickets: TicketStore,
+    authorization: crate::authz::WorkspaceAuthorization,
     activity: ActivityTracker,
-    http: reqwest::Client,
+    guests: crate::guest::GuestPool,
     preview_origin: PreviewOrigin,
-    preview_guests: Arc<Mutex<HashMap<String, PreviewGuestBinding>>>,
 }
 
 #[derive(Clone)]
@@ -165,21 +144,6 @@ pub(crate) struct PreviewOrigin {
     desktop_origin: Arc<str>,
     domain: Arc<str>,
     template: Arc<str>,
-}
-
-struct PreviewGuestBinding {
-    incarnation: Option<String>,
-    session_token: String,
-    owner_hash: String,
-    agent_id: String,
-    port: u16,
-    expires_at: SystemTime,
-    guest: Arc<OnceCell<GuestClient>>,
-}
-
-struct ResolvedPreviewGuest {
-    client: GuestClient,
-    binding: Arc<OnceCell<GuestClient>>,
 }
 
 #[derive(Deserialize)]
@@ -201,96 +165,18 @@ impl GatewayState {
         tickets: TicketStore,
         activity: ActivityTracker,
         preview_origin: PreviewOrigin,
+        guests: crate::guest::GuestPool,
+        authorization: crate::authz::WorkspaceAuthorization,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             client,
             namespace,
             tickets,
+            authorization,
             activity,
-            http: reqwest::Client::builder()
-                .redirect(Policy::none())
-                .connect_timeout(Duration::from_secs(5))
-                .build()?,
+            guests,
             preview_origin,
-            preview_guests: Arc::new(Mutex::new(HashMap::new())),
         })
-    }
-
-    async fn preview_guest(
-        &self,
-        session: &PreviewSessionRecord,
-    ) -> Result<ResolvedPreviewGuest, crate::guest::GuestError> {
-        let binding = {
-            let mut bindings = self.preview_guests.lock().await;
-            bindings.retain(|_, binding| binding.expires_at > SystemTime::now());
-            match bindings.get(&session.id) {
-                Some(binding) if binding.matches(session) => Arc::clone(&binding.guest),
-                _ => {
-                    let binding = PreviewGuestBinding::new(session);
-                    let guest = Arc::clone(&binding.guest);
-                    bindings.insert(session.id.clone(), binding);
-                    guest
-                }
-            }
-        };
-        let client = self.client.clone();
-        let namespace = self.namespace.clone();
-        let agent_id = session.agent_id.clone();
-        let incarnation = session.incarnation.clone();
-        let guest = binding
-            .get_or_try_init(|| async move {
-                GuestClient::for_agent_incarnation(
-                    client,
-                    &namespace,
-                    &agent_id,
-                    incarnation.as_deref(),
-                )
-                .await
-            })
-            .await?
-            .clone();
-        Ok(ResolvedPreviewGuest {
-            client: guest,
-            binding,
-        })
-    }
-
-    async fn invalidate_preview_guest(
-        &self,
-        session_id: &str,
-        failed_binding: &Arc<OnceCell<GuestClient>>,
-    ) {
-        let mut bindings = self.preview_guests.lock().await;
-        let remove = bindings
-            .get(session_id)
-            .is_some_and(|binding| Arc::ptr_eq(&binding.guest, failed_binding));
-        if remove {
-            bindings.remove(session_id);
-        }
-    }
-}
-
-impl PreviewGuestBinding {
-    fn new(session: &PreviewSessionRecord) -> Self {
-        Self {
-            incarnation: session.incarnation.clone(),
-            session_token: session.token.clone(),
-            owner_hash: session.owner_hash.clone(),
-            agent_id: session.agent_id.clone(),
-            port: session.port,
-            expires_at: session.expires_at,
-            guest: Arc::new(OnceCell::new()),
-        }
-    }
-
-    fn matches(&self, session: &PreviewSessionRecord) -> bool {
-        self.incarnation == session.incarnation
-            && self.session_token == session.token
-            && self.owner_hash == session.owner_hash
-            && self.agent_id == session.agent_id
-            && self.port == session.port
-            && self.expires_at == session.expires_at
-            && self.expires_at > SystemTime::now()
     }
 }
 
@@ -405,6 +291,9 @@ pub fn preview_router(state: GatewayState) -> Router {
 }
 
 async fn readiness(State(state): State<GatewayState>) -> StatusCode {
+    if state.authorization.ready().await.is_err() {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
     if state.tickets.stats().is_err() {
         return StatusCode::SERVICE_UNAVAILABLE;
     }
@@ -463,9 +352,14 @@ async fn terminal_websocket(
             "ticket is not scoped to a terminal",
         );
     };
+    let access = state
+        .authorization
+        .access(&state.namespace, &ticket.agent_id, &ticket.owner_hash);
+    if let Err(error) = access.require().await {
+        return status_response(error.code(), error.message());
+    }
     state.activity.touch(&ticket.agent_id);
-    let guest = match GuestClient::for_agent(state.client, &state.namespace, &ticket.agent_id).await
-    {
+    let guest = match state.guests.for_agent(&ticket.agent_id, None).await {
         Ok(guest) => guest,
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
     };
@@ -484,7 +378,10 @@ async fn terminal_websocket(
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER)
         .protocols([protocol])
         .on_upgrade(move |socket| async move {
-            terminal_rpc::bridge(socket, rpc, attachment, activity, agent_id).await;
+            tokio::select! {
+                _ = terminal_rpc::bridge(socket, rpc, attachment, activity, agent_id) => {},
+                _ = access.revoked() => {},
+            }
         })
         .into_response()
 }
@@ -505,6 +402,14 @@ async fn open_preview(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
+    if let Err(error) = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .require()
+        .await
+    {
+        return status_response(error.code(), error.message());
+    }
     let location = preview_launch_location(
         &state.preview_origin,
         &session.id,
@@ -573,6 +478,14 @@ async fn preview_bootstrap(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
+    if let Err(error) = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .require()
+        .await
+    {
+        return status_response(error.code(), error.message());
+    }
     state.activity.touch(&session.agent_id);
     let lifetime = if session.port == crate::guest::EDITOR_PORT {
         86400
@@ -706,8 +619,20 @@ async fn preview_host_proxy(
         Ok(session) => session,
         Err(error) => return status_response(error.code(), error.message()),
     };
+    if let Err(error) = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .require()
+        .await
+    {
+        return status_response(error.code(), error.message());
+    }
     state.activity.touch(&session.agent_id);
-    let guest = match state.preview_guest(&session).await {
+    let guest = match state
+        .guests
+        .for_agent(&session.agent_id, session.incarnation.as_deref())
+        .await
+    {
         Ok(guest) => guest,
         Err(error) => {
             return (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response();
@@ -727,30 +652,30 @@ async fn preview_host_proxy(
     }
     let target = format!(
         "{}/v1/preview/{}{}{}",
-        guest.client.base_url(),
+        guest.base_url(),
         session.port,
         path,
         query,
     );
     if let Some(websocket) = websocket {
-        let websocket_target = target.replacen("http://", "ws://", 1);
-        let token = guest.client.token().to_owned();
+        let websocket_target = target
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        let token = guest.token().to_owned();
         let activity = state.activity.clone();
         let agent_id = session.agent_id.clone();
-        let (upstream, selected_protocol) =
-            match connect_upstream_websocket(&websocket_target, &token, Some(request.headers()))
-                .await
-            {
-                Ok(connection) => connection,
-                Err(error) => {
-                    if error.invalidates_guest_binding() {
-                        state
-                            .invalidate_preview_guest(&session.id, &guest.binding)
-                            .await;
-                    }
-                    return StatusCode::BAD_GATEWAY.into_response();
-                }
-            };
+        let (upstream, selected_protocol) = match connect_upstream_websocket(
+            &websocket_target,
+            &token,
+            Some(request.headers()),
+            guest.preview_tls.clone(),
+            &guest.claim_headers,
+        )
+        .await
+        {
+            Ok(connection) => connection,
+            Err(()) => return StatusCode::BAD_GATEWAY.into_response(),
+        };
         let websocket = websocket
             .max_frame_size(MAX_WEBSOCKET_FRAME)
             .max_message_size(MAX_WEBSOCKET_MESSAGE)
@@ -770,6 +695,12 @@ async fn preview_host_proxy(
                             .tickets
                             .preview_session(&session.id, &session.token)
                             .is_err()
+                            || state
+                                .authorization
+                                .access(&state.namespace, &session.agent_id, &session.owner_hash)
+                                .require()
+                                .await
+                                .is_err()
                         {
                             return;
                         }
@@ -833,7 +764,7 @@ fn preview_launch_location(
 async fn proxy_http(
     state: GatewayState,
     session: PreviewSessionRecord,
-    guest: ResolvedPreviewGuest,
+    guest: GuestClient,
     target: String,
     request: Request<Body>,
 ) -> axum::response::Response {
@@ -851,10 +782,10 @@ async fn proxy_http(
                 .into_response();
         }
     };
-    let mut upstream = state
+    let mut upstream = guest
         .http
         .request(parts.method, target)
-        .bearer_auth(guest.client.token());
+        .bearer_auth(guest.token());
     for (name, value) in &parts.headers {
         if forward_request_header(name) || (editor_asset && name == header::ACCEPT_ENCODING) {
             if name == header::COOKIE {
@@ -875,9 +806,6 @@ async fn proxy_http(
     let upstream = match upstream.send().await {
         Ok(response) => response,
         Err(_) => {
-            state
-                .invalidate_preview_guest(&session.id, &guest.binding)
-                .await;
             return (
                 StatusCode::BAD_GATEWAY,
                 "preview application is unavailable",
@@ -886,22 +814,25 @@ async fn proxy_http(
         }
     };
     let status = upstream.status();
-    if nanoagent_auth_failed(status, upstream.headers()) {
-        state
-            .invalidate_preview_guest(&session.id, &guest.binding)
-            .await;
-    }
     let headers = upstream.headers().clone();
     let is_editor = session.port == crate::guest::EDITOR_PORT;
-    let inject_bridge = should_inject_preview_bridge(&request_method, status, &headers);
+    let inject_bridge = session.port != crate::guest::BROWSER_PORT
+        && should_inject_preview_bridge(&request_method, status, &headers);
+    let upstream_body = state
+        .authorization
+        .access(&state.namespace, &session.agent_id, &session.owner_hash)
+        .guard_stream(upstream.bytes_stream().map(|chunk| {
+            chunk.map_err(|error| {
+                tonic::Status::unavailable(format!("preview stream failed: {error}"))
+            })
+        }));
     let (body, bridge_nonce) = if inject_bridge {
-        let bytes = match to_bytes(Body::from_stream(upstream.bytes_stream()), MAX_PROXY_BODY).await
-        {
+        let bytes = match to_bytes(Body::from_stream(upstream_body), MAX_PROXY_BODY).await {
             Ok(bytes) => bytes,
             Err(_) => {
                 return (
                     StatusCode::BAD_GATEWAY,
-                    "preview response body is too large",
+                    "preview response body could not be read",
                 )
                     .into_response();
             }
@@ -918,7 +849,7 @@ async fn proxy_http(
             None => (Body::from(bytes), None),
         }
     } else {
-        (Body::from_stream(upstream.bytes_stream()), None)
+        (Body::from_stream(upstream_body), None)
     };
     let preview_origin = state.preview_origin.origin(&session.id);
     let frame_ancestors = if is_editor {
@@ -984,33 +915,24 @@ async fn connect_upstream_websocket(
     target: &str,
     token: &str,
     forwarded_headers: Option<&HeaderMap>,
-) -> Result<(UpstreamWebSocket, Option<String>), UpstreamWebSocketError> {
-    let request = upstream_websocket_request(target, token, forwarded_headers)
-        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
-    let requested_protocols = websocket_protocols(request.headers())
-        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
+    tls: Option<Arc<rustls::ClientConfig>>,
+    claim_headers: &HeaderMap,
+) -> Result<(UpstreamWebSocket, Option<String>), ()> {
+    let mut request =
+        upstream_websocket_request(target, token, forwarded_headers).map_err(|_| ())?;
+    request.headers_mut().extend(claim_headers.clone());
+    let requested_protocols = websocket_protocols(request.headers()).map_err(|_| ())?;
     let config = WebSocketConfig::default()
         .max_frame_size(Some(MAX_WEBSOCKET_FRAME))
         .max_message_size(Some(MAX_WEBSOCKET_MESSAGE))
         .max_write_buffer_size(MAX_WEBSOCKET_WRITE_BUFFER);
-    let (upstream, response) = connect_async_with_config(request, Some(config), false)
-        .await
-        .map_err(|error| classify_upstream_websocket_error(&error))?;
-    let selected_protocol = selected_websocket_protocol(response.headers(), &requested_protocols)
-        .map_err(|_| UpstreamWebSocketError::PreserveGuestBinding)?;
+    let (upstream, response) =
+        connect_async_tls_with_config(request, Some(config), false, tls.map(Connector::Rustls))
+            .await
+            .map_err(|_| ())?;
+    let selected_protocol =
+        selected_websocket_protocol(response.headers(), &requested_protocols).map_err(|_| ())?;
     Ok((upstream, selected_protocol))
-}
-
-fn classify_upstream_websocket_error(error: &TungsteniteError) -> UpstreamWebSocketError {
-    match error {
-        TungsteniteError::Io(_) => UpstreamWebSocketError::StaleGuestBinding,
-        TungsteniteError::Http(response)
-            if nanoagent_auth_failed(response.status(), response.headers()) =>
-        {
-            UpstreamWebSocketError::StaleGuestBinding
-        }
-        _ => UpstreamWebSocketError::PreserveGuestBinding,
-    }
 }
 
 async fn bridge_open_websocket(
@@ -1128,6 +1050,7 @@ fn status_response(code: tonic::Code, message: &str) -> axum::response::Response
         tonic::Code::PermissionDenied => StatusCode::FORBIDDEN,
         tonic::Code::NotFound => StatusCode::NOT_FOUND,
         tonic::Code::ResourceExhausted => StatusCode::TOO_MANY_REQUESTS,
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::BAD_REQUEST,
     };
     (status, message.to_owned()).into_response()
@@ -1362,6 +1285,8 @@ fn forward_request_header(name: &HeaderName) -> bool {
             | "x-forwarded-for"
             | "x-forwarded-host"
             | "x-forwarded-proto"
+            | "x-tengri-microvm-uid"
+            | "x-tengri-claim-epoch"
     )
 }
 
@@ -1379,13 +1304,6 @@ fn forward_response_header(name: &HeaderName) -> bool {
             | "upgrade"
             | "x-frame-options"
     )
-}
-
-fn nanoagent_auth_failed(status: StatusCode, headers: &HeaderMap) -> bool {
-    status == StatusCode::UNAUTHORIZED
-        && headers
-            .get(NANOAGENT_AUTH_FAILURE_HEADER)
-            .is_some_and(|value| value.as_bytes() == NANOAGENT_AUTH_FAILURE_HEADER_VALUE)
 }
 
 #[cfg(test)]
@@ -1407,12 +1325,18 @@ mod tests {
             client.clone(),
             "tengri".to_owned(),
             tickets,
-            ActivityTracker::new(client, "tengri".to_owned()),
+            ActivityTracker::new(client.clone(), "tengri".to_owned()),
             PreviewOrigin::parse(
                 "https://tengri-{session}.proompteng.ai".to_owned(),
                 "https://proompteng.ai".to_owned(),
             )
             .expect("preview origin"),
+            crate::guest::GuestPool::new(
+                client,
+                "tengri",
+                crate::identity::WorkloadIdentity::Fixture(8080),
+            ),
+            crate::authz::WorkspaceAuthorization::Fixture,
         )
         .expect("gateway state")
     }
@@ -1631,6 +1555,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn readiness_and_preview_bootstrap_fail_closed_when_spicedb_is_unavailable() {
+        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let fixture = crate::authz::tests::SpiceFixture::new().await;
+        let mut state = test_gateway_state(Client::new(service, "tengri"));
+        state.authorization = fixture.authorization.clone();
+        fixture.mode.store(4, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            readiness(State(state.clone())).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        for (mode, expected) in [
+            (1, StatusCode::FORBIDDEN),
+            (4, StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            fixture
+                .mode
+                .store(mode, std::sync::atomic::Ordering::SeqCst);
+            let ticket = state
+                .tickets
+                .issue_preview(&"a".repeat(64), "agent-fixture", 3000, "/", "")
+                .unwrap();
+            let session = state.tickets.consume_preview(&ticket.token).unwrap();
+            let response = preview_router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(http::Method::POST)
+                        .uri("/_tengri/bootstrap")
+                        .header(header::HOST, format!("tengri-{}.proompteng.ai", session.id))
+                        .body(Body::from(
+                            serde_json::json!({"token": session.token}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(!response.headers().contains_key(header::SET_COOKIE));
+            let status = response.status();
+            let body = to_bytes(response.into_body(), MAX_BOOTSTRAP_BODY)
+                .await
+                .unwrap();
+            assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
+        }
+    }
+
+    #[tokio::test]
     async fn editor_launch_bootstraps_over_an_expired_cookie_without_serving_guest_content() {
         let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
         let state = test_gateway_state(Client::new(service, "tengri"));
@@ -1846,126 +1815,6 @@ mod tests {
         assert_eq!(parsed.path(), "/dashboard");
         assert_eq!(parsed.query(), Some("mode=dev"));
         assert_eq!(parsed.fragment(), Some("secret.ticket"));
-    }
-
-    #[test]
-    fn preview_guest_bindings_are_scoped_to_the_authorized_session() {
-        let session = PreviewSessionRecord {
-            incarnation: None,
-            revocation_token: "test-revocation-token".to_owned(),
-            id: "a1b2c3d4e5f6a1b2c3d4e5f6".to_owned(),
-            token: "session-token".to_owned(),
-            owner_hash: "a".repeat(64),
-            agent_id: "agent-a".to_owned(),
-            port: 3000,
-            initial_path: "/".to_owned(),
-            initial_fragment: String::new(),
-            expires_at: SystemTime::now() + Duration::from_secs(60),
-        };
-        let binding = PreviewGuestBinding::new(&session);
-        assert!(binding.matches(&session));
-
-        let mut other_owner = session.clone();
-        other_owner.owner_hash = "b".repeat(64);
-        assert!(!binding.matches(&other_owner));
-
-        let mut other_incarnation = session.clone();
-        other_incarnation.incarnation = Some("new-agent".to_owned());
-        assert!(!binding.matches(&other_incarnation));
-
-        let mut other_token = session.clone();
-        other_token.token = "different-session-token".to_owned();
-        assert!(!binding.matches(&other_token));
-
-        let mut other_port = session.clone();
-        other_port.port = 5173;
-        assert!(!binding.matches(&other_port));
-    }
-
-    #[tokio::test]
-    async fn stale_preview_failure_does_not_evict_a_replacement_binding() {
-        let (service, _handle) = tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
-        let state = test_gateway_state(Client::new(service, "tengri"));
-        let session = PreviewSessionRecord {
-            incarnation: None,
-            revocation_token: "test-revocation-token".to_owned(),
-            id: "a1b2c3d4e5f6a1b2c3d4e5f6".to_owned(),
-            token: "session-token".to_owned(),
-            owner_hash: "a".repeat(64),
-            agent_id: "agent-a".to_owned(),
-            port: 3000,
-            initial_path: "/".to_owned(),
-            initial_fragment: String::new(),
-            expires_at: SystemTime::now() + Duration::from_secs(60),
-        };
-        let stale_binding = PreviewGuestBinding::new(&session);
-        let stale_identity = Arc::clone(&stale_binding.guest);
-        let replacement = PreviewGuestBinding::new(&session);
-        let replacement_identity = Arc::clone(&replacement.guest);
-        state
-            .preview_guests
-            .lock()
-            .await
-            .insert(session.id.clone(), replacement);
-
-        state
-            .invalidate_preview_guest(&session.id, &stale_identity)
-            .await;
-        assert!(
-            state
-                .preview_guests
-                .lock()
-                .await
-                .get(&session.id)
-                .is_some_and(|binding| Arc::ptr_eq(&binding.guest, &replacement_identity))
-        );
-
-        state
-            .invalidate_preview_guest(&session.id, &replacement_identity)
-            .await;
-        assert!(!state.preview_guests.lock().await.contains_key(&session.id));
-    }
-
-    #[test]
-    fn preview_guest_cache_is_invalidated_only_for_nanoagent_authentication_failures() {
-        let mut headers = HeaderMap::new();
-        assert!(!nanoagent_auth_failed(StatusCode::UNAUTHORIZED, &headers));
-        assert!(!nanoagent_auth_failed(StatusCode::FORBIDDEN, &headers));
-
-        headers.insert(
-            HeaderName::from_static(NANOAGENT_AUTH_FAILURE_HEADER),
-            HeaderValue::from_static("1"),
-        );
-        assert!(nanoagent_auth_failed(StatusCode::UNAUTHORIZED, &headers));
-        assert!(!nanoagent_auth_failed(StatusCode::FORBIDDEN, &headers));
-        assert!(!forward_response_header(&HeaderName::from_static(
-            NANOAGENT_AUTH_FAILURE_HEADER,
-        )));
-    }
-
-    #[test]
-    fn preview_websocket_application_rejections_preserve_the_guest_cache() {
-        for status in [
-            StatusCode::UNAUTHORIZED,
-            StatusCode::FORBIDDEN,
-            StatusCode::NOT_FOUND,
-            StatusCode::BAD_GATEWAY,
-        ] {
-            let response = http::Response::builder()
-                .status(status)
-                .body(None)
-                .expect("websocket rejection response");
-            let error = TungsteniteError::Http(Box::new(response));
-            assert!(!classify_upstream_websocket_error(&error).invalidates_guest_binding());
-        }
-
-        let response = http::Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .header(NANOAGENT_AUTH_FAILURE_HEADER, "1")
-            .body(None)
-            .expect("Nanoagent authentication rejection");
-        let error = TungsteniteError::Http(Box::new(response));
-        assert!(classify_upstream_websocket_error(&error).invalidates_guest_binding());
     }
 
     #[test]
