@@ -41,7 +41,22 @@ Utility Bun/TypeScript scripts that automate common platform workflows. Use `bun
 | `src/torghut/deploy-agentruns.ts`                     | Applies the Torghut AgentRun rollout manifests (`argocd/applications/agents/torghut-agentruns.yaml`) to the `agents` namespace.                                                                                                                                                                                    | `kubectl`                          | `bun run packages/scripts/src/torghut/deploy-agentruns.ts [--dry-run] [--no-apply]`                                               |
 | `src/torghut/storage-stability-gate.ts`               | Collects a read-only 30-minute clean observation window from Talos, Ceph/current SMART health, Kafka, Torghut and Jangar PostgreSQL, Argo CD, and contained Torghut write workloads; exits non-zero unless current storage, quorum, durability, WAL budgets, and runtime evidence prove staged activation is safe. | `kubectl`, `talosctl`              | `bun run gate:torghut-storage-stability --observation-start 2026-07-15T11:00:00Z --output json`                                   |
 | `src/torghut/generate-whitepaper-replay-workflows.ts` | Fetches closed whitepaper issues from GitHub, deduplicates them by source PDF, writes one direct-intake payload per unique paper under `docs/whitepapers/replay-workflows/`, and can optionally POST them to Torghut.                                                                                              | `gh`                               | `bun run whitepapers:replay --post --base-url http://localhost:8181`                                                              |
-| `src/registry/prune-images.ts`                        | Prunes version-like image manifests through the registry API; defaults to dry-run. Protect required tags and digests before `--apply`. Garbage collection requires a separate read-only maintenance window; follow [the GC runbook](../../docs/registry/manual-garbage-collection.md).                             | `kubectl`                          | `bun run packages/scripts/src/registry/prune-images.ts --repo=lab/jangar --keep=5 --apply`                                        |
+
+## Registry maintenance
+
+The registry cleanup CLI is Python 3.14. Follow the [cleanup runbook](../../docs/registry/manual-garbage-collection.md).
+`src/registry/protected_references.py` snapshots built-in workloads and all served custom resources,
+including idle providers and retained Kargo references across all namespaces; failed discovery or listing aborts cleanup.
+`prepare.py` builds a read-only retention and blob plan on the existing claim.
+`collect.py` renames eligible tags and verified old blobs into quarantine under a bounded read-only hold and restores uploads.
+`purge.py` deletes quarantined data through the registry Pod's maintenance container,
+whose sole writable claim mount is quarantine. Preparation and purge create no separate RWO attachment.
+`scheduled.py` runs these phases daily through the GitOps-managed `registry-cleanup` CronJob,
+resumes receipted purges and skips the read-only phase for an empty plan.
+The former `prune-images.ts` CLI is removed.
+
+Run `bun test packages/scripts/src/registry/__tests__/cleanup.test.ts` for retention, graph,
+quarantine, reupload protection and timeout/restoration regressions.
 
 ## Production image delivery
 

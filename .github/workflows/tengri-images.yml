@@ -5,6 +5,7 @@ on:
     paths:
       - 'services/tengri/**'
       - 'services/nanoagent/**'
+      - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
@@ -17,6 +18,7 @@ on:
       - 'apps/landing/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
+      - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
@@ -63,11 +65,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
 
-      - name: Set up Go for guest interoperability
+      - name: Set up Go for seccomp and guest interoperability
         uses: actions/setup-go@v6
         with:
-          go-version-file: services/nanoagent/go.mod
-          cache-dependency-path: services/nanoagent/go.sum
+          go-version-file: services/tengri/seccomp/go.mod
+          cache-dependency-path: |
+            services/nanoagent/go.sum
+            services/tengri/seccomp/go.sum
+
+      - name: Validate native runner seccomp profile
+        working-directory: services/tengri/seccomp
+        env:
+          GOWORK: 'off'
+        run: |
+          set -euo pipefail
+          go test .
+          go run . | diff -u ../../../devices/galactic/omni/tengri-runner-amd64.json -
 
       - name: Validate controller and generated CRD
         working-directory: services/tengri
@@ -115,6 +128,7 @@ jobs:
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
           bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
+          bash -n build-editor.sh launch-editor.sh test-editor-bundle.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
           bash -n build-boot-artifacts.sh tengri-init.sh
           bash validate-rootfs.test.sh
@@ -214,6 +228,8 @@ jobs:
           if [[ "$SERVICE" == tengri ]]; then
             image=tengri-kvm-test:fixture
             cp services/tengri/test-kvm.sh .artifacts/kvm-fixture/
+            jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+              devices/galactic/omni/tengri-runner-amd64.json > .artifacts/kvm-fixture/runner-seccomp.json
           fi
           docker save "$image" | gzip -1 > ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz"
           config_path="$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" manifest.json | \
@@ -230,7 +246,7 @@ jobs:
           cd .artifacts/kvm-fixture
           sha256sum "${SERVICE}-images.tar.gz" "${SERVICE}.json" > "${SERVICE}-SHA256SUMS"
           if [[ "$SERVICE" == tengri ]]; then
-            sha256sum test-kvm.sh >> "${SERVICE}-SHA256SUMS"
+            sha256sum test-kvm.sh runner-seccomp.json >> "${SERVICE}-SHA256SUMS"
           fi
 
       - name: Retain native KVM fixture image
@@ -309,7 +325,12 @@ jobs:
           TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
           TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
-        run: bash services/tengri/test-kvm.sh
+          TENGRI_KVM_SECCOMP: ${{ github.workspace }}/.artifacts/runner-seccomp.json
+        run: |
+          mkdir -p .artifacts
+          jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+            devices/galactic/omni/tengri-runner-${{ matrix.architecture }}.json > "$TENGRI_KVM_SECCOMP"
+          bash services/tengri/test-kvm.sh
 
       - name: Retain KVM diagnostics
         if: always()

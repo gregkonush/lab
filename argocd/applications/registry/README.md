@@ -1,7 +1,7 @@
 # Private registry
 
 The registry keeps its existing single `registry-data` claim. HAProxy shares one
-5 MiB/s upload budget across every mutation using a constant stick-table key.
+10 MiB/s upload budget across every mutation using a constant stick-table key.
 Up to 32 blob requests can stream concurrently. Serializing them behind one
 writer makes cold image/cache uploads wait long enough for clients to disconnect.
 
@@ -18,8 +18,9 @@ do not change the claim or delete uploaded blobs.
 
 Validate the traffic boundary with the deployed HAProxy version in an isolated
 container. A slow upload holds its request open for eight seconds while three
-8 MiB uploads run. The fixture uses four proxy threads. The test checks digests, completion before the slow request, the aggregate
-upload budget, and concurrent read access.
+16 MiB uploads run. The fixture uses four proxy threads. The test checks digests,
+completion before the slow request, the aggregate upload budget, and concurrent
+read access.
 
 ```sh
 docker build -f argocd/applications/registry/tests/Dockerfile -t registry-pacing-test argocd/applications/registry
@@ -29,28 +30,33 @@ docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp --memory 
 The same test fails with the former single-writer configuration and with a
 per-stream limiter combined with concurrent writers.
 
+The operator selected 10 MiB/s and waived the proposed sustained load trial.
+This is a configured limit, not a measured shared-storage throughput ceiling.
+Further increases require a coordinated 30-minute observation of current Ceph,
+Kafka and database dependencies. Roll back to 5 MiB/s through GitOps if the higher
+rate causes storage or Kafka stalls.
+
 ## Clean old images
 
-Keep at least five recent version tags per repository, every image uploaded in the
+`registry-cleanup` runs daily at **03:23 America/Los_Angeles**. Its CronJob,
+service account, permissions and scripts are committed with this Application.
+Runs cannot overlap; failed runs are retained and are not automatically retried.
+Each run resumes receipted quarantine purges, prepares online, refreshes protected
+references, collects for at most four minutes and purges with uploads open.
+An empty plan skips the read-only restart. Missing protected content or incomplete
+cluster discovery fails the run before collection.
+
+Keep at least five recent build tags per repository, every image uploaded in the
 last seven days, and all digests referenced by workload templates or retained Kargo
 Freight, Stage history, and promotions. Preserve the platform manifests and
 attestations reachable from retained image indexes. Leave unknown tags alone.
-The prune script's default bare-hash pattern does not cover current
-`sha-*`, `kargo-sha-*`, or run-qualified build tags.
+Retention recognizes bare hashes, `sha-*`, `kargo-sha-*` and run-qualified build tags.
 
-Remove reviewed old tags through the registry API. Tag removal alone does not
-reclaim blob storage. For garbage collection, pause
-Argo reconciliation for this Application using an owned
-[maintenance hold](../../applicationsets/README.md#storage-maintenance-holds),
-restart the registry in read-only mode,
-and verify that upload initiation is rejected before running
-`registry garbage-collect --delete-untagged /etc/docker/registry/config.yml`
-against the existing claim. A maintenance Pod sharing the RWO claim must stay on
-the registry node. Check that protected digests remain reachable from retained
-tags before enabling `--delete-untagged`. The prune CLI rejects GC flags; follow
-the [maintenance runbook](../../../docs/registry/manual-garbage-collection.md). After collection, trim this filesystem if its
-mount does not enable discard so freed extents return to RBD. Remove maintenance
-Pods before restoring the committed Deployment and Argo reconciliation, then
-verify a push, a pull, and claim free space.
-
-See [Distribution's garbage collection requirements](https://distribution.github.io/distribution/about/garbage-collection/).
+Use the [cleanup runbook](../../../docs/registry/manual-garbage-collection.md).
+Preparation runs while uploads remain available. An owned maintenance hold limits
+the final read-only phase to validating current roots and atomically moving eligible
+tags and old unreferenced blobs into quarantine. The controller removes its helper before
+restoring uploads and Argo reconciliation. The committed maintenance container has
+a read-only CAS mount and a writable quarantine subpath. It prepares plans and
+frees quarantined blocks online without a separate RWO attachment. Preserve the claim and verify protected images, a
+completed push, a full pull and reclaimed capacity.
