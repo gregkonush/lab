@@ -47,7 +47,11 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
       )
     if (
       receipt.outcome === 'COMPLETE' &&
-      (receipt.startedAtMs < Date.parse(run.featureCutoff) ||
+      (receipt.httpStatus !== 200 ||
+        receipt.firstTokenAtMs === null ||
+        receipt.firstTokenAtMs < receipt.startedAtMs ||
+        receipt.firstTokenAtMs > receipt.completedAtMs ||
+        receipt.startedAtMs < Date.parse(run.featureCutoff) ||
         receipt.completedAtMs >= Date.parse(run.deadlineAt) ||
         receipt.usage === null ||
         receipt.usage.total_tokens !== receipt.usage.prompt_tokens + receipt.usage.completion_tokens ||

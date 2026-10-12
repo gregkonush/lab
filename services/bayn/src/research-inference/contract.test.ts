@@ -80,4 +80,21 @@ describe('frozen research contract and existing expense ledger', () => {
       expect(Result.getOrThrow(researchExpensePlan(run, receipt(outcome))).transfers).toEqual([])
     },
   )
+  test('rejects resealed success receipts with inconsistent HTTP or token timing', () => {
+    const {
+      schemaVersion: _version,
+      qualification: _qualification,
+      receiptHash: _hash,
+      costPicoUsd: _cost,
+      ...material
+    } = receipt()
+    for (const changed of [
+      { ...material, httpStatus: 503 },
+      { ...material, firstTokenAtMs: null },
+      { ...material, firstTokenAtMs: material.completedAtMs + 1 },
+    ]) {
+      const resealed = Result.getOrThrow(sealResearchReceipt(run, changed))
+      expect(Result.isFailure(verifyResearchReceipt(run, resealed))).toBe(true)
+    }
+  })
 })
