@@ -84,7 +84,7 @@ def inventory(context, verify):
         if (
             namespace == "arc"
             and meta.get("labels", {}).get("actions.github.com/scale-set-name")
-            == "arc-amd64"
+            == "arc-amd64-ryzen"
         ):
             runners.append(pod)
         for volume in spec.get("volumes", []):

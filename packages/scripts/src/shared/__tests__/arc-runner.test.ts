@@ -56,70 +56,83 @@ describe('ARC Nix runner toolchain', () => {
 
   it('places AMD64 Nix, Docker, and workspace writes on one disposable local NVMe volume', () => {
     const application = YAML.parseDocument(arcApplication)
-    const valuesPath = ['spec', 'sources', 2, 'helm', 'valuesObject']
-    expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe('arc-amd64')
-    const pod = application.getIn([...valuesPath, 'template', 'spec'])
-    if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
+    for (const [index, name, host, storageClass] of [
+      [2, 'arc-amd64', 'turin', 'local-path-turin-nvme-transcend'],
+      [4, 'arc-amd64-ryzen', 'talos-192-168-1-194', 'local-path-ryzen'],
+    ] as const) {
+      const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
+      expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe(name)
+      expect(application.getIn([...valuesPath, 'scaleSetLabels']).toJSON()).toContain('arc-amd64')
+      const pod = application.getIn([...valuesPath, 'template', 'spec'])
+      if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
 
-    const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
-    expect(pod.toJSON()).toMatchObject({
-      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'talos-192-168-1-194' },
-      tolerations: expect.arrayContaining([
-        { key: 'workload.proompteng.ai/compute-local', operator: 'Equal', value: 'true', effect: 'NoSchedule' },
-      ]),
-      initContainers: expect.arrayContaining([
-        expect.objectContaining({
-          volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
-        }),
-      ]),
-      containers: expect.arrayContaining([
-        expect.objectContaining({
-          name: 'runner',
-          volumeMounts: expect.arrayContaining([
-            { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
-            { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
-            { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
-            workMount,
-          ]),
-        }),
-        expect.objectContaining({
-          name: 'dind',
-          volumeMounts: expect.arrayContaining([
-            workMount,
-            { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
-            { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
-          ]),
-        }),
-      ]),
-      volumes: expect.arrayContaining([
-        {
-          name: 'scratch',
-          ephemeral: {
-            volumeClaimTemplate: expect.objectContaining({
-              spec: {
-                accessModes: ['ReadWriteOnce'],
-                storageClassName: 'local-path-ryzen',
-                volumeMode: 'Filesystem',
-                resources: { requests: { storage: '45Gi' } },
-              },
-            }),
+      const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
+      expect(pod.toJSON()).toMatchObject({
+        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': host },
+        initContainers: expect.arrayContaining([
+          expect.objectContaining({
+            volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
+          }),
+        ]),
+        containers: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'runner',
+            volumeMounts: expect.arrayContaining([
+              { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
+              { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
+              { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
+              workMount,
+            ]),
+          }),
+          expect.objectContaining({
+            name: 'dind',
+            volumeMounts: expect.arrayContaining([
+              workMount,
+              { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
+              { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
+            ]),
+          }),
+        ]),
+        volumes: expect.arrayContaining([
+          {
+            name: 'scratch',
+            ephemeral: {
+              volumeClaimTemplate: expect.objectContaining({
+                spec: {
+                  accessModes: ['ReadWriteOnce'],
+                  storageClassName: storageClass,
+                  volumeMode: 'Filesystem',
+                  resources: { requests: { storage: '45Gi' } },
+                },
+              }),
+            },
           },
-        },
-      ]),
-    })
+        ]),
+      })
+      if (host === 'talos-192-168-1-194') {
+        expect(pod.toJSON().tolerations).toContainEqual({
+          key: 'workload.proompteng.ai/compute-local',
+          operator: 'Equal',
+          value: 'true',
+          effect: 'NoSchedule',
+        })
+      }
+    }
   })
 
   it('keeps lab ARC runner concurrency capped', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 3')
+    expect(runnerScaleSetBlock('arc-amd64-ryzen')).toContain('maxRunners: 2')
+    expect(runnerScaleSetBlock('arc-amd64-ryzen')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
   it('serializes registry uploads from every runner scale set', () => {
-    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64']) {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64', 'arc-amd64-ryzen']) {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('--max-concurrent-uploads=1')
       expect(block).not.toContain('--max-concurrent-uploads=8')
@@ -127,7 +140,7 @@ describe('ARC Nix runner toolchain', () => {
   })
 
   it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
-    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'arc-amd64-ryzen']) {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('ephemeral-storage: "4Gi"')
       expect(block).toContain('ephemeral-storage: "6Gi"')

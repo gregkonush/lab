@@ -12,12 +12,14 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
 - Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
 - The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.
-- The `arc-amd64` runner is pinned to Ryzen, `talos-192-168-1-194`, and uses one 45Gi generic ephemeral
-  PVC on `local-path-ryzen`. Its `/nix`, `/home/runner/.cache`, `/tmp`, shared `/home/runner/_work`, and Docker data
-  subpaths live on the existing 1.8TB XFS user volume at `/var/mnt/local-path-provisioner`. The init container copies
-  the image's `/nix` tree before the main containers mount the scratch subpath, verifies the filesystem, free capacity,
-  regular-file byte count, regular-file count, and symlink count, then fails closed on any mismatch.
-  The PVC is deleted with the runner Pod. ARM64 and `analysis-arm64` retain their existing `emptyDir` workspaces on ARM64.
+- The `arc-amd64` pool runs up to three runners on Turin with `local-path-turin-nvme-transcend`. The
+  `arc-amd64-ryzen` pool runs up to two on `talos-192-168-1-194` with `local-path-ryzen`. Both advertise the
+  `arc-amd64` workflow label, so existing jobs can use either pool. Each also advertises its host-specific label,
+  `arc-amd64-turin` or `arc-amd64-ryzen`, for placement acceptance. The pools retain separate ARC identities and
+  independent caps. Each runner uses one 45Gi generic ephemeral PVC for `/nix`, `/home/runner/.cache`, `/tmp`,
+  `/home/runner/_work`, and Docker data. The init copies the image's Nix tree before the main containers mount it,
+  checks the host's expected filesystem and free capacity, then verifies file bytes, file counts, and symlink counts.
+  The PVC is deleted with the runner Pod. ARM64 and `analysis-arm64` retain their existing `emptyDir` workspaces.
 - The 45Gi value is a PVC request. The local-path provisioner does not configure an XFS project quota, so Kubernetes
   does not enforce a 45Gi per-runner ceiling. The init requires at least 45Gi free after copying the image tree and
   cache. A failed scratch bootstrap is a runner admission failure; investigate it before changing the class.
@@ -38,22 +40,32 @@ ARC separates architecture-specific runner pods from architecture-neutral contro
 
 ## AMD64 capacity
 
-The `arc-amd64` scale set retains `minRunners: 1` and `maxRunners: 5`. Each runner reserves 16Gi and four logical CPUs
-across the runner and DinD. Ryzen has 128GiB installed, but its current 64GiB firmware GPU allocation leaves only
-61.8GiB allocatable to Kubernetes. That split cannot accommodate five runners.
+The AMD64 pools total five runners: `arc-amd64` has `minRunners: 1`, `maxRunners: 3` on Turin, and
+`arc-amd64-ryzen` has `minRunners: 1`, `maxRunners: 2` on Ryzen. ARC 0.14.2 supports the shared `arc-amd64` label
+across distinct scale sets. Neither pool changes GitHub runner-group access or requires workflow routing changes.
 
-Before moving the scale set, reduce the GPU allocation to 8GiB, or 16GiB if 8GiB is unavailable, through the
-[Bosgame memory procedure](../../../devices/ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
-Verify the actual post-reboot allocatable memory. The 2026-10-11 inventory projected 14.95GiB and 7.78 logical CPUs
-for workloads remaining after all application Ceph clients and Bayn components leave Ryzen. Five runners bring the
-request total to about 94.95GiB and 27.78 logical CPUs, below the estimated 117.8GiB memory and current 31.95 logical
-CPU capacity with an 8GiB GPU allocation. These are scheduling reservations, not measured five-build throughput.
-The combined container memory limits are 32Gi per runner Pod; concurrent bursts can still exhaust host memory.
+Each runner reserves 16Gi and four logical CPUs across the runner and DinD. Ryzen has 128GiB installed, but its current
+64GiB firmware GPU allocation leaves only 61.8GiB allocatable. Two runners reserve 32Gi and eight logical CPUs.
+The 2026-10-11 inventory projected 14.95GiB and 7.78 logical CPUs for retained workloads after application Ceph clients
+and all Bayn components leave Ryzen. Adding two runners brings that total to about 46.95GiB and 15.78 logical CPUs.
+Verify fresh requests before delivery; do not rely on that projection while those moves remain unfinished.
+The combined container memory limits are 32Gi per runner Pod, so concurrent bursts can still exhaust host memory.
 
-Apply the new local class and complete the [Ryzen placement rollout](../../../devices/galactic/scheduling/README.md)
-and the memory repartition before promoting the runner configuration through Kargo. Existing busy runners must finish normally.
-The compute-local toleration is explicit in the runner template so startup does not depend on admission mutation.
-The ARM64 scale sets retain their existing placement and capacity.
+The current two-plus-three split does not require a BIOS change or reboot. A future move of all five runners to Ryzen
+requires reducing the GPU reservation through the
+[Bosgame memory procedure](../../../devices/ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation),
+then measuring post-reboot capacity and concurrent build load.
+
+Apply the local class and complete the [Ryzen placement rollout](../../../devices/galactic/scheduling/README.md)
+before promoting the runner configuration through Kargo. Existing busy Turin runners must finish normally.
+The Ryzen pool's compute-local toleration is explicit so startup does not depend on admission mutation.
+The ARM64 scale sets retain their existing placement and capacity. The Kargo Stage updates the image in all four
+runner scale sets, including the Ryzen pool.
+
+After both pools reconcile, dispatch `.github/workflows/arc-placement-acceptance.yml` from `main`. Its five matrix jobs
+require the host-specific labels, check the actual downward-API node identity, and exercise local scratch, Nix, and
+Docker without publishing an image. Two target Ryzen and three target Turin. This is placement and toolchain proof;
+measure memory pressure, etcd latency, and NVMe contention under representative builds before increasing capacity.
 
 Capacity changes use a reviewed Git change and the normal runner-image/Kargo delivery path. If storage contention
 returns, restore `minRunners: 0` and `maxRunners: 1` through that path. Existing busy runners finish before the count

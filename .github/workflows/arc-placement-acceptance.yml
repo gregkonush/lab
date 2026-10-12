@@ -1,0 +1,73 @@
+name: ARC placement acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arc-placement-acceptance
+  cancel-in-progress: false
+
+jobs:
+  local-build:
+    name: ${{ matrix.slot }} local scratch build
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - slot: ryzen-1
+            labels: [arc-amd64, arc-amd64-ryzen]
+            node: talos-192-168-1-194
+            filesystem: xfs
+          - slot: ryzen-2
+            labels: [arc-amd64, arc-amd64-ryzen]
+            node: talos-192-168-1-194
+            filesystem: xfs
+          - slot: turin-1
+            labels: [arc-amd64, arc-amd64-turin]
+            node: turin
+            filesystem: ext4
+          - slot: turin-2
+            labels: [arc-amd64, arc-amd64-turin]
+            node: turin
+            filesystem: ext4
+          - slot: turin-3
+            labels: [arc-amd64, arc-amd64-turin]
+            node: turin
+            filesystem: ext4
+    runs-on: ${{ matrix.labels }}
+    env:
+      EXPECTED_NODE: ${{ matrix.node }}
+      EXPECTED_FILESYSTEM: ${{ matrix.filesystem }}
+      SLOT: ${{ matrix.slot }}
+    steps:
+      - name: Verify local scratch, Nix, and Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$ARC_RUNNER_NODE_NAME" = "$EXPECTED_NODE"
+          for path in /nix /home/runner/.cache /tmp /home/runner/_work; do
+            test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = "$EXPECTED_FILESYSTEM"
+          done
+          test "$(nix eval --offline --expr '40 + 2')" = 42
+          nix --version
+          docker version
+          test "$(docker info --format '{{.DockerRootDir}}')" = /var/lib/docker
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/arc-local-proof.XXXXXX")"
+          trap 'rm -rf "$proof_dir"' EXIT
+          dd if=/dev/zero of="$proof_dir/payload" bs=1M count=16 conv=fsync
+          sha256sum "$proof_dir/payload"
+          cat > "$proof_dir/Dockerfile" <<'DOCKERFILE'
+          FROM busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          COPY payload /payload
+          RUN test "$(wc -c < /payload)" = 16777216
+          CMD ["wc", "-c", "/payload"]
+          DOCKERFILE
+          docker build --tag "arc-local-proof:$SLOT" "$proof_dir"
+          test "$(docker run --rm "arc-local-proof:$SLOT" | awk '{print $1}')" = 16777216
+          printf 'Verified slot=%s node=%s pod=%s\n' "$SLOT" "$ARC_RUNNER_NODE_NAME" "$ACTIONS_RUNNER_POD_NAME"
+          sleep 60
