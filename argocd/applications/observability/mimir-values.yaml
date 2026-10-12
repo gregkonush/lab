@@ -162,6 +162,17 @@ alertmanager:
     storageClass: null
     size: 1Gi
 
+gateway:
+  nginx:
+    config:
+      serverSnippet: |
+        location = /alertmanager {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
+        location = /alertmanager/ {
+          return 302 "https://grafana.ide-newton.ts.net/alerting/groups?alertmanager=Mimir%20Alertmanager#";
+        }
+
 kafka:
   enabled: false
 

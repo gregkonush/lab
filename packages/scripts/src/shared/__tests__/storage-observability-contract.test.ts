@@ -228,6 +228,35 @@ test('critical Ceph alerts opt into the configured email route', () => {
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
 })
 
+test('Mimir email UI links select its provisioned Grafana Alertmanager without redirecting API paths', () => {
+  const mimir = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
+  const grafana = YAML.parse(readRepoFile('argocd/applications/observability/grafana-values.yaml'))
+  const datasource = grafana.datasources['datasources.yaml'].datasources.find(
+    (source: { type: string }) => source.type === 'alertmanager',
+  )
+  expect(datasource).toBeDefined()
+  expect(datasource.url).toBe('http://observability-mimir-gateway.observability.svc.cluster.local')
+  expect(datasource.access).toBe('proxy')
+  expect(datasource.jsonData).toMatchObject({ implementation: 'mimir', handleGrafanaManagedAlerts: false })
+
+  const externalUrl = new URL(mimir.mimir.structuredConfig.alertmanager.external_url)
+  expect(externalUrl.origin).toBe('https://mimir.ide-newton.ts.net')
+  const uiPath = externalUrl.pathname
+  const snippet = mimir.gateway.nginx.config.serverSnippet
+  const redirects = Array.from(snippet.matchAll(/location\s+(=)?\s+([^\s{]+)\s*\{\s*return\s+302\s+"([^"]+)";\s*\}/g))
+  expect(redirects.map((match) => [match[1], match[2]])).toEqual([
+    ['=', uiPath],
+    ['=', `${uiPath}/`],
+  ])
+  for (const match of redirects) {
+    const target = new URL(match[3])
+    expect(target.origin).toBe('https://grafana.ide-newton.ts.net')
+    expect(target.pathname).toBe('/alerting/groups')
+    expect(target.searchParams.get('alertmanager')).toBe(datasource.name)
+    expect(match[3].endsWith('#')).toBe(true)
+  }
+})
+
 test('alert email uses Brevo SMTP credentials from the existing secret store', () => {
   const externalSecret = YAML.parse(
     readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
