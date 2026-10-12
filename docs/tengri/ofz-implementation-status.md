@@ -4,6 +4,40 @@ The goal is the complete migration and deployed acceptance described in
 [the authorization plan](ofz-enterprise-authorization-plan.md). Work proceeds through dependent PRs, without subagents.
 Production keeps its current authority until the coordinated hard cutover. New code has no legacy authorization fallback.
 
+The active Codex goal was recreated and verified on 2026-10-11 after goal readback returned empty. It has no token
+limit. Completion requires the exact deployed release, every service's allow/deny/revocation and failure checks,
+retained-data product acceptance, independent restore and the required soak. Published source and passing fixtures
+are intermediate evidence.
+
+The service split is published in native GitHub stack [#14917](https://github.com/proompteng/lab/pull/14908).
+
+| Service or contract                      | Reviewable implementation                              | Deployed acceptance                         |
+| ---------------------------------------- | ------------------------------------------------------ | ------------------------------------------- |
+| Ofz lifecycle and control                | [#14908](https://github.com/proompteng/lab/pull/14908) | Pending cutover                             |
+| Tengri controller, runner and supervisor | [#14915](https://github.com/proompteng/lab/pull/14915) | Pending cutover                             |
+| Landing BFF and desktop authority        | [#14916](https://github.com/proompteng/lab/pull/14916) | Pending cutover                             |
+| Ofz, Keycloak and application HA         | [#14909](https://github.com/proompteng/lab/pull/14909) | Pending cutover and fault probes            |
+| Physical database promotion proof        | [#14910](https://github.com/proompteng/lab/pull/14910) | Pending native CNPG and independent restore |
+| Runtime epoch and preview binding        | [#14911](https://github.com/proompteng/lab/pull/14911) | Pending cutover                             |
+| Signed guest enforcement                 | [#14913](https://github.com/proompteng/lab/pull/14913) | Pending native KVM and execution fencing    |
+| Ofz Viewer policy                        | [#14920](https://github.com/proompteng/lab/pull/14920) | Pending bounded observers and cutover       |
+| Landing Viewer administration            | [#14921](https://github.com/proompteng/lab/pull/14921) | Pending bounded observers and cutover       |
+| Exact-target guest proof protocol        | [#14923](https://github.com/proompteng/lab/pull/14923) | Pending cutover                             |
+
+Source delivery continues through required CI and automatic review. Production remains held until the reviewed Ofz,
+BFF, runtime, guest, migration and broker contracts can activate together. Remaining implementation includes bounded
+observers, independent execution fencing, diagnostic proof keys and brokers, offboarding and independent recovery.
+P8 still requires migration rehearsals, real custodian enrollment, coordinated GitOps activation and full acceptance.
+
+The 2026-10-11 delivery checkpoint rebases all ten layers onto current main while preserving the runtime performance
+changes. The assembled runtime passes Rust units/contracts, Clippy, 23 real shared-database tests and Rust-Go RPC
+interoperability. Cached transports carry no user authority; a regression verifies separate users, revocation and Ofz
+loss on one reused connection. The independently checked Ofz root layer passes 50 control commands and 125 immutable
+receipts in 145.04 seconds, 52 real browser assertions in 111.76 seconds, 297 Landing unit tests, TypeScript, lint and
+22 operation-inventory regressions. Its fixture now acknowledges the synthetic outbox and sequence, gives new valid
+roster reads fresh deadlines, and allows bounded cold Keycloak startup and cleanup. Production deadlines are unchanged.
+These are source checks. Remote CI, reviewed merge and deployed acceptance remain separate gates.
+
 - [x] Read repository instructions and Poteto principles; refresh source and runtime baseline.
 - [x] Verify the requested administrator: `gregkonush`, GitHub numeric ID `12027037`.
 - [x] Verify the second administrator/custodian: `tuslagch`, GitHub numeric ID `241203724`.

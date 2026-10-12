@@ -1498,11 +1498,14 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
         });
         context.session_id = identity.1.clone();
         context.trace_id = Uuid::new_v4().to_string();
-        context
+        async move {
+            context.deadline_unix_ms = database.state().await.unwrap().now_ms + 10_000;
+            context
+        }
     };
     let roster = service
         .list_access(rpc(ListAccessRequest {
-            context: Some(roster_context(owner)),
+            context: Some(roster_context(owner).await),
             resource: Some(policy::workspace(&uid)),
             ..Default::default()
         }))
@@ -1528,7 +1531,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
     assert_eq!(roster.quotas[0].used_bytes, HOME_BYTES);
     let denied = service
         .list_access(rpc(ListAccessRequest {
-            context: Some(roster_context(&identities[2])),
+            context: Some(roster_context(&identities[2]).await),
             resource: Some(policy::workspace(&uid)),
             ..Default::default()
         }))
@@ -1541,7 +1544,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
     );
     let platform = service
         .list_access(rpc(ListAccessRequest {
-            context: Some(roster_context(owner)),
+            context: Some(roster_context(owner).await),
             resource: Some(policy::platform()),
             ..Default::default()
         }))
@@ -1558,7 +1561,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
     );
     let denied = service
         .read_audit(rpc(ReadAuditRequest {
-            context: Some(roster_context(&identities[2])),
+            context: Some(roster_context(&identities[2]).await),
             ..Default::default()
         }))
         .await
@@ -1583,7 +1586,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
     .await;
     let audit = service
         .read_audit(rpc(ReadAuditRequest {
-            context: Some(roster_context(&identities[1])),
+            context: Some(roster_context(&identities[1]).await),
             limit: 200,
             ..Default::default()
         }))
