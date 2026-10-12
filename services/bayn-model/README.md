@@ -99,6 +99,12 @@ receipts before posting an inference expense to TigerBeetle. This endpoint neith
 posts a zero expense. Usage, allocated cost and realized net strategy value are different evidence. The research
 worker must retain checkpoint, prompt, input, run and request identities with usage and expense receipts.
 
+Each inference response carries `x-bayn-serving-identity`: the model alias, checkpoint, tokenizer and chat-template
+revision from the verified model lock, plus the deployment-bound vLLM image digest. CI verifies that the digest
+matches the serving container image and the native vLLM contract test image. The research client rejects missing
+or mismatched identity before consuming output and retains the attestation in its immutable receipt. Independent
+model and research promotions cannot silently accept output under a different frozen serving policy.
+
 ## Validation
 
 From the repository root:

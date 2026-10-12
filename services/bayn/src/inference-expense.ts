@@ -263,6 +263,54 @@ export interface InferenceExpensePlan {
   readonly transfers: readonly LedgerTransferRecord[]
 }
 
+export const inferenceExpensePosting = (
+  scope: string,
+  transferIdentity: string,
+  evidenceHash: string,
+  amount: bigint,
+): InferenceExpensePlan => {
+  const account = (code: number): LedgerAccountRecord => ({
+    id: stableU128(`${scope}:account:${code}`),
+    debits_pending: 0n,
+    debits_posted: 0n,
+    credits_pending: 0n,
+    credits_posted: 0n,
+    user_data_128: stableU128(scope),
+    user_data_64: stableU64(scope),
+    user_data_32: inferenceExpenseSchemaVersion,
+    reserved: 0,
+    ledger: inferenceExpenseLedger,
+    code,
+    flags: 1 << 3,
+    timestamp: 0n,
+  })
+  const expense = account(510)
+  const clearing = account(230)
+  return {
+    accounts: [expense, clearing],
+    transfers:
+      amount === 0n
+        ? []
+        : [
+            {
+              id: stableU128(transferIdentity),
+              debit_account_id: expense.id,
+              credit_account_id: clearing.id,
+              amount,
+              pending_id: 0n,
+              user_data_128: stableU128(evidenceHash),
+              user_data_64: stableU64(scope),
+              user_data_32: inferenceExpenseSchemaVersion,
+              timeout: 0,
+              ledger: inferenceExpenseLedger,
+              code: 1,
+              flags: 0,
+              timestamp: 0n,
+            },
+          ],
+  }
+}
+
 export const buildInferenceExpensePlan = (
   quotes: readonly InferenceExpenseQuote[],
 ): Result.Result<InferenceExpensePlan, InferenceCostError> =>
@@ -282,41 +330,15 @@ export const buildInferenceExpensePlan = (
         )
       pricedRequests.set(requestKey, quote.quoteHash)
       const scope = inferenceExpenseScope(quote.accountBindingHash, quote.sessionDate)
-      const account = (code: number): LedgerAccountRecord => ({
-        id: stableU128(`${scope}:account:${code}`),
-        debits_pending: 0n,
-        debits_posted: 0n,
-        credits_pending: 0n,
-        credits_posted: 0n,
-        user_data_128: stableU128(scope),
-        user_data_64: stableU64(scope),
-        user_data_32: inferenceExpenseSchemaVersion,
-        reserved: 0,
-        ledger: inferenceExpenseLedger,
-        code,
-        flags: 1 << 3,
-        timestamp: 0n,
-      })
-      const expense = account(510)
-      const clearing = account(230)
-      accounts.set(expense.id, expense)
-      accounts.set(clearing.id, clearing)
-      if (amount === '0') continue
-      const transfer: LedgerTransferRecord = {
-        id: stableU128(`bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`),
-        debit_account_id: expense.id,
-        credit_account_id: clearing.id,
-        amount: BigInt(amount),
-        pending_id: 0n,
-        user_data_128: stableU128(quote.quoteHash),
-        user_data_64: stableU64(scope),
-        user_data_32: inferenceExpenseSchemaVersion,
-        timeout: 0,
-        ledger: inferenceExpenseLedger,
-        code: 1,
-        flags: 0,
-        timestamp: 0n,
-      }
+      const posting = inferenceExpensePosting(
+        scope,
+        `bayn.inference-expense.transfer.v1:${quote.accountBindingHash}:${quote.line.requestId}`,
+        quote.quoteHash,
+        BigInt(amount),
+      )
+      for (const account of posting.accounts) accounts.set(account.id, account)
+      const transfer = posting.transfers[0]
+      if (transfer === undefined) continue
       const previous = transfers.get(transfer.id)
       if (previous !== undefined && !transferMetadataMatches(previous, transfer))
         return yield* Result.fail(

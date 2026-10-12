@@ -41,10 +41,11 @@ remain eligible on Ryzen. The monitor placement retains all three hosts with
    Require temperatures below the reported critical threshold before adding client traffic. Historical peaks do not
    establish the current temperature, and a negotiated 100G link alone does not prove sustained operation.
 5. Keep the existing CPU/GPU memory split for the initial ARC move. Ryzen has 128GiB installed, with 64GiB reserved
-   for the GPU and 61.8GiB allocatable. Place at most two AMD64 runners there, and retain three on Turin. Each runner
-   reserves 21Gi and four logical CPUs. The 2026-10-11 inventory projects about 56.95GiB and 15.78 logical CPUs for
-   retained workloads plus two runners after application Ceph clients and all Bayn components leave Ryzen. Verify
-   fresh requests and local filesystem free space before promotion. A later all-five move requires the
+   for the GPU and 61.8GiB allocatable. The initial two-Ryzen/three-Turin migration passed native acceptance; the
+   authorized expansion places three AMD64 runners on Ryzen and six on Turin. Each reserves 16Gi and four logical
+   CPUs. The 2026-10-12 inventory measured 11.94GiB and 6.57 logical CPUs for retained Ryzen workloads, giving about
+   59.94GiB and 18.57 logical CPUs with three runners. The user permits memory overcommit; their combined limits
+   remain 96Gi. Verify fresh requests and local filesystem free space before promotion. A later all-five move requires the
    [Bosgame memory repartition](../../ryzen/docs/bosgame-m5-talos-drivers.md#cpu-and-gpu-memory-allocation).
 
 Three Ceph-backed database clusters, SPIRE server, and Restate retain three replicas but use preferred host separation
@@ -77,14 +78,17 @@ do not sync its Kargo revision before its local class and memory headroom exist.
 6. Keep Forgejo's AMD64 runner on Turin with its original Ceph registration PVC. Drain assigned jobs through the
    [Forgejo runner procedure](../../../argocd/applications/forgejo-runners/README.md) before its move.
 7. Promote the reviewed ARC configuration through the existing `arc-runner` Kargo Stage after Ceph clients have left Ryzen.
-   Keep the ARM64 sets on Altra. Let busy AMD64 runners finish normally. One five-runner `arc-amd64` set uses
+   Keep the ARM64 sets on Altra; raise the normal `arc-arm64` maximum from five to eight and retain the separate
+   analysis set's one-slot limit. Let busy AMD64 runners finish normally. One nine-runner `arc-amd64` set uses
    `local-path-ci-amd64`, whose node maps select Turin Transcend or Ryzen local scratch. Strict two-host spread and
-   the 21Gi memory reservation allow two on current Ryzen capacity and three on Turin. Require fresh non-runner
-   Ryzen requests below 19.82GiB. Revisit this reservation and spread before a BIOS memory change.
+   the 16Gi memory reservation with `maxSkew: 3` allow three on current Ryzen capacity and six on Turin. Require
+   fresh non-runner Ryzen requests below 13.82GiB and no node pressure on any runner host. Revisit this reservation
+   and spread before a BIOS memory change. Altra's ARM64 runners retain node-local workspaces; inspect its filesystem
+   headroom and native image reclamation before increasing concurrency.
 8. Run `python3 devices/galactic/scheduling/verify-placement.py --context galactic-lan --verify`.
    Require no application Ceph client on Ryzen, an AMD64 runner using only its local scratch claim, and the Ryzen monitor in quorum.
    Execute a non-publishing AMD64 CI job that writes scratch files, builds and runs a container, and executes Nix binaries.
-   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during two concurrent Ryzen builds and three concurrent Turin builds.
+   Check Ryzen etcd latency, memory pressure, CPU contention, and scratch I/O during three concurrent Ryzen builds and six concurrent Turin builds.
    Its local scratch partition shares the physical NVMe with `/var`.
 
 ## Live acceptance on 2026-10-12 UTC
@@ -102,8 +106,8 @@ the existing controller policy and activation hook.
 
 The [five-slot ARC acceptance run](https://github.com/proompteng/lab/actions/runs/38207296252) completed five
 concurrent AMD64 jobs: two on Ryzen and three on Turin, with 57 seconds of overlap across all five. Each job
-verified Nix execution, a Docker build and container run, and its local XFS scratch volume. ARC retains two
-idle runners and scales to five jobs; five idle Pods are not required. Placement verification selects Pods
+verified Nix execution, a Docker build and container run, and its local XFS scratch volume. That initial revision
+retained two idle runners and scaled to five jobs; five idle Pods were not required. Placement verification selects Pods
 whose component is `runner`, because ARC listeners also carry the scale-set label but have no scratch PVC.
 
 During that run Ryzen had at least 48.19GiB available memory, peaked at 3.06 CPU cores, and reported no node

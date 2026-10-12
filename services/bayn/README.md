@@ -1308,3 +1308,31 @@ OTLP failure warnings include consecutive failed attempts. The exporter logs a s
 with the attempt count and elapsed outage time. This confirms transport recovery for that request, not completeness
 of spans during the outage. Broker projection rejection logs distinguish stale, future, account and chronology
 failures with observation age, without recording account identifiers or payloads.
+
+## Independent Alpha-R1 research
+
+`BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
+The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
+original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
+The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research) defines the approved restricted
+database identity, separate run-approval credential and normal Kargo release path. The source includes no broker or capital capability in the research server.
+
+The pinned vLLM endpoint supplies cumulative usage on streaming chunks. The decoder requires stable prompt counts,
+nondecreasing completion counts within the approved budget, and one final usage summary after normal generation
+finish. Intermediate counts never substitute for that final summary or complete stream termination.
+
+The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
+Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
+Submission requires `BAYN_RESEARCH_APPROVAL_KEY` from the approved secret-management path. The CLI signs the exact
+run identity; only its approval proof is submitted, and the key is never logged or journaled in Restate.
+
+```sh
+bayn-research --validate run.json
+RESTATE_INGRESS_ORIGIN=http://restate.restate.svc.cluster.local:8080 \
+  bayn-research --run run.json --output new-receipt.json
+```
+
+Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFIED. The original full-session capture,
+Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
+measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
+the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.

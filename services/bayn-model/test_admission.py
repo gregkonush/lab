@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -20,10 +21,48 @@ async def empty_receive():
 
 class AdmissionTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        image = patch.dict(
+            "os.environ", {"BAYN_MODEL_SERVING_IMAGE": "sha256:" + "1" * 64}
+        )
+        image.start()
+        self.addCleanup(image.stop)
         self.output = io.StringIO()
         context = redirect_stdout(self.output)
         context.__enter__()
         self.addCleanup(context.__exit__, None, None, None)
+
+    async def test_serving_attestation_is_bound_to_verified_lock_and_image(self):
+        async def backend(scope, receive, send):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"x-bayn-serving-identity", b"untrusted-backend-value")
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        app = AdmissionMiddleware(backend)
+        messages = await self.request(app)
+        headers = messages[0]["headers"]
+        self.assertEqual(
+            sum(key == b"x-bayn-serving-identity" for key, _ in headers), 1
+        )
+        self.assertEqual(
+            json.loads(dict(headers)[b"x-bayn-serving-identity"]),
+            {
+                "model": app.lock["servedModel"],
+                "checkpoint": app.lock["revision"],
+                "servingImage": "sha256:" + "1" * 64,
+                "tokenizerRevision": app.lock["revision"],
+                "chatTemplateRevision": app.lock["revision"],
+            },
+        )
+        with patch.dict("os.environ", {"BAYN_MODEL_SERVING_IMAGE": "moving-tag"}):
+            with self.assertRaisesRegex(ValueError, "immutable digest"):
+                AdmissionMiddleware(backend)
 
     async def request(self, app, scope=SCOPE, receive=empty_receive):
         messages = []
