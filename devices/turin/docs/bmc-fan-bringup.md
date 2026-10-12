@@ -18,11 +18,12 @@ the node.
 
 ## Credential handling
 
-For authorized BMC operations, use the existing protected local file
+For authorized BMC operations, use the existing operator-provisioned local file
 `~/.config/lab-secrets/turin-bmc.json`. It contains `host`, `username`, and
 `password`. Keep the file at mode `0600` and its directory at mode `0700`.
 Load the stored username, including its casing. Keep passwords out of process
-arguments, output, and Git. Define this helper once for the commands below:
+arguments, output, and Git. This procedure reads that existing source; it does
+not create or copy credentials. Define this helper once for the commands below:
 
 ```bash
 set +x
@@ -124,15 +125,31 @@ Before a speed test, read all fan statuses, CPU and DIMM temperatures, and the
 [NIC's own sensor](../../galactic/network/README.md#read-nic-temperature).
 Confirm that no other fan controller is running. This example requires the
 original automatic mode to be `Optimal`. Prepare the restore commands before
-enabling bypass. The verified tests used
-at least eight seconds of settling time and restored automatic control on exit:
+enabling bypass. The verified tests used at least eight seconds of settling
+time and restored automatic control on exit:
 
 ```bash
 (
   set -e
   test "$(turin_ipmi raw 0x30 0x45 0x00 | tr -d '[:space:]')" = 02
-  trap 'turin_ipmi raw 0x30 0x70 0x66 0x02 0x00
-        turin_ipmi raw 0x30 0x45 0x01 0x02' EXIT
+  restore_automatic() {
+    local released=1
+    local restore_attempt
+    for restore_attempt in 1 2 3; do
+      if turin_ipmi raw 0x30 0x70 0x66 0x02 0x00; then
+        released=0
+        break
+      fi
+    done
+    if turin_ipmi raw 0x30 0x45 0x01 0x02 && test "$released" -eq 0; then
+      return 0
+    fi
+    turin_ipmi raw 0x30 0x70 0x66 0x01 0x00 0x64 || true
+    turin_ipmi raw 0x30 0x70 0x66 0x01 0x01 0x64 || true
+    printf '%s\n' 'Automatic recovery failed; check the BMC and release bypass.' >&2
+    return 1
+  }
+  trap 'restore_automatic || exit 1' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap 'exit 129' HUP
@@ -142,6 +159,12 @@ at least eight seconds of settling time and restored automatic control on exit:
   turin_ipmi sdr list
 )
 ```
+
+Cleanup retries bypass release three times and attempts the mode refresh even
+if release fails. If either recovery step fails, it attempts `100%` duty for
+both groups independently and exits nonzero. That emergency fallback is not a
+quiet operating setting or proof of restored automatic control. If the BMC
+remains unreachable, those writes can also fail; the operator must recover it.
 
 This example requests `55%` for group 0. The separate group 1 test used
 `raw 0x30 0x70 0x66 0x01 0x01 0x55`, which requests `85%`.

@@ -122,22 +122,18 @@ transition.
 
 ### Authorized BMC power cycle
 
-The expected workstation path is an already signed-in 1Password CLI session. Do not put the password in an argument,
-file, repository, chat, or shell trace. Do not repeat `op signin` after the session is already authenticated. If `op`
-returns an authentication error, stop and report that concrete error.
+The workstation already has the operator-provisioned credential file
+`~/.config/lab-secrets/turin-bmc.json`. Use the
+[Turin credential helper](../../devices/turin/docs/bmc-fan-bringup.md#credential-handling),
+which reads that existing source and passes the password through `IPMI_PASSWORD`.
+Keep the file at mode `0600` and its directory at mode `0700`. This procedure
+does not create another credential copy or change the account, target, or
+permissions. Keep the password out of arguments, repositories, chat, and shell
+traces. Stop on authentication failure.
 
 ```bash
-set +x
-TURIN_BMC_ITEM='<exact Turin BMC item name or ID>'
-TURIN_BMC_USER="$(op item get "$TURIN_BMC_ITEM" --fields label=username)"
-
-IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
-  ipmitool -I lanplus -H "$TURIN_BMC_HOST" -U "$TURIN_BMC_USER" -E chassis power status
-
-IPMI_PASSWORD="$(op item get "$TURIN_BMC_ITEM" --fields label=password --reveal)" \
-  ipmitool -I lanplus -H "$TURIN_BMC_HOST" -U "$TURIN_BMC_USER" -E chassis power cycle
-
-unset TURIN_BMC_ITEM TURIN_BMC_USER
+turin_ipmi chassis power status
+turin_ipmi chassis power cycle
 ```
 
 The power command requires explicit authorization. The read-only credential retrieval does not authorize another power
