@@ -1,5 +1,41 @@
 # Bayn GitOps rollout notes
 
+## Isolated Alpha-R1 research
+
+`research-worker.yaml` runs only `BaynResearchRun`, with one inference in flight and a separate two-connection
+PostgreSQL pool. It has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
+existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads.
+Recovery pauses only the research worker through GitOps; it does not change trading authority.
+
+The approved `bayn_research` CNPG-managed role uses `bayn-research-db` for its password and connection URI. It is
+neither a superuser nor a role/database creator and has a two-connection limit. After migration 0093 has created the
+tables, apply these approved grants through the existing database administration path:
+
+```sql
+GRANT CONNECT ON DATABASE bayn TO bayn_research;
+GRANT USAGE ON SCHEMA public TO bayn_research;
+GRANT SELECT, INSERT ON research_inference_runs, research_inference_receipts TO bayn_research;
+```
+
+Verify that it cannot UPDATE receipts, access trading tables, create schema objects or post expenses. Existing
+accounting workers own expense posting and verification. The worker fails closed until the tables and grants exist.
+The paired source-egress and database-ingress rules permit only the required PostgreSQL connection.
+
+Each run requires HMAC-SHA256 operator approval over its exact canonical identity, including source, study, context,
+attempt, deadline/token budget and cost basis. The operator CLI and worker receive the separate 32-byte random
+approval key from `bayn-research-authority`, key `run-approval-key`, as `BAYN_RESEARCH_APPROVAL_KEY`. Only the signed proof
+travels through Restate. Changed or unsigned runs are rejected before the durable inference step; a signed run can
+transmit once. Do not print credentials or put plaintext in source or process arguments.
+
+Worker metrics are exported to Mimir and native/Effect traces to Tempo. `bayn-research.rules` in the existing Mimir
+rule source covers missing telemetry, repeated failed attempts and incomplete expense coverage. Verify actual
+factor selection, cancellation, retained replay, expense recovery and matching Loki/Tempo/Mimir evidence against
+the deployed revision. Synthetic acceptance does not establish economic qualification or session latency.
+
+Original-session eligibility, preparation expenses and comparison requirements are described in the
+[research contract](../../../docs/bayn/alpha-r1-research-plan.md). Invalidated or unsealed captures cannot establish
+complete original coverage; do not manufacture descriptions or later outcomes to make old captures eligible.
+
 Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and
 exponent-looking commit prefixes as YAML strings, as Kubernetes requires for label values. The activation Job name,
 full source revision, immutable image digest and authored research lineage retain their existing contracts.

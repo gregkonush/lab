@@ -1,9 +1,9 @@
 # Connect Alpha-R1 to Bayn research
 
 The independent research Workflow, streaming client, immutable attempt receipts, expense projection and operator
-command are implemented. The resident Alpha-R1 endpoint is deployed. The new worker has not been activated.
-Its [reviewable activation configuration](research-inference-activation/README.md) needs approval for a separate,
-restricted database identity and operator approval credential. No strategy has been admitted or economically qualified by this work.
+command are implemented. The isolated worker and approved credentials are enrolled in
+[Bayn GitOps](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research), using the existing Kargo release path.
+No strategy has been admitted or economically qualified by this work.
 
 ## Runtime
 
@@ -83,7 +83,7 @@ no TigerBeetle or broker credential and cannot acknowledge its own expenses.
 
 Worker metrics report heartbeat, inference duration, TTFT, completion tokens, outcomes, retained replays, unknown
 expenses, ambiguous attempts and posting lag. Resource/request identities remain in logs and traces, not metric labels.
-The activation proposal contains warning alerts for missing telemetry, repeated failed attempts and cost gaps.
+The existing Mimir rule source contains warning alerts for missing telemetry, repeated failed attempts and cost gaps.
 
 ## Current evidence and remaining acceptance
 
@@ -93,7 +93,7 @@ cannot establish complete coverage. No eligible original session was available f
 The [capture contract](../../services/bayn/src/research-capture/README.md) remains authoritative. Existing capture
 credentials and bucket availability do not prove full original arrival, source frontier and controller coverage.
 
-Activate the reviewed worker only after its restricted credential destinations are approved, through main, immutable
+Deliver the reviewed worker through main, immutable
 publication, eligible Freight, the existing Kargo Stage, generated Kargo revision and Argo reconciliation. Verify an
 actual factor-selection run, cancellation to zero model work, durable recovery, exact expense posting and matching
 Tempo/Loki/Mimir evidence. Do not use a direct image bump or manual workload deployment. Recovery pauses only research.
