@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import re
 import time
 import uuid
@@ -36,6 +37,19 @@ class AdmissionMiddleware:
     def __init__(self, app):
         self.app = app
         self.lock = read_lock(Path(__file__).with_name("model-lock.json"))
+        image = os.environ["BAYN_MODEL_SERVING_IMAGE"]
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image):
+            raise ValueError("Serving image must be an immutable digest")
+        self.identity = json.dumps(
+            {
+                "model": self.lock["servedModel"],
+                "checkpoint": self.lock["revision"],
+                "servingImage": image,
+                "tokenizerRevision": self.lock["revision"],
+                "chatTemplateRevision": self.lock["revision"],
+            },
+            separators=(",", ":"),
+        ).encode()
         self.inflight = 0
         self.counts = dict.fromkeys(OUTCOMES, 0)
         self.duration_seconds = 0.0
@@ -109,6 +123,15 @@ class AdmissionMiddleware:
             nonlocal status, response_started, response_finished
             if message["type"] == "http.response.start":
                 status, response_started = message["status"], True
+                message = {
+                    **message,
+                    "headers": [
+                        (key, value)
+                        for key, value in message.get("headers", [])
+                        if key.lower() != b"x-bayn-serving-identity"
+                    ]
+                    + [(b"x-bayn-serving-identity", self.identity)],
+                }
             if message["type"] == "http.response.body" and not message.get(
                 "more_body", False
             ):

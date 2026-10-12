@@ -963,6 +963,11 @@ describe('Kargo direct-push GitOps contract', () => {
       (step: { env?: { VLLM_IMAGE?: string } }) => step.env?.VLLM_IMAGE !== undefined,
     )
     expect(servingContract.env.VLLM_IMAGE).toBe(deployment.spec.template.spec.containers[0].image)
+    expect(
+      deployment.spec.template.spec.containers[0].env.find(
+        (entry: { name: string }) => entry.name === 'BAYN_MODEL_SERVING_IMAGE',
+      ).value,
+    ).toBe(servingContract.env.VLLM_IMAGE.split('@')[1])
     expect(deployment.spec.template.spec.initContainers[0].image).toBe(`${imageRepo('bayn-model')}:unpromoted`)
     expect(deployment.spec.template.spec.containers[0].command).toEqual(['python3', '/opt/bayn-model/serve.py'])
   })
