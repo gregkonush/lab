@@ -1,12 +1,14 @@
-import { Effect, Schema, Stream } from 'effect'
+import { Effect, Redacted, Schema, Stream } from 'effect'
 import { HttpClient, HttpClientRequest } from 'effect/http'
 import { decodeResearchRun, hashResearch, ResearchError, ResearchReceiptSchema } from './contract'
 import { verifyResearchReceipt } from './store'
+import { approveResearchRun } from './approval'
 
 export const submitResearch = Effect.fn('bayn.research.submit')(
-  function* (input: unknown, origin: string) {
+  function* (input: unknown, origin: string, approvalKey: Redacted.Redacted<string>) {
     const run = yield* Effect.fromResult(decodeResearchRun(input))
     const runId = yield* Effect.fromResult(hashResearch(run))
+    const approval = yield* Effect.fromResult(approveResearchRun(run, approvalKey))
     const url = yield* Effect.try({
       try: () => new URL(origin),
       catch: (cause) => new ResearchError({ message: 'Restate research origin is invalid', cause }),
@@ -23,7 +25,7 @@ export const submitResearch = Effect.fn('bayn.research.submit')(
     const http = yield* HttpClient.HttpClient
     const initial = yield* http.execute(
       HttpClientRequest.post(`${url.origin}/restate/call/BaynResearchRun/${runId}/run`).pipe(
-        HttpClientRequest.bodyText(JSON.stringify(run), 'application/json'),
+        HttpClientRequest.bodyText(JSON.stringify({ run, approval }), 'application/json'),
       ),
     )
     const response =

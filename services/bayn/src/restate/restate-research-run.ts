@@ -1,18 +1,23 @@
 import * as restate from '@restatedev/restate-sdk'
-import { Result } from 'effect'
+import { Redacted, Result } from 'effect'
 
-import { decodeResearchRun, hashResearch, type ResearchRun, type ResearchReceipt } from '../research-inference/contract'
+import { hashResearch, type ResearchRun, type ResearchReceipt } from '../research-inference/contract'
+import { decodeApprovedResearchRun } from '../research-inference/approval'
 
 export interface ResearchRuntime {
   readonly run: (run: ResearchRun, signal: AbortSignal) => Promise<ResearchReceipt>
 }
-export const makeBaynResearchRun = (runtime: ResearchRuntime, hooks: readonly restate.HooksProvider[] = []) =>
+export const makeBaynResearchRun = (
+  runtime: ResearchRuntime,
+  approvalKey: Redacted.Redacted<string>,
+  hooks: readonly restate.HooksProvider[] = [],
+) =>
   restate.workflow({
     name: 'BaynResearchRun',
     options: { inactivityTimeout: 240_000, abortTimeout: 10_000, hooks: [...hooks] },
     handlers: {
       run: async (ctx: restate.WorkflowContext, input: unknown) => {
-        const decoded = decodeResearchRun(input)
+        const decoded = decodeApprovedResearchRun(input, approvalKey)
         if (Result.isFailure(decoded)) throw new restate.TerminalError(decoded.failure.message)
         const identity = hashResearch(decoded.success)
         if (Result.isFailure(identity) || identity.success !== ctx.key)

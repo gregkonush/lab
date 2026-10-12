@@ -43,6 +43,11 @@ spec:
             - name: restate
               containerPort: 9080
           env:
+            - name: BAYN_RESEARCH_APPROVAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-authority
+                  key: run-approval-key
             - name: RESTATE_REQUEST_IDENTITY_KEYS
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: BAYN_RESEARCH_INFERENCE_POLICY

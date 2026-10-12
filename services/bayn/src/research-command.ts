@@ -30,7 +30,11 @@ export const researchCommand = (args: readonly string[]) =>
     if (args[0] === '--validate') return yield* print(JSON.stringify({ runId, qualification: 'UNQUALIFIED' }))
     const output = args[3]
     if (output === undefined) return yield* new ResearchError({ message: researchCommandUsage })
-    const receipt = yield* submitResearch(run, yield* Config.NonEmptyString('RESTATE_INGRESS_ORIGIN'))
+    const receipt = yield* submitResearch(
+      run,
+      yield* Config.NonEmptyString('RESTATE_INGRESS_ORIGIN'),
+      yield* Config.Redacted('BAYN_RESEARCH_APPROVAL_KEY'),
+    )
     yield* fs.writeFileString(output, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
     return yield* print(
       JSON.stringify({

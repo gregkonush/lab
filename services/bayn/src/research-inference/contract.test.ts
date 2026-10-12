@@ -59,8 +59,17 @@ describe('frozen research contract and existing expense ledger', () => {
       },
       { ...run, context: { ...run.context, factors: [{ ...factor, description: 'changed' }] } },
       { ...run, costBasis: { ...run.costBasis, picoUsdPerSecond: '0' } },
+      { ...run, costBasis: { ...run.costBasis, picoUsdPerSecond: (2n ** 128n / 180n + 1n).toString() } },
     ])
       expect(Result.isFailure(decodeResearchRun(changed))).toBe(true)
+    expect(
+      Result.isSuccess(
+        decodeResearchRun({
+          ...run,
+          costBasis: { ...run.costBasis, picoUsdPerSecond: ((2n ** 128n - 1n) / 180n).toString() },
+        }),
+      ),
+    ).toBe(true)
   })
   test('allocates integer USD_PICO without floating point or changing posted identities', () => {
     const value = receipt()

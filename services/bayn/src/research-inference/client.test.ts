@@ -45,6 +45,23 @@ describe('bounded native inference stream', () => {
     expect(result.outcome).toBe(ResearchOutcome.Expired)
     expect(calls).toBe(0)
   })
+  test('never transmits before the approved feature cutoff', async () => {
+    const { TestClock } = await import('effect/testing')
+    let calls = 0
+    const http = HttpClient.make((request) => {
+      calls++
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(streamFixture())))
+    })
+    const future = { ...fixture, featureCutoff: '1970-01-01T00:00:00.001Z' }
+    const result = await Effect.runPromise(
+      inferResearch(future, Result.getOrThrow(hashResearch(future)), 'http://fixture.invalid').pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    expect(result.outcome).toBe(ResearchOutcome.Rejected)
+    expect(calls).toBe(0)
+  })
 })
 
 test.each(['deadline', 'interruption'] as const)(

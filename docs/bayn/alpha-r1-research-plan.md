@@ -3,13 +3,19 @@
 The independent research Workflow, streaming client, immutable attempt receipts, expense projection and operator
 command are implemented. The resident Alpha-R1 endpoint is deployed. The new worker has not been activated.
 Its [reviewable activation configuration](research-inference-activation/README.md) needs approval for a separate,
-restricted database identity. No strategy has been admitted or economically qualified by this work.
+restricted database identity and operator approval credential. No strategy has been admitted or economically qualified by this work.
 
 ## Runtime
 
 `BaynResearchRun` is a finite Restate Workflow keyed by the canonical run hash. It runs in a separate process and
 deployment. It does not register execution or broker-observation handlers. The account controller adds no research
 RPC, send acknowledgement, outbox wait, inference wait or expense-posting wait. Jev remains the trading model.
+
+The server requires HMAC-SHA256 operator approval over the exact run hash. The separate, redacted approval key
+never travels through Restate; the CLI signs the complete source, study, context, attempt, deadline/token budget
+and cost basis. Changed or unsigned runs are rejected before `ctx.run`. A signed run can transmit once.
+Invocations before its feature cutoff send no model request. This controls admission even though Restate's
+shared internal ingress is reachable by other cluster workloads, without a per-run GitOps deployment.
 
 ```mermaid
 flowchart LR
@@ -87,7 +93,7 @@ cannot establish complete coverage. No eligible original session was available f
 The [capture contract](../../services/bayn/src/research-capture/README.md) remains authoritative. Existing capture
 credentials and bucket availability do not prove full original arrival, source frontier and controller coverage.
 
-Activate the reviewed worker only after its restricted credential destination is approved, through main, immutable
+Activate the reviewed worker only after its restricted credential destinations are approved, through main, immutable
 publication, eligible Freight, the existing Kargo Stage, generated Kargo revision and Argo reconciliation. Verify an
 actual factor-selection run, cancellation to zero model work, durable recovery, exact expense posting and matching
 Tempo/Loki/Mimir evidence. Do not use a direct image bump or manual workload deployment. Recovery pauses only research.

@@ -166,9 +166,12 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   )
   const stream = makeResearchStreamDecoder(run)
   let httpStatus: number | null = null
-  const state: { outcome: ResearchOutcome } = { outcome: ResearchOutcome.Expired }
+  const cutoff = Date.parse(run.featureCutoff)
+  const state: { outcome: ResearchOutcome } = {
+    outcome: startedAtMs < cutoff ? ResearchOutcome.Rejected : ResearchOutcome.Expired,
+  }
   let factors: readonly string[] = []
-  if (startedAtMs < deadline) {
+  if (startedAtMs >= cutoff && startedAtMs < deadline) {
     const response = yield* Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
       const body = JSON.stringify(request)

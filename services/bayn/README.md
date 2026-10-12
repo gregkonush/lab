@@ -1315,10 +1315,12 @@ failures with observation age, without recording account identifiers or payloads
 The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
 original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
 The [activation proposal](../../docs/bayn/research-inference-activation/README.md) is outside GitOps inputs pending approval
-for its restricted database identity. The source includes no broker or capital capability in the research server.
+for its restricted database identity and separate run-approval credential. The source includes no broker or capital capability in the research server.
 
 The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
 Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
+Submission requires `BAYN_RESEARCH_APPROVAL_KEY` from the approved secret-management path. The CLI signs the exact
+run identity; only its approval proof is submitted, and the key is never logged or journaled in Restate.
 
 ```sh
 bayn-research --validate run.json

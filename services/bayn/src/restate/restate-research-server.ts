@@ -17,6 +17,7 @@ import { HttpClient } from 'effect/http'
 import { embeddedBuildMetadata } from '../build'
 import { PostgresClientLive } from '../db/postgres-client'
 import { GitSourceRevisionSchema } from '../schemas'
+import { validateResearchApprovalKey } from '../research-inference/approval'
 import { hashResearch, ResearchError, ResearchPolicySchema } from '../research-inference/contract'
 import { makeResearchRunner } from '../research-inference/runner'
 import { makeResearchStore } from '../research-inference/store'
@@ -34,6 +35,7 @@ export const researchServerConfig = Config.all({
       : Config.succeed(embeddedBuildMetadata.sourceRevision),
   identityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
   policy: Config.schema(Schema.fromJsonString(ResearchPolicySchema), 'BAYN_RESEARCH_INFERENCE_POLICY'),
+  approvalKey: Config.Redacted('BAYN_RESEARCH_APPROVAL_KEY'),
   url: Config.Redacted('BAYN_POSTGRES_URL'),
   tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   caPath: Config.String('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
@@ -42,6 +44,7 @@ export const researchModelEndpoint = 'http://bayn-model.bayn-model.svc.cluster.l
 
 export const researchServerProgram = Effect.gen(function* () {
   const config = yield* researchServerConfig
+  yield* Effect.fromResult(validateResearchApprovalKey(config.approvalKey))
   if (embeddedBuildMetadata !== undefined && embeddedBuildMetadata.sourceRevision !== config.sourceRevision)
     return yield* new ResearchError({ message: 'Research server source revision differs from its immutable image' })
   const identityKeys = yield* Effect.fromResult(decodeRestateRequestIdentityKeys(config.identityKeys))
@@ -99,6 +102,7 @@ export const researchServerProgram = Effect.gen(function* () {
           })
         },
       },
+      config.approvalKey,
       telemetry.hooks,
     )
     yield* acquireRestateHttp2Server(

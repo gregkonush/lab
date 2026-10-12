@@ -137,11 +137,12 @@ export const decodeResearchRun = (input: unknown) =>
       run.costBasis !== null &&
       (run.costBasis.effectiveFrom > run.featureCutoff ||
         run.costBasis.effectiveUntil < run.deadlineAt ||
-        BigInt(run.costBasis.picoUsdPerSecond) === 0n)
+        BigInt(run.costBasis.picoUsdPerSecond) === 0n ||
+        BigInt(run.costBasis.picoUsdPerSecond) * 180n >= 2n ** 128n)
     )
       return yield* Result.fail(
         new ResearchError({
-          message: 'Research cost basis does not cover the complete attempt or has an unsupported zero allocation',
+          message: 'Research cost basis does not cover the attempt or exceeds its positive ledger allocation bound',
         }),
       )
     return run

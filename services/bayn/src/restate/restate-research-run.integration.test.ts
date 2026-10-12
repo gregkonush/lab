@@ -1,12 +1,13 @@
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
-import { Config, Effect, Option, Result } from 'effect'
+import { Config, Effect, Option, Redacted, Result } from 'effect'
 import * as restate from '@restatedev/restate-sdk'
 import { NodeHttpClient } from '@effect/platform-node'
 
 import { hashResearch, ResearchOutcome, researchRequest, sealResearchReceipt } from '../research-inference/contract'
 import { researchFixture } from '../research-inference/test-support'
 import { submitResearch } from '../research-inference/submission'
+import { approveResearchRun } from '../research-inference/approval'
 import { makeBaynResearchRun } from './restate-research-run'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 
@@ -26,6 +27,8 @@ integration('real Restate research Workflow', () => {
     let calls = 0
     const run = { ...researchFixture(), studyHash: crypto.randomUUID().replaceAll('-', '').repeat(2) }
     const id = Result.getOrThrow(hashResearch(run))
+    const approvalKey = Redacted.make('7'.repeat(64))
+    const approval = Result.getOrThrow(approveResearchRun(run, approvalKey))
     const retained = Result.getOrThrow(
       sealResearchReceipt(run, {
         runId: id,
@@ -47,7 +50,7 @@ integration('real Restate research Workflow', () => {
       const response = await fetch(`${ingress}/restate/call/BaynResearchRun/${key}/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(run),
+        body: JSON.stringify({ run, approval }),
         signal: AbortSignal.timeout(15000),
       })
       if (response.status === 409) {
@@ -67,14 +70,17 @@ integration('real Restate research Workflow', () => {
         Effect.gen(function* () {
           const register = (replacement: boolean) =>
             Effect.gen(function* () {
-              const workflow = makeBaynResearchRun({
-                run: () => {
-                  calls++
-                  return replacement
-                    ? Promise.reject(new Error('Retained workflow must not execute replacement code'))
-                    : Promise.resolve(retained)
+              const workflow = makeBaynResearchRun(
+                {
+                  run: () => {
+                    calls++
+                    return replacement
+                      ? Promise.reject(new Error('Retained workflow must not execute replacement code'))
+                      : Promise.resolve(retained)
+                  },
                 },
-              })
+                approvalKey,
+              )
               const server = createServer(restate.createEndpointHandler({ services: [workflow] }))
               yield* acquireRestateHttp2Server(server, 0)
               const address = server.address()
@@ -90,12 +96,24 @@ integration('real Restate research Workflow', () => {
               })
             })
           yield* register(false)
+          const unapproved = { ...run, attempt: 1 }
+          const unauthorized = yield* Effect.promise(() =>
+            fetch(`${ingress}/restate/call/BaynResearchRun/${Result.getOrThrow(hashResearch(unapproved))}/run`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ run: unapproved, approval }),
+              signal: AbortSignal.timeout(15000),
+            }),
+          )
+          expect(unauthorized.status).toBe(500)
+          yield* Effect.promise(() => unauthorized.body?.cancel() ?? Promise.resolve())
+          expect(calls).toBe(0)
           const bad = yield* Effect.promise(() => invoke(crypto.randomUUID().replaceAll('-', '').repeat(2)))
           expect(bad.status).toBe(500)
-          expect(yield* submitResearch(run, ingress)).toEqual(retained)
-          expect(yield* submitResearch(run, ingress)).toEqual(retained)
+          expect(yield* submitResearch(run, ingress, approvalKey)).toEqual(retained)
+          expect(yield* submitResearch(run, ingress, approvalKey)).toEqual(retained)
           yield* register(true)
-          expect(yield* submitResearch(run, ingress)).toEqual(retained)
+          expect(yield* submitResearch(run, ingress, approvalKey)).toEqual(retained)
           expect(calls).toBe(1)
         }),
       ).pipe(Effect.provide(NodeHttpClient.layerNodeHttp)),
