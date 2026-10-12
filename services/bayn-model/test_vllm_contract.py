@@ -155,7 +155,8 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
         middleware = AdmissionMiddleware(app)
         with (
             redirect_stdout(io.StringIO()),
-            patch("admission.REQUEST_TIMEOUT_SECONDS", 180 if disconnect else 0.02),
+            # FastAPI builds its first route schema inside the request deadline.
+            patch("admission.REQUEST_TIMEOUT_SECONDS", 180 if disconnect else 1),
         ):
             await middleware(
                 {
@@ -169,6 +170,9 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
                 },
                 receive,
                 send,
+            )
+            self.assertTrue(
+                streamed.is_set(), "Deadline must interrupt active streaming"
             )
             await asyncio.wait_for(stopped.wait(), timeout=1)
         self.assertEqual(middleware.inflight, 0)
