@@ -67,7 +67,11 @@ difference between nominal system memory and Kubernetes allocatable memory; read
 | 16GiB           | 112GiB             | 109.8GiB                         | About 14.9GiB request headroom      |
 | 8GiB            | 120GiB             | 117.8GiB                         | About 22.9GiB request headroom      |
 
-Each existing AMD64 runner requests 16GiB memory and four logical CPUs across runner and DinD. After the planned
+The inventory above uses the original 16GiB memory and four logical CPU request per AMD64 runner. The initial
+two-Ryzen/three-Turin migration instead reserves 21GiB per runner to prevent three fitting on the measured 61.82GiB
+Ryzen node; strict hostname spread keeps all five shared-label slots across the two hosts. Before changing BIOS memory,
+revise that temporary reservation and spread through the reviewed ARC configuration. A future all-five Ryzen plan
+may restore the original 16GiB request only after native memory and concurrent-build acceptance. After the planned
 application Ceph-client and Bayn moves, the snapshot projects 14.95GiB memory and 7.78 logical CPUs for retained
 workloads. Five runners therefore request about 94.95GiB and 27.78 logical CPUs in total. Ryzen currently offers
 31.95 logical CPUs from its 16-core / 32-thread processor. These numbers establish scheduling fit, not simultaneous

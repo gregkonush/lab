@@ -1220,7 +1220,7 @@ describe('Kargo direct-push GitOps contract', () => {
     expectYamlUpdate(
       'arc-runner',
       './out/argocd/applications/arc/application.yaml',
-      [1, 2, 3, 4].flatMap((index) => [
+      [1, 2, 3].flatMap((index) => [
         `spec.sources.${index}.helm.valuesObject.template.spec.initContainers.0.image`,
         `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`,
       ]),

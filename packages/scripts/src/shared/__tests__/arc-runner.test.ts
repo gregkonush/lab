@@ -56,10 +56,7 @@ describe('ARC Nix runner toolchain', () => {
 
   it('places AMD64 Nix, Docker, and workspace writes on one disposable local NVMe volume', () => {
     const application = YAML.parseDocument(arcApplication)
-    for (const [index, name, host, storageClass] of [
-      [2, 'arc-amd64', 'turin', 'local-path-turin-nvme-transcend'],
-      [4, 'arc-amd64-ryzen', 'talos-192-168-1-194', 'local-path-ryzen'],
-    ] as const) {
+    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {
       const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
       expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe(name)
       expect(application.getIn([...valuesPath, 'scaleSetLabels']).toJSON()).toContain('arc-amd64')
@@ -68,7 +65,20 @@ describe('ARC Nix runner toolchain', () => {
 
       const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
       expect(pod.toJSON()).toMatchObject({
-        nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': host },
+        nodeSelector: { 'kubernetes.io/arch': 'amd64' },
+        affinity: {
+          nodeAffinity: {
+            requiredDuringSchedulingIgnoredDuringExecution: {
+              nodeSelectorTerms: [
+                {
+                  matchExpressions: [
+                    { key: 'kubernetes.io/hostname', operator: 'In', values: ['turin', 'talos-192-168-1-194'] },
+                  ],
+                },
+              ],
+            },
+          },
+        },
         initContainers: expect.arrayContaining([
           expect.objectContaining({
             volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
@@ -109,30 +119,73 @@ describe('ARC Nix runner toolchain', () => {
           },
         ]),
       })
-      if (host === 'talos-192-168-1-194') {
-        expect(pod.toJSON().tolerations).toContainEqual({
-          key: 'workload.proompteng.ai/compute-local',
-          operator: 'Equal',
-          value: 'true',
-          effect: 'NoSchedule',
-        })
-      }
+      expect(pod.toJSON().tolerations).toContainEqual({
+        key: 'workload.proompteng.ai/compute-local',
+        operator: 'Equal',
+        value: 'true',
+        effect: 'NoSchedule',
+      })
     }
   })
 
   it('keeps lab ARC runner concurrency capped', () => {
     expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 3')
-    expect(runnerScaleSetBlock('arc-amd64-ryzen')).toContain('maxRunners: 2')
-    expect(runnerScaleSetBlock('arc-amd64-ryzen')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 2')
+    expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
+    expect(arcApplication).not.toContain('arc-amd64-turin')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
+  it('keeps the five shared-label slots in one scale set and fits only two on current Ryzen memory', () => {
+    const application = YAML.parseDocument(arcApplication)
+    const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
+    if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
+    expect(pod.toJSON().topologySpreadConstraints).toEqual([
+      {
+        maxSkew: 1,
+        minDomains: 2,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'DoNotSchedule',
+        nodeTaintsPolicy: 'Honor',
+        labelSelector: {
+          matchLabels: { 'actions.github.com/scale-set-name': 'arc-amd64', 'app.kubernetes.io/component': 'runner' },
+        },
+      },
+    ])
+    const request = [0, 1].reduce((total, index) => {
+      const memory = pod.getIn(['containers', index, 'resources', 'requests', 'memory'])
+      if (typeof memory !== 'string' || !/^\d+Gi$/.test(memory)) throw new Error('Expected explicit Gi memory request')
+      return total + Number.parseInt(memory, 10)
+    }, 0)
+    expect(request * 2 + 14.95).toBeLessThan(61.82)
+    const placements = [0, 1, 2, 3, 4, 5].filter(
+      (ryzen) => ryzen * request <= 61.82 && Math.abs(ryzen - (5 - ryzen)) <= 1,
+    )
+    expect(placements).toEqual([2])
+    const config = YAML.parseDocument(
+      readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
+    )
+    const data = JSON.parse(String(config.getIn(['data', 'config.json'])))
+    expect(data.nodePathMap).toEqual([])
+    expect(data.storageClassConfigs['local-path-ci-amd64'].nodePathMap).toEqual([
+      { node: 'turin', paths: ['/var/mnt/turin-nvme-transcend'] },
+      { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
+      { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
+    ])
+    expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
+      'local-path',
+      'local-path-ci-amd64',
+      'local-path-ryzen',
+      'local-path-turin-nvme-intel',
+      'local-path-turin-nvme-transcend',
+    ])
+  })
+
   it('serializes registry uploads from every runner scale set', () => {
-    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64', 'arc-amd64-ryzen']) {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'analysis-arm64']) {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('--max-concurrent-uploads=1')
       expect(block).not.toContain('--max-concurrent-uploads=8')
@@ -140,7 +193,7 @@ describe('ARC Nix runner toolchain', () => {
   })
 
   it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
-    for (const scaleSet of ['arc-arm64', 'arc-amd64', 'arc-amd64-ryzen']) {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('ephemeral-storage: "4Gi"')
       expect(block).toContain('ephemeral-storage: "6Gi"')

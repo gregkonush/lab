@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: arc-placement-acceptance
@@ -12,46 +13,27 @@ concurrency:
 
 jobs:
   local-build:
-    name: ${{ matrix.slot }} local scratch build
-    timeout-minutes: 20
+    name: Slot ${{ matrix.slot }} local scratch build
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 5
       matrix:
-        include:
-          - slot: ryzen-1
-            labels: [arc-amd64, arc-amd64-ryzen]
-            node: talos-192-168-1-194
-            filesystem: xfs
-          - slot: ryzen-2
-            labels: [arc-amd64, arc-amd64-ryzen]
-            node: talos-192-168-1-194
-            filesystem: xfs
-          - slot: turin-1
-            labels: [arc-amd64, arc-amd64-turin]
-            node: turin
-            filesystem: xfs
-          - slot: turin-2
-            labels: [arc-amd64, arc-amd64-turin]
-            node: turin
-            filesystem: xfs
-          - slot: turin-3
-            labels: [arc-amd64, arc-amd64-turin]
-            node: turin
-            filesystem: xfs
-    runs-on: ${{ matrix.labels }}
+        slot: [1, 2, 3, 4, 5]
+    runs-on: arc-amd64
     env:
-      EXPECTED_NODE: ${{ matrix.node }}
-      EXPECTED_FILESYSTEM: ${{ matrix.filesystem }}
       SLOT: ${{ matrix.slot }}
     steps:
       - name: Verify local scratch, Nix, and Docker
         shell: bash
         run: |
           set -euo pipefail
-          test "$ARC_RUNNER_NODE_NAME" = "$EXPECTED_NODE"
+          case "$ARC_RUNNER_NODE_NAME" in
+            turin|talos-192-168-1-194) ;;
+            *) exit 1 ;;
+          esac
           for path in /nix /home/runner/.cache /tmp /home/runner/_work; do
-            test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = "$EXPECTED_FILESYSTEM"
+            test "$(df -P -T "$path" | awk 'NR == 2 {print $2}')" = xfs
           done
           test "$(nix eval --offline --expr '40 + 2')" = 42
           nix --version
@@ -69,5 +51,60 @@ jobs:
           DOCKERFILE
           docker build --tag "arc-local-proof:$SLOT" "$proof_dir"
           test "$(docker run --rm "arc-local-proof:$SLOT" | awk '{print $1}')" = 16777216
-          printf 'Verified slot=%s node=%s pod=%s\n' "$SLOT" "$ARC_RUNNER_NODE_NAME" "$ACTIONS_RUNNER_POD_NAME"
-          sleep 60
+          jq -n --arg node "$ARC_RUNNER_NODE_NAME" --arg pod "$ACTIONS_RUNNER_POD_NAME" --arg slot "$SLOT" \
+            '{node:$node,pod:$pod,slot:$slot}' > "$RUNNER_TEMP/arc-ready.json"
+      - name: Publish ready slot
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-ready-${{ github.run_attempt }}-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-ready.json
+          retention-days: 1
+      - name: Require all five slots concurrently
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          prefix="arc-ready-$RUN_ATTEMPT-"
+          for _ in $(seq 1 90); do
+            count="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.expired == false and (.name | startswith(\"$prefix\")))] | length")"
+            if test "$count" = 5; then
+              jq --argjson start "$(date +%s)" '. + {start:$start}' "$RUNNER_TEMP/arc-ready.json" > "$RUNNER_TEMP/arc-proof.json"
+              sleep 60
+              jq --argjson end "$(date +%s)" '. + {end:$end}' "$RUNNER_TEMP/arc-proof.json" > "$RUNNER_TEMP/arc-complete.json"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'All five shared-label runner slots did not become ready concurrently' >&2
+          exit 1
+      - name: Publish concurrency proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: arc-proof-${{ github.run_attempt }}-${{ matrix.slot }}
+          path: ${{ runner.temp }}/arc-complete.json
+          retention-days: 1
+  verify-placement:
+    needs: local-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: arc-proof-${{ github.run_attempt }}-*
+          path: proof
+      - name: Verify two Ryzen and three Turin slots overlapped
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -s -e '
+            length == 5 and
+            ([.[].slot] | unique | length) == 5 and
+            ([.[].pod] | unique | length) == 5 and
+            ([.[] | select(.node == "talos-192-168-1-194")] | length) == 2 and
+            ([.[] | select(.node == "turin")] | length) == 3 and
+            ([.[].end] | min) - ([.[].start] | max) >= 45
+          ' proof/*/arc-complete.json
