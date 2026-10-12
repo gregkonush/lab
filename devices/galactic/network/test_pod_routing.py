@@ -1,6 +1,9 @@
 import importlib.util
+import contextlib
+import io
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -25,6 +28,25 @@ def nodes():
 
 
 class TopologyGateTest(unittest.TestCase):
+    def test_missing_live_bond_returns_failure_instead_of_unknown(self):
+        pods = [
+            {
+                "metadata": {"name": name},
+                "spec": {"nodeName": name},
+                "status": {"phase": "Running"},
+            }
+            for name in routing.NODES
+        ]
+        with (
+            patch.object(
+                routing, "query", side_effect=[{"items": nodes()}, {"items": pods}, []]
+            ),
+            patch.object(routing.sys, "argv", ["verify-pod-routing.py"]),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(routing.main(), 1)
+        self.assertIn("storage0 does not own", output.getvalue())
+
     def test_storage_bond_member_must_not_retain_its_old_address(self):
         links = [
             {

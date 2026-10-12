@@ -172,10 +172,11 @@ def main():
                     "address",
                     "show",
                 ]
-                links = query(prefix + ["dev", "storage0"]) + query(
-                    prefix + ["master", "storage0"]
-                )
-                failures.extend(validate_storage_links(node, links))
+                # Listing all links succeeds even when the required bond is absent.
+                # A missing bond is a failed topology check, not unavailable evidence.
+                failures.extend(validate_storage_links(node, query(prefix)))
+                if failures:
+                    break
             for label, route, device, gateway in route_cases(node):
                 result = query(
                     [
