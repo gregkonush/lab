@@ -11,7 +11,7 @@ import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { JevContractError } from './contract'
 import { JevManagementAction, JevManagementDecisionSchema } from './decision'
 import { JevObservationSchema } from './observation-contract'
-import { JevPortfolioSchema, JevPurpose, type JevPortfolio } from './portfolio'
+import { JevPortfolioSchema, JevPurpose } from './portfolio'
 import { JevProtocolSchema } from './protocol'
 
 export enum JevExitReason {
@@ -57,15 +57,6 @@ export const jevProtectiveStopCrossed = (
   stopBps: number,
 ): boolean =>
   (basisMicros * 1_000_000n - bidMicros * quantityMicros) * 10_000n >= basisMicros * 1_000_000n * BigInt(stopBps)
-export const jevMaximumHoldDueAt = (firstFillAt: string, maximumHoldingMinutes: number): string =>
-  new Date(Date.parse(firstFillAt) + maximumHoldingMinutes * 60_000).toISOString()
-export const jevBrokerEvidenceFreshUntilMs = (state: JevPortfolio['brokerState']): number =>
-  Math.min(
-    Date.parse(state.account.observedAt),
-    Date.parse(state.positionsObservedAt),
-    Date.parse(state.ordersObservedAt),
-    Date.parse(state.reconciliation.reconciledAt),
-  ) + maximumBrokerObservationAgeMs
 const equal = (left: unknown, right: unknown) => {
   const a = canonicalHashV1Result(left)
   const b = canonicalHashV1Result(right)
@@ -92,8 +83,7 @@ export const decideJevExit = (input: unknown) =>
         state.positionsObservedAt,
         state.ordersObservedAt,
         state.reconciliation.reconciledAt,
-      ].some((at) => Date.parse(at) > now) ||
-      now >= jevBrokerEvidenceFreshUntilMs(state)
+      ].some((at) => Date.parse(at) > now || now - Date.parse(at) >= maximumBrokerObservationAgeMs)
     )
       return yield* invalid('Exit requires current position evidence for its strategy session')
     let commitDeadlineAt = new Date(now + protocol.maximumQuoteAgeMs).toISOString()

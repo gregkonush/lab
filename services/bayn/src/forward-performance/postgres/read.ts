@@ -1,7 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
-import type { WriterFenceService } from '../../execution/writer-fence'
-import { forwardPerformanceSnapshot } from './snapshot'
 import { StoredFeeSchema } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db/accounting-rows'
@@ -189,11 +187,12 @@ export const readForwardPerformancePostgresDataFirst = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
-  writerFence?: WriterFenceService,
 ): Effect.Effect<ForwardPerformancePostgresEvidence, ForwardPerformancePostgresError> =>
-  forwardPerformanceSnapshot(sql, writerFence)
+  sql
     .withTransaction(
       Effect.gen(function* () {
+        yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
+
         const cycleRows = yield* sql<Record<string, unknown>>`
           SELECT
             cycle_id,
@@ -367,7 +366,6 @@ export const readForwardPerformancePostgresDataFirst = (
           SELECT fee.data, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
             fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
             fee.tigerbeetle_ledger::integer AS tigerbeetle_ledger, fee.posted_at IS NOT NULL AS posted,
-            fee.first_observed_at, fee.posted_at,
             (${authorityGenerationHash === undefined} OR EXISTS (
               SELECT 1 FROM accounting_transactions AS transaction
               WHERE transaction.account_id = fee.account_id
@@ -388,8 +386,6 @@ export const readForwardPerformancePostgresDataFirst = (
               Schema.Array(
                 Schema.Struct({
                   ...StoredFeeSchema.fields,
-                  first_observed_at: Schema.Date,
-                  posted_at: Schema.NullOr(Schema.Date),
                   includes_generation: Schema.Boolean,
                   includes_other_generation: Schema.Boolean,
                 }),
@@ -879,13 +875,7 @@ export const readForwardPerformancePostgresDataFirst = (
           transactions,
           ledgerTransactions,
           brokerFeeRecords: brokerFeeRows.map(
-            ({
-              includes_generation: _owned,
-              includes_other_generation: _other,
-              first_observed_at: _observed,
-              posted_at: _posted,
-              ...record
-            }) => record,
+            ({ includes_generation: _owned, includes_other_generation: _other, ...record }) => record,
           ),
           generationBrokerFeeIds: brokerFeeRows
             .filter((row) => row.includes_generation && !row.includes_other_generation)
@@ -923,16 +913,7 @@ export const readForwardPerformancePostgresDataFirst = (
           unresolvedMutationCount: unresolvedMutations.count,
           openPositionCount: openPositions.count,
           unaccountedFillCount: unaccountedFills.count,
-          // Preserve delayed fees in their economic generation, but do not treat evidence observed or
-          // posted after the reconciliation as part of a closed cut. All account fees feed ledger verification.
-          postReconciliationActivityCount:
-            postReconciliationActivity.count +
-            brokerFeeRows.filter(
-              (row) =>
-                reconciliationRow !== undefined &&
-                (row.first_observed_at > reconciliationRow.reconciled_at ||
-                  (row.posted_at !== null && row.posted_at > reconciliationRow.reconciled_at)),
-            ).length,
+          postReconciliationActivityCount: postReconciliationActivity.count,
         }
       }),
     )
@@ -942,7 +923,6 @@ export const readForwardPerformancePostgres = Pipeable.by<
   (
     accountId: string,
     authorityGenerationHash?: string,
-    writerFence?: WriterFenceService,
   ) => (sql: PgClient.PgClient) => ReturnType<typeof readForwardPerformancePostgresDataFirst>,
   typeof readForwardPerformancePostgresDataFirst
 >((arguments_) => typeof arguments_[0] !== 'string', readForwardPerformancePostgresDataFirst)

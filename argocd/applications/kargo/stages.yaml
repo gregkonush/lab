@@ -2011,9 +2011,9 @@ spec:
               - key: metadata.name
                 value: bayn-execution-activate-${{ commitFrom(vars.gitRepo).ID[0:12] }}
               - key: metadata.labels.app\.kubernetes\.io/version
-                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: ${{ commitFrom(vars.gitRepo).ID[0:12] }}
               - key: spec.template.metadata.labels.app\.kubernetes\.io/version
-                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: ${{ commitFrom(vars.gitRepo).ID[0:12] }}
         - uses: git-commit
           as: commit
           config:
@@ -2209,7 +2209,7 @@ spec:
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
-  name: bayn-model
+  name: rune
   namespace: lab-delivery
   labels:
     delivery.proompteng.ai/managed-by: kargo
@@ -2218,100 +2218,17 @@ spec:
     - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
-      value: kargo/bayn-model
+      value: kargo/rune
     - name: srcPath
       value: ./src
     - name: outPath
       value: ./out
     - name: imageRepo
-      value: registry.ide-newton.ts.net/lab/bayn-model
+      value: registry.ide-newton.ts.net/lab/rune
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: bayn-model
-      sources:
-        direct: true
-        autoPromotionOptions:
-          selectionPolicy: NewestFreight
-  promotionTemplate:
-    spec:
-      steps:
-        - uses: git-clone
-          config:
-            repoURL: ${{ vars.gitRepo }}
-            author:
-              name: Kargo
-              email: kargo@proompteng.ai
-            checkout:
-              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-                path: ${{ vars.srcPath }}
-              - branch: ${{ vars.targetBranch }}
-                create: true
-                path: ${{ vars.outPath }}
-        - uses: git-clear
-          config:
-            path: ${{ vars.outPath }}
-        - uses: copy
-          config:
-            inPath: ${{ vars.srcPath }}
-            outPath: ${{ vars.outPath }}
-        - uses: kustomize-set-image
-          config:
-            path: ./out/argocd/applications/bayn-model
-            images:
-              - image: ${{ vars.imageRepo }}
-                newName: ${{ vars.imageRepo }}
-                digest: ${{ imageFrom(vars.imageRepo).Digest }}
-        - uses: git-commit
-          as: commit
-          config:
-            path: ${{ vars.outPath }}
-            message: |
-              kargo(bayn-model): promote ${{ ctx.targetFreight.name }}
-
-              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-              Build run: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
-        - uses: git-push
-          as: push
-          config:
-            path: ${{ vars.outPath }}
-            targetBranch: ${{ vars.targetBranch }}
-        - uses: argocd-update
-          as: deploy
-          retry:
-            timeout: 4h0m0s
-            errorThreshold: 3
-          config:
-            apps:
-              - name: bayn-model
-                namespace: argocd
-                sources:
-                  - repoURL: https://github.com/proompteng/lab.git
-                    desiredRevision: ${{ outputs.commit.commit }}
----
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Stage
-metadata:
-  name: temporal-worker
-  namespace: lab-delivery
-  labels:
-    delivery.proompteng.ai/managed-by: kargo
-spec:
-  vars:
-    - name: gitRepo
-      value: git@github.com:proompteng/lab.git
-    - name: targetBranch
-      value: kargo/temporal-worker
-    - name: srcPath
-      value: ./src
-    - name: outPath
-      value: ./out
-    - name: imageRepo
-      value: registry.ide-newton.ts.net/lab/temporal-worker
-  requestedFreight:
-    - origin:
-        kind: Warehouse
-        name: temporal-worker
+        name: rune
       sources:
         direct: true
         autoPromotionOptions:
@@ -2340,9 +2257,9 @@ spec:
             outPath: ${{ vars.outPath }}
         - uses: kustomize-set-image
           config:
-            path: ./out/argocd/applications/temporal
+            path: ./out/argocd/applications/rune
             images:
-              - image: temporal-worker-runtime
+              - image: ${{ vars.imageRepo }}
                 newName: ${{ vars.imageRepo }}
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
         - uses: git-commit
@@ -2350,7 +2267,7 @@ spec:
           config:
             path: ${{ vars.outPath }}
             message: |
-              kargo(temporal-worker): promote ${{ ctx.targetFreight.name }}
+              kargo(rune): promote ${{ ctx.targetFreight.name }}
 
               Source commit: ${{ commitFrom(vars.gitRepo).ID }}
               Build run: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
@@ -2362,11 +2279,11 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m0s
+            timeout: 4h0m0s
             errorThreshold: 3
           config:
             apps:
-              - name: temporal
+              - name: rune
                 namespace: argocd
                 sources:
                   - repoURL: https://github.com/proompteng/lab.git

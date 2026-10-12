@@ -1,6 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -160,41 +158,6 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
-  it('excludes unreferenced prepared directories and includes declared Kustomize inputs', () => {
-    const root = mkdtempSync(join(tmpdir(), 'enabled-app-inputs-'))
-    const app = join(root, 'argocd/applications/example')
-    try {
-      mkdirSync(join(root, 'argocd/applicationsets'), { recursive: true })
-      for (const name of ['active', 'prepared', 'patches', 'values']) mkdirSync(join(app, name), { recursive: true })
-      writeFileSync(
-        join(root, 'argocd/applicationsets/test.yaml'),
-        YAML.stringify({
-          spec: { generators: [{ list: { elements: [{ name: 'example', path: 'argocd/applications/example' }] } }] },
-        }),
-      )
-      const manifest = (name: string) => YAML.stringify({ image: `registry.ide-newton.ts.net/lab/${name}` })
-      writeFileSync(join(app, 'active/deployment.yaml'), manifest('active'))
-      writeFileSync(join(app, 'prepared/deployment.yaml'), manifest('prepared'))
-      writeFileSync(join(app, 'patches/image.yaml'), manifest('patch'))
-      writeFileSync(join(app, 'values/chart.yaml'), manifest('chart'))
-      const input = {
-        resources: ['active'],
-        patches: [{ path: 'patches/image.yaml' }],
-        helmCharts: [{ valuesFile: 'values/chart.yaml' }],
-      }
-      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify(input))
-      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toEqual([
-        'registry.ide-newton.ts.net/lab/active',
-        'registry.ide-newton.ts.net/lab/chart',
-        'registry.ide-newton.ts.net/lab/patch',
-      ])
-      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify({ ...input, resources: ['active', 'prepared'] }))
-      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toContain('registry.ide-newton.ts.net/lab/prepared')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
   it('recognizes the inert devbox promotion template without accepting arbitrary mutable images', () => {
     const template = {
       name: 'devbox',
@@ -376,7 +339,7 @@ describe('enabled app inventory', () => {
     expect(metallbEntry).toContain('argocd.argoproj.io/sync-options: Prune=false')
   })
 
-  it('preserves Tengri state and keeps runtime validation isolated', () => {
+  it('preserves Tengri state and keeps Kata runtime proof bounded', () => {
     const tengriEntry = platformApplicationSet.match(
       /              - name: tengri\n[\s\S]*?(?=\n              - name:)/,
     )?.[0]
@@ -399,13 +362,11 @@ describe('enabled app inventory', () => {
     expect(talosUpgradeRunbook).not.toContain('The canaries are DaemonSets')
     expect(talosUpgradeRunbook).toContain('It deletes that Pod and its')
     expect(talosUpgradeRunbook).toContain('unique bootstrap Secret on success or failure')
-    expect(tengriOperations).toContain('The paired publisher must withhold discoverable aliases')
-    expect(tengriOperations).toContain('and KVM acceptance pass')
-    expect(tengriOperations).toContain(
-      'Never drain, cordon, reboot, relabel, change scheduling on, or reconfigure shared nodes',
-    )
-    expect(tengriOperations).toContain('private container and volumes')
-    expect(tengriOperations).toContain('Measure at least 50 fresh prepared creations and 50 cold-cache resumes')
+    expect(tengriOperations).toContain('`Tengri images` validates both services and CRDs')
+    expect(tengriOperations).toContain('emits the `kargo-sha-<40>` aliases')
+    expect(tengriOperations).toContain('argocd app sync kata --prune')
+    expect(tengriOperations).toContain('kubectl --context galactic-lan -n kata get daemonset -o name')
+    expect(tengriOperations).toContain('verify-runtimes.sh "$PROOF_DIR" talos-192-168-1-194 fc')
     expect(tengriOperations).not.toContain('`Manual OCI Mirror`')
     expect(tengriImagesWorkflow).toContain('TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri')
     expect(tengriImagesWorkflow).toContain('runner: arc-amd64')
@@ -531,12 +492,6 @@ describe('enabled app inventory', () => {
       version: '1.6.0',
     })
     expect(temporalKustomization.images).toEqual([
-      {
-        name: 'temporal-worker-runtime',
-        newName: 'mirror.gcr.io/temporalio/server',
-        newTag: '1.31.2',
-        digest: 'sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da',
-      },
       {
         name: 'docker.elastic.co/elasticsearch/elasticsearch',
         newTag: '8.19.21',
@@ -804,7 +759,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: false,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:2fd023efbb8d3d2b0ce1a73d028b07370cff34f567cfe0e999553e8c327ea283',
+        'registry.ide-newton.ts.net/lab/hermes-agent@sha256:b3190406963c6b51ac955397ecef45346efaae9563ee305108f8eef0a77e267b',
       ],
     })
     expect(entry('hermes').deferredReason).toContain('NousResearch/hermes-agent')
@@ -815,7 +770,7 @@ describe('enabled app inventory', () => {
       class: 'vendor-manifest',
       hasHelmChart: true,
       repoImages: [
-        'registry.ide-newton.ts.net/lab/tigresse@sha256:e5174fe7f584ac12d4c50ef372b346cbffe4b0f377b552e795f046fca1e85172',
+        'registry.ide-newton.ts.net/lab/tigresse@sha256:b04308528a46291e2c65562d04c2ac7644c4e7f25f2c247dae282b70f8856e2c',
       ],
     })
     expect(entry('tigresse').deferredReason).toContain('proompteng/tigresse')

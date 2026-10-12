@@ -5,13 +5,13 @@ metadata:
 spec:
   hard:
     count/microvms.runtime.proompteng.ai: "6"
-    count/leases.coordination.k8s.io: "6"
     persistentvolumeclaims: "6"
-    requests.storage: 192Gi
+    requests.storage: 96Gi
     pods: "8"
     secrets: "8"
-    # Six runners, six host supervisors, and the controller with its mesh proxy.
-    requests.cpu: "26"
-    limits.cpu: "27"
-    requests.memory: 56Gi
-    limits.memory: 56Gi
+    # Six 2 CPU/4 GiB guests, kata-fc's 250m/130Mi fixed overhead per guest,
+    # and the Tengri control plane must all fit before Kubernetes admits a Pod.
+    requests.cpu: "14"
+    limits.cpu: "15"
+    requests.memory: 26Gi
+    limits.memory: 26Gi

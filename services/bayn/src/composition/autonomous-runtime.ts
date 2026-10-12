@@ -106,11 +106,7 @@ export const makeAutonomousServiceRuntime = (
                 autonomousRuntimeServices.pipe(
                   Effect.flatMap((runtimeServices) => {
                     const marketData = dependencies.intradayMarketData
-                    const cycleResources = makeAutonomousCycleResources(
-                      runtimeServices,
-                      marketData,
-                      observePlan.config.operationTimeoutMs,
-                    )
+                    const cycleResources = makeAutonomousCycleResources(runtimeServices, marketData)
                     const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                       Effect.gen(function* () {
                         if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
@@ -273,7 +269,6 @@ export const makeAutonomousServiceRuntime = (
                                 Effect.flatMap((brokerMutation) =>
                                   makeTradingEngine({
                                     authority,
-                                    riskPolicyHash: generation.riskPolicyHash,
                                     cycle: {
                                       accountId: realizedPlan.config.alpaca.expectedAccountId,
                                       authorityGenerationHash: generation.generationHash,

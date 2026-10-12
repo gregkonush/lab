@@ -13,15 +13,11 @@ import {
 } from '../execution/configuration'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
-import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../reconciliation'
-import { canonicalHashV1Result } from '../hash'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   configuredCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
   validateResearchCapitalPreflight,
-  validateResearchCapitalRiskPolicy,
 } from './capital-activation'
 
 const accountId = '123e4567-e89b-42d3-a456-426614174000'
@@ -37,10 +33,7 @@ const strategy = {
   ...fixtureRuntime.provenance.strategy,
   protocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
 }
-const request = (
-  overrides: Partial<ResearchCapitalActivationRequest['strategy']> = {},
-  riskPolicyHash = 'a'.repeat(64),
-) => {
+const request = (overrides: Partial<ResearchCapitalActivationRequest['strategy']> = {}) => {
   const material: Omit<ResearchCapitalActivationRequest, 'schemaVersion' | 'grant' | 'requestHash'> = {
     activation: {
       sourceRevision: config.build.sourceRevision,
@@ -49,7 +42,7 @@ const request = (
     },
     strategy: { ...strategy, ...overrides },
     broker: { environment: BrokerEnvironment.Sandbox, accountId, identityHash: identity.identityHash },
-    riskPolicyHash,
+    riskPolicyHash: 'a'.repeat(64),
     limits: { maxOpenOrders: 0, maxPositions: 0 } as const,
   }
   const planHash = Result.getOrThrow(
@@ -110,23 +103,6 @@ test('retains the exact compatible mandate without changing its account or risk 
   expect(configuredCapitalActivation(plan(JSON.stringify(current)))).toEqual(
     Result.succeed({ request: current, buildContinuation: null, buildLineage: null }),
   )
-})
-
-test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {
-  for (const environment of [BrokerEnvironment.Sandbox, BrokerEnvironment.Live]) {
-    const policy = await Effect.runPromise(
-      loadQuoteBoundExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment),
-    )
-    const hash = Result.getOrThrow(canonicalHashV1Result(policy))
-    const outcome = await Effect.runPromise(
-      validateResearchCapitalRiskPolicy(plan(), request({}, hash)).pipe(Effect.result),
-    )
-    expect(Result.isSuccess(outcome)).toBe(true)
-  }
-  const unknown = await Effect.runPromise(
-    validateResearchCapitalRiskPolicy(plan(), request({}, 'f'.repeat(64))).pipe(Effect.result),
-  )
-  expect(Result.isFailure(unknown)).toBe(true)
 })
 
 test('rejects malformed sealed content with its configuration reason', () => {
@@ -217,23 +193,4 @@ test('activation consumes the current reconciliation rather than the startup pos
       }),
     ),
   ).toBe(true)
-})
-
-test('pre-activation retains a typed nonexact reconciliation failure until a later exact observation', async () => {
-  let status = ReconciliationStatus.Discrepancy
-  const refresh = refreshResearchCapitalActivationReconciliation(
-    Effect.sync(() => ({ report: { reconciliation: { status } } })),
-    1000,
-  )
-  const blocked = await Effect.runPromise(refresh.pipe(Effect.result))
-  expect(Result.isFailure(blocked)).toBe(true)
-  if (Result.isFailure(blocked)) {
-    expect(blocked.failure).toBeInstanceOf(OperationalError)
-    expect(blocked.failure.cause).toBeInstanceOf(CapitalActivationReconciliationNotExact)
-    expect(blocked.failure.cause).toMatchObject({ status: ReconciliationStatus.Discrepancy })
-  }
-  status = ReconciliationStatus.Exact
-  expect(await Effect.runPromise(refresh)).toEqual({
-    report: { reconciliation: { status: ReconciliationStatus.Exact } },
-  })
 })

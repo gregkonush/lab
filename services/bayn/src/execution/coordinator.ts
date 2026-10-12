@@ -30,10 +30,9 @@ import {
 } from './coordinator-decisions'
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
 import { MutationStore, MutationStoreError, type MutationEvent } from './mutations'
-import type { WriterFenceError } from './writer-fence'
+import { WriterFence, WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { Pipeable } from '../pipeable'
-import { withObservedStage } from '../telemetry'
 
 export enum ExecutionFailure {
   IntentNotFound = 'INTENT_NOT_FOUND',
@@ -54,6 +53,7 @@ export interface DryRunSubmit extends DryRunSubmitDecision {}
 interface MutationServices {
   readonly mutations: MutationStore['Service']
   readonly broker: BrokerMutation['Service']
+  readonly fence: WriterFence['Service']
 }
 
 interface RecoveryServices {
@@ -165,45 +165,25 @@ export const dryRunSubmit = (
     ),
   )
 
-const denyStartedSubmit = (mutations: MutationStore['Service'], started: MutationEvent) =>
-  currentInstant.pipe(
-    Effect.flatMap((occurredAt) =>
-      mutations.submitDenied(
-        started.intentId,
-        started.requestHash,
-        occurredAt < started.occurredAt ? started.occurredAt : occurredAt,
-      ),
-    ),
-  )
-
 const persistSubmitDecision = (
   services: MutationServices,
-  started: MutationEvent,
+  intentId: string,
+  requestHash: string,
   decision: SubmitPersistenceDecision,
 ) =>
   Match.value(decision).pipe(
     Match.tagsExhaustive({
       SubmitAccepted: ({ brokerOrderId, evidence, terminalOutcome }) =>
-        services.mutations.submitAccepted(
-          started.intentId,
-          started.requestHash,
-          brokerOrderId,
-          evidence,
-          terminalOutcome,
+        services.mutations.submitAccepted(intentId, requestHash, brokerOrderId, evidence, terminalOutcome),
+      SubmitRejected: ({ evidence }) => services.mutations.submitRejected(intentId, requestHash, evidence),
+      SubmitDenied: () =>
+        currentInstant.pipe(
+          Effect.flatMap((occurredAt) => services.mutations.submitDenied(intentId, requestHash, occurredAt)),
         ),
-      SubmitRejected: ({ evidence }) =>
-        services.mutations.submitRejected(started.intentId, started.requestHash, evidence),
-      SubmitDenied: () => denyStartedSubmit(services.mutations, started),
       SubmitUnknown: ({ brokerOrderId, evidence }) =>
         (evidence === undefined ? currentInstant : Effect.succeed(evidence.observedAt)).pipe(
           Effect.flatMap((occurredAt) =>
-            services.mutations.submitUnknown(
-              started.intentId,
-              started.requestHash,
-              occurredAt,
-              evidence,
-              brokerOrderId,
-            ),
+            services.mutations.submitUnknown(intentId, requestHash, occurredAt, evidence, brokerOrderId),
           ),
         ),
     }),
@@ -212,19 +192,21 @@ const persistSubmitDecision = (
 const submitToBroker = (
   services: MutationServices,
   stored: StoredIntent,
-  started: MutationEvent,
+  requestHash: string,
   request: DryRunSubmitDecision['request'],
   closeOnly: boolean,
 ) => {
   const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
   return services.broker.submit(submittedIntent, closeOnly).pipe(
     Effect.matchEffect({
-      onFailure: (error) => persistSubmitDecision(services, started, decideSubmitFailure(started.requestHash, error)),
+      onFailure: (error) =>
+        persistSubmitDecision(services, stored.intent.intentId, requestHash, decideSubmitFailure(requestHash, error)),
       onSuccess: (receipt) =>
         persistSubmitDecision(
           services,
-          started,
-          decideSubmitSuccess(submittedIntent, { requestHash: started.requestHash, request }, receipt),
+          stored.intent.intentId,
+          requestHash,
+          decideSubmitSuccess(submittedIntent, { requestHash, request }, receipt),
         ),
     }),
   )
@@ -232,7 +214,8 @@ const submitToBroker = (
 
 const continueStartedSubmit = (
   services: MutationServices,
-  started: MutationEvent,
+  intentId: string,
+  requestHash: string,
   request: DryRunSubmitDecision['request'],
   closeOnly: boolean,
 ): Effect.Effect<
@@ -240,17 +223,19 @@ const continueStartedSubmit = (
   ExecutionError | IntentStoreError | MutationStoreError | WriterFenceError,
   IntentStore
 > =>
-  readIntent(MutationOperation.Submit, started.intentId).pipe(
+  readIntent(MutationOperation.Submit, intentId).pipe(
     Effect.flatMap((startedIntent) =>
       Clock.currentTimeMillis.pipe(
         Effect.flatMap(
           (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
             const validation = validateStartedSubmitRiskDecision(startedIntent, currentTimeMillis)
             if (Result.isSuccess(validation)) {
-              return submitToBroker(services, validation.success, started, request, closeOnly)
+              return submitToBroker(services, validation.success, requestHash, request, closeOnly)
             }
             return validation.failure._tag === 'ExpiredRiskDecision'
-              ? denyStartedSubmit(services.mutations, started)
+              ? currentInstant.pipe(
+                  Effect.flatMap((occurredAt) => services.mutations.submitDenied(intentId, requestHash, occurredAt)),
+                )
               : Effect.fail(executionError(validation.failure))
           },
         ),
@@ -266,7 +251,8 @@ const startSubmit = (
   consistencyDelayMs: number,
   closeOnly: boolean,
 ) =>
-  requireActiveSubmitRiskDecision(stored).pipe(
+  services.fence.check.pipe(
+    Effect.andThen(requireActiveSubmitRiskDecision(stored)),
     Effect.andThen(currentInstant),
     Effect.flatMap((occurredAt) =>
       liftDecision(nextInstant(MutationOperation.Submit, stored.updatedAt, occurredAt)).pipe(
@@ -283,7 +269,7 @@ const startSubmit = (
     ),
     Effect.flatMap((started) => {
       if (!started.started) return Effect.succeed(started.event)
-      return continueStartedSubmit(services, started.event, request, closeOnly)
+      return continueStartedSubmit(services, stored.intent.intentId, requestHash, request, closeOnly)
     }),
   )
 
@@ -312,11 +298,8 @@ const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
-  }).pipe(
-    Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)),
-    withObservedStage('bayn.execution.submit', { operation: closeOnly ? 'close' : 'entry' }),
-    Effect.annotateLogs({ intentId, closeOnly }),
-  )
+    fence: WriterFence,
+  }).pipe(Effect.flatMap((services) => runSubmit(services, intentId, consistencyDelayMs, closeOnly)))
 
 export const submit = Pipeable.by<
   (consistencyDelayMs: number, closeOnly?: boolean) => (intentId: string) => ReturnType<typeof submitDataFirst>,
@@ -366,7 +349,8 @@ const startCancel = (
   brokerOrderId: string,
   consistencyDelayMs: number,
 ) =>
-  currentInstant.pipe(
+  services.fence.check.pipe(
+    Effect.andThen(currentInstant),
     Effect.flatMap((occurredAt) =>
       liftDecision(nextInstant(MutationOperation.Cancel, stored.updatedAt, occurredAt)).pipe(
         Effect.flatMap((nextOccurredAt) =>
@@ -418,6 +402,7 @@ const cancelDataFirst = (intentId: string, consistencyDelayMs: number) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
+    fence: WriterFence,
   }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs)))
 
 export const cancel = Pipeable.dual(2, cancelDataFirst)

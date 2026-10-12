@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: flamingo
     app.kubernetes.io/component: model-server
 spec:
-  replicas: 1
+  replicas: 0
   progressDeadlineSeconds: 14400
   strategy:
     type: Recreate
@@ -53,13 +53,13 @@ spec:
             - --max-model-len
             - "262144"
             - --gpu-memory-utilization
-            - "0.60"
+            - "0.85"
             - --kv-cache-dtype
             - fp8
             - --max-num-seqs
-            - "8"
+            - "16"
             - --max-num-batched-tokens
-            - "8192"
+            - "16384"
             - --enable-prefix-caching
             - --reasoning-parser
             - qwen3

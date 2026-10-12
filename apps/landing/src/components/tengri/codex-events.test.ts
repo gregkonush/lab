@@ -6,6 +6,7 @@ import {
   codexAccountRefreshIsCurrent,
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
+  codexCanStartNewConversation,
   codexEventDisplayText,
   codexEventContinuesRestoredItem,
   codexEventMatchesThread,
@@ -19,7 +20,6 @@ import {
   codexTranscriptFromThread,
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
-  reconcileSubmittedPrompts,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -34,101 +34,7 @@ const event: TengriCodexEvent = {
   rawJson: '{}',
 }
 
-describe('Accepted prompt retention', () => {
-  const prompt = {
-    id: 'sent-1',
-    threadId: 'thread-1',
-    text: 'Inspect the workspace.',
-    previousItemIds: new Set(['previous-user', 'previous-answer']),
-  }
-  const previous = { id: 'previous-user', kind: 'user-message' as const, text: prompt.text }
-
-  test('keeps an accepted prompt before the new response when its echo is absent', () => {
-    const answer = { id: 'new-answer', kind: 'assistant-text' as const, text: 'Reading files.' }
-    const result = reconcileSubmittedPrompts([previous, answer], [prompt])
-    expect(result.acknowledged.size).toBe(0)
-    expect(result.pending).toEqual([{ prompt, beforeItemId: answer.id }])
-  })
-
-  test('acknowledges a new canonical item without matching an identical earlier prompt', () => {
-    const next = { ...previous, id: 'new-user' }
-    const result = reconcileSubmittedPrompts([previous, next], [prompt])
-    expect([...result.acknowledged]).toEqual(['sent-1'])
-    expect(result.pending).toEqual([])
-  })
-
-  test('one server echo cannot consume two identical accepted prompts', () => {
-    const second = { ...prompt, id: 'sent-2' }
-    const result = reconcileSubmittedPrompts([{ ...previous, id: 'new-user' }], [prompt, second])
-    expect([...result.acknowledged]).toEqual(['sent-1'])
-    expect(result.pending.map(({ prompt }) => prompt.id)).toEqual(['sent-2'])
-  })
-
-  test('matches restored image inputs to the accepted image-only prompt', () => {
-    const imagePrompt = { ...prompt, text: '[Image]' }
-    const result = reconcileSubmittedPrompts(
-      [{ ...previous, id: 'new-image', text: '[Local image: /workspace/.tengri-attachments/image.png]' }],
-      [imagePrompt],
-    )
-    expect([...result.acknowledged]).toEqual(['sent-1'])
-    expect(result.pending).toEqual([])
-  })
-})
-
 describe('Codex event replay', () => {
-  test('keeps pending approvals when later notices exceed the event buffer', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: '101',
-    }
-    let current = appendCodexEvent([], approval)
-    for (let sequence = 8; sequence < 520; sequence += 1) {
-      current = appendCodexEvent(current, {
-        ...event,
-        sequence,
-        kind: 'warning',
-        method: 'tengri/eventOmitted',
-        approvalId: '',
-      })
-    }
-    expect(current.filter((event) => event.kind === 'approval')).toEqual([approval])
-    expect(current.filter((event) => event.kind === 'warning').length).toBeLessThanOrEqual(500)
-    const resolved = appendCodexEvent(current, {
-      ...event,
-      sequence: 520,
-      kind: 'thread-state',
-      method: 'serverRequest/resolved',
-      rawJson: '{"params":{"requestId":101}}',
-    })
-    expect(resolved.filter((event) => event.kind === 'approval')).toEqual([])
-  })
-
-  test('removes approvals when their turn completes without a resolution notification', () => {
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
-      method: 'item/commandExecution/requestApproval',
-      approvalId: '101',
-    }
-    const anotherTurn = { ...approval, turnId: 'turn-2', approvalId: '102' }
-    const anotherThread = { ...approval, threadId: 'thread-2', approvalId: '103' }
-    const completed = {
-      ...event,
-      sequence: 8,
-      kind: 'thread-state' as const,
-      method: 'turn/completed',
-      itemId: '',
-      text: '',
-    }
-    const next = appendCodexEvent([approval, anotherTurn, anotherThread], completed)
-    expect(next.filter((event) => event.kind === 'approval')).toEqual([anotherTurn, anotherThread])
-    expect(
-      appendCodexEvent(appendCodexEvent([], approval), completed).filter((event) => event.kind === 'approval'),
-    ).toEqual([])
-  })
-
   test('deduplicates an event replayed after an SSE reconnect', () => {
     const current = [event]
     expect(appendCodexEvent(current, { ...event })).toBe(current)
@@ -233,7 +139,7 @@ describe('Codex event replay', () => {
     expect(updated).toHaveLength(2)
     expect(updated[1]).toEqual(other)
     expect(codexEventDisplayText(updated[0]!)).toBe(
-      '5h window 88% left · Weekly 80% left · Credits: 8 · Limit state: rate limit reached',
+      '5h window: 12% used · 7d window: 20% used · Credits: 8 · Limit state: rate limit reached',
     )
   })
 
@@ -374,15 +280,6 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
-  test('hides token counts during live streaming and replay while keeping account usage visible', () => {
-    const tokenUsage = { ...event, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' }
-    const rateLimits = { ...tokenUsage, method: 'account/rateLimits/updated' }
-    for (const snapshotSequence of [0, event.sequence + 1]) {
-      expect(codexEventShouldRender(tokenUsage, event.threadId, new Set(), snapshotSequence)).toBe(false)
-      expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(true)
-    }
-  })
-
   test('keeps only post-resume item updates plus snapshot-independent events visible', () => {
     const restoredItemIds = new Set([event.itemId])
     const itemlessSnapshotEvent = { ...event, kind: 'usage' as const, itemId: '' }
@@ -436,6 +333,19 @@ describe('Codex event replay', () => {
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-1')).toBe(true)
     expect(codexResumeCommitIsCurrent(2, 3, 'thread-1', 'thread-1')).toBe(false)
     expect(codexResumeCommitIsCurrent(3, 3, 'thread-1', 'thread-2')).toBe(false)
+  })
+
+  test('allows abandoning a thread after replay recovery fails', () => {
+    const failedRecovery = {
+      activeTurnId: 'stale-turn',
+      recovering: false,
+      submitting: false,
+      threadReady: false,
+    }
+
+    expect(codexCanStartNewConversation(failedRecovery)).toBe(true)
+    expect(codexCanStartNewConversation({ ...failedRecovery, recovering: true })).toBe(false)
+    expect(codexCanStartNewConversation({ ...failedRecovery, threadReady: true })).toBe(false)
   })
 
   test('reconciles reordered snapshot responses and event deliveries against the server cursor', () => {
@@ -823,60 +733,6 @@ describe('Codex event decoding', () => {
     ])
   })
 
-  test('shows MCP tool confirmations with arguments and only the advertised session scope', () => {
-    const params = {
-      mode: 'form',
-      message: 'Allow the fixture MCP server to run tool "exec"?',
-      requestedSchema: { type: 'object', properties: {} },
-      _meta: {
-        codex_approval_kind: 'mcp_tool_call',
-        persist: ['session', 'always'],
-        tool_description: 'Execute a command in the selected workspace.',
-        tool_params: { command: 'printf fixture', cwd: '/tmp/fixture' },
-      },
-    }
-    const approval = {
-      ...event,
-      kind: 'approval' as const,
-      method: 'mcpServer/elicitation/request',
-      rawJson: JSON.stringify({ params }),
-    }
-    expect(codexApprovalDecisions(approval)).toEqual(['approve-once', 'approve-session', 'deny'])
-    expect(codexEventDisplayText(approval)).toContain(params.message)
-    expect(codexEventDisplayText(approval)).toContain('printf fixture')
-    expect(codexEventDisplayText(approval)).toContain('/tmp/fixture')
-    expect(codexEventDisplayText(approval)).toContain('Session approval applies to this tool')
-    expect(codexEventMatchesThread(approval, 'thread-2')).toBe(false)
-    for (const persist of [undefined, 'always', []]) {
-      expect(
-        codexApprovalDecisions({
-          ...approval,
-          rawJson: JSON.stringify({ params: { ...params, _meta: { ...params._meta, persist } } }),
-        }),
-      ).toEqual(['approve-once', 'deny'])
-    }
-  })
-
-  test('keeps MCP controls and an omission notice after large arguments are bounded', () => {
-    for (const persist of [undefined, 'session']) {
-      const approval = {
-        ...event,
-        kind: 'approval' as const,
-        method: 'mcpServer/elicitation/request',
-        text: 'Allow the fixture tool?',
-        rawJson: JSON.stringify({
-          params: { _meta: { codex_approval_kind: 'mcp_tool_call', persist } },
-          rawOmitted: true,
-        }),
-      }
-      expect(codexApprovalDecisions(approval)).toEqual(
-        persist === 'session' ? ['approve-once', 'approve-session', 'deny'] : ['approve-once', 'deny'],
-      )
-      expect(codexEventDisplayText(approval)).toContain('Allow the fixture tool?')
-      expect(codexEventDisplayText(approval)).toContain('Arguments were omitted')
-    }
-  })
-
   test('renders token usage and rate-limit snapshots', () => {
     expect(
       codexEventDisplayText({
@@ -904,25 +760,7 @@ describe('Codex event decoding', () => {
           },
         }),
       }),
-    ).toBe('5h window 88% left · Weekly 55% left · Credits: 18')
-  })
-
-  test.each([
-    [9.1, '62306.900236', 'Weekly 90% left · Credits: 62,307'],
-    [0, 0, 'Weekly 100% left · Credits: 0'],
-    [100, '17', 'Weekly 0% left · Credits: 17'],
-    [110, 'invalid', 'Weekly 0% left'],
-    [12.5, '', 'Weekly 87% left'],
-  ])('formats remaining weekly usage %s and credits %s', (usedPercent, balance, expected) => {
-    expect(
-      codexEventDisplayText({
-        ...event,
-        kind: 'usage',
-        rawJson: JSON.stringify({
-          params: { rateLimits: { secondary: { usedPercent, windowDurationMins: 10_080 }, credits: { balance } } },
-        }),
-      }),
-    ).toBe(expected)
+    ).toBe('5h window: 12% used · 7d window: 45% used · Credits: 17.50')
   })
 
   test('extracts a failed device-login completion error', () => {

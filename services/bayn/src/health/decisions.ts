@@ -247,7 +247,7 @@ const deriveRuntimeHealth = (
   checkedAt,
   dependencies: {
     postgresql: dependencyHealth(results.postgresql, checkedAt),
-    ...(results.signal === undefined ? {} : { signal: dependencyHealth(results.signal, checkedAt) }),
+    signal: dependencyHealth(results.signal, checkedAt),
     tigerBeetle: dependencyHealth(results.tigerBeetle, checkedAt),
     cycle: dependencyHealth(results.cycle, checkedAt),
     cycleRunner,

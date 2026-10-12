@@ -12,8 +12,9 @@ import {
   type JevBatchPlan,
   type JevBatchResult,
 } from '../jev/batch'
-import { JevBatchExpired, JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
+import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest } from '../jev/evidence'
+import { JevEvaluationStore } from '../jev/evaluation'
 import {
   decodeJevResolution,
   makeJevResolution,
@@ -23,8 +24,6 @@ import {
 import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
 import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
-import { withObservedStage } from '../telemetry'
-import { readJevEvaluationEvidence } from './jev-evaluation-read'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
 const StoredEvaluationRow = Schema.Struct({
@@ -37,6 +36,7 @@ const OneBatch = Schema.Tuple([Schema.Struct({ batch_id: Sha256Schema })])
 
 export const makeJevBatchStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
+  const evaluations = yield* JevEvaluationStore
   const persistError = (cause: unknown) =>
     operationalError({
       component: 'database',
@@ -68,15 +68,9 @@ export const makeJevBatchStore = Effect.gen(function* () {
       if (plan.batchId !== batchId) return yield* persistError('Stored Jev batch identity differs')
       if (row.result === null) return { plan, result: null } satisfies JevBatchEvidence
       const result = yield* Effect.fromResult(decodeJevBatchResult(plan, row.result))
-      const evidenceByRequestId = yield* readJevEvaluationEvidence(
-        sql,
-        result.candidates.flatMap((candidate) =>
-          candidate.status === JevCandidateResultStatus.Excluded ? [] : [candidate.requestId],
-        ),
-      )
       for (const candidate of result.candidates) {
         if (candidate.status === JevCandidateResultStatus.Excluded) continue
-        const evidence = evidenceByRequestId.get(candidate.requestId) ?? null
+        const evidence = yield* evaluations.read(candidate.requestId)
         if (candidate.status === JevCandidateResultStatus.Unattempted) {
           if (evidence !== null) return yield* persistError('A sealed unattempted candidate has a request claim')
         } else if (
@@ -92,12 +86,6 @@ export const makeJevBatchStore = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* requireAutocommit
       const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
-      yield* Effect.annotateCurrentSpan({
-        'bayn.jev.batch_id': plan.batchId,
-        'bayn.cycle.id': plan.cycleId,
-        'bayn.jev.observed_at': plan.observedAt,
-        'bayn.jev.expires_at': plan.expiresAt,
-      })
       const observations = yield* Schema.decodeUnknownEffect(
         Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
         strictParseOptions,
@@ -107,28 +95,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
         return yield* persistError('Jev batch observation bytes differ from their stored hash')
       yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
       const existing = yield* read(plan.batchId)
-      if (existing !== null) {
-        yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
-        return existing
-      }
+      if (existing !== null) return existing
       const now = yield* Clock.currentTimeMillis
-      const checkedAt = utcInstantFromEpochMillis(now)
-      yield* Effect.annotateCurrentSpan({
-        'bayn.jev.admission.checked_at': checkedAt,
-        'bayn.jev.admission.lag_ms': now - Date.parse(plan.observedAt),
-      })
-      if (now < Date.parse(plan.observedAt)) return yield* persistError('Jev batch clock regressed before observation')
-      if (now >= Date.parse(plan.expiresAt)) {
-        yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
-        return yield* new JevBatchExpired({
-          batchId: plan.batchId,
-          cycleId: plan.cycleId,
-          observedAt: plan.observedAt,
-          expiresAt: plan.expiresAt,
-          checkedAt,
-        })
-      }
-      yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
+      if (now < Date.parse(plan.observedAt) || now >= Date.parse(plan.expiresAt))
+        return yield* persistError('An unrecorded Jev batch cannot start outside its validity window')
       yield* sql`
         INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
         VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
@@ -137,19 +107,12 @@ export const makeJevBatchStore = Effect.gen(function* () {
       const saved = yield* read(plan.batchId)
       if (saved === null) return yield* persistError('Committed Jev batch plan is missing')
       return saved
-    }).pipe(
-      Effect.mapError((cause) => (cause instanceof JevBatchExpired ? cause : persistError(cause))),
-      withObservedStage('bayn.jev.batch-admission', { dependency: 'postgresql' }),
-    )
+    }).pipe(Effect.mapError(persistError))
 
   const finish = (input: string) =>
     Effect.gen(function* () {
       yield* requireAutocommit
       const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
-      // A single-request receipt may have committed its final batch atomically. Its
-      // immutable, decoded result needs no new transaction or durability wait.
-      const committed = yield* read(batchId)
-      if (committed !== null && committed.result !== null) return committed
       return yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* Schema.decodeUnknownEffect(
@@ -201,7 +164,6 @@ export const makeJevBatchStore = Effect.gen(function* () {
                   ) AS matching_symbols
                 FROM intraday_candidate_observations AS observation
                 WHERE observation.cycle_id = ${saved.plan.cycleId}
-                  AND observation.observed_at = ${saved.plan.observedAt}::timestamptz
                   AND observation.payload->>'authorityGenerationHash' = ${saved.plan.authorityGenerationHash}
                   AND observation.payload->>'observedAt' = ${saved.plan.observedAt}
                   AND observation.payload->'manifest'->>'observedAt' = ${saved.plan.observedAt}
@@ -318,11 +280,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
       )
     }).pipe(Effect.mapError(persistError))
 
-  const pending = (cycleId: string, authorityGenerationHash?: string) =>
+  const pending = (cycleId: string, authorityGenerationHash: string) =>
     Effect.gen(function* () {
       yield* Schema.decodeUnknownEffect(Sha256Schema)(cycleId)
-      if (authorityGenerationHash !== undefined)
-        yield* Schema.decodeUnknownEffect(Sha256Schema)(authorityGenerationHash)
+      yield* Schema.decodeUnknownEffect(Sha256Schema)(authorityGenerationHash)
       const rows = yield* Schema.decodeUnknownEffect(
         Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
         strictParseOptions,
@@ -330,8 +291,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
         yield* sql`
           SELECT plan.batch_id FROM jev_batch_plans AS plan
           LEFT JOIN jev_batch_results AS result USING (batch_id)
-          WHERE plan.cycle_id = ${cycleId}
-            AND ${authorityGenerationHash === undefined ? sql`true` : sql`plan.authority_generation_hash = ${authorityGenerationHash}`}
+          WHERE plan.cycle_id = ${cycleId} AND plan.authority_generation_hash = ${authorityGenerationHash}
             AND result.batch_id IS NULL
           ORDER BY plan.payload->>'observedAt', plan.batch_id COLLATE "C"
         `,

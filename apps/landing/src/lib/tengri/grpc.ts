@@ -1,13 +1,10 @@
 import 'server-only'
 
-import type { TengriCodexImage } from './codex-images'
-
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
-import { z } from 'zod'
 import type {
   AgentArchitecture,
   AgentPhase,
@@ -31,36 +28,30 @@ import type {
 import { parseTengriSigningSecrets, signTengriMetadata } from './internal-auth'
 import { readTengriBffSecret } from './runtime-secrets'
 import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
-import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
-import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
-import { codexHistoryResponse } from './codex-history-stream'
-import type { CodexHistoryPage } from './codex-history'
 
 const DEFAULT_GRPC_DEADLINE_MS = 15_000
-const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
 const NO_PRESERVED_SCALAR_DEFAULTS = new Set<string>()
 const WATCH_FILES_PRESERVED_SCALAR_DEFAULTS = new Set(['afterSequence'])
-const POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS = new Set(['idleTimeoutMinutes'])
 
 type RawRecord = Record<string, unknown>
 type RawAgent = RawRecord & {
   id?: string
-  uid?: string
   displayName?: string
   phase?: string
   architecture?: string
   cpuMillis?: number
   memoryMib?: number
   workspaceGib?: number
-  idleTimeoutMinutes?: number
   nodeName?: string
   message?: string
   createdAt?: string
   readyAt?: string
   lastActivityAt?: string
   idleDeadline?: string
+  expiresAt?: string
+  pendingImage?: string
   conditions?: RawRecord[]
 }
 
@@ -107,13 +98,7 @@ export class TengriUnavailableError extends Error {
 }
 
 export function isTengriControlPlaneConfigured() {
-  return Boolean(
-    process.env.TENGRI_GRPC_ENDPOINT?.trim() &&
-    signingSecrets() &&
-    process.env.SPIFFE_ENDPOINT_SOCKET?.trim() &&
-    process.env.SPIFFE_ID?.trim() &&
-    process.env.TENGRI_SPIFFE_ID?.trim(),
-  )
+  return Boolean(process.env.TENGRI_GRPC_ENDPOINT?.trim() && signingSecrets())
 }
 
 export async function listAgents(subject: string): Promise<TengriAgent[]> {
@@ -122,7 +107,7 @@ export async function listAgents(subject: string): Promise<TengriAgent[]> {
 }
 
 export async function createAgent(subject: string, displayName: string) {
-  return normalizeAgent(await unary<RawAgent>('createAgent', { displayName }, subject, LIFECYCLE_GRPC_DEADLINE_MS))
+  return normalizeAgent(await unary<RawAgent>('createAgent', { displayName }, subject))
 }
 
 export async function getAgent(subject: string, id: string) {
@@ -130,27 +115,11 @@ export async function getAgent(subject: string, id: string) {
 }
 
 export async function sleepAgent(subject: string, id: string) {
-  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject, LIFECYCLE_GRPC_DEADLINE_MS))
+  return normalizeAgent(await unary<RawAgent>('sleepAgent', { id }, subject))
 }
 
 export async function resumeAgent(subject: string, id: string) {
-  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject, LIFECYCLE_GRPC_DEADLINE_MS))
-}
-
-export async function updatePowerSettings(subject: string, id: string, power: TengriPowerSettings) {
-  return normalizeAgent(
-    await unary<RawAgent>(
-      'updatePowerSettings',
-      {
-        id,
-        idleTimeoutMinutes: power.idleTimeoutMinutes,
-      },
-      subject,
-      DEFAULT_GRPC_DEADLINE_MS,
-      undefined,
-      POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS,
-    ),
-  )
+  return normalizeAgent(await unary<RawAgent>('resumeAgent', { id }, subject, 130_000))
 }
 
 export async function deleteAgent(subject: string, id: string) {
@@ -239,7 +208,7 @@ export async function searchFiles(subject: string, agentId: string, filePath: st
   } satisfies TengriFileSearchResult
 }
 
-export async function watchFiles(subject: string, agentId: string, filePath: string, afterSequence?: number) {
+export function watchFiles(subject: string, agentId: string, filePath: string, afterSequence?: number) {
   const request: RawRecord = { agentId, path: filePath }
   if (afterSequence !== undefined) request.afterSequence = afterSequence
   return stream('watchFiles', request, subject, WATCH_FILES_PRESERVED_SCALAR_DEFAULTS)
@@ -356,43 +325,9 @@ export async function resumeCodexThread(
   agentId: string,
   threadId: string,
   options: TengriCodexOptions = {},
-  signal: AbortSignal = new AbortController().signal,
 ) {
-  const source = await stream(
-    'resumeCodexThread',
-    { agentId, threadId, ...options },
-    subject,
-    NO_PRESERVED_SCALAR_DEFAULTS,
-    130_000,
-  )
-  return codexHistoryResponse(source, signal, normalizeCodexHistoryPage, (error) => {
-    if (error instanceof TengriUnavailableError) return error
-    if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number') {
-      return mapGrpcError(error as grpc.ServiceError, 'resumeCodexThread')
-    }
-    return new TengriUnavailableError('Codex conversation recovery returned invalid history')
-  })
-}
-
-function normalizeCodexHistoryPage(response: RawRecord): CodexHistoryPage {
-  let part: CodexHistoryPage['part']
-  switch (response.part) {
-    case 'CODEX_HISTORY_PART_THREAD':
-      part = 'thread'
-      break
-    case 'CODEX_HISTORY_PART_ITEMS':
-      part = 'items'
-      break
-    case 'CODEX_HISTORY_PART_TURNS':
-      part = 'turns'
-      break
-    default:
-      throw new TengriUnavailableError('Codex conversation recovery returned invalid history')
-  }
-  if (typeof response.rawJson !== 'string' || !response.rawJson) {
-    throw new TengriUnavailableError('Codex conversation recovery returned invalid history')
-  }
-  return { type: 'page', part, rawJson: response.rawJson, eventSequence: sequenceValue(response.eventSequence) }
+  const response = await unary<RawRecord>('resumeCodexThread', { agentId, threadId, ...options }, subject, 130_000)
+  return normalizeCodexThread(response)
 }
 
 function normalizeCodexThread(response: RawRecord): TengriCodexThread {
@@ -424,46 +359,14 @@ export async function sendCodexTurn(
   threadId: string,
   text: string,
   options: TengriCodexOptions = {},
-  images: readonly TengriCodexImage[] = [],
 ) {
   return normalizeTurn(
-    await unary<RawRecord>(
-      'sendCodexInput',
-      {
-        agentId,
-        threadId,
-        text,
-        ...options,
-        images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
-      },
-      subject,
-      130_000,
-    ),
+    await unary<RawRecord>('sendCodexTurn', { agentId, threadId, text, ...options }, subject, 130_000),
   )
 }
 
-export async function steerCodexTurn(
-  subject: string,
-  agentId: string,
-  threadId: string,
-  turnId: string,
-  text: string,
-  images: readonly TengriCodexImage[] = [],
-) {
-  return normalizeTurn(
-    await unary<RawRecord>(
-      'steerCodexInput',
-      {
-        agentId,
-        threadId,
-        turnId,
-        text,
-        images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
-      },
-      subject,
-      130_000,
-    ),
-  )
+export async function steerCodexTurn(subject: string, agentId: string, threadId: string, turnId: string, text: string) {
+  return normalizeTurn(await unary<RawRecord>('steerCodexTurn', { agentId, threadId, turnId, text }, subject, 130_000))
 }
 
 export async function interruptCodexTurn(subject: string, agentId: string, threadId: string, turnId: string) {
@@ -521,18 +424,8 @@ export async function issueEditorSession(
   }
 }
 
-export async function revokeDesktopPreviews(subject: string) {
+export async function revokeEditorSessions(subject: string) {
   await unary('revokeEditorSessions', {}, subject)
-}
-
-export async function issueBrowserSession(subject: string, agentId: string): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueBrowserSession', { id: agentId }, subject, 400_000)
-  return {
-    id: stringValue(response.id),
-    launchUrl: stringValue(response.launchUrl),
-    expiresAt: stringValue(response.expiresAt),
-    previewOrigin: stringValue(response.previewOrigin),
-  }
 }
 
 export async function revokePreviewSession(
@@ -544,7 +437,7 @@ export async function revokePreviewSession(
   await unary('revokePreviewSession', { agentId, sessionId, revocationToken }, subject)
 }
 
-export async function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {
+export function watchCodexEvents(subject: string, agentId: string, afterSequence: number) {
   return stream('watchCodexEvents', { agentId, afterSequence }, subject)
 }
 
@@ -568,12 +461,11 @@ async function unary<Response = RawRecord>(
   subject: string,
   deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
   signal?: AbortSignal,
-  preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
 ): Promise<Response> {
-  const client = await getClient()
+  const client = getClient()
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
-  const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
+  const canonicalRequest = canonicalizeProto3Request(request)
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortedRequestError())
@@ -611,18 +503,17 @@ function abortedRequestError() {
   return error
 }
 
-async function stream(
+function stream(
   methodName: string,
   request: RawRecord,
   subject: string,
   preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
-  deadlineMs = 0,
 ) {
-  const client = await getClient()
+  const client = getClient()
   const method = client[methodName] as StreamMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
-  return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(deadlineMs))
+  return method.call(client, canonicalRequest, metadata(subject, methodName, canonicalRequest), callOptions(0))
 }
 
 function canonicalizeProto3Request(
@@ -646,46 +537,15 @@ function isProto3ScalarDefault(value: unknown) {
   )
 }
 
-async function getClient(): Promise<TengriGrpcClient> {
+function getClient(): TengriGrpcClient {
   const globalState = globalThis as typeof globalThis & {
     tengriGrpcClient?: TengriGrpcClient
     tengriGrpcService?: RuntimeServiceDefinition
-    tengriSpiffeSource?: SpiffeSource
-    tengriSpiffeConfiguration?: string
-    tengriSpiffeFingerprint?: string
   }
+  if (globalState.tengriGrpcClient && globalState.tengriGrpcService) return globalState.tengriGrpcClient
+  globalState.tengriGrpcClient?.close()
   const target = process.env.TENGRI_GRPC_ENDPOINT?.trim()
-  const endpoint = process.env.SPIFFE_ENDPOINT_SOCKET?.trim()
-  const ownId = process.env.SPIFFE_ID?.trim()
-  const peerId = process.env.TENGRI_SPIFFE_ID?.trim()
-  if (!target || !endpoint || !ownId || !peerId || !signingSecrets()) {
-    throw new TengriUnavailableError('Tengri workload identity is not configured')
-  }
-  parseSpiffeId(ownId)
-  parseSpiffeId(peerId)
-  const configuration = JSON.stringify([target, endpoint, ownId, peerId])
-  if (!globalState.tengriSpiffeSource || globalState.tengriSpiffeConfiguration !== configuration) {
-    globalState.tengriGrpcClient?.close()
-    globalState.tengriGrpcClient = undefined
-    globalState.tengriSpiffeSource?.close()
-    globalState.tengriSpiffeSource = new SpiffeSource({
-      endpoint,
-      spiffeId: ownId,
-      protoPath:
-        process.env.SPIFFE_WORKLOAD_API_PROTO_PATH?.trim() ??
-        path.resolve(path.dirname(resolveProtoPath()), '../../../spiffe/workloadapi.proto'),
-    })
-    globalState.tengriSpiffeConfiguration = configuration
-  }
-  let material
-  try {
-    material = await globalState.tengriSpiffeSource.material()
-  } catch {
-    throw new TengriUnavailableError('Tengri workload identity is unavailable')
-  }
-  if (globalState.tengriGrpcClient && globalState.tengriSpiffeFingerprint === material.fingerprint) {
-    return globalState.tengriGrpcClient
-  }
+  if (!target || !signingSecrets()) throw new TengriUnavailableError('Tengri control plane is not configured')
   const definition = protoLoader.loadSync(resolveProtoPath(), {
     defaults: true,
     enums: String,
@@ -695,18 +555,14 @@ async function getClient(): Promise<TengriGrpcClient> {
   })
   const descriptor = grpc.loadPackageDefinition(definition) as unknown as RuntimeDescriptor
   const Constructor = descriptor.proompteng.runtime.v1.MicroVMControlPlane
-  const credentials = grpc.credentials.createSsl(material.bundle, material.privateKey, material.certificate, {
-    checkServerIdentity: (_hostname, certificate) => verifySpiffePeer(peerId, certificate),
-  })
+  const credentials =
+    process.env.TENGRI_GRPC_TLS === 'true' ? grpc.credentials.createSsl() : grpc.credentials.createInsecure()
   const client = new Constructor(target, credentials, {
     'grpc.max_receive_message_length': MAX_GRPC_MESSAGE_BYTES,
     'grpc.max_send_message_length': MAX_GRPC_MESSAGE_BYTES,
   }) as TengriGrpcClient
-  const expiration = setTimeout(() => client.close(), Math.max(0, material.expiresAt - Date.now()))
-  expiration.unref()
   globalState.tengriGrpcClient = client
   globalState.tengriGrpcService = Constructor.service
-  globalState.tengriSpiffeFingerprint = material.fingerprint
   return client
 }
 
@@ -744,6 +600,7 @@ function metadata(subject: string, methodName: string, request: RawRecord) {
 }
 
 function grpcMethod(methodName: string) {
+  getClient()
   const globalState = globalThis as typeof globalThis & { tengriGrpcService?: RuntimeServiceDefinition }
   const method = Object.values(globalState.tengriGrpcService ?? {}).find(
     (candidate) => candidate.originalName === methodName,
@@ -838,27 +695,22 @@ function decodeUtf8File(content: Uint8Array) {
 }
 
 function normalizeAgent(agent: RawAgent): TengriAgent {
-  const power = tengriPowerSettingsSchema.safeParse({
-    idleTimeoutMinutes: agent.idleTimeoutMinutes,
-  })
-  if (!power.success)
-    throw new TengriUnavailableError('The runtime returned invalid power settings. Update Tengri and refresh.')
   return {
     id: stringValue(agent.id),
-    uid: z.uuid().parse(agent.uid),
     displayName: stringValue(agent.displayName, 'Unnamed agent'),
     phase: normalizePhase(stringValue(agent.phase)),
     architecture: normalizeArchitecture(stringValue(agent.architecture)),
     cpuMillis: numberValue(agent.cpuMillis),
     memoryMib: numberValue(agent.memoryMib),
     workspaceGib: numberValue(agent.workspaceGib),
-    power: power.data,
     nodeName: stringValue(agent.nodeName),
     message: stringValue(agent.message),
     createdAt: stringValue(agent.createdAt),
     readyAt: stringValue(agent.readyAt),
     lastActivityAt: stringValue(agent.lastActivityAt),
     idleDeadline: stringValue(agent.idleDeadline),
+    expiresAt: stringValue(agent.expiresAt),
+    pendingImage: stringValue(agent.pendingImage),
     conditions: (agent.conditions ?? []).map(normalizeCondition),
   }
 }

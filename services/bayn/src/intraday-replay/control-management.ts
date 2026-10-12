@@ -54,11 +54,7 @@ export const applyControlManagementDecision = (input: {
       decision.symbol !== held.symbol ||
       !Number.isSafeInteger(committedAtMs) ||
       committedAtMs < Date.parse(decidedAt) ||
-      committedAtMs >=
-        Math.min(
-          Date.parse(batchPlan.expiresAt),
-          portfolio.inventory.enteredAtMs + observation.protocol.maximumHoldingMinutes * 60_000,
-        )
+      committedAtMs > Date.parse(batchPlan.expiresAt)
     )
       return yield* invalid('Management decision differs from the current control position, request or commit deadline')
     if (decision.action === JevManagementAction.Hold)
@@ -251,7 +247,7 @@ export const makeControlManagementBatch = (input: {
     const batch = yield* makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: utcInstantFromEpochMillis(atMs + protocol.inferenceValidityMs),
-      planVersion: protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V3,
     })
     return {
       classification: 'SIMULATED_CONTROL_MANAGEMENT_REQUEST_ONLY' as const,

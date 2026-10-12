@@ -2,7 +2,7 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect, Layer, Option, Result, pipe } from 'effect'
 import type { SqlError } from 'effect/sql/SqlError'
 
-import type { HistoricalMarketDataConfig } from '../config/historical-signal'
+import type { RuntimeConfig } from '../config'
 import {
   selectCyclePublicationManifests,
   selectPublicationManifest,
@@ -30,7 +30,7 @@ import { decodeSnapshotRows, type SignalManifestRow } from './rows'
 import { Pipeable } from '../pipeable'
 
 const makeMarketDataDataFirst = (
-  config: HistoricalMarketDataConfig,
+  config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   contract: MarketDataContract,
 ): Effect.Effect<MarketDataService, never, ClickhouseClient.ClickhouseClient> =>
   pipe(
@@ -52,11 +52,11 @@ const makeMarketDataDataFirst = (
 
       const request = (observedAt: string): SnapshotRequest => {
         const common = {
-          snapshotId: config.historicalSignal.snapshotId,
-          publicationAsOf: config.historicalSignal.publicationAsOf,
-          calendarVersion: config.historicalSignal.calendarVersion,
+          snapshotId: config.clickhouse.snapshotId,
+          publicationAsOf: config.clickhouse.publicationAsOf,
+          calendarVersion: config.clickhouse.calendarVersion,
           universe: contract.universe,
-          bounds: config.historicalSignal.bounds,
+          bounds: config.clickhouse.bounds,
           observedAt,
         } as const
         return {
@@ -331,7 +331,7 @@ const makeMarketDataDataFirst = (
 export const makeMarketData = Pipeable.dual(2, makeMarketDataDataFirst)
 
 const MarketDataLiveDataFirst = (
-  config: HistoricalMarketDataConfig,
+  config: Pick<RuntimeConfig, 'clickhouse' | 'operationTimeoutMs'>,
   contract: MarketDataContract,
 ): Layer.Layer<MarketData, never, ClickhouseClient.ClickhouseClient> =>
   Layer.effect(MarketData, makeMarketData(config, contract))

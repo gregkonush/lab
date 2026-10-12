@@ -18,10 +18,6 @@ resources:
 nodeSelector: {}
 
 tolerations:
-  - key: workload.proompteng.ai/compute-local
-    operator: Equal
-    value: "true"
-    effect: NoSchedule
   - key: "node-role.kubernetes.io/storage"
     operator: Exists
     effect: NoSchedule

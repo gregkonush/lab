@@ -18,15 +18,14 @@ const agent: TengriAgent = {
   architecture: 'amd64',
   cpuMillis: 2_000,
   memoryMib: 4_096,
-  workspaceGib: 32,
-  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-  power: { idleTimeoutMinutes: 60 },
+  workspaceGib: 16,
   nodeName: 'ryzen',
   message: '',
   createdAt: '2026-08-26T08:00:00.000Z',
   readyAt: '2026-08-26T09:00:00.000Z',
   lastActivityAt: '2026-08-26T10:00:00.000Z',
   idleDeadline: '2026-08-26T11:00:00.000Z',
+  expiresAt: '2026-08-26T12:00:00.000Z',
   conditions: [],
 }
 

@@ -1,5 +1,4 @@
-import { readFileSync, statSync } from 'node:fs'
-import { basename, dirname } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 import { Effect } from 'effect'
 
@@ -38,13 +37,12 @@ export const createFileTools = (): EffectTool[] => [
           }
           if (args.fixedStrings) rgArgs.push('--fixed-strings')
           if (args.caseSensitive === false) rgArgs.push('--ignore-case')
-          const target = resolveWorkspacePath(runner.resolveRoot(args.sessionId, auth), args.path)
-          const directory = statSync(target).isDirectory()
-          rgArgs.push('--', args.query, directory ? '.' : basename(target))
+          rgArgs.push(args.query)
+          rgArgs.push('.')
           const result = await runner.runProcess({
             command: 'rg',
             args: rgArgs,
-            cwd: directory ? target : dirname(target),
+            cwd: args.path,
             sessionId: args.sessionId,
             timeoutSeconds: config.defaultTimeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,

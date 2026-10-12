@@ -15,8 +15,6 @@ spec:
   storage:
     className: local-path
     size: 100Gi
-  nodeSelector:
-    network.proompteng.ai/100g: "true"
   resources:
     requests:
       cpu: "2"
@@ -25,22 +23,11 @@ spec:
       memory: 8Gi
   affinity:
     podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchLabels:
-                app.kubernetes.io/instance: ledger
-            topologyKey: kubernetes.io/hostname
-  topologySpreadConstraints:
-    - maxSkew: 1
-      minDomains: 2
-      topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: DoNotSchedule
-      nodeTaintsPolicy: Honor
-      labelSelector:
-        matchLabels:
-          app.kubernetes.io/instance: ledger
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: ledger
+          topologyKey: kubernetes.io/hostname
   pdb:
     enabled: true
     minAvailable: 2

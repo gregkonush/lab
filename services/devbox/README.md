@@ -31,8 +31,7 @@ cannot use the image's virtio-fs filesystem as their writable backing store.
 The `Codex devbox` workflow builds and exercises one development image on both
 native architectures, then publishes a signed immutable index. The release receipt
 must upload successfully before the Kargo discovery tag is exposed. Publication
-uses the shared Docker retry helper and the registry's
-[shared upload budget](../../argocd/applications/registry/README.md).
+uses the shared Docker retry helper and the registry's 5 MiB/s single bulk writer.
 
 The `devbox` Warehouse and Stage bind the image to its source commit and successful
 workflow run. Kargo updates `argocd/applications/devbox` on `kargo/devbox`; the

@@ -373,7 +373,7 @@ const measureExecutionQuality = (
   }
 
   const brokerFees = parseUnsigned(input.ledgerTotals?.brokerExecutionFeesMicros, false)
-  const otherCosts = parseUnsigned(input.ledgerTotals?.otherChargedCostsMicros ?? undefined, false)
+  const otherCosts = parseUnsigned(input.ledgerTotals?.otherChargedCostsMicros, false)
   if (brokerFees === undefined || otherCosts === undefined) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
 
   let plannedQuantity = 0n

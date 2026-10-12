@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import { Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
@@ -33,13 +33,6 @@ import { postgresMigrations } from '../../db/postgres-migrations'
 import { canonicalHashV1 } from '../../hash'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
-import { restrictAuthority } from '../../db/reconciliation'
-import { MutationOperation } from '../../broker/alpaca-mutations'
-import { makeMutationEventPostgres } from '../mutations/postgres/events'
-import { makeMutationStartPostgres } from '../mutations/postgres/start'
-import { WriterFence, WriterFenceLive } from '../writer-fence'
-import { recoverTerminalGenerationToObserve } from '../../blocked-generation-recovery'
-import { operationalError } from '../../errors'
 import {
   defaultIntradayMomentumProtocolDocument,
   intradayMomentumExecutionModel,
@@ -273,130 +266,6 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
-  test.each(
-    [executionActivationExpiredRestrictionReason, legacyExecutionActivationExpiredRestrictionReason].flatMap((reason) =>
-      ['no-cycle', 'unused-preopen-cycle'].map((scenario) => ({ reason, scenario })),
-    ),
-  )(
-    'recovers zero-execution expiry through the production coordinator: $scenario / $reason',
-    async ({ reason, scenario }) => {
-      const fixture = makeFixture()
-      const generationHash = canonicalHashV1({ generation: 'execution' })
-      await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const cycles = yield* CycleStore
-          const blocked = yield* BlockedCycleIntentStore
-          const fence = yield* WriterFence
-          yield* seedExecutionAuthority(sql, fixture)
-          if (scenario === 'unused-preopen-cycle') {
-            yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
-            yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
-          }
-          yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
-  reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
-          const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
-          let reconciliations = 0
-          const reconcile = Effect.gen(function* () {
-            // Reaching here proves that settlement did not require the new reconciliation in advance.
-            reconciliations += 1
-            expect(yield* authority.readAuthorityState).toMatchObject({
-              generationHash,
-              effective: Authority.Observe,
-              kill: KillState.Active,
-            })
-            expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`).toEqual([
-              { count: 0 },
-            ])
-            const exactHash = canonicalHashV1({ reconciliation: 'zero-expiry-current' })
-            yield* sql`INSERT INTO position_snapshots (
-    snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
-  ) VALUES (
-    ${exactHash}, 'bayn.paper-position-snapshot.v1', ${accountId}, ${exactHash}, clock_timestamp(), 0, ${exactHash}
-  )`
-            yield* sql`INSERT INTO reconciliations (
-    reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
-    content_hash, status, discrepancies, reconciled_at
-  ) VALUES (
-    ${exactHash}, 'bayn.paper-reconciliation.v1', ${accountId}, ${exactHash}, ${exactHash},
-    ${exactHash}, 'EXACT', ${sql.json([])}, clock_timestamp()
-  )`
-          }).pipe(
-            Effect.mapError((cause) =>
-              operationalError({
-                component: 'database',
-                operation: 'reconcile-test-fixture',
-                message: 'failed to reconcile test fixture',
-                cause,
-              }),
-            ),
-          )
-          const recover = recoverTerminalGenerationToObserve({
-            accountId,
-            blockedIntents: blocked,
-            authorityStore: authority,
-            writerFence: fence,
-            reconcileAfterSettlement: reconcile,
-          })
-          const result = yield* recover
-          expect(result).toMatchObject({
-            _tag: 'RolledOver',
-            previousGenerationHash: generationHash,
-            terminalIntentCount: 0,
-          })
-          const state = yield* authority.readAuthorityState
-          expect(state).toMatchObject({
-            maximum: Authority.Observe,
-            effective: Authority.Observe,
-            kill: KillState.Clear,
-          })
-          expect(state.generationHash).not.toBe(generationHash)
-          if (scenario === 'unused-preopen-cycle') {
-            expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Blocked)
-          }
-          expect(yield* recover).toEqual({ _tag: 'NotRequired' })
-          expect(reconciliations).toBe(1)
-          expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`).toEqual([
-            { count: 0 },
-          ])
-        }).pipe(Effect.provide(WriterFenceLive)),
-      )
-    },
-  )
-
-  test('settles a zero-execution expiry without clearing authority when fresh reconciliation fails', async () => {
-    const fixture = makeFixture()
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const blocked = yield* BlockedCycleIntentStore
-        const fence = yield* WriterFence
-        yield* seedExecutionAuthority(sql, fixture)
-        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
-  reason = ${executionActivationExpiredRestrictionReason}, version = version + 1,
-  updated_at = ${fixture.restrictedAt} WHERE singleton`
-        const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
-        const before = yield* authority.readAuthorityState
-        const error = operationalError({
-          component: 'database',
-          operation: 'reconcile-test-fixture',
-          message: 'injected unavailable reconciliation',
-        })
-        const result = yield* recoverTerminalGenerationToObserve({
-          accountId,
-          blockedIntents: blocked,
-          authorityStore: authority,
-          writerFence: fence,
-          reconcileAfterSettlement: Effect.fail(error),
-        }).pipe(Effect.result)
-        expect(result).toEqual(Result.fail(error))
-        expect(yield* authority.readAuthorityState).toEqual(before)
-        expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`).toEqual([
-          { count: 0 },
-        ])
-      }).pipe(Effect.provide(WriterFenceLive)),
-    )
-  })
   test('recovers a generation restricted before its first cycle only after fresh exact reconciliation', async () => {
     const fixture = makeFixture(true)
     const successorHash = canonicalHashV1({ generation: 'unused-successor' })
@@ -412,7 +281,6 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           accountId,
           observedAt: fixture.reconciledAt,
         })
-
         expect(settlement).toMatchObject({
           _tag: 'TerminalGenerationSettled',
           authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
@@ -458,7 +326,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
   })
 
-  test.each(['settled', 'submillisecond', 'stale', 'position', 'unresolved', 'operator'] as const)(
+  test.each(['settled', 'stale', 'position', 'unresolved', 'operator'] as const)(
     'recovers restricted OBSERVE after historical trading only with settled fresh evidence: %s',
     async (scenario) => {
       const fixture = makeFixture(true)
@@ -529,17 +397,10 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             maximum: Authority.Observe,
           })
           expect(successor.kill).toBe(KillState.Clear)
-          const restrictionClock =
-            scenario === 'submillisecond'
-              ? sql`date_trunc('milliseconds', greatest(clock_timestamp(), updated_at)) + interval '1 millisecond'`
-              : sql`greatest(clock_timestamp(), updated_at + interval '1 millisecond')`
-          const evidenceClock =
-            scenario === 'submillisecond'
-              ? sql`(SELECT updated_at + interval '1500 microseconds' FROM authority_state WHERE singleton)`
-              : sql`clock_timestamp()`
           yield* sql`UPDATE authority_state SET kill_state = 'ACTIVE', effective = 'OBSERVE',
           reason = ${scenario === 'operator' ? 'operator hold' : 'reconciliation pass incomplete'},
-          version = version + 1, updated_at = ${restrictionClock} WHERE singleton`
+          version = version + 1, updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond')
+          WHERE singleton`
           if (scenario === 'position') {
             yield* sql`INSERT INTO position_snapshots (
             snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
@@ -564,7 +425,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
             ) VALUES (
               ${canonicalHashV1({ snapshot: 'after-restriction' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
-              ${'c'.repeat(64)}, ${evidenceClock}, 0, ${'c'.repeat(64)}
+              ${'c'.repeat(64)}, clock_timestamp(), 0, ${'c'.repeat(64)}
             )`
             }
             yield* sql`INSERT INTO reconciliations (
@@ -572,36 +433,14 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             status, discrepancies, reconciled_at
           ) VALUES (
             ${canonicalHashV1({ reconciliation: 'after-restriction' })}, 'bayn.paper-reconciliation.v1', ${accountId},
-            ${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'b'.repeat(64)}, 'EXACT', '[]'::jsonb, ${evidenceClock}
+            ${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'b'.repeat(64)}, 'EXACT', '[]'::jsonb, clock_timestamp()
           )`
           }
-          const recoveryAuthority = makeObserveAuthorityInterpreter(
-            sql,
-            makeAuthorityPostgres(sql, {
-              now:
-                scenario === 'submillisecond'
-                  ? sql`(SELECT updated_at + interval '1900 microseconds' FROM authority_state WHERE singleton)`
-                  : sql`clock_timestamp()`,
-            }),
-            brokerIdentity,
-          )
-          const recovered = yield* recoveryAuthority.ensureAuthorityGeneration({
+          const recovered = yield* authority.ensureAuthorityGeneration({
             generationHash: canonicalHashV1({ generation: 'recovered-observe' }),
             maximum: Authority.Observe,
           })
-          expect(recovered.kill).toBe(
-            scenario === 'settled' || scenario === 'submillisecond' ? KillState.Clear : KillState.Active,
-          )
-          if (scenario === 'submillisecond') {
-            expect(
-              yield* sql`SELECT
-                state.updated_at = generation.activated_at AS matching_instant,
-                extract(microseconds FROM state.updated_at - date_trunc('milliseconds', state.updated_at))::integer AS submillisecond
-              FROM authority_state AS state
-              JOIN authority_generations AS generation USING (generation_hash)
-              WHERE state.singleton`,
-            ).toEqual([{ matching_instant: true, submillisecond: 900 }])
-          }
+          expect(recovered.kill).toBe(scenario === 'settled' ? KillState.Clear : KillState.Active)
           expect(recovered.effective).toBe(Authority.Observe)
           expect(yield* sql`SELECT count(*)::integer AS count FROM mutation_events`).toEqual([
             { count: scenario === 'unresolved' ? 3 : 2 },
@@ -1093,261 +932,4 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(blocked.state).toBe(CycleState.Blocked)
     expect(blocked.terminalReason).toBe(CycleTerminalReason.Authority)
   })
-})
-
-const expiryFixture = {
-  generationHash: 'a'.repeat(64),
-  cycleId: 'b'.repeat(64),
-  decisionHash: 'c'.repeat(64),
-  intentIds: ['d'.repeat(64), 'e'.repeat(64)],
-  policyHash: 'f'.repeat(64),
-  createdAt: '2026-08-28T14:30:00.000Z',
-  expiresAt: '2026-08-28T14:30:10.000Z',
-  reservedAt: '2026-08-28T14:30:09.000Z',
-  cutoffAt: '2026-08-28T19:55:00.000Z',
-} as const
-
-const makeExpiryRuntime = () =>
-  ManagedRuntime.make(
-    Layer.mergeAll(BlockedCycleIntentStoreLive, WriterFenceLive).pipe(
-      Layer.provideMerge(PostgresClientLive(config)),
-      Layer.provideMerge(NodeServices.layer),
-    ),
-  )
-
-// Exercise the actual SQL adapters and writer lease independently of the much larger decision-creation fixture.
-// These tables retain only the columns those adapters read; the preceding suite validates the migrated schema.
-const seedUntouchedExpiry = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  yield* sql`DROP SCHEMA public CASCADE`
-  yield* sql`CREATE SCHEMA public`
-  yield* sql`CREATE TABLE autonomous_cycles (
-    cycle_id text PRIMARY KEY, state text, decision_hash text, submission_cutoff_at timestamptz, terminal_at timestamptz
-  )`
-  yield* sql`CREATE TABLE autonomous_cycle_shadow_decisions (cycle_id text, decision_hash text, document jsonb)`
-  yield* sql`CREATE TABLE authority_generations (
-    generation_hash text PRIMARY KEY, account_id text, maximum text, risk_policy_hash text, strategy_name text
-  )`
-  yield* sql`CREATE TABLE authority_state (
-    singleton boolean PRIMARY KEY, generation_hash text, maximum text, effective text, kill_state text,
-    reason text, version integer, updated_at timestamptz
-  )`
-  yield* sql`CREATE TABLE intents (
-    intent_id text PRIMARY KEY, authority_generation_hash text, cycle_id text, account_id text, policy_hash text,
-    strategy_name text, side text, state text, terminal_outcome text, state_version integer,
-    updated_at timestamptz, risk_decision_id text
-  )`
-  yield* sql`CREATE TABLE risk_decisions (
-    decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
-  )`
-  yield* sql`CREATE TABLE mutation_events (
-    event_id text PRIMARY KEY, schema_version text, mutation_id text, intent_id text, sequence integer,
-    operation text, event_type text, request_hash text, consistency_delay_ms integer,
-    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz
-  )`
-  yield* sql`CREATE TABLE orders (intent_id text)`
-  yield* sql`CREATE TABLE fills (intent_id text)`
-  yield* sql`CREATE FUNCTION execution_account_now(text) RETURNS timestamptz LANGUAGE sql STABLE
-    AS 'SELECT ''2026-08-28T14:30:09Z''::timestamptz'`
-  yield* sql`INSERT INTO authority_generations VALUES (
-    ${expiryFixture.generationHash}, ${accountId}, 'PAPER', ${expiryFixture.policyHash}, 'intraday-momentum'
-  )`
-  yield* sql`INSERT INTO authority_state VALUES (
-    true, ${expiryFixture.generationHash}, 'PAPER', 'PAPER', 'CLEAR', NULL, 1, ${expiryFixture.createdAt}
-  )`
-  yield* sql`INSERT INTO autonomous_cycles VALUES (
-    ${expiryFixture.cycleId}, 'ACTIVE', ${expiryFixture.decisionHash}, ${expiryFixture.cutoffAt}, NULL
-  )`
-  yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
-    ${expiryFixture.cycleId}, ${expiryFixture.decisionHash},
-    ${sql.json({
-      schemaVersion: 'bayn.paper-cycle-decision.v1',
-      mode: 'PAPER',
-      bindings: { authorityGenerationHash: expiryFixture.generationHash },
-    })}
-  )`
-  for (const intentId of expiryFixture.intentIds) {
-    yield* sql`INSERT INTO intents VALUES (
-      ${intentId}, ${expiryFixture.generationHash}, ${expiryFixture.cycleId}, ${accountId}, ${expiryFixture.policyHash},
-      'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId}
-    )`
-    yield* sql`INSERT INTO risk_decisions VALUES (
-      ${intentId}, ${intentId}, 'APPROVED', ${expiryFixture.createdAt}, ${expiryFixture.expiresAt}
-    )`
-  }
-})
-
-const settleUntouchedExpiry = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const store = yield* BlockedCycleIntentStore
-  const fence = yield* WriterFence
-  return yield* fence.transaction(
-    Effect.gen(function* () {
-      yield* sql`UPDATE autonomous_cycles SET state = 'BLOCKED', terminal_at = ${expiryFixture.expiresAt}
-        WHERE cycle_id = ${expiryFixture.cycleId}`
-      yield* restrictAuthority(
-        sql,
-        'execution cycle loop restricted effective authority: expired approval',
-        expiryFixture.expiresAt,
-      )
-      return yield* store.terminalizeUntouchedApproved({
-        authorityGenerationHash: expiryFixture.generationHash,
-        cycleId: expiryFixture.cycleId,
-        observedAt: expiryFixture.expiresAt,
-      })
-    }),
-  )
-})
-
-const reserveExpiryIntent = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  const fence = yield* WriterFence
-  return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
-    MutationOperation.Submit,
-    expiryFixture.intentIds[0],
-    '1'.repeat(64),
-    1_000,
-    expiryFixture.reservedAt,
-  )
-})
-
-const readExpiryState = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient
-  return {
-    intents: yield* sql`SELECT * FROM intents ORDER BY intent_id`,
-    cycles: yield* sql`SELECT * FROM autonomous_cycles`,
-    authority: yield* sql`SELECT * FROM authority_state`,
-    events: yield* sql`SELECT count(*)::integer AS count FROM mutation_events`,
-    mutationRows: yield* sql`SELECT * FROM mutation_events ORDER BY event_id`,
-    orders: yield* sql`SELECT * FROM orders`,
-    fills: yield* sql`SELECT * FROM fills`,
-  }
-})
-
-describePostgres('PostgreSQL untouched approval expiry safety', () => {
-  let owner: ReturnType<typeof makeExpiryRuntime>
-  let contender: ReturnType<typeof makeExpiryRuntime>
-
-  beforeAll(() => {
-    const parsed = new URL(testUrl)
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test')) {
-      throw new Error('BAYN_TEST_POSTGRES_URL must target a local database whose name ends in _test')
-    }
-    owner = makeExpiryRuntime()
-    contender = makeExpiryRuntime()
-  })
-  beforeEach(async () => {
-    await owner.runPromise(seedUntouchedExpiry)
-  })
-  afterAll(async () => {
-    await owner?.dispose()
-    await contender?.dispose()
-  })
-
-  test('expires untouched approvals exactly once without order I/O and preserves manual holds', async () => {
-    await owner.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
-          reason = 'operator kill switch', version = 2`
-      }),
-    )
-    expect(await owner.runPromise(settleUntouchedExpiry)).toEqual({
-      blockedIntentCount: 0,
-      expiredIntentCount: 2,
-      terminalIntentCount: 2,
-    })
-    const first = await owner.runPromise(readExpiryState)
-    expect(first).toMatchObject({
-      intents: expiryFixture.intentIds.map(() => ({
-        state: 'TERMINAL',
-        terminal_outcome: 'EXPIRED',
-        state_version: 2,
-      })),
-      cycles: [{ state: 'BLOCKED' }],
-      authority: [{ effective: 'OBSERVE', kill_state: 'ACTIVE', reason: 'operator kill switch', version: 2 }],
-      events: [{ count: 0 }],
-    })
-    expect(await contender.runPromise(settleUntouchedExpiry)).toEqual({
-      blockedIntentCount: 0,
-      expiredIntentCount: 0,
-      terminalIntentCount: 2,
-    })
-    expect(await owner.runPromise(readExpiryState)).toEqual(first)
-  })
-
-  test.each(['mutation', 'order', 'fill', 'started-state'] as const)(
-    'rolls back the entire cleanup when %s evidence appears after selection',
-    async (evidence) => {
-      await owner.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const intentId = expiryFixture.intentIds[1]
-          if (evidence === 'mutation')
-            yield* sql`INSERT INTO mutation_events(event_id, intent_id) VALUES (${intentId}, ${intentId})`
-          if (evidence === 'order') yield* sql`INSERT INTO orders VALUES (${intentId})`
-          if (evidence === 'fill') yield* sql`INSERT INTO fills VALUES (${intentId})`
-          if (evidence === 'started-state')
-            yield* sql`UPDATE intents SET state = 'IO_STARTED' WHERE intent_id = ${intentId}`
-        }),
-      )
-      const before = await owner.runPromise(readExpiryState)
-      const result = await owner.runPromise(Effect.result(settleUntouchedExpiry))
-      expect(result).toMatchObject({
-        _tag: 'Failure',
-        failure: { _tag: 'BlockedCycleIntentStoreError', failure: 'invariant' },
-      })
-      expect(await owner.runPromise(readExpiryState)).toEqual(before)
-    },
-  )
-
-  test.each(['reservation', 'expiry'] as const)(
-    'fences a competing %s transaction and rechecks durable state on retry',
-    async (winner) => {
-      type FixtureOperation = Effect.Effect<
-        void,
-        Effect.Error<typeof reserveExpiryIntent> | Effect.Error<typeof settleUntouchedExpiry>,
-        PgClient.PgClient | WriterFence | BlockedCycleIntentStore
-      >
-      const first: FixtureOperation =
-        winner === 'reservation' ? reserveExpiryIntent.pipe(Effect.asVoid) : settleUntouchedExpiry.pipe(Effect.asVoid)
-      const second: FixtureOperation =
-        winner === 'reservation' ? settleUntouchedExpiry.pipe(Effect.asVoid) : reserveExpiryIntent.pipe(Effect.asVoid)
-      const competing = await owner.runPromise(
-        Effect.gen(function* () {
-          const fence = yield* WriterFence
-          const held = yield* Deferred.make<void>()
-          const release = yield* Deferred.make<void>()
-          const holding = yield* fence
-            .transaction(
-              first.pipe(Effect.andThen(Deferred.succeed(held, undefined)), Effect.andThen(Deferred.await(release))),
-            )
-            .pipe(Effect.forkChild({ startImmediately: true }))
-          return yield* Deferred.await(held).pipe(
-            Effect.raceFirst(Fiber.join(holding)),
-            Effect.andThen(Effect.promise((signal) => contender.runPromise(Effect.result(second), { signal }))),
-            Effect.ensuring(Deferred.succeed(release, undefined)),
-            Effect.tap(() => Fiber.join(holding)),
-            Effect.ensuring(Fiber.interrupt(holding)),
-          )
-        }),
-      )
-      expect(competing).toMatchObject({
-        _tag: 'Failure',
-        failure: { _tag: 'WriterFenceError', failure: 'busy' },
-      })
-      const before = await owner.runPromise(readExpiryState)
-      expect(Result.isFailure(await contender.runPromise(Effect.result(second)))).toBe(true)
-      expect(await owner.runPromise(readExpiryState)).toEqual(before)
-      expect(before.events).toEqual([{ count: winner === 'reservation' ? 1 : 0 }])
-      expect(before.intents).toMatchObject(
-        winner === 'reservation'
-          ? [
-              { state: 'IO_STARTED', terminal_outcome: null, state_version: 2 },
-              { state: 'APPROVED', terminal_outcome: null, state_version: 1 },
-            ]
-          : expiryFixture.intentIds.map(() => ({ state: 'TERMINAL', terminal_outcome: 'EXPIRED', state_version: 2 })),
-      )
-    },
-  )
 })

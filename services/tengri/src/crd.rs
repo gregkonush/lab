@@ -2,10 +2,15 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const CPU_MILLIS: u32 = 4_000;
-pub const MEMORY_MIB: u32 = 8_192;
-pub const WORKSPACE_GIB: u32 = 32;
+pub const CPU_MILLIS: u32 = 2_000;
+pub const MEMORY_MIB: u32 = 4_096;
+pub const WORKSPACE_GIB: u32 = 16;
 pub const IDLE_MINUTES: i64 = 60;
+// Retained for source compatibility with callers that still construct legacy
+// four-hour resources. The controller no longer treats this field as a
+// lifecycle deadline.
+#[allow(dead_code)]
+pub const LIFETIME_HOURS: i64 = 4;
 
 #[derive(CustomResource, Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[kube(
@@ -26,43 +31,18 @@ pub struct MicroVMSpec {
     pub image: String,
     pub architecture: MicroVMArchitecture,
     pub resources: MicroVMResources,
-    #[serde(default)]
-    pub power: MicroVMPowerSettings,
     pub created_at: String,
     pub idle_deadline: String,
+    /// Legacy compatibility field. New retained agents leave this empty; it
+    /// is never used to delete or block an agent.
     #[serde(default)]
-    pub slot: Option<MicroVMSlot>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct MicroVMSlot {
-    pub name: String,
-    pub pod_uid: String,
-    pub pvc_name: String,
-    pub pvc_uid: String,
-    pub epoch: u64,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 pub enum MicroVMDesiredState {
     Running,
     Sleeping,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct MicroVMPowerSettings {
-    /// Zero disables automatic sleep. Manual sleep remains available.
-    pub idle_timeout_minutes: u32,
-}
-
-impl Default for MicroVMPowerSettings {
-    fn default() -> Self {
-        Self {
-            idle_timeout_minutes: IDLE_MINUTES as u32,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -130,6 +110,9 @@ pub struct MicroVMStatus {
     pub conditions: Vec<MicroVMCondition>,
     #[serde(default)]
     pub observed_generation: i64,
+    /// Configured Nanoagent image waiting for a safe replacement of a running guest.
+    #[serde(default)]
+    pub pending_image: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -160,9 +143,9 @@ mod tests {
 
     #[test]
     fn v1_resource_profile_is_fixed() {
-        assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
-        assert_eq!(MicroVMResources::default().memory_mib, 8_192);
-        assert_eq!(MicroVMResources::default().workspace_gib, 32);
+        assert_eq!(MicroVMResources::default().cpu_millis, 2_000);
+        assert_eq!(MicroVMResources::default().memory_mib, 4_096);
+        assert_eq!(MicroVMResources::default().workspace_gib, 16);
     }
 
     #[test]

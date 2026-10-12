@@ -3564,6 +3564,7 @@ export const activities = {
         })
         if (partial !== null) throw new Error('Atlas partial reconciliation unexpectedly finalized')
         progress = { ...progress, preparedFiles: preparedFileCount }
+        await sendHeartbeat()
         if (preparedFileCount >= nextProgressLog || preparedFileCount === totalChangedFiles) {
           logActivity('info', 'progress', 'reconcileAtlasRepository', {
             repository,
@@ -3575,7 +3576,6 @@ export const activities = {
         }
       }
 
-      await sendHeartbeat()
       assertHeartbeatHealthy()
       const result = await applyAtlasReconciliation({
         db,

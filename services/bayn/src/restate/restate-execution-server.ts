@@ -19,7 +19,6 @@ import {
 import { acquireRestateTelemetry } from './restate-telemetry'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
-import { startInferenceExpenseProjection } from '../inference-expense-runtime'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
   readonly message: string
@@ -103,7 +102,6 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
     ),
   )
   const { config, runtime } = yield* acquireNativeExecutionRuntime(plan, previousBinding)
-  yield* startInferenceExpenseProjection(plan.config)
   const brokerObservations = yield* acquireBrokerObservationRuntime(plan)
   const telemetry = yield* acquireRestateTelemetry({
     ...(yield* telemetryRuntimeConfig('bayn-execution-controller')),

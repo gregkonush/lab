@@ -27,10 +27,7 @@ type State = typeof BrokerObservationOwnerStateSchema.Type
 export type BrokerObservationPoll = (
   | { readonly _tag: 'Published'; readonly snapshotHash: string }
   | { readonly _tag: 'Invalidated' }
-  | {
-      readonly _tag: 'Unavailable'
-      readonly captureNotStarted?: { readonly reason: 'ExpiredUnusedTicket'; readonly expiredByMs: number }
-    }
+  | { readonly _tag: 'Unavailable' }
 ) & { readonly nextPollNotBeforeMs: number }
 
 export interface BrokerObservationRuntime {
@@ -118,8 +115,6 @@ export const makeBaynBrokerObservations = (
           }),
         { maxRetryAttempts: 0 },
       )
-      // Keep this after the existing journaled poll command: only a returned result proves settled usage
-      // or an atomically consumed unused ticket. Replay reuses that proof without claiming another ticket.
       notBefore = Math.max(notBefore, poll.nextPollNotBeforeMs)
       ctx.set(budgetKey, notBefore)
       return { poll: { ...poll, nextPollNotBeforeMs: notBefore }, startedAt: captureStartedAt }

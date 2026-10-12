@@ -40,7 +40,6 @@ const STATIC_PREFIXES = [
 ]
 
 const STATIC_EXACT_PATHS = new Set([
-  '.github/workflows/agents-ci.yml',
   'packages/scripts/src/agents/deploy-service.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
   'scripts/download_crd_schema.py',
@@ -86,7 +85,6 @@ const isStaticPath = (path: string) =>
 const imageTargetsForPath = (path: string): AgentsImageTarget[] => {
   if (isDocumentationPath(path) || isTestPath(path)) return []
   if (ALL_IMAGE_EXACT_PATHS.has(path)) return [...AGENTS_IMAGE_TARGETS]
-  if (path === 'nix/verify-agents-shell-image-lifecycle.sh') return ['agents-shell']
   if (RUNNER_IMAGE_EXACT_PATHS.has(path)) return ['runner']
   if (path.startsWith('packages/codex/')) return [...AGENTS_IMAGE_TARGETS]
   if (LINEAR_MCP_RUNNER_SHARED_PATHS.has(path)) return ['control-plane', 'controller', 'runner']

@@ -1,20 +1,20 @@
 import type { Effect } from 'effect'
 import * as Schema from 'effect/Schema'
 
-const defaultSignalSchema: Schema.Codec<unknown> = Schema.Unknown
-const defaultQueryInputSchema: Schema.Codec<unknown> = Schema.Unknown
-const defaultQueryOutputSchema: Schema.Codec<unknown> = Schema.Unknown
+const defaultSignalSchema: Schema.Schema<unknown> = Schema.Unknown
+const defaultQueryInputSchema: Schema.Schema<unknown> = Schema.Unknown
+const defaultQueryOutputSchema: Schema.Schema<unknown> = Schema.Unknown
 
 export const CHILD_WORKFLOW_COMPLETED_SIGNAL = '__childWorkflowCompleted'
 
-const shouldDecodeAsArray = (schema: Schema.Codec<unknown>): boolean => schema.ast._tag === 'Arrays'
+const shouldDecodeAsArray = (schema: Schema.Schema<unknown>): boolean => schema.ast._tag === 'TupleType'
 
-type RecordValue<T> = Schema.Codec<T> | { schema?: Schema.Codec<T>; description?: string }
+type RecordValue<T> = Schema.Schema<T> | { schema?: Schema.Schema<T>; description?: string }
 
 export interface WorkflowSignalHandle<I> {
   readonly kind: 'workflow-signal'
   readonly name: string
-  readonly schema: Schema.Codec<I>
+  readonly schema: Schema.Schema<I>
   readonly decodeArgumentsAsArray: boolean
   readonly description?: string
 }
@@ -24,10 +24,10 @@ export type WorkflowSignalsDefinition<T extends Record<string, RecordValue<unkno
 }
 
 type ExtractSignalSchema<T> =
-  T extends Schema.Codec<infer I>
-    ? Schema.Codec<I>
-    : T extends { schema?: Schema.Codec<infer I> }
-      ? Schema.Codec<I>
+  T extends Schema.Schema<infer I>
+    ? Schema.Schema<I>
+    : T extends { schema?: Schema.Schema<infer I> }
+      ? Schema.Schema<I>
       : typeof defaultSignalSchema
 
 export const defineWorkflowSignals = <T extends Record<string, RecordValue<unknown>>>(
@@ -79,18 +79,18 @@ export interface WorkflowSignalHandlerOptions {
 }
 
 type QueryRecordValue<I, O> =
-  | Schema.Codec<I>
+  | Schema.Schema<I>
   | {
-      readonly input?: Schema.Codec<I>
-      readonly output?: Schema.Codec<O>
+      readonly input?: Schema.Schema<I>
+      readonly output?: Schema.Schema<O>
       readonly description?: string
     }
 
 export interface WorkflowQueryHandle<I, O> {
   readonly kind: 'workflow-query'
   readonly name: string
-  readonly inputSchema: Schema.Codec<I>
-  readonly outputSchema: Schema.Codec<O>
+  readonly inputSchema: Schema.Schema<I>
+  readonly outputSchema: Schema.Schema<O>
   readonly decodeInputAsArray: boolean
   readonly description?: string
 }
@@ -103,14 +103,14 @@ export type WorkflowQueriesDefinition<T extends Record<string, QueryRecordValue<
 }
 
 type ExtractQueryInputSchema<T> =
-  T extends Schema.Codec<infer I>
-    ? Schema.Codec<I>
-    : T extends { input?: Schema.Codec<infer I> }
-      ? Schema.Codec<I>
+  T extends Schema.Schema<infer I>
+    ? Schema.Schema<I>
+    : T extends { input?: Schema.Schema<infer I> }
+      ? Schema.Schema<I>
       : typeof defaultQueryInputSchema
 
-type ExtractQueryOutputSchema<T> = T extends { output?: Schema.Codec<infer O> }
-  ? Schema.Codec<O>
+type ExtractQueryOutputSchema<T> = T extends { output?: Schema.Schema<infer O> }
+  ? Schema.Schema<O>
   : typeof defaultQueryOutputSchema
 
 export const defineWorkflowQueries = <T extends Record<string, QueryRecordValue<unknown, unknown>>>(

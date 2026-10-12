@@ -39,7 +39,6 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
     const plannedRequests = new Map<string, JevEvaluationRequest>()
     const windows = new Map<string, string>()
     const calls: ReplayJevCall[] = []
-    let interrupted = false
     const failure = (cause: unknown) =>
       operationalError({
         component: 'database',
@@ -48,23 +47,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         cause,
       })
     const atomic = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
-      permit
-        .withPermit(
-          Effect.gen(function* () {
-            if (interrupted)
-              return yield* failure(
-                'Interrupted journal cannot be reused; preserve this experiment and use a new directory',
-              )
-            return yield* operation
-          }).pipe(
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                interrupted = true
-              }),
-            ),
-          ),
-        )
-        .pipe(Effect.mapError(failure))
+      permit.withPermit(Effect.uninterruptible(operation)).pipe(Effect.mapError(failure))
     const filePath = (kind: string, id: string) => `${directory}/${kind}-${id}.json`
     const read = (kind: string, id: string) =>
       Effect.gen(function* () {
@@ -224,8 +207,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
               const saved = yield* readBatch(id)
               if (
                 saved?.plan.cycleId === cycleId &&
-                (authorityGenerationHash === undefined ||
-                  saved.plan.authorityGenerationHash === authorityGenerationHash) &&
+                saved.plan.authorityGenerationHash === authorityGenerationHash &&
                 saved.result === null
               )
                 pending.push(id)
@@ -305,7 +287,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
     }
     const observations: CandidateObservationStore['Service'] = {
       latestJevWindowEnd: ({ cycleId, purpose }) =>
-        atomic(Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`)))),
+        Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`))),
       record: ({ contentHash, payload }) =>
         atomic(
           Effect.gen(function* () {

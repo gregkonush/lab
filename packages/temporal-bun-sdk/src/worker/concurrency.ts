@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, Fiber, Ref } from 'effect'
 import * as Queue from 'effect/Queue'
-import * as Semaphore from 'effect/Semaphore'
+import * as TSemaphore from 'effect/TSemaphore'
 import type { Logger } from '../observability/logger'
 import type { Counter } from '../observability/metrics'
 
@@ -75,14 +75,14 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
     let workflowQueue = yield* Queue.bounded<WorkflowTaskEnvelope>(computeCapacity(workflowConcurrency))
     let activityQueue = yield* Queue.bounded<ActivityTaskEnvelope>(computeCapacity(activityConcurrency))
 
-    const workflowSemaphore = Semaphore.makeUnsafe(workflowConcurrency)
-    const activitySemaphore = Semaphore.makeUnsafe(activityConcurrency)
+    const workflowSemaphore = TSemaphore.unsafeMake(workflowConcurrency)
+    const activitySemaphore = TSemaphore.unsafeMake(activityConcurrency)
 
     const runningRef = yield* Ref.make(false)
     const workflowActiveRef = yield* Ref.make(0)
     const activityActiveRef = yield* Ref.make(0)
-    const workflowFiberRef = yield* Ref.make<ReadonlyArray<Fiber.Fiber<void, unknown>>>([])
-    const activityFiberRef = yield* Ref.make<ReadonlyArray<Fiber.Fiber<void, unknown>>>([])
+    const workflowFiberRef = yield* Ref.make<ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>>([])
+    const activityFiberRef = yield* Ref.make<ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>>([])
 
     const logHookFailure = (hook: string, error: unknown) =>
       options.logger
@@ -94,7 +94,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
 
     const runWorkflowTask = (task: WorkflowTaskEnvelope): Effect.Effect<void, unknown, never> => {
       const finalizer = hooks.onWorkflowComplete
-        ? hooks.onWorkflowComplete(task).pipe(Effect.catch((error) => logHookFailure('workflowComplete', error)))
+        ? hooks.onWorkflowComplete(task).pipe(Effect.catchAll((error) => logHookFailure('workflowComplete', error)))
         : Effect.void
       return Effect.ensuring(
         Effect.gen(function* () {
@@ -111,7 +111,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
 
     const runActivityTask = (task: ActivityTaskEnvelope): Effect.Effect<void, unknown, never> => {
       const finalizer = hooks.onActivityComplete
-        ? hooks.onActivityComplete(task).pipe(Effect.catch((error) => logHookFailure('activityComplete', error)))
+        ? hooks.onActivityComplete(task).pipe(Effect.catchAll((error) => logHookFailure('activityComplete', error)))
         : Effect.void
       return Effect.ensuring(
         Effect.gen(function* () {
@@ -128,7 +128,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
 
     const makeWorkerLoop = <Envelope>(
       queue: Queue.Queue<Envelope>,
-      semaphore: Semaphore.Semaphore,
+      semaphore: TSemaphore.TSemaphore,
       activeRef: Ref.Ref<number>,
       label: 'workflow' | 'activity',
       runner: (task: Envelope) => Effect.Effect<void, unknown, never>,
@@ -141,14 +141,16 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
             break
           }
           yield* Ref.update(activeRef, (count) => count + 1)
-          const execute = Semaphore.withPermit(semaphore)(
-            runner(task).pipe(Effect.ensuring(Ref.update(activeRef, (count) => count - 1))),
+          const execute = Effect.scoped(
+            TSemaphore.withPermitScoped(semaphore).pipe(
+              Effect.zipRight(runner(task).pipe(Effect.ensuring(Ref.update(activeRef, (count) => count - 1)))),
+            ),
           )
-          yield* Effect.catchCause(execute, (cause) =>
-            Cause.hasInterruptsOnly(cause) ? Effect.void : logTaskFailure(label, cause, options.logger),
+          yield* Effect.catchAllCause(execute, (cause) =>
+            Cause.isInterruptedOnly(cause) ? Effect.void : logTaskFailure(label, cause, options.logger),
           )
         }
-      }).pipe(Effect.catchCause((cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.failCause(cause))))
+      }).pipe(Effect.catchAllCause((cause) => (Cause.isInterruptedOnly(cause) ? Effect.void : Effect.failCause(cause))))
 
     const workflowLoop = () =>
       makeWorkerLoop(workflowQueue, workflowSemaphore, workflowActiveRef, 'workflow', runWorkflowTask)
@@ -161,7 +163,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
         if (!running) {
           yield* Effect.fail(new Error('Workflow scheduler is no longer accepting tasks'))
         }
-        const offered = yield* Queue.offer(workflowQueue, task)
+        const offered = yield* workflowQueue.offer(task)
         if (!offered) {
           yield* Effect.fail(new Error('Workflow scheduler is no longer accepting tasks'))
         }
@@ -173,7 +175,7 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
         if (!running) {
           yield* Effect.fail(new Error('Activity scheduler is no longer accepting tasks'))
         }
-        const offered = yield* Queue.offer(activityQueue, task)
+        const offered = yield* activityQueue.offer(task)
         if (!offered) {
           yield* Effect.fail(new Error('Activity scheduler is no longer accepting tasks'))
         }
@@ -182,11 +184,11 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
     const spawnWorkers = (
       count: number,
       factory: () => Effect.Effect<void, never, never>,
-    ): Effect.Effect<ReadonlyArray<Fiber.Fiber<void, unknown>>, unknown, never> =>
+    ): Effect.Effect<ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>, unknown, never> =>
       Effect.gen(function* () {
-        const fibers: Fiber.Fiber<void, unknown>[] = []
+        const fibers: Fiber.RuntimeFiber<void, unknown>[] = []
         for (let index = 0; index < count; index += 1) {
-          const fiber = yield* Effect.forkDetach(factory())
+          const fiber = yield* Effect.forkDaemon(factory())
           fibers.push(fiber)
         }
         return fibers
@@ -211,15 +213,15 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
         count === 0 ? Effect.void : Effect.flatMap(Effect.sleep('5 millis'), () => awaitDrain(ref)),
       )
 
-    const joinFibers = (fibers: ReadonlyArray<Fiber.Fiber<void, unknown>>): Effect.Effect<void, never, never> =>
+    const joinFibers = (fibers: ReadonlyArray<Fiber.RuntimeFiber<void, unknown>>): Effect.Effect<void, never, never> =>
       Effect.forEach(
         fibers,
         (fiber) =>
           Fiber.await(fiber).pipe(
             Effect.flatMap(
-              Exit.match({
+              Exit.matchEffect({
                 onFailure: (cause) =>
-                  Cause.hasInterruptsOnly(cause)
+                  Cause.isInterruptedOnly(cause)
                     ? Effect.void
                     : logTaskFailure('scheduler shutdown', cause, options.logger),
                 onSuccess: () => Effect.void,
@@ -236,8 +238,8 @@ export const makeWorkerScheduler = (options: WorkerSchedulerOptions): Effect.Eff
           return
         }
         yield* Ref.set(runningRef, false)
-        yield* Queue.shutdown(workflowQueue)
-        yield* Queue.shutdown(activityQueue)
+        yield* workflowQueue.shutdown
+        yield* activityQueue.shutdown
         const workflowFibers = yield* Ref.get(workflowFiberRef)
         const activityFibers = yield* Ref.get(activityFiberRef)
         yield* joinFibers(workflowFibers)

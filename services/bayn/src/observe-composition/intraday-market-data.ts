@@ -11,15 +11,12 @@ import {
   type IntradaySnapshotQuery,
 } from '../market-data'
 import { strictParseOptions } from '../schemas'
-import { withObservedStage } from '../telemetry'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
 
 export class IntradayMarketDataFailure extends Data.TaggedError('IntradayMarketDataFailure')<{
   readonly operation: 'entry-decision' | 'close-quote-not-ready' | 'prices' | 'binding'
   readonly message: string
   readonly cause?: unknown
-  readonly symbol?: string
-  readonly eventAt?: string
 }> {}
 
 const failure = (
@@ -31,10 +28,7 @@ const failure = (
 export const loadIntradaySnapshot = (
   marketData: IntradayMarketDataService,
   query: IntradaySnapshotQuery,
-): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> =>
-  Effect.suspend(() => marketData.loadSnapshot(query)).pipe(
-    withObservedStage('bayn.market-data.snapshot', { dependency: 'market-data', operation: query.purpose ?? 'signal' }),
-  )
+): Effect.Effect<VerifiedStrategyMarketSnapshot, OperationalError> => marketData.loadSnapshot(query)
 
 const decodeExecutionMarketDataBinding = Schema.decodeUnknownResult(
   ExecutionMarketDataBindingSchema,
@@ -100,23 +94,12 @@ export const adverseClosingQuotePrices = (
   for (const symbol of [...new Set(symbols)].sort()) {
     const quote = snapshot.latestQuotes[symbol]
     if (quote === undefined) {
-      return Result.fail(
-        new IntradayMarketDataFailure({
-          operation: 'close-quote-not-ready',
-          message: `intraday snapshot has no verified quote for ${symbol}`,
-          symbol,
-        }),
-      )
+      return Result.fail(failure('close-quote-not-ready', `intraday snapshot has no verified quote for ${symbol}`))
     }
     const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
     if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
       return Result.fail(
-        new IntradayMarketDataFailure({
-          operation: 'close-quote-not-ready',
-          message: `closing quote for ${symbol} is outside the freshness window`,
-          symbol,
-          eventAt: quote.eventAt,
-        }),
+        failure('close-quote-not-ready', `closing quote for ${symbol} is outside the freshness window`),
       )
     }
   }

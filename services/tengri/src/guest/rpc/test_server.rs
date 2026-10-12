@@ -9,7 +9,6 @@ type Handler<Input, Output> = Arc<dyn Fn(Request<Input>) -> Result<Output, Statu
 pub(crate) struct TestService {
     pub get_info: Option<Handler<proto::Empty, proto::GuestInfo>>,
     pub open_editor: Option<Handler<proto::Empty, proto::Editor>>,
-    pub open_browser: Option<Handler<proto::Empty, proto::Browser>>,
     pub list_files: Option<Handler<proto::Path, proto::FileList>>,
     pub read_file: Option<Handler<proto::Path, proto::FileContent>>,
     pub write_file: Option<Handler<proto::FileWrite, proto::FileWriteResult>>,
@@ -43,15 +42,6 @@ impl proto::nanoagent_service_server::NanoagentService for TestService {
         self.open_editor
             .as_ref()
             .ok_or_else(|| Status::unimplemented("OpenEditor"))?(request)
-        .map(Response::new)
-    }
-    async fn open_browser(
-        &self,
-        request: Request<proto::Empty>,
-    ) -> Result<Response<proto::Browser>, Status> {
-        self.open_browser
-            .as_ref()
-            .ok_or_else(|| Status::unimplemented("OpenBrowser"))?(request)
         .map(Response::new)
     }
     async fn list_files(
@@ -212,7 +202,7 @@ impl TestServer {
     pub async fn start(service: TestService) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let rpc = RpcClient::fixture(&base_url, "fixture-token").unwrap();
+        let rpc = RpcClient::new(&base_url, "fixture-token").unwrap();
         let server = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(proto::nanoagent_service_server::NanoagentServiceServer::new(service))
@@ -225,9 +215,6 @@ impl TestServer {
                 rpc,
                 base_url,
                 token: "fixture-token".into(),
-                http: reqwest::Client::new(),
-                preview_tls: None,
-                claim_headers: Default::default(),
             },
             server,
         }

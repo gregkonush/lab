@@ -24,7 +24,6 @@ import { BlockedCycleIntentStore, IntentStore } from '../execution/intents'
 import { MutationStore } from '../execution/mutations'
 import { WriterFence } from '../execution/writer-fence'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
-import { withTerminalJevEvidence } from './terminal-jev-evidence'
 
 export const autonomousRuntimeServices = Effect.all({
   jevBatchStore: JevBatchStore,
@@ -56,7 +55,6 @@ export type AutonomousRuntimeServices = Effect.Success<typeof autonomousRuntimeS
 export const makeAutonomousCycleResources = (
   runtimeServices: AutonomousRuntimeServices,
   marketData: IntradayMarketDataService,
-  operationTimeoutMs: number,
 ) =>
   Layer.mergeAll(
     Layer.succeed(JevBatchStore, runtimeServices.jevBatchStore),
@@ -66,10 +64,7 @@ export const makeAutonomousCycleResources = (
     Layer.succeed(CandidateObservationStore, runtimeServices.candidateObservationStore),
     Layer.succeed(BrokerRead, runtimeServices.session.read),
     Layer.succeed(IntradayMarketData, marketData),
-    Layer.succeed(
-      CycleStore,
-      withTerminalJevEvidence(runtimeServices.cycleStore, runtimeServices.jevBatchStore, operationTimeoutMs),
-    ),
+    Layer.succeed(CycleStore, runtimeServices.cycleStore),
     Layer.succeed(BrokerEventStore, runtimeServices.brokerEventStore),
     Layer.succeed(FillAccountingStore, runtimeServices.fillAccountingStore),
     Layer.succeed(ValuationStore, runtimeServices.valuationStore),

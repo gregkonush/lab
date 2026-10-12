@@ -1,18 +1,16 @@
-import { Cause, Data, Effect, Exit } from 'effect'
+import { Data, Effect } from 'effect'
 
 import { CycleState } from '../cycle/model'
 import type { CycleRunnerError } from '../cycle/runner'
 import type { CycleRunResult } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
-import { ExecutionStageTimings, type ExecutionStageTiming, withObservedSpan } from '../telemetry'
-import { operationCurrentTimeMillis } from '../operation-timeout'
+import { withObservedSpan } from '../telemetry'
 
 interface AdvancePass {
   readonly observation: AutonomousCyclePassObservation
   readonly result?: CycleRunResult
   readonly nextDelayMs?: number
-  readonly nextWakeAt?: string
 }
 
 export interface AdvanceExecutionCommand {
@@ -31,7 +29,7 @@ export type ExecutionBlocker =
       readonly failure: CycleRunnerError['failure']
     }
 
-export type AdvanceOutcome = { readonly nextWakeAt?: string } & (
+export type AdvanceOutcome =
   | {
       readonly _tag: 'Completed'
       readonly receiptHash: string
@@ -52,7 +50,6 @@ export type AdvanceOutcome = { readonly nextWakeAt?: string } & (
       readonly nextDelayMs: number
       readonly observation: AutonomousCyclePassObservation
     }
-)
 
 export class TransientExecutionFailure extends Data.TaggedError('TransientExecutionFailure')<{
   readonly operation: 'advance' | 'receipt-hash'
@@ -103,13 +100,7 @@ const hashOutcome = (
 ): Effect.Effect<string, TransientExecutionFailure> => {
   const { observation, result } = advance
   const material = {
-    schemaVersion:
-      observation.jevObservationReferences === undefined
-        ? 'bayn.execution-advance-receipt.v1'
-        : 'bayn.execution-advance-receipt.v2',
-    ...(observation.jevObservationReferences === undefined
-      ? {}
-      : { jevObservationReferences: observation.jevObservationReferences }),
+    schemaVersion: 'bayn.execution-advance-receipt.v1',
     controllerKey: command.controllerKey,
     epoch: command.epoch,
     sequence: command.sequence,
@@ -142,7 +133,6 @@ const hashOutcome = (
             ...(result.outcome === 'RECOVERED' ? { action: result.action } : {}),
           },
     nextDelayMs,
-    ...(advance.nextWakeAt === undefined ? {} : { nextWakeAt: advance.nextWakeAt }),
   }
   return Effect.fromResult(canonicalHashV1Result(material)).pipe(
     Effect.mapError(
@@ -163,85 +153,41 @@ export const advanceExecutionOnce = <R>(
     readonly nextDelayMs: number
   },
 ): Effect.Effect<AdvanceOutcome, TransientExecutionFailure, R> =>
-  Effect.gen(function* () {
-    const startedAt = yield* operationCurrentTimeMillis
-    const stageTimings = new Map<string, ExecutionStageTiming>()
-    return yield* driver.advance.pipe(
-      Effect.mapError(
-        (cause) =>
-          new TransientExecutionFailure({
-            operation: 'advance',
-            message: 'execution advance did not complete within its bounded interpreter',
-            cause,
-          }),
-      ),
-      Effect.flatMap((advance) => {
-        const outcome = classifyAdvance(advance)
-        const nextDelayMs = advance.nextDelayMs ?? driver.nextDelayMs
-        return hashOutcome(command, outcome, advance, nextDelayMs).pipe(
-          Effect.map(
-            (receiptHash): AdvanceOutcome => ({
-              ...outcome,
-              receiptHash,
-              nextDelayMs,
-              ...(advance.nextWakeAt === undefined ? {} : { nextWakeAt: advance.nextWakeAt }),
-              observation:
-                advance.observation.result === 'SUCCESS' && advance.nextWakeAt !== undefined
-                  ? { ...advance.observation, nextWakeAt: advance.nextWakeAt }
-                  : advance.observation,
-            }),
-          ),
-        )
-      }),
-      Effect.onExit((exit) =>
-        operationCurrentTimeMillis.pipe(
-          Effect.flatMap((finishedAt) => {
-            const elapsedMs = Math.max(0, finishedAt - startedAt)
-            const outcome = Exit.isSuccess(exit)
-              ? exit.value._tag
-              : Cause.hasInterruptsOnly(exit.cause)
-                ? 'Interrupted'
-                : 'Failed'
-            const log = Exit.isSuccess(exit)
-              ? Effect.logInfo('Bayn execution advance completed')
-              : Effect.logWarning('Bayn execution advance did not complete', exit.cause)
-            return Effect.annotateCurrentSpan({
-              'bayn.execution.elapsed_ms': elapsedMs,
-              'bayn.execution.outcome': outcome,
-            }).pipe(
-              Effect.andThen(
-                log.pipe(
-                  Effect.annotateLogs({
-                    outcome,
-                    elapsedMs,
-                    stageTimings: [...stageTimings.values()],
-                    ...(Exit.isSuccess(exit)
-                      ? {
-                          receiptHash: exit.value.receiptHash,
-                          nextDelayMs: exit.value.nextDelayMs,
-                          ...(exit.value._tag === 'Completed' ? {} : { reason: exit.value.reason }),
-                          ...(exit.value.observation.result === 'SUCCESS' &&
-                          exit.value.observation.waitReason !== undefined
-                            ? { waitReason: exit.value.observation.waitReason }
-                            : {}),
-                        }
-                      : {}),
-                  }),
-                ),
-              ),
-            )
+  driver.advance.pipe(
+    Effect.mapError(
+      (cause) =>
+        new TransientExecutionFailure({
+          operation: 'advance',
+          message: 'execution advance did not complete within its bounded interpreter',
+          cause,
+        }),
+    ),
+    Effect.flatMap((advance) => {
+      const outcome = classifyAdvance(advance)
+      const nextDelayMs = advance.nextDelayMs ?? driver.nextDelayMs
+      return hashOutcome(command, outcome, advance, nextDelayMs).pipe(
+        Effect.map(
+          (receiptHash): AdvanceOutcome => ({
+            ...outcome,
+            receiptHash,
+            nextDelayMs,
+            observation: advance.observation,
           }),
         ),
-      ),
-      Effect.provideService(ExecutionStageTimings, stageTimings),
-    )
-  }).pipe(
-    Effect.annotateLogs({
-      controllerKey: command.controllerKey,
-      epoch: command.epoch,
-      sequence: command.sequence,
-      sourceRevision: command.sourceRevision,
+      )
     }),
+    Effect.tap((outcome) =>
+      Effect.logInfo('Bayn execution advance completed').pipe(
+        Effect.annotateLogs({
+          controllerKey: command.controllerKey,
+          epoch: command.epoch,
+          sequence: command.sequence,
+          sourceRevision: command.sourceRevision,
+          outcome: outcome._tag,
+          receiptHash: outcome.receiptHash,
+        }),
+      ),
+    ),
     withObservedSpan('bayn.execution.advance', {
       'bayn.component': 'execution',
       'bayn.controller.key': command.controllerKey,

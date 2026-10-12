@@ -379,8 +379,7 @@ export const StateSchema = StateBase.check(
     if (state.reconciliation.accountId !== accountId) {
       issues.push({ path: ['reconciliation', 'accountId'], issue: 'must match the account snapshot' })
     }
-    // Freshness uses the observation clock's millisecond resolution; durable authority identity retains microseconds.
-    if (Date.parse(state.authority.updatedAt) > Date.parse(state.authorityObservedAt)) {
+    if (state.authority.updatedAt > state.authorityObservedAt) {
       issues.push({ path: ['authorityObservedAt'], issue: 'must not precede the authority update' })
     }
     if (state.closeOnly === true && state.closeOnlyExpiresAt === undefined) {

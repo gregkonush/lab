@@ -134,8 +134,7 @@ export const jevEntryQuoteMaximumAgeMs = (
   quoteEventAt: string,
   quoteAgeLimitMs: number,
 ): number =>
-  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V3 ||
-  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V4
+  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V3
     ? quoteAgeLimitMs
     : Math.min(quoteAgeLimitMs, Date.parse(target.evidence.batchPlan.expiresAt) - Date.parse(quoteEventAt))
 

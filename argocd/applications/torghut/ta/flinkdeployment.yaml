@@ -86,7 +86,6 @@ spec:
       # rootLogger.level = DEBUG
   flinkConfiguration:
     kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
-    kubernetes.operator.job.restart.failed: "true"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
@@ -191,5 +190,5 @@ spec:
     parallelism: 8
     upgradeMode: savepoint
     state: running
-    initialSavepointPath: s3a://flink-checkpoints/torghut/technical-analysis/savepoints/savepoint-1d9e60-f3e71d89dac4
-    savepointRedeployNonce: 3
+    initialSavepointPath: s3a://flink-checkpoints/torghut/technical-analysis/savepoints/savepoint-437918-85237d1073d0
+    savepointRedeployNonce: 2

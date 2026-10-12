@@ -4,6 +4,7 @@ import type { BrokerConnection, BrokerConnectionDecodeFailure, BrokerProvider } 
 import type { BrokerEnvironment } from '../broker/identity'
 import type { EmbeddedBuildMetadata } from '../build'
 import type { KafkaMarketConfig } from '../market-data/streaming/kafka'
+import type { EvaluationBounds } from '../contracts'
 import type { BrokerAccess } from '../execution/authority'
 import {
   CapitalAuthoritySelection,
@@ -44,6 +45,10 @@ export interface RuntimeConfig {
     readonly url: string
     readonly username: string
     readonly password: Redacted.Redacted<string>
+    readonly snapshotId: string
+    readonly publicationAsOf: string
+    readonly calendarVersion: string
+    readonly bounds: EvaluationBounds
   }
   readonly postgres: {
     readonly url: Redacted.Redacted<string>
@@ -124,6 +129,10 @@ export interface AlpacaCredentialPresence {
 }
 
 export type RuntimeConfigResolutionFailure =
+  | {
+      readonly _tag: 'InvalidEvaluationBounds'
+      readonly cause: Schema.SchemaError
+    }
   | {
       readonly _tag: 'CyclePollIntervalNotShorterThanStallThreshold'
       readonly cyclePollIntervalMs: number

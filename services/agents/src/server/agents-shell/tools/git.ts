@@ -1,21 +1,20 @@
 import { Effect } from 'effect'
 
-import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, openReadOnlyAnnotations } from '../constants'
+import { READ_SCOPES, WRITE_SCOPES, destructiveAnnotations, readOnlyAnnotations } from '../constants'
 import { normalizeCliArgs, requireReadOnlyGitArgs } from '../cli-policy'
 import { agentsShellErrorFromUnknown } from '../errors'
 import { toolSecurityMeta, type EffectTool } from '../mcp-adapter'
 import { jsonTextResult } from '../results'
-import { CliInputSchema, GitWriteInputSchema, CommandResultSchema, type CliInput, type GitWriteInput } from '../schemas'
+import { CliInputSchema, CommandResultSchema, type CliInput } from '../schemas'
 
 export const createGitTools = (): EffectTool[] => [
   {
     name: 'git',
     title: 'Inspect git repository',
-    description:
-      'Inspect local Git metadata under /workspace. Pass argv after git. Use git_write with an owned session for ls-remote.',
+    description: 'Run read-only git commands under /workspace. Pass argv after git.',
     inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
-    annotations: openReadOnlyAnnotations,
+    annotations: readOnlyAnnotations,
     scopes: READ_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
     handler: (args: CliInput, { runner, auth }) =>
@@ -41,15 +40,14 @@ export const createGitTools = (): EffectTool[] => [
   },
   {
     name: 'git_write',
-    title: 'Execute Git in repo session',
-    description:
-      'Run Git commands that may change files or execute configured helpers. Pass argv after git and an owned sessionId.',
-    inputSchema: GitWriteInputSchema,
+    title: 'Run mutating git',
+    description: 'Run repository-changing git commands under /workspace. Pass argv after git.',
+    inputSchema: CliInputSchema,
     outputSchema: CommandResultSchema,
     annotations: destructiveAnnotations,
     scopes: WRITE_SCOPES,
     ...toolSecurityMeta([READ_SCOPES[0]]),
-    handler: (args: GitWriteInput, { runner, auth }) =>
+    handler: (args: CliInput, { runner, auth }) =>
       Effect.tryPromise({
         try: async () => {
           const gitArgs = normalizeCliArgs('git_write', args.args)

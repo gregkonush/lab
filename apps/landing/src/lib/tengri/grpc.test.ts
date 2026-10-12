@@ -3,8 +3,6 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import * as grpc from '@grpc/grpc-js'
 import * as protoLoader from '@grpc/proto-loader'
-import { createSpiffeFixture } from './spiffe.fixture'
-import { verifySpiffePeer } from './spiffe'
 import { codexModelFixtures } from '../../components/tengri/codex-models.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -31,19 +29,15 @@ const descriptor = grpc.loadPackageDefinition(definition) as unknown as {
   }
 }
 
-let fixture: Awaited<ReturnType<typeof createSpiffeFixture>>
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
-let receivedDeadline = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
-let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
 
 beforeAll(async () => {
-  fixture = await createSpiffeFixture()
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
     issueEditorSession(
@@ -80,7 +74,6 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      receivedDeadline = Number(call.getDeadline())
       callback(null, {
         id: 'agent-test',
         displayName: String(call.request.displayName),
@@ -88,41 +81,7 @@ beforeAll(async () => {
         architecture: 'ARCHITECTURE_ARM64',
         cpuMillis: 2_000,
         memoryMib: 4_096,
-        workspaceGib: 32,
-        uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        ...(call.request.displayName === 'Old runtime' ? {} : { idleTimeoutMinutes: 60 }),
-      })
-    },
-    resumeAgent(
-      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-      callback: grpc.sendUnaryData<Record<string, unknown>>,
-    ) {
-      receivedDeadline = Number(call.getDeadline())
-      callback(null, {
-        id: call.request.id,
-        displayName: 'Tengri',
-        phase: 'AGENT_PHASE_READY',
-        architecture: 'ARCHITECTURE_AMD64',
-        cpuMillis: 4_000,
-        memoryMib: 8_192,
-        workspaceGib: 32,
-        uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        idleTimeoutMinutes: 60,
-      })
-    },
-    updatePowerSettings(
-      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-      callback: grpc.sendUnaryData<Record<string, unknown>>,
-    ) {
-      receivedMetadata = call.metadata
-      receivedRequest = call.request
-      callback(null, {
-        id: call.request.id,
-        displayName: 'Tengri',
-        uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-        phase: 'AGENT_PHASE_READY',
-        architecture: 'ARCHITECTURE_ARM64',
-        idleTimeoutMinutes: call.request.idleTimeoutMinutes,
+        workspaceGib: 16,
       })
     },
     getAgent(
@@ -187,15 +146,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, { id: 'thread-selected', rawJson: '{}', eventSequence: 0 })
     },
-    sendCodexInput(
-      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-      callback: grpc.sendUnaryData<Record<string, unknown>>,
-    ) {
-      receivedMetadata = call.metadata
-      receivedRequest = call.request
-      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
-    },
-    steerCodexInput(
+    sendCodexTurn(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
@@ -328,8 +279,7 @@ beforeAll(async () => {
         kind: 'FILE_EVENT_KIND_RESET',
         path: String(call.request.path),
       })
-      if (call.request.path === '/renewal') renewingFileWatch = call
-      else call.end()
+      call.end()
     },
     resolveCodexApproval(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -338,129 +288,68 @@ beforeAll(async () => {
       receivedRequest = call.request
       callback(null, {})
     },
-    resumeCodexThread(call: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>>) {
+    resumeCodexThread(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
       receivedRequest = call.request
-      const threadId = String(call.request.threadId)
-      if (threadId === 'missing-conversation') {
-        call.emit('error', serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'))
+      if (call.request.threadId === 'missing-conversation') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'), null)
         return
       }
-      if (threadId === 'missing-resource') {
-        call.emit(
-          'error',
-          serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'),
-        )
+      if (call.request.threadId === 'missing-resource') {
+        callback(serviceError(grpc.status.NOT_FOUND, '{"error":"internal resource at 10.244.1.42 is missing"}'), null)
         return
       }
-      if (threadId === 'unavailable-conversation') {
-        call.emit('error', serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'))
+      if (call.request.threadId === 'unavailable-conversation') {
+        callback(serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'), null)
         return
       }
-      call.write({
-        part: 'CODEX_HISTORY_PART_THREAD',
-        rawJson: JSON.stringify({
-          thread: { id: threadId, historyMode: 'paginated', turns: [] },
-        }),
-        eventSequence: threadId === 'invalid-sequence' ? '18446744073709551615' : '42',
+      if (call.request.threadId === 'invalid-sequence') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"invalid-sequence"}}',
+          eventSequence: '-1',
+        })
+        return
+      }
+      if (call.request.threadId === 'paged-thread' || call.request.threadId === 'outdated-item-cursor') {
+        callback(null, {
+          id: String(call.request.threadId),
+          rawJson: '{"thread":{"id":"paged-thread"}}',
+          eventSequence: '42',
+          itemEventSequences: { 'message-1': call.request.threadId === 'paged-thread' ? '52' : '41' },
+        })
+        return
+      }
+      callback(null, {
+        id: String(call.request.threadId),
+        rawJson: '{"thread":{"id":"thread-test"}}',
+        eventSequence: '42',
       })
-      const paged = threadId === 'paged-thread' || threadId === 'outdated-item-cursor'
-      call.write({
-        part: 'CODEX_HISTORY_PART_ITEMS',
-        rawJson: JSON.stringify({
-          data: paged ? [{ turnId: 'turn-1', item: { id: 'message-1', type: 'agentMessage', text: 'Recovered' } }] : [],
-          nextCursor: null,
-        }),
-        eventSequence: threadId === 'outdated-item-cursor' ? '41' : '52',
-      })
-      call.write({
-        part: 'CODEX_HISTORY_PART_TURNS',
-        rawJson: JSON.stringify({
-          data: paged ? [{ id: 'turn-1', status: 'completed', items: [], itemsView: 'notLoaded' }] : [],
-          nextCursor: null,
-        }),
-        eventSequence: '53',
-      })
-      call.end()
     },
   })
   const port = await new Promise<number>((resolve, reject) => {
-    server.bindAsync(
-      '127.0.0.1:0',
-      grpc.ServerCredentials.createSsl(
-        fixture.bundle,
-        [{ cert_chain: fixture.peer.pem, private_key: fixture.peer.key }],
-        true,
-      ),
-      (error, boundPort) => {
-        if (error) reject(error)
-        else resolve(boundPort)
-      },
-    )
+    server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (error, boundPort) => {
+      if (error) reject(error)
+      else resolve(boundPort)
+    })
   })
-  process.env.TENGRI_GRPC_ENDPOINT = `localhost:${port}`
-  process.env.SPIFFE_ENDPOINT_SOCKET = fixture.endpoint
-  process.env.SPIFFE_ID = fixture.ownId
-  process.env.TENGRI_SPIFFE_ID = fixture.peerId
-  process.env.SPIFFE_WORKLOAD_API_PROTO_PATH = fixture.protoPath
+  process.env.TENGRI_GRPC_ENDPOINT = `127.0.0.1:${port}`
+  process.env.TENGRI_GRPC_TLS = 'false'
   process.env.TENGRI_INTERNAL_HMAC_SECRET = secret
   process.env.TENGRI_PROTO_PATH = protoPath
 })
 
 afterAll(async () => {
-  const state = globalThis as typeof globalThis & {
-    tengriGrpcClient?: grpc.Client
-    tengriGrpcService?: unknown
-    tengriSpiffeSource?: { close(): void }
-  }
-  state.tengriSpiffeSource?.close()
-  delete state.tengriSpiffeSource
+  const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriGrpcService?: unknown }
   state.tengriGrpcClient?.close()
   delete state.tengriGrpcClient
   delete state.tengriGrpcService
   await new Promise<void>((resolve) => server.tryShutdown(() => resolve()))
-  fixture.close()
 })
 
 describe('Tengri gRPC BFF transport', () => {
-  test('renews the client certificate while an existing signed stream stays open', async () => {
-    const { listCodexModels, watchFiles } = await import('./grpc')
-    const watch = await watchFiles('github:42', 'agent-test', '/renewal')
-    const first = await new Promise<Record<string, unknown>>((resolve, reject) => {
-      watch.once('data', resolve)
-      watch.once('error', reject)
-    })
-    expect(first.sequence).toBe('1')
-    const state = globalThis as typeof globalThis & { tengriGrpcClient?: grpc.Client; tengriSpiffeFingerprint?: string }
-    const before = state.tengriGrpcClient
-    fixture.rotate()
-    const deadline = Date.now() + 2_000
-    while (state.tengriGrpcClient === before && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 10))
-      await listCodexModels('github:42', 'agent-test')
-    }
-    expect(state.tengriGrpcClient).not.toBe(before)
-    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
-    const next = new Promise<Record<string, unknown>>((resolve, reject) => {
-      watch.once('data', resolve)
-      watch.once('error', reject)
-    })
-    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/renewal' })
-    expect((await next).sequence).toBe('2')
-    watch.cancel()
-    before?.close()
-  })
-
-  test('rejects a trusted certificate with the wrong destination SPIFFE ID', async () => {
-    const { listCodexModels } = await import('./grpc')
-    process.env.TENGRI_SPIFFE_ID = 'spiffe://proompteng.ai/ns/tengri/sa/another-service'
-    try {
-      expect(await rejection(listCodexModels('github:42', 'agent-test'))).toMatchObject({ status: 503 })
-    } finally {
-      process.env.TENGRI_SPIFFE_ID = fixture.peerId
-    }
-    expect((await listCodexModels('github:42', 'agent-test')).models).toEqual(codexModelFixtures)
-  })
-
   test('reads a validated guest catalog through the owner-signed transport', async () => {
     const { listCodexModels } = await import('./grpc')
     expect(await listCodexModels('github:42', 'agent-test', 'models-2')).toEqual({
@@ -486,106 +375,6 @@ describe('Tengri gRPC BFF transport', () => {
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
   })
 
-  test('carries binary images through owner-signed mTLS for sends and steering', async () => {
-    const { sendCodexTurn, steerCodexTurn } = await import('./grpc')
-    const content = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0])
-    const images = [{ mediaType: 'image/png' as const, data: content.toString('base64') }]
-    await sendCodexTurn('github:42', 'agent-test', 'thread-selected', '', {}, images)
-    expect(receivedRequest).toMatchObject({
-      agentId: 'agent-test',
-      text: '',
-      images: [{ mediaType: 'image/png', content }],
-    })
-    expect(receivedMetadata?.get('x-tengri-subject')).toEqual(['github:42'])
-    await steerCodexTurn('github:42', 'agent-test', 'thread-selected', 'turn-selected', 'Inspect this', images)
-    expect(receivedRequest).toMatchObject({
-      turnId: 'turn-selected',
-      text: 'Inspect this',
-      images: [{ mediaType: 'image/png', content }],
-    })
-  })
-
-  test('rejects the previous input contract without starting or steering a text-only turn', async () => {
-    const oldController = new grpc.Server()
-    const service = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service
-    let startedTurns = 0
-    const oldInput = (
-      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-      callback: grpc.sendUnaryData<Record<string, unknown>>,
-    ) => {
-      startedTurns += 1
-      callback(null, { id: 'image-lost', threadId: call.request.threadId })
-    }
-    oldController.addService(
-      {
-        SendCodexTurn: {
-          ...service.SendCodexInput,
-          path: service.SendCodexInput.path.replace('SendCodexInput', 'SendCodexTurn'),
-          originalName: 'sendCodexTurn',
-        },
-        SteerCodexTurn: {
-          ...service.SteerCodexInput,
-          path: service.SteerCodexInput.path.replace('SteerCodexInput', 'SteerCodexTurn'),
-          originalName: 'steerCodexTurn',
-        },
-        GetCodexAccount: service.GetCodexAccount,
-      },
-      {
-        sendCodexTurn: oldInput,
-        steerCodexTurn: oldInput,
-        getCodexAccount: (
-          _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
-          callback: grpc.sendUnaryData<Record<string, unknown>>,
-        ) => callback(null, { authenticated: true, plan: 'pro' }),
-      },
-    )
-    const port = await new Promise<number>((resolve, reject) => {
-      oldController.bindAsync(
-        '127.0.0.1:0',
-        grpc.ServerCredentials.createSsl(
-          fixture.bundle,
-          [{ cert_chain: fixture.peer.pem, private_key: fixture.peer.key }],
-          true,
-        ),
-        (error, boundPort) => (error ? reject(error) : resolve(boundPort)),
-      )
-    })
-    const client = new grpc.Client(
-      `localhost:${port}`,
-      grpc.credentials.createSsl(fixture.bundle, fixture.own.key, fixture.own.pem, {
-        checkServerIdentity: (_hostname, certificate) => verifySpiffePeer(fixture.peerId, certificate),
-      }),
-    )
-    const request = {
-      agentId: 'agent-test',
-      threadId: 'thread-selected',
-      turnId: 'turn-selected',
-      text: 'Inspect this',
-      images: [{ mediaType: 'image/png', content: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) }],
-    }
-    const call = (method: grpc.MethodDefinition<Record<string, unknown>, Record<string, unknown>>) =>
-      new Promise<unknown>((resolve, reject) => {
-        client.makeUnaryRequest(
-          method.path,
-          method.requestSerialize,
-          method.responseDeserialize,
-          request,
-          new grpc.Metadata(),
-          { deadline: Date.now() + 3000 },
-          (error, result) => (error ? reject(error) : resolve(result)),
-        )
-      })
-    try {
-      expect(await call(service.GetCodexAccount)).toMatchObject({ authenticated: true })
-      expect(await rejection(call(service.SendCodexInput))).toMatchObject({ code: grpc.status.UNIMPLEMENTED })
-      expect(await rejection(call(service.SteerCodexInput))).toMatchObject({ code: grpc.status.UNIMPLEMENTED })
-      expect(startedTurns).toBe(0)
-    } finally {
-      client.close()
-      oldController.forceShutdown()
-    }
-  })
-
   test('identifies unsupported model selection without disguising other catalog failures', async () => {
     const { listCodexModels } = await import('./grpc')
     expect(await rejection(listCodexModels('github:42', 'legacy-model-catalog'))).toMatchObject({
@@ -598,9 +387,9 @@ describe('Tengri gRPC BFF transport', () => {
     })
   })
 
-  test('revokes desktop previews for the authenticated subject without a caller-selected owner', async () => {
-    const { revokeDesktopPreviews } = await import('./grpc')
-    await revokeDesktopPreviews('github:42')
+  test('revokes editor sessions for the authenticated subject without a caller-selected owner', async () => {
+    const { revokeEditorSessions } = await import('./grpc')
+    await revokeEditorSessions('github:42')
     expect(receivedRequest).toEqual({})
     expect(metadataValue('x-tengri-subject')).toBe('github:42')
     expect(metadataValue('x-tengri-signature')).not.toBe('')
@@ -628,8 +417,7 @@ describe('Tengri gRPC BFF transport', () => {
       architecture: 'arm64',
       cpuMillis: 2_000,
       memoryMib: 4_096,
-      workspaceGib: 32,
-      uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      workspaceGib: 16,
     })
 
     const subject = metadataValue('x-tengri-subject')
@@ -650,16 +438,6 @@ describe('Tengri gRPC BFF transport', () => {
     )
   })
 
-  test('creation and resume retain the full synchronous lifecycle deadline', async () => {
-    const { createAgent, resumeAgent } = await import('./grpc')
-    for (const request of [() => createAgent('github:42', 'Tengri'), () => resumeAgent('github:42', 'agent-test')]) {
-      const started = Date.now()
-      expect((await request()).id).toBe('agent-test')
-      expect(receivedDeadline).toBeGreaterThan(started + 300_000)
-      expect(receivedDeadline).toBeLessThanOrEqual(Date.now() + 310_000)
-    }
-  })
-
   test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {
     const { readFile } = await import('./grpc')
     const error = await rejection(readFile('github:42', 'agent-test', '/workspace/binary'))
@@ -667,44 +445,6 @@ describe('Tengri gRPC BFF transport', () => {
     expect(error).toMatchObject({
       message: 'This file is not valid UTF-8 text',
       status: 415,
-    })
-  })
-
-  test('persists power settings through the signed gRPC contract, including disabled automatic sleep', async () => {
-    const { updatePowerSettings } = await import('./grpc')
-    const agent = await updatePowerSettings('github:42', 'agent-test', {
-      idleTimeoutMinutes: 0,
-    })
-    expect(receivedRequest).toEqual({
-      id: 'agent-test',
-      idleTimeoutMinutes: 0,
-      _idleTimeoutMinutes: 'idleTimeoutMinutes',
-    })
-    expect(agent.power).toEqual({ idleTimeoutMinutes: 0 })
-    expect(metadataValue('x-tengri-subject')).toBe('github:42')
-    const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.UpdatePowerSettings
-    const bodyHash = createHash('sha256')
-      .update(
-        method.requestSerialize({
-          id: 'agent-test',
-          idleTimeoutMinutes: 0,
-        }),
-      )
-      .digest('hex')
-    expect(metadataValue('x-tengri-signature')).toBe(
-      createHmac('sha256', secret)
-        .update(
-          `github:42\n${metadataValue('x-tengri-timestamp')}\n${metadataValue('x-tengri-nonce')}\n${method.path}\n${bodyHash}`,
-        )
-        .digest('hex'),
-    )
-  })
-
-  test('rejects an old runtime response rather than inventing its power settings', async () => {
-    const { createAgent } = await import('./grpc')
-    expect(await rejection(createAgent('github:42', 'Old runtime'))).toMatchObject({
-      status: 503,
-      message: 'The runtime returned invalid power settings. Update Tengri and refresh.',
     })
   })
 
@@ -794,7 +534,7 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('distinguishes an initial file watch from an explicit zero resume cursor', async () => {
     const { watchFiles } = await import('./grpc')
-    const stream = await watchFiles('github:42', 'agent-test', '/workspace')
+    const stream = watchFiles('github:42', 'agent-test', '/workspace')
     await new Promise<void>((resolve, reject) => {
       stream.on('error', reject)
       stream.on('end', resolve)
@@ -819,7 +559,7 @@ describe('Tengri gRPC BFF transport', () => {
         .digest('hex'),
     )
 
-    const resumed = await watchFiles('github:42', 'agent-test', '/workspace', 0)
+    const resumed = watchFiles('github:42', 'agent-test', '/workspace', 0)
     await new Promise<void>((resolve, reject) => {
       resumed.on('error', reject)
       resumed.on('end', resolve)
@@ -968,11 +708,13 @@ describe('Tengri gRPC BFF transport', () => {
   })
 
   test('preserves the atomic event cursor returned with a resumed thread snapshot', async () => {
-    const thread = await restoredThread('thread-test')
+    const { resumeCodexThread } = await import('./grpc')
+
+    const thread = await resumeCodexThread('github:42', 'agent-test', 'thread-test')
     expect(receivedRequest).toEqual({ agentId: 'agent-test', threadId: 'thread-test', model: '', reasoningEffort: '' })
     expect(thread).toEqual({
       id: 'thread-test',
-      rawJson: '{"thread":{"id":"thread-test","historyMode":"paginated","turns":[]}}',
+      rawJson: '{"thread":{"id":"thread-test"}}',
       eventSequence: 42,
       itemEventSequences: {},
     })
@@ -988,12 +730,14 @@ describe('Tengri gRPC BFF transport', () => {
   })
 
   test('preserves item page cursors and rejects pages older than the recovery baseline', async () => {
-    expect(await restoredThread('paged-thread')).toMatchObject({
+    const { resumeCodexThread } = await import('./grpc')
+    expect(await resumeCodexThread('github:42', 'agent-test', 'paged-thread')).toMatchObject({
       eventSequence: 42,
       itemEventSequences: { 'message-1': 52 },
     })
-    expect(await rejection(restoredThread('outdated-item-cursor'))).toMatchObject({
-      message: 'Codex conversation recovery returned invalid history: invalid event cursor',
+    expect(await rejection(resumeCodexThread('github:42', 'agent-test', 'outdated-item-cursor'))).toMatchObject({
+      message: 'Tengri control plane returned an outdated Codex item cursor',
+      status: 503,
     })
   })
 
@@ -1054,15 +798,4 @@ async function rejection(promise: Promise<unknown>) {
     return error
   }
   throw new Error('expected request to fail')
-}
-
-async function restoredThread(threadId: string) {
-  const { resumeCodexThread } = await import('./grpc')
-  const { readCodexHistory } = await import('./codex-history')
-  return readCodexHistory(
-    await resumeCodexThread('github:42', 'agent-test', threadId),
-    threadId,
-    undefined,
-    (record) => new Error(String(record.error)),
-  )
 }

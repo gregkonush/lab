@@ -64,7 +64,7 @@ export class Journal extends Context.Service<Journal, JournalService>()('@proomp
 const validationBoundary = <A>(decision: Result.Result<A, LedgerValidationError>) =>
   Effect.fromResult(decision).pipe(Effect.mapError((validation) => new JournalValidationError(validation)))
 
-export const createAndVerifyAccounts = (
+const createAndVerifyAccounts = (
   client: TigerBeetleRequestClient,
   accounts: readonly LedgerAccountRecord[],
 ): Effect.Effect<void, JournalError> =>
@@ -81,7 +81,7 @@ export const createAndVerifyAccounts = (
     )
   })
 
-export const createAndVerifyTransfers = (
+const createAndVerifyTransfers = (
   client: TigerBeetleRequestClient,
   transfers: readonly LedgerTransferRecord[],
 ): Effect.Effect<void, JournalError> =>

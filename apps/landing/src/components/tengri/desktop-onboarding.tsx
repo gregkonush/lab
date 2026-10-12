@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
-import { startTengriSignIn } from '@/lib/tengri/auth-client'
+import { tengriAuthClient } from '@/lib/tengri/auth-client'
 import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '@/lib/tengri/desktop-gate'
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
@@ -134,7 +134,7 @@ export default function DesktopOnboarding() {
 
   return (
     <RecoveryOwnerContext value={recoveryOwnerId}>
-      <main className="font-geist relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
+      <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
         <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center" />
         <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
         <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
@@ -247,17 +247,25 @@ function SignInWindow() {
   function signIn() {
     setBusy(true)
     setError('')
-    void startTengriSignIn().catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
-      setBusy(false)
-    })
+    void tengriAuthClient.signIn
+      .social({ provider: 'github', callbackURL: '/' })
+      .then((result) => {
+        if (result.error) {
+          setError(result.error.message || 'Tengri could not start GitHub sign-in')
+          setBusy(false)
+        }
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
+        setBusy(false)
+      })
   }
 
   return (
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <CircleUserRound className="h-7 w-7" />}
       title="Sign in to Tengri"
-      detail="Sign in with GitHub and your passkey. Ofz determines which workspaces you can access."
+      detail="Your GitHub identity owns one private Firecracker agent and its persistent workspace."
       error={error}
       actionIcon={<CircleUserRound aria-hidden="true" className="h-4 w-4" />}
       actionBusy={busy}
@@ -316,7 +324,7 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
         <dl className="mt-5 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 text-center">
           <Resource label="CPU" value="2 cores" />
           <Resource label="Memory" value="4 GiB" />
-          <Resource label="Workspace" value="32 GiB" />
+          <Resource label="Workspace" value="16 GiB" />
         </dl>
         {errors.root?.server ? (
           <p
@@ -364,7 +372,7 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <Moon className="h-7 w-7 text-[#b7a6ff]" />}
       title={busy ? 'Waking your agent' : `${agent.displayName} is sleeping`}
-      detail="Your workspace, running processes, and Codex state are saved to disk."
+      detail="The microVM Pod is stopped. Your workspace and Codex state remain on persistent storage."
       error={error}
       actionIcon={<Play aria-hidden="true" className="h-4 w-4 fill-current" />}
       actionBusy={busy}
@@ -386,6 +394,38 @@ function FailedAgentWindow({
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [sleepBusy, setSleepBusy] = useState(false)
+  const [sleepCommitted, setSleepCommitted] = useState(false)
+
+  useEffect(() => {
+    if (!sleepCommitted) return
+    let cancelled = false
+    let timer: number | undefined
+
+    const refreshUntilSleeping = async () => {
+      await onChanged()
+      if (!cancelled) timer = window.setTimeout(() => void refreshUntilSleeping(), 2_000)
+    }
+    void refreshUntilSleeping()
+
+    return () => {
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [onChanged, sleepCommitted])
+
+  async function preserveWorkspace() {
+    setSleepBusy(true)
+    setError('')
+    try {
+      await runTengriAction<TengriAgent>({ action: 'sleep-agent', agentId: agent.id })
+      setSleepCommitted(true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The failed agent could not be stopped')
+    } finally {
+      setSleepBusy(false)
+    }
+  }
 
   async function deleteAgent() {
     setDeleteBusy(true)
@@ -402,6 +442,17 @@ function FailedAgentWindow({
     }
   }
 
+  if (sleepCommitted) {
+    return (
+      <StatusWindow
+        icon={<LoaderCircle className="h-7 w-7 animate-spin text-[#8abfff]" />}
+        title="Putting agent to sleep"
+        detail="Stopping the failed Firecracker guest while keeping the persistent workspace."
+        progress
+      />
+    )
+  }
+
   return (
     <>
       <div aria-hidden={confirmOpen || undefined} inert={confirmOpen || undefined}>
@@ -410,13 +461,14 @@ function FailedAgentWindow({
           title="Agent could not start"
           detail={agent.message || agent.conditions.at(-1)?.message || 'Tengri reported a guest startup failure.'}
           error={error}
-          actionBusy={deleteBusy}
-          actionLabel="Refresh Status"
-          onAction={() => void onChanged()}
+          actionIcon={<Moon aria-hidden="true" className="h-4 w-4" />}
+          actionBusy={sleepBusy}
+          actionLabel="Sleep and Keep Workspace"
+          onAction={() => void preserveWorkspace()}
           secondaryAction={
             <button
               type="button"
-              disabled={deleteBusy}
+              disabled={sleepBusy || deleteBusy}
               onClick={() => setConfirmOpen(true)}
               className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40"
             >

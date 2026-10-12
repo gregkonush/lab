@@ -60,7 +60,7 @@ const createLoggingInterceptor =
       url: req.url,
     }
     await Effect.runPromise(
-      logger.log('debug', 'temporal rpc request', baseFields).pipe(Effect.catch(() => Effect.void)),
+      logger.log('debug', 'temporal rpc request', baseFields).pipe(Effect.catchAll(() => Effect.void)),
     )
     const start = Date.now()
     try {
@@ -68,14 +68,14 @@ const createLoggingInterceptor =
       await Effect.runPromise(
         logger
           .log('debug', 'temporal rpc response', { ...baseFields, durationMs: Date.now() - start })
-          .pipe(Effect.catch(() => Effect.void)),
+          .pipe(Effect.catchAll(() => Effect.void)),
       )
       return response
     } catch (error) {
       await Effect.runPromise(
         logger
           .log('error', 'temporal rpc failure', { ...baseFields, error: describeError(error) })
-          .pipe(Effect.catch(() => Effect.void)),
+          .pipe(Effect.catchAll(() => Effect.void)),
       )
       throw error
     }

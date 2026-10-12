@@ -471,7 +471,7 @@ const tigerBeetleRequest = <A>(
         Effect.tapError(() => invalidateClient(active, `failed:${operation}`)),
       ),
     ),
-    withObservedStage('bayn.tigerbeetle.request', { dependency: 'tigerbeetle', operation }),
+    withObservedStage('bayn.tigerbeetle.request', { dependency: 'tigerbeetle' }),
     Effect.annotateLogs({ operation }),
   )
 

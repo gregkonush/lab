@@ -12,7 +12,7 @@ use kube::{
 use serde_json::json;
 use tracing::warn;
 
-use crate::crd::MicroVM;
+use crate::crd::{IDLE_MINUTES, MicroVM};
 
 const ACTIVITY_WRITE_INTERVAL: Duration = Duration::from_secs(20);
 pub const LAST_ACTIVITY_ANNOTATION: &str = "runtime.proompteng.ai/last-activity-at";
@@ -107,16 +107,12 @@ pub fn effective_idle_deadline(microvm: &MicroVM) -> Option<String> {
 }
 
 fn effective_idle_deadline_at(microvm: &MicroVM) -> Option<DateTime<Utc>> {
-    let minutes = microvm.spec.power.idle_timeout_minutes;
-    if minutes == 0 {
-        return None;
-    }
     let configured_deadline = DateTime::parse_from_rfc3339(&microvm.spec.idle_deadline)
         .ok()
         .map(|value| value.with_timezone(&Utc));
     let activity_deadline = last_activity_at(microvm)
         .and_then(|value| DateTime::parse_from_rfc3339(&value).ok())
-        .map(|value| value.with_timezone(&Utc) + chrono::Duration::minutes(i64::from(minutes)));
+        .map(|value| value.with_timezone(&Utc) + chrono::Duration::minutes(IDLE_MINUTES));
 
     configured_deadline
         .into_iter()
@@ -138,8 +134,7 @@ fn activity_metadata_patch(now: DateTime<Utc>) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::crd::{
-        IDLE_MINUTES, MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec,
-        MicroVMStatus,
+        MicroVMArchitecture, MicroVMDesiredState, MicroVMResources, MicroVMSpec, MicroVMStatus,
     };
     use http::{Request, Response, StatusCode};
     use kube::client::Body as KubeBody;
@@ -154,10 +149,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "a".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: (now - chrono::Duration::hours(2)).to_rfc3339(),
                 idle_deadline: (now - chrono::Duration::hours(1)).to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(2)).to_rfc3339(),
             },
         )
     }
@@ -264,37 +258,6 @@ mod tests {
         assert!(idle_deadline_passed(
             &microvm,
             now + chrono::Duration::minutes(IDLE_MINUTES + 1),
-        ));
-    }
-
-    #[test]
-    fn disabled_idle_sleep_ignores_even_expired_deadlines() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.spec.power.idle_timeout_minutes = 0;
-        assert_eq!(effective_idle_deadline(&microvm), None);
-        assert!(!idle_deadline_passed(
-            &microvm,
-            now + chrono::Duration::days(10)
-        ));
-    }
-
-    #[test]
-    fn activity_uses_the_selected_idle_timeout() {
-        let now = Utc::now();
-        let mut microvm = test_microvm(now);
-        microvm.spec.power.idle_timeout_minutes = 5;
-        microvm.metadata.annotations = Some(std::collections::BTreeMap::from([(
-            LAST_ACTIVITY_ANNOTATION.to_owned(),
-            now.to_rfc3339(),
-        )]));
-        assert!(!idle_deadline_passed(
-            &microvm,
-            now + chrono::Duration::minutes(4)
-        ));
-        assert!(idle_deadline_passed(
-            &microvm,
-            now + chrono::Duration::minutes(5)
         ));
     }
 }

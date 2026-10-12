@@ -647,8 +647,6 @@ export const validateBarStructure = (
             delayClass: request.delayClass,
             eventAt: bar.eventAt,
             ingestedAt: bar.ingestedAt,
-            publicationDelayMs: Number(intradayAgeNanos(bar.ingestedAt, bar.eventAt)) / 1_000_000,
-            minimumPublicationDelayMs: Number(minimumAvailabilityDelay) / 1_000_000,
           },
         }),
       )
@@ -710,8 +708,6 @@ export const validateBarCoverage = (
             delayClass: request.delayClass,
             eventAt: bar.eventAt,
             ingestedAt: bar.ingestedAt,
-            publicationDelayMs: Number(intradayAgeNanos(bar.ingestedAt, bar.eventAt)) / 1_000_000,
-            maximumPublicationDelayMs: Number(maximumAvailabilityDelay) / 1_000_000,
           },
         }),
       )

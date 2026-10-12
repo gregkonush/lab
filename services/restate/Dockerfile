@@ -9,9 +9,7 @@ RUN curl --fail --location --retry 3 https://codeload.github.com/restatedev/rest
     && tar -xzf /tmp/source.tar.gz --strip-components=1 \
     && rm /tmp/source.tar.gz
 COPY metadata-background.patch /tmp/metadata-background.patch
-COPY metadata-election-connect.patch /tmp/metadata-election-connect.patch
-RUN patch --batch --fuzz=0 -p1 < /tmp/metadata-background.patch \
-    && patch --batch --fuzz=0 -p1 < /tmp/metadata-election-connect.patch
+RUN patch --batch --fuzz=0 -p1 < /tmp/metadata-background.patch
 ENV VERGEN_GIT_SHA=fb0ca137d5fc1c86cda5a7d8ef653c5ab201fe6c
 ENV CARGO_BUILD_JOBS=4
 
@@ -22,8 +20,7 @@ RUN cc -Wall -Wextra -Werror -shared -fPIC /proof/slow-fsync.c -ldl -o /proof/sl
 RUN --mount=type=cache,id=restate-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=restate-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=restate-test-target,target=/restate/target \
-    bash /proof/verify-metadata.sh \
-    && bash /proof/verify-election-connect.sh
+    bash /proof/verify-metadata.sh
 
 FROM source AS builder
 RUN --mount=type=cache,id=restate-cargo-registry,target=/usr/local/cargo/registry \
@@ -36,4 +33,4 @@ FROM docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e1651
 COPY --from=builder /tmp/restate-server /usr/local/bin/restate-server
 LABEL org.opencontainers.image.base.name="docker.restate.dev/restatedev/restate:1.7.9" \
       ai.proompteng.restate.upstream-revision="fb0ca137d5fc1c86cda5a7d8ef653c5ab201fe6c" \
-      ai.proompteng.restate.patch="metadata-background-v1,election-connect-v1"
+      ai.proompteng.restate.patch="metadata-background-v1"

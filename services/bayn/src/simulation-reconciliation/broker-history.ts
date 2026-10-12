@@ -287,7 +287,7 @@ const readHistory = (
       fills: readFillPages(read, until, initialFillPaginationState()),
       fees: readFeePages(read, until),
     },
-    { concurrency: 3 },
+    { concurrency: 2 },
   )
 
 const historyHashResult = (history: BrokerHistory): Result.Result<string, HistoryHashFailure> =>

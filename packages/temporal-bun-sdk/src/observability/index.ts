@@ -39,7 +39,7 @@ export const createObservabilityServices = (
     const exporter = overrides.metricsExporter ?? (yield* createMetricsExporter(config.metrics))
     const registry = overrides.metricsRegistry ?? createMetricsRegistry(exporter)
     const openTelemetry = yield* Effect.promise(() => registerOpenTelemetry()).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
+      Effect.catchAll(() => Effect.succeed(undefined)),
     )
     return {
       logger,

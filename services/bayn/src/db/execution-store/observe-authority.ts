@@ -1,7 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../../telemetry'
-import { databaseUtcInstant } from '../clock'
 
 import {
   BrokerEnvironment,
@@ -157,7 +156,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const [databaseTime] = yield* sql<Record<string, unknown>>`
-        SELECT to_char(${authority.clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
+        SELECT ${authority.clock.now} AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
@@ -186,7 +185,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
         )
         RETURNING
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
+          version::text AS version, updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const insertedRow = inserted[0]
       if (insertedRow === undefined) {
@@ -212,7 +211,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
   const terminalizeUnusedPreSubmissionResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
-    activatedAt: string,
+    activatedAt: Date,
   ) =>
     sql`
       UPDATE autonomous_cycles AS cycle
@@ -256,13 +255,10 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
-                AND (
-                  EXISTS (
-                    SELECT 1
-                    FROM autonomous_forward_performance_receipts AS receipt
-                    WHERE receipt.authority_generation_hash = state.generation_hash
-                  )
-                  OR research_paper_expired_zero_execution_settled(state.generation_hash)
+                AND EXISTS (
+                  SELECT 1
+                  FROM autonomous_forward_performance_receipts AS receipt
+                  WHERE receipt.authority_generation_hash = state.generation_hash
                 )
               )
             )
@@ -387,13 +383,10 @@ const makeObserveAuthorityInterpreterDataFirst = (
                       ${legacyV1CompletedRestrictionReason},
                       ${legacyExecutionActivationExpiredRestrictionReason}
                     )
-                    AND (
-                      EXISTS (
-                        SELECT 1
-                        FROM autonomous_forward_performance_receipts AS receipt
-                        WHERE receipt.authority_generation_hash = state.generation_hash
-                      )
-                      OR research_paper_expired_zero_execution_settled(state.generation_hash)
+                    AND EXISTS (
+                      SELECT 1
+                      FROM autonomous_forward_performance_receipts AS receipt
+                      WHERE receipt.authority_generation_hash = state.generation_hash
                     )
                   )
                 )
@@ -439,7 +432,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           AND (NOT research_rearm.candidate OR research_rearm.eligible)
         RETURNING
           state.schema_version, state.generation_hash, state.maximum, state.effective, state.kill_state, state.reason,
-          state.version::text AS version, ${databaseUtcInstant(sql, sql`state.updated_at`)} AS updated_at
+          state.version::text AS version, state.updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const rotatedRow = rotated[0]
       if (rotatedRow === undefined) {
@@ -454,8 +447,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
-          ${authority.clock.now} AS observed_at
+          version::text AS version, updated_at, ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -494,8 +486,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
-          ${authority.clock.now} AS observed_at
+          version::text AS version, updated_at, ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -531,7 +522,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
 
   const authorityStateQuery = sql`
         SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
+          version::text AS version, updated_at
         FROM authority_state
         WHERE singleton
       `

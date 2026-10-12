@@ -187,7 +187,7 @@ describe('activity lifecycle helpers', () => {
     let caught: unknown
     await Effect.runPromise(
       registration.heartbeat(['late']).pipe(
-        Effect.catch((error) =>
+        Effect.catchAll((error) =>
           Effect.sync(() => {
             caught = error
           }),

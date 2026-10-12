@@ -3,7 +3,6 @@ import { Effect } from 'effect'
 
 import type { BrokerEventInput, PositionSnapshotInput } from '../../broker/observations'
 import { Broker } from '../../execution/contracts'
-import type { WriterFenceService } from '../../execution/writer-fence'
 import type { EventReceipt, ExecutionStoreError, HistoryEventInput, PositionSnapshotReceipt } from './contract'
 import {
   decideBrokerEventAppend,
@@ -40,10 +39,7 @@ export interface BrokerEventInterpreter {
   ) => Effect.Effect<PositionSnapshotReceipt, ExecutionStoreError>
 }
 
-export const makeBrokerEventInterpreter = (
-  sql: PgClient.PgClient,
-  writerFence: WriterFenceService,
-): BrokerEventInterpreter => {
+export const makeBrokerEventInterpreter = (sql: PgClient.PgClient): BrokerEventInterpreter => {
   const completeHistory = (
     inputs: readonly HistoryEventInput[],
   ): Effect.Effect<ReadonlySet<string>, ExecutionStoreError> =>
@@ -56,7 +52,7 @@ export const makeBrokerEventInterpreter = (
           return yield* failExecutionStore('ingest', 'invariant', 'broker history spans multiple accounts')
         }
 
-        return yield* writerFence.transaction(
+        return yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
             const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
@@ -211,7 +207,7 @@ export const makeBrokerEventInterpreter = (
         Effect.flatMap((decoded) =>
           decoded._tag === 'Position'
             ? failExecutionStore('ingest', 'invariant', 'position events require a complete position snapshot')
-            : writerFence.transaction(append(decoded)),
+            : sql.withTransaction(append(decoded)),
         ),
       ),
     )
@@ -221,7 +217,7 @@ export const makeBrokerEventInterpreter = (
       'positions',
       decodePositionSnapshotInput(input).pipe(
         Effect.flatMap((decoded) =>
-          writerFence.transaction(
+          sql.withTransaction(
             Effect.gen(function* () {
               const plan = yield* liftStoreDecision('positions', planPositionSnapshot(decoded))
               yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${Broker.Alpaca}:${decoded.accountId}`}, 0))`

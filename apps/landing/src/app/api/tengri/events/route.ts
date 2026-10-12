@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     }
     let body: ReadableStream<Uint8Array>
     try {
-      const source = await watchCodexEvents(identity.subject, agentId, after)
+      const source = watchCodexEvents(identity.subject, agentId, after)
       body = createTengriEventStream(
         source,
         request.signal,
@@ -41,11 +41,4 @@ export async function GET(request: Request) {
   } catch (error) {
     return tengriRouteError(error)
   }
-}
-
-export function HEAD() {
-  return new Response(null, { status: 405, headers: { 'Cache-Control': 'no-store' } })
-}
-export function OPTIONS() {
-  return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
 }

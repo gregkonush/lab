@@ -3,7 +3,6 @@ import { isSqlError } from 'effect/sql/SqlError'
 
 import { capitalGrantFailureDetails, type CapitalGrantAlgebraFailure } from '../../execution/capital-grant-algebra'
 import { ReconciliationStoreError } from '../reconciliation'
-import { WriterFenceError } from '../../execution/writer-fence'
 import { ExecutionStoreError } from './contract'
 import type { ExecutionStoreDecisionFailure } from './decisions'
 import { Pipeable } from '../../pipeable'
@@ -41,13 +40,6 @@ const runExecutionOperationDataFirst = <A, E, R>(
   effect.pipe(
     Effect.mapError((cause) => {
       if (cause instanceof ExecutionStoreError) return cause
-      if (cause instanceof WriterFenceError)
-        return executionStoreError({
-          operation,
-          failure: 'query',
-          message: 'execution store could not hold the PostgreSQL writer fence',
-          cause,
-        })
       if (cause instanceof ReconciliationStoreError) {
         return executionStoreError({
           operation,
@@ -88,7 +80,7 @@ const runExecutionOperationDataFirst = <A, E, R>(
         cause,
       })
     }),
-    withObservedStage('bayn.execution-store.operation', { dependency: 'postgresql', operation }),
+    withObservedStage('bayn.execution-store.operation'),
     Effect.annotateLogs({ operation }),
   )
 

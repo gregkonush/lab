@@ -703,7 +703,7 @@ describe('PostgreSQL reconciliation algebra', () => {
       peakEquityMicros: '1000000000',
     })
 
-    const updatedAt = '2026-07-22T15:30:01.000Z'
+    const updatedAt = sqlTimestamp('2026-07-22T15:30:01.000Z')
     const observedAuthorityAt = sqlTimestamp('2026-07-22T15:30:02.000Z')
     const authority = successOf(
       riskContextFromRow(
@@ -728,7 +728,7 @@ describe('PostgreSQL reconciliation algebra', () => {
         effective: Authority.Observe,
         kill: KillState.Clear,
         version: 1,
-        updatedAt,
+        updatedAt: updatedAt.toISOString(),
       },
       authorityObservedAt: observedAuthorityAt.toISOString(),
     })
@@ -777,7 +777,7 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_effective: Authority.Execution,
           authority_kill: KillState.Clear,
           authority_version: '1',
-          authority_updated_at: '2026-07-22T15:30:01.000Z',
+          authority_updated_at: sqlTimestamp('2026-07-22T15:30:01.000Z'),
           authority_observed_at: sqlTimestamp('2026-07-22T15:30:02.000Z'),
         },
         0,
@@ -804,20 +804,20 @@ describe('PostgreSQL reconciliation algebra', () => {
           authority_effective: Authority.Observe,
           authority_kill: KillState.Clear,
           authority_version: '1',
-          authority_updated_at: '2026-07-22T15:30:01.000Z',
-          authority_observed_at: invalidSqlTimestamp(),
+          authority_updated_at: invalidSqlTimestamp(),
+          authority_observed_at: sqlTimestamp('2026-07-22T15:30:02.000Z'),
         },
         0,
       ),
     )
     expect(invalidTimestamp).toMatchObject({
       _tag: 'RiskContextTimestampFailed',
-      field: 'authority_observed_at',
+      field: 'authority_updated_at',
       epochMillis: Number.NaN,
     })
     expect(reconciliationAlgebraFailureDetails(invalidTimestamp)).toEqual({
       failure: 'invariant',
-      message: 'reconciliation risk context timestamp authority_observed_at is invalid',
+      message: 'reconciliation risk context timestamp authority_updated_at is invalid',
       cause: invalidTimestamp,
     })
   })

@@ -91,7 +91,8 @@ export function DesktopWindowFrame({
   const viewport = useCallback((): Bounds => {
     const rect = stageRef.current?.getBoundingClientRect()
     const browserWidth = typeof globalThis.window === 'undefined' ? 0 : globalThis.window.innerWidth
-    const browserHeight = typeof globalThis.window === 'undefined' ? 0 : Math.max(0, globalThis.window.innerHeight - 30)
+    const browserHeight =
+      typeof globalThis.window === 'undefined' ? 0 : Math.max(0, globalThis.window.innerHeight - 126)
     return { x: 0, y: 0, width: rect?.width ?? browserWidth, height: rect?.height ?? browserHeight }
   }, [stageRef])
 
@@ -100,7 +101,7 @@ export function DesktopWindowFrame({
       if (window.mode !== 'normal' || event.button !== 0) return
       event.preventDefault()
       dispatch({ type: 'focus', id: window.id })
-      if (event.target instanceof Element) event.target.setPointerCapture(event.pointerId)
+      event.currentTarget.setPointerCapture(event.pointerId)
       interactionRef.current = {
         pointerId: event.pointerId,
         edge,
@@ -144,8 +145,8 @@ export function DesktopWindowFrame({
       const element = elementRef.current
       if (element) paintWindowInteractionFrame(element.style, interaction, RESIZE_GUTTER)
       interactionRef.current = null
-      if (event.target instanceof Element && event.target.hasPointerCapture(event.pointerId)) {
-        event.target.releasePointerCapture(event.pointerId)
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
       }
       if (element) element.style.willChange = ''
       releasePendingRef.current = true
@@ -155,7 +156,7 @@ export function DesktopWindowFrame({
   )
 
   const bounds = window.bounds
-  const unifiedToolbar = window.app === 'finder' || window.app === 'settings'
+  const unifiedToolbar = window.app === 'chrome' || window.app === 'finder' || window.app === 'settings'
   return (
     <motion.div
       ref={elementRef}
@@ -192,15 +193,10 @@ export function DesktopWindowFrame({
         data-active={active}
         data-app={window.app}
         className={cn(
-          'tengri-window absolute inset-3 flex flex-col overflow-hidden bg-zinc-900 outline-none',
-          window.mode === 'maximized'
-            ? 'rounded-none'
-            : cn(
-                'rounded-xl ring-1 ring-black/55',
-                active
-                  ? 'shadow-[0_20px_48px_-12px_rgba(0,0,0,0.52),0_4px_14px_rgba(0,0,0,0.24)]'
-                  : 'shadow-[0_7px_22px_-6px_rgba(0,0,0,0.3)]',
-              ),
+          'tengri-window absolute inset-3 flex flex-col overflow-hidden rounded-xl bg-zinc-900 outline-none ring-1 ring-black/55 before:pointer-events-none before:absolute before:inset-0 before:z-40 before:rounded-[inherit] before:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]',
+          active
+            ? 'shadow-[0_20px_48px_-12px_rgba(0,0,0,0.52),0_4px_14px_rgba(0,0,0,0.24)]'
+            : 'shadow-[0_7px_22px_-6px_rgba(0,0,0,0.3)]',
         )}
         style={{ pointerEvents: window.mode === 'minimized' ? 'none' : 'auto' }}
         onFocusCapture={(event) => {
@@ -225,7 +221,7 @@ export function DesktopWindowFrame({
           className={cn(
             'flex shrink-0 touch-none select-none items-center px-2.5',
             unifiedToolbar
-              ? 'pointer-events-none absolute inset-x-0 top-0 z-10 h-[52px]'
+              ? `pointer-events-none absolute inset-x-0 top-0 z-10 ${window.app === 'chrome' ? 'h-10' : 'h-[52px]'}`
               : 'relative h-9 border-b border-black/25 bg-gradient-to-b from-[#38383b] to-[#303033]',
           )}
         >

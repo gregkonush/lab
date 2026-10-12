@@ -64,8 +64,8 @@ import ./bun-workspace-service.nix {
   serviceName = "jangar";
   packageName = "@proompteng/jangar";
   depsHash = {
-    x86_64-linux = "sha256-pRrr1m5IyQECMHB4OVu3AwNliNjVxsr54Vu3dKVR/ks=";
-    aarch64-linux = "sha256-S79/o92WuYWGDxpIJSKS+LvqbGiz/6ZC+PEYpF97cJI=";
+    x86_64-linux = "sha256-IX6fuls+0YLKT5HiuZDOpJE0iEKJ+9gl/n69AAHnKKs=";
+    aarch64-linux = "sha256-9w5g9FwF7CDwHYeLYjUKjWRUj7PxDJYRnTAKKND+O5U=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -77,6 +77,7 @@ import ./bun-workspace-service.nix {
     "@proompteng/discord"
     "@proompteng/jangar"
     "@proompteng/otel"
+    "@proompteng/temporal-bun-sdk"
   ];
   sourcePaths = [
     "packages/agent-contracts"
@@ -85,6 +86,7 @@ import ./bun-workspace-service.nix {
     "packages/design"
     "packages/discord"
     "packages/otel"
+    "packages/temporal-bun-sdk"
     "services/bumba"
     "services/jangar"
   ];
@@ -123,6 +125,7 @@ import ./bun-workspace-service.nix {
     "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/codex run build"
     "bun --cwd=packages/otel run build"
+    "bun --cwd=packages/temporal-bun-sdk run build"
     "bun --cwd=packages/cx-tools run build"
     "NODE_OPTIONS=--max-old-space-size=4096 CI=true JANGAR_BUILD_MINIFY=0 JANGAR_BUILD_SOURCEMAP=0 JANGAR_BUILD_LOG_LEVEL=warn bun --cwd=services/jangar run build"
   ];
@@ -131,7 +134,7 @@ import ./bun-workspace-service.nix {
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
 
-    for package in agent-contracts codex cx-tools design discord otel; do
+    for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
     done
 
@@ -161,9 +164,8 @@ import ./bun-workspace-service.nix {
     cp -R "$TMPDIR/work/services/jangar/src/server/runtime-tooling-config.ts" "$out/app/services/jangar/src/server/runtime-tooling-config.ts"
 
     cp -R "$TMPDIR/work/services/bumba" "$out/app/services/bumba"
-
-    bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" \
-      "$out/app/services/bumba" "$out/app/services/jangar"
+    rm -rf "$out/app/services/bumba/node_modules"
+    ln -s /app/node_modules "$out/app/services/bumba/node_modules"
 
     chmod +x "$out/app/packages/cx-tools/dist/"*.js
   '';

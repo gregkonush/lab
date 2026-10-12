@@ -5,8 +5,6 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
 import { makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
-import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
-import { settleCompletedBrokerObservationPoll } from '../composition/broker-observation-runtime'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 
 const controllerKey = 'a'.repeat(64)
@@ -23,7 +21,6 @@ const harness = (
     sleep?: (milliseconds: number) => Promise<void>
     budgetDeadline?: number
     runResults?: Map<string, unknown>
-    losePollResult?: 'before-journal' | 'after-journal'
   } = {},
 ) => {
   let state: State | null = input.state ?? null
@@ -32,7 +29,6 @@ const harness = (
   let polls = 0
   let now = 0
   const sleeps: number[] = []
-  const commands: string[] = []
   const deliveries: Array<{
     parameter: { sourceRevision: string; epoch: number; sequence: number }
     idempotencyKey: string
@@ -74,14 +70,9 @@ const harness = (
       }
     },
     run: async (name: string, action: () => Promise<unknown>) => {
-      commands.push(name)
       if (input.runResults?.has(name)) return input.runResults.get(name)
       const value = await action()
-      if (name === 'poll and publish broker observation' && input.losePollResult === 'before-journal')
-        throw new Error('interrupted before poll result was journaled')
       input.runResults?.set(name, value)
-      if (name === 'poll and publish broker observation' && input.losePollResult === 'after-journal')
-        throw new Error('interrupted after poll result was journaled')
       return value
     },
     sleep: async (duration: { milliseconds: number }) => {
@@ -106,7 +97,6 @@ const harness = (
     context,
     deliveries,
     sleeps,
-    commands,
     calls: () => ({ activations, polls }),
     state: () => state,
     budgetDeadline: () => budgetDeadline,
@@ -114,159 +104,6 @@ const harness = (
 }
 
 describe('Restate broker observation owner', () => {
-  test.each([undefined, 'before-journal', 'after-journal'] as const)(
-    'a 47-second handoff releases unused debt only with returned proof (%s)',
-    async (lostResult) => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const execute = Effect.runPromiseWith(yield* Effect.context<never>())
-          const budget = yield* makeBrokerObservationBudget
-          const journal = new Map<string, unknown>()
-          let claims = 0
-          let requests = 0
-          const client = budget.decorate(
-            HttpClient.make((request) =>
-              Effect.sync(() => {
-                requests += 1
-                return HttpClientResponse.fromWeb(request, new Response('{}'))
-              }),
-            ),
-          )
-          const runtime: Partial<BrokerObservationRuntime> = {
-            nextPollNotBeforeMs: (signal) => execute(budget.nextPollNotBeforeMs, { signal }),
-            preparePoll: (signal) => execute(budget.prepareCapture, { signal }),
-            poll: (signal, reservation) =>
-              execute(
-                Effect.gen(function* () {
-                  if (claims === 0) yield* TestClock.adjust(47_000)
-                  claims += 1
-                  const claim = yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)
-                  if (claim._tag === 'ExpiredUnused')
-                    return {
-                      _tag: 'Unavailable',
-                      captureNotStarted: { reason: 'ExpiredUnusedTicket', expiredByMs: claim.expiredByMs },
-                      nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs,
-                    } as const
-                  if (claim._tag === 'Unavailable')
-                    return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
-                  yield* client.get('https://example.invalid/account')
-                  return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
-                }),
-                { signal },
-              ),
-          }
-          // Restate replays the original capture clock; runtime claims see the delayed live clock.
-          const journaledClock = () => {
-            let reads = 0
-            return async () => (++reads <= 2 ? 0 : 47_000)
-          }
-          const first = harness({
-            runtime,
-            now: journaledClock(),
-            runResults: journal,
-            ...(lostResult === undefined ? {} : { losePollResult: lostResult }),
-          })
-          yield* Effect.promise(() => first.handlers.activate(first.context, { sourceRevision }))
-          expect(first.budgetDeadline()).toBe(lostResult === undefined ? 0 : 180_000)
-          expect(first.deliveries[0]?.delay.milliseconds).toBe(lostResult === undefined ? 1_000 : 133_000)
-          expect(first.state()?.lastSnapshotHash).toBeUndefined()
-          expect(requests).toBe(0)
-          expect(claims).toBe(1)
-          yield* TestClock.adjust(47_000)
-          const replay = harness({ runtime, now: journaledClock(), runResults: journal })
-          yield* Effect.promise(() => replay.handlers.activate(replay.context, { sourceRevision }))
-          expect(replay.budgetDeadline()).toBe(lostResult === 'before-journal' ? 180_000 : 0)
-          expect(claims).toBe(lostResult === 'before-journal' ? 2 : 1)
-          expect(requests).toBe(0)
-          expect(replay.state()?.lastSnapshotHash).toBeUndefined()
-          expect(replay.commands).toEqual([
-            'activate broker observation projection',
-            'read broker observation budget',
-            'prepare broker observation capture',
-            'poll and publish broker observation',
-          ])
-          expect(first.commands).toEqual(replay.commands)
-        }).pipe(Effect.provide(TestClock.layer())),
-      )
-    },
-  )
-  test('an old journaled unavailable result retains its conservative deadline on replay', async () => {
-    const journal = new Map<string, unknown>([
-      ['activate broker observation projection', undefined],
-      ['read broker observation budget', 0],
-      ['prepare broker observation capture', 'old-ticket'],
-      ['poll and publish broker observation', { _tag: 'Unavailable', nextPollNotBeforeMs: 180_000 }],
-    ])
-    const h = harness({ runResults: journal })
-    await h.handlers.activate(h.context, { sourceRevision })
-    expect(h.budgetDeadline()).toBe(180_000)
-    expect(h.calls()).toEqual({ activations: 0, polls: 0 })
-    expect(h.state()?.lastSnapshotHash).toBeUndefined()
-  })
-  test.each([0, 8_400, 45_000])(
-    'a completed persistence failure retains measured quota %d without the lost-worker reservation',
-    async (measuredDeadline) => {
-      const h = harness({
-        runtime: {
-          poll: (signal) =>
-            Effect.runPromise(
-              settleCompletedBrokerObservationPoll(
-                Effect.fail(
-                  new BrokerReadError({
-                    operation: 'preflight',
-                    kind: BrokerReadErrorKind.Timeout,
-                    retryable: true,
-                    message: 'Broker observation persistence failed',
-                  }),
-                ),
-                Effect.succeed(measuredDeadline),
-              ),
-              { signal },
-            ),
-        },
-      })
-      await h.handlers.activate(h.context, { sourceRevision })
-      expect(h.state()?.lastSnapshotHash).toBeUndefined()
-      expect(h.budgetDeadline()).toBe(measuredDeadline)
-      expect(h.deliveries[0]?.delay.milliseconds).toBe(Math.max(10_000, measuredDeadline))
-    },
-  )
-  test.each([
-    'defect',
-    'interruption',
-    'typed failure with cleanup defect',
-    'typed failure with cleanup interruption',
-  ] as const)('a poll %s retains the conservative lost-worker reservation', async (failure) => {
-    const typedFailure = Effect.fail(
-      new BrokerReadError({
-        operation: 'preflight',
-        kind: BrokerReadErrorKind.Timeout,
-        retryable: true,
-        message: 'injected completed persistence failure',
-      }),
-    )
-    const poll =
-      failure === 'defect'
-        ? Effect.die(new Error('worker defect'))
-        : failure === 'interruption'
-          ? Effect.interrupt
-          : typedFailure.pipe(
-              Effect.ensuring(
-                failure === 'typed failure with cleanup defect'
-                  ? Effect.die(new Error('cleanup defect'))
-                  : Effect.interrupt,
-              ),
-            )
-    const h = harness({
-      runtime: {
-        poll: (signal) => Effect.runPromise(settleCompletedBrokerObservationPoll(poll, Effect.succeed(0)), { signal }),
-      },
-    })
-    await h.handlers.activate(h.context, { sourceRevision })
-    expect(h.state()?.lastSnapshotHash).toBeUndefined()
-    expect(h.budgetDeadline()).toBe(180_000)
-    expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
-  })
   test('publishes before returning activation and schedules only one serial successor', async () => {
     const h = harness()
     const state = await h.handlers.activate(h.context, { sourceRevision })
@@ -314,10 +151,7 @@ describe('Restate broker observation owner', () => {
             poll: (signal, reservation) =>
               execute(
                 Effect.gen(function* () {
-                  if (
-                    (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))._tag !==
-                    'Claimed'
-                  )
+                  if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)))
                     return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
                   yield* budget.beginCapture
                   yield* Effect.all(
@@ -379,10 +213,7 @@ describe('Restate broker observation owner', () => {
             poll: (signal, reservation) =>
               execute(
                 Effect.gen(function* () {
-                  if (
-                    (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))._tag !==
-                    'Claimed'
-                  )
+                  if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)))
                     return { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs } as const
                   polls.push(yield* Clock.currentTimeMillis)
                   yield* budget.beginCapture
@@ -447,8 +278,7 @@ describe('Restate broker observation owner', () => {
                     execute(
                       Effect.gen(function* () {
                         if (
-                          (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))
-                            ._tag !== 'Claimed'
+                          !(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))
                         ) {
                           return {
                             _tag: 'Unavailable',
@@ -537,10 +367,7 @@ describe('Restate broker observation owner', () => {
                   poll: (signal, reservation) =>
                     execute(
                       Effect.gen(function* () {
-                        if (
-                          (yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs))
-                            ._tag !== 'Claimed'
-                        )
+                        if (!(yield* budget.claimCapture(reservation.captureToken, reservation.captureStartDeadlineMs)))
                           return {
                             _tag: 'Unavailable',
                             nextPollNotBeforeMs: reservation.interruptedNotBeforeMs,

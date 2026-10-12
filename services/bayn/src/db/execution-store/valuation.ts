@@ -3,7 +3,6 @@ import { Effect } from 'effect'
 
 import type { ValuationInput } from '../../broker/observations'
 import type { Valuation } from '../../execution/contracts'
-import type { WriterFenceService } from '../../execution/writer-fence'
 import type { ExecutionStoreError } from './contract'
 import { VALUATION_SNAPSHOT_MAX_SKEW_MS } from './contract'
 import { decideStoredValuation, planValuation, requireValuationPositionSnapshot } from './decisions'
@@ -37,16 +36,13 @@ export interface ValuationInterpreter {
   readonly hasAccountBaseline: (accountId: string) => Effect.Effect<boolean, ExecutionStoreError>
 }
 
-export const makeValuationInterpreter = (
-  sql: PgClient.PgClient,
-  writerFence: WriterFenceService,
-): ValuationInterpreter => {
+export const makeValuationInterpreter = (sql: PgClient.PgClient): ValuationInterpreter => {
   const value = (input: ValuationInput): Effect.Effect<Valuation, ExecutionStoreError> =>
     runExecutionOperation(
       'valuation',
       decodeValuationInput(input).pipe(
         Effect.flatMap((decoded) =>
-          writerFence.transaction(
+          sql.withTransaction(
             Effect.gen(function* () {
               const [accountSnapshot] = yield* sql<Record<string, unknown>>`
                 SELECT

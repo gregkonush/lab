@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer } from 'effect'
+import { Effect, Layer } from 'effect'
 
 import { resolveTemporalEnvironment, type TemporalConfig } from '../config'
 import { deriveWorkerBuildId } from '../worker/defaults'
@@ -49,7 +49,7 @@ export const runWorkerApp = (options: WorkerAppLayerOptions = {}): Effect.Effect
     Effect.scoped(
       Effect.gen(function* () {
         const failureSignal = yield* WorkerRuntimeFailureSignal
-        return yield* Deferred.await(failureSignal)
+        return yield* failureSignal
       }),
     ),
     createWorkerAppLayer(options),

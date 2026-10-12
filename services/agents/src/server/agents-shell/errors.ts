@@ -3,8 +3,6 @@ import { Data } from 'effect'
 export class AgentsShellRuntimeError extends Data.TaggedError('AgentsShellRuntimeError')<{
   readonly message: string
   readonly cause?: unknown
-  readonly code?: 'CAPACITY_BUSY' | 'IDEMPOTENCY_CONFLICT' | 'SHUTTING_DOWN'
-  readonly retryAfterMs?: number
 }> {}
 
 export type AgentsShellError = AgentsShellRuntimeError

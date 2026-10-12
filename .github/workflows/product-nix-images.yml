@@ -9,15 +9,13 @@ on:
     branches:
       - main
     paths:
-      - '.github/actions/affected-inputs/**'
-      - 'packages/scripts/src/ci/**'
       - 'apps/app/**'
       - 'apps/docs/**'
       - 'apps/landing/**'
       - 'apps/synthesis/**'
       - 'packages/backend/**'
       - 'packages/design/**'
-      - 'services/tengri/**'
+      - 'services/tengri/proto/**'
       - 'nix/images/app.nix'
       - 'nix/check-bun-dependency-closure.sh'
       - '.github/workflows/nix-bun-dependency-closure.yml'
@@ -51,7 +49,7 @@ on:
       - 'apps/synthesis/**'
       - 'packages/backend/**'
       - 'packages/design/**'
-      - 'services/tengri/**'
+      - 'services/tengri/proto/**'
       - 'nix/images/app.nix'
       - 'nix/check-bun-dependency-closure.sh'
       - '.github/workflows/nix-bun-dependency-closure.yml'
@@ -103,37 +101,30 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: arc-amd64
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || fromJSON(steps.filter.outputs.affected).proompteng }}
-      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || fromJSON(steps.filter.outputs.affected).app }}
-      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || fromJSON(steps.filter.outputs.affected).synthesis }}
-      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || fromJSON(steps.filter.outputs.affected).docs }}
+      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
+      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
+      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
+      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: Check for product image input changes
         if: github.event_name != 'workflow_dispatch'
         id: filter
-        uses: ./.github/actions/affected-inputs
+        uses: dorny/paths-filter@v3
         with:
-          workspaces: |
-            proompteng: ['', 'apps/landing', 'packages/backend', 'packages/design']
-            app: ['', 'apps/app', 'packages/design']
-            synthesis: ['', 'apps/synthesis', 'packages/design']
-            docs: ['', 'apps/docs', 'packages/design']
           filters: |
             proompteng:
               - 'apps/landing/**'
               - 'packages/backend/**'
               - 'packages/design/**'
-              - 'services/tengri/**'
+              - 'services/tengri/proto/**'
               - 'nix/images/proompteng.nix'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/packages.nix'
@@ -221,7 +212,7 @@ jobs:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
-      publish_kargo_tag: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}
+      publish_kargo_tag: true
       pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit

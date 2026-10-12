@@ -7,24 +7,6 @@ import {
 } from './schemas'
 
 describe('Tengri BFF action schema', () => {
-  test('power settings enforce integer idle limits and reject modes that retain RAM', () => {
-    const action = { action: 'update-power-settings', agentId: 'agent-test' }
-    for (const idleTimeoutMinutes of [0, 5, 60, 1440]) {
-      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(true)
-    }
-    for (const idleTimeoutMinutes of [-1, 0.5, 1441, '60', null]) {
-      expect(tengriActionSchema.safeParse({ ...action, power: { idleTimeoutMinutes } }).success).toBe(false)
-    }
-    expect(
-      tengriActionSchema.safeParse({ ...action, power: { sleepMode: 'hibernate', idleTimeoutMinutes: 60 } }).success,
-    ).toBe(false)
-    expect(
-      tengriActionSchema.safeParse({
-        ...action,
-        power: { idleTimeoutMinutes: 60, ownerHash: 'other' },
-      }).success,
-    ).toBe(false)
-  })
   test('accepts model options on conversation operations and rejects invalid choices', () => {
     for (const action of [
       { action: 'create-thread', agentId: 'agent-test' },
@@ -47,13 +29,12 @@ describe('Tengri BFF action schema', () => {
   })
 
   test('validates editor window identity and rejects editor ports in ordinary previews', () => {
-    expect(tengriActionSchema.safeParse({ action: 'browser-session', agentId: 'agent-test' }).success).toBe(true)
     const editor = { action: 'editor-session', agentId: 'agent-test', windowId: 'desktop-stable-code-window' }
     expect(tengriActionSchema.safeParse(editor).success).toBe(true)
     for (const windowId of ['short', '../arbitrary-window-path', 'a'.repeat(129)]) {
       expect(tengriActionSchema.safeParse({ ...editor, windowId }).success).toBe(false)
     }
-    for (const port of [13337, 13338, 13339]) {
+    for (const port of [13337, 13338]) {
       expect(
         tengriActionSchema.safeParse({
           action: 'preview-session',
@@ -293,42 +274,6 @@ describe('Tengri BFF action schema', () => {
         agentId: 'agent-123',
         path: '/workspace',
         query: `${exact}é`,
-      }).success,
-    ).toBe(false)
-  })
-})
-
-describe('Codex image inputs', () => {
-  const png = { mediaType: 'image/png', data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]).toString('base64') }
-  const request = { action: 'send-turn', agentId: 'agent-123', threadId: 'thread-1', text: '' }
-  test('accepts image-only and mixed text/image messages', () => {
-    expect(tengriActionSchema.safeParse({ ...request, images: [png] }).success).toBe(true)
-    expect(tengriActionSchema.safeParse({ ...request, text: 'Inspect this', images: [png] }).success).toBe(true)
-    expect(
-      tengriActionSchema.safeParse({ ...request, action: 'steer-turn', turnId: 'turn-1', images: [png] }).success,
-    ).toBe(true)
-    expect(tengriActionSchema.safeParse(request).success).toBe(false)
-  })
-  test('rejects spoofed formats, malformed base64, remote URLs, and excessive images', () => {
-    for (const image of [
-      { ...png, mediaType: 'image/jpeg' },
-      { ...png, data: 'https://example.test/image.png' },
-      { ...png, data: 'not base64' },
-      { ...png, mediaType: 'image/svg+xml' },
-    ])
-      expect(tengriActionSchema.safeParse({ ...request, images: [image] }).success).toBe(false)
-    expect(tengriActionSchema.safeParse({ ...request, images: Array(5).fill(png) }).success).toBe(false)
-  })
-  test('bounds each image and total decoded size', () => {
-    const bytes = Buffer.alloc(4 * 1024 * 1024)
-    Buffer.from(png.data, 'base64').copy(bytes)
-    const exact = { ...png, data: bytes.toString('base64') }
-    expect(tengriActionSchema.safeParse({ ...request, images: [exact, exact] }).success).toBe(true)
-    expect(tengriActionSchema.safeParse({ ...request, images: [exact, exact, png] }).success).toBe(false)
-    expect(
-      tengriActionSchema.safeParse({
-        ...request,
-        images: [{ ...png, data: Buffer.concat([bytes, Buffer.from([0])]).toString('base64') }],
       }).success,
     ).toBe(false)
   })

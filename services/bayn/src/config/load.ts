@@ -15,6 +15,8 @@ interface RuntimeConfigFailurePresentation {
 
 const presentRuntimeConfigFailure = (failure: RuntimeConfigResolutionFailure): RuntimeConfigFailurePresentation => {
   switch (failure._tag) {
+    case 'InvalidEvaluationBounds':
+      return { operation: 'load', message: `invalid Signal evaluation bounds: ${failure.cause.message}` }
     case 'CyclePollIntervalNotShorterThanStallThreshold':
       return {
         operation: 'cycle-loop',

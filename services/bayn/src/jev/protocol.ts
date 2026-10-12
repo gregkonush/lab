@@ -7,8 +7,6 @@ import { maximumIntradayObservationLagMs } from '../market-data/intraday/verific
 import { PositiveIntegerSchema, SymbolSchema, UnitIntervalSchema, strictParseOptions } from '../schemas'
 import {
   intradayExecutionModel,
-  intradayLookbackMinutes,
-  intradayDecisionDelaySeconds,
   intradaySourceTopics,
   intradayStreamingContract,
   IntradayStreamingInputSchema,
@@ -20,11 +18,8 @@ const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Probability = UnitIntervalSchema.check(Schema.isGreaterThan(0.5))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
-export const momentumFirstEntryPolicy = 'bayn.positive-relative-momentum-entry.v1' as const
-
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literals(['bayn.jev.protocol.v1', 'bayn.jev.protocol.v2']),
-  entrySignalPolicy: Schema.optionalKey(Schema.Literal(momentumFirstEntryPolicy)),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v1'),
   model: Schema.Literal(jevModel),
   inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v2'),
   streamingInput: IntradayStreamingInputSchema,
@@ -41,8 +36,8 @@ const ProtocolBase = Schema.Struct({
     trades: Schema.Literal(intradaySourceTopics.trades),
   }),
   positionPolicy: Schema.Literal('long-only'),
-  lookbackMinutes: Schema.Literal(intradayLookbackMinutes),
-  decisionDelaySeconds: Schema.Literal(intradayDecisionDelaySeconds),
+  lookbackMinutes: Schema.Literal(30),
+  decisionDelaySeconds: Schema.Literal(2),
   maximumDecisionLagMs: PositiveIntegerSchema,
   maximumQuoteAgeMs: Schema.Literal(10_000),
   candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
@@ -67,11 +62,6 @@ const ProtocolBase = Schema.Struct({
 export const JevProtocolSchema = ProtocolBase.check(
   Schema.makeFilter((protocol) => {
     const issues: Schema.FilterIssue[] = []
-    if ((protocol.schemaVersion === 'bayn.jev.protocol.v2') !== (protocol.entrySignalPolicy !== undefined))
-      issues.push({
-        path: ['entrySignalPolicy'],
-        issue: 'momentum entry policy requires protocol v2, and v2 requires it',
-      })
     if (protocol.universe.join(',') !== intradayUniverse.symbols.join(','))
       issues.push({ path: ['universe'], issue: 'must match the source-controlled market-data universe' })
     const candidates = [...new Set(protocol.candidateSymbols)].sort()
@@ -118,8 +108,8 @@ export const defaultJevProtocolDocument = Object.freeze({
   delayClass: 'real_time_exchange_only',
   sourceTopics: intradaySourceTopics,
   positionPolicy: 'long-only',
-  lookbackMinutes: intradayLookbackMinutes,
-  decisionDelaySeconds: intradayDecisionDelaySeconds,
+  lookbackMinutes: 30,
+  decisionDelaySeconds: 2,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 10_000,
   candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
@@ -141,13 +131,6 @@ export const defaultJevProtocolDocument = Object.freeze({
   executionModel: intradayExecutionModel,
 } as const)
 
-/** Momentum-first research policy. Activation requires its own reviewed strategy and mandate identity. */
-export const momentumFirstJevProtocolDocument = Object.freeze({
-  ...defaultJevProtocolDocument,
-  schemaVersion: 'bayn.jev.protocol.v2',
-  entrySignalPolicy: momentumFirstEntryPolicy,
-} as const)
-
 export const decodeJevProtocol = (input: unknown) =>
   Schema.decodeUnknownResult(
     JevProtocolSchema,
@@ -157,6 +140,5 @@ export const decodeJevProtocol = (input: unknown) =>
   )
 
 export const jevBehaviorHash = sha256('bayn.jev.behavior.v3')
-export const momentumFirstJevBehaviorHash = sha256('bayn.jev.momentum-first.behavior.v1')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...candidates, protocol.benchmarkSymbol].sort()

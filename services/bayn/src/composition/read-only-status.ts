@@ -14,6 +14,7 @@ import { BrokerAccess } from '../execution/authority'
 import { checkHealth, type CycleObservationBinding } from '../health'
 import { serveHttp } from '../http'
 import { Journal } from '../ledger'
+import { MarketDataHealth } from '../market-data'
 import { initialState, type RuntimeState } from '../runtime-state'
 import { observeCycleGenerationHash, runtimeBroker } from './lifecycle'
 import {
@@ -209,6 +210,7 @@ export const readOnlyExecutionControllerBinding = (
 export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'AutonomousService'>) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
+    const marketData = yield* MarketDataHealth
     const journal = yield* Journal
     const cycleObservability = yield* CycleObservability
     const controllerStatus = yield* ExecutionControllerStatusStore
@@ -233,7 +235,7 @@ export const runReadOnlyAutonomousStatusService = (plan: ApplicationPlanFor<'Aut
         ...(controller === undefined ? {} : { executionController: controller }),
       }),
     )
-    const dependencies = { journal, postgresql: postgresHealthCheck(sql), cycleObservability }
+    const dependencies = { marketData, journal, postgresql: postgresHealthCheck(sql), cycleObservability }
     yield* refreshReadOnlyCapitalActivation(plan, configured, state, activationStore)
     yield* serveHttp(observePlan.config, state, observePlan.strategy.provenance, observePlan.config.build.verification)
 

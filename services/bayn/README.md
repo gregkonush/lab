@@ -4,36 +4,8 @@ Bayn is a single-writer intraday execution service. Restate schedules one accoun
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using momentum-first `bayn.jev.protocol.v2`. Historical strategy
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v1`. Historical strategy
 rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
-
-The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a protocol-v2 entry gate:
-exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
-The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
-
-## Profitability goal
-
-The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.
-
-Demonstrate repeatable positive net profit after execution, model, and allocated data costs on untouched prospective
-sessions. The working target remains the frozen
-[`jev-migration-acceptance-v2`](../../docs/bayn/jev-migration-acceptance-v2.json) contract: at least $5,000 net over
-20 consecutive registered sessions on the existing $100,000 PAPER allocation, maximum session loss $1,000, and
-maximum marked drawdown $2,500. Its paired-control, uncertainty, execution-stress, activity, and evidence requirements
-all remain in force. Activity targets never require an otherwise unjustified order.
-
-The immediate priorities are reliable recovery and complete cost accounting, then the existing
-[`matched-entry study`](../../docs/bayn/matched-entry-study.md) to test Jev's incremental value under common timing,
-sizing, and exits. Historical trades are development evidence. A selected confidence score, a positive day, or an
-engineering improvement cannot complete economic qualification. Freeze any candidate revision and its cost and
-execution assumptions before its next untouched evaluation; retain failed and inconclusive attempts. Preserve the
-current broker, capital, and risk limits throughout this work.
-
-The [retained session export](../../docs/bayn/study-evidence-export.md) supplies complete native Jev observations,
-plans and results for these diagnostics through a bounded read-only command. It retains exclusions, abstentions,
-pending results and no-batch cycles; its receipt explicitly remains unqualified.
-The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
-assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
 ## Broker observation owner
 
@@ -44,23 +16,12 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
-The observation owner's child runtimes share the worker's configured logger and tracer. The
-`bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
-across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
-observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
-
-Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
+Each poll retains the complete paginated order, fill and fee history with the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
-projection. Each continuous health pass reads and validates one complete projected cut for all six broker components,
-rather than fetching and decoding the full history six times. The next pass revalidates a new read; no successful or
-failed cut is memoized across passes. Unprojected broker health retains its independent endpoint probes. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
+projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
-
-Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
-the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
-without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
@@ -80,44 +41,16 @@ Maximum-hold, model and protective exits use the same broker ceiling. An expired
 rejects the exit; accepting a cached position does not extend a model response or executable quote's deadline.
 A mutation or newer retained broker event can invalidate a successful cut before the next poll. While that cut is
 still within the cache lifetime, execution retains `WAITING / BROKER_OBSERVATION_PENDING` and performs no order I/O.
-Pending cuts continue after one second, bounded by the configured controller cadence, instead of waiting for the
-normal idle interval. The continuation survives worker replacement through the existing durable controller schedule.
-The same continuation applies when a terminal close needs a newer exact broker cut, including partial-fill recovery.
-Transport failures, inexact accounting and unresolved order or mutation evidence retain the normal retry cadence.
-An advanced mutation with no remaining consistency delay still schedules its reconciliation continuation rather than
-falling back to the idle interval. Every continuation rechecks existing evidence, quantity and submission deadlines.
-Each waiting pass rechecks the projection without broker requests, model calls or order I/O. Expiry, a failed poll,
-wrong source revision or corrupt evidence remain failures; waiting cannot make unavailable data usable or clear an
-authority restriction.
-
-Known `LOOKBACK_WARMUP` and `SIGNAL_WINDOW_OBSERVED` readiness timestamps can shorten the next durable controller
-wait to the next eligible signal boundary. Only a future timestamp before the entry cutoff and earlier than the
-existing continuation qualifies. Elapsed, missing or invalid timestamps, other readiness reasons and failed passes
-keep their normal cadence. Every wake rechecks source readiness and the existing completed-window admission; it
-does not repeat inference on an already consumed window or change broker polling, signal history or position limits.
-
-Discretionary management is bounded by the earliest of the first-fill holding deadline, inference-validity budget,
-and broker-evidence freshness boundary. A completed or retryable management result rechecks the holding deadline
-before returning. Cancellation still waits for scoped finalizers. If finalization outlasts broker freshness, the
-result requires reconciliation instead of constructing an exit from stale evidence. The holding-deadline log records
-any overrun and the broker-evidence expiry; order authorization retains all existing risk checks.
-
-Held-position waits also retain the first-fill-based maximum-hold deadline. A future deadline caps the next wake,
-while an earlier signal boundary still wins. The absolute bound survives management work, completion persistence,
-and worker replay. If work crosses a deadline that was future when management checked it, one continuation rechecks
-the position; an already-overdue evaluation retains the normal evidence-wait cadence. This schedules exit evaluation,
-not a guaranteed broker-flat time: fresh reconciliation, executable quotes, risk checks and partial-fill recovery
-remain required. Old retained completions keep their existing durable replay command order.
-The send boundary uses a live transport clock rather than a journaled time sample, so a restart before send
-persistence cannot add the old remaining delay again. An overdue successor is scheduled once with a one-millisecond
-minimum; actual delivery still depends on Restate availability and the next pass repeats the normal execution guards.
+Each waiting pass rechecks the projection. Expiry, a failed poll, wrong source revision or corrupt evidence remain
+failures; waiting cannot make unavailable data usable or clear an authority restriction.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
 with one order page, two fill pages and one fee page uses fourteen calls, approximately eighty-four calls per minute
 at the default cadence. The background client's transport counts every actual attempt, including startup verification,
 pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
-100 background calls per minute on average, or half a smaller reported account limit. The three independent history endpoints run concurrently; individual captures can burst. Response headers showing one-quarter or less of account quota
+100 background calls per minute on average, or half a smaller reported account limit. Complete captures keep their
+existing concurrency; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
 or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
 journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
@@ -126,43 +59,13 @@ poll cadence rather than adding artificial delays inside a full history scan. Be
 activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
 and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
 allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
-deadline elapsed, returns unavailable without repeating broker I/O. When the same worker atomically consumes a
-matching unused expired ticket, successful invalidation and the existing journaled poll result prove that capture
-never started. Only then can the owner replace speculative debt with the existing measured HTTP/quota deadline;
-it logs the reason and capture-start lateness without ticket contents. A lost result before journaling still retains
-the full reservation. A journaled result replays without another claim or a reset capture clock.
-A completed capture replaces the reservation with
+deadline elapsed, returns unavailable without repeating broker I/O. A completed capture replaces the reservation with
 its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
 timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
-Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
-quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
-Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
-client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
-and missing, mismatched, already claimed or replaced-worker capture tickets retain the conservative reservation.
-Failure or interruption before the unused-ticket result is journaled also retains that reservation.
 Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
 the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
 capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
 the background budget does not impose a global limit on other account callers.
-
-One serialized execution pass reads its unfinished cycle once and advances acquisition, activation and decision
-binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
-repeating an admission transition fails closed. Each transition checks the current clock, and restart begins with a
-fresh durable cycle read. Already committed intents retain exact immutable intent/decision validation without
-repeating their writer-fenced commit transaction. Missing intents still use that atomic transaction; a persisted
-`PLANNED` row is rejected as incomplete atomic persistence. Mutable intent state is read again after reconciliation,
-and close planning reuses only the closure read by its owning pass.
-Terminal close checks and archive-backed residual planning use the pass-owned reconciliation read instead of replaying the same
-broker history through accounting and PostgreSQL. Reuse still checks evidence age and current authority; the broker
-observations must cover the close intent's settlement time. The pass discards that evidence after a broker mutation,
-and the next command reconciles again. Invalid or older preflight evidence triggers an immediate refresh before
-waiting for settlement. If archive pricing fails, reconciled-position liquidation samples the broker
-again after that attempt so intervening fills affect the remaining quantity.
-
-Untouched expired entry approvals can retire under restricted submission authority only in canonical intent order.
-A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
-with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
-Close documents retain their existing residual-replanning and hard-deadline failure behavior.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -170,9 +73,6 @@ intent's own start event; other mutations or newer durable broker evidence inval
 before transmission and after completion, failure or interruption. Unknown or unresolved requests block submission;
 settled observations remain available to native reconciliation and lookup-only recovery so an unknown outcome cannot
 deadlock its own recovery. Observing an account never grants trading authority.
-Submit and cancel check the writer fence in their durable reservation transaction; there is no separate empty
-precheck transaction. Final submit authorization and mutation outcome persistence retain their existing transactional
-fences.
 A later poll must start after the existing one-second broker consistency window. Lookup-only recovery invalidates a
 cut when it finds new durable order state. Restarting a worker does not create a second cache or bypass reservations.
 
@@ -194,15 +94,6 @@ provider precision guarantee. Score answers must also fit the same distribution 
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
-Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
-batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
-transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
-candidates retain independent receipts and all-candidate finalization. Atomic receipt recording and recovery lock
-the batch before the request. A completed batch is verified and reused without opening another transaction. A
-failure, defect or interruption during atomic persistence rolls back the receipt, resolution and result together;
-the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
-evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
-
 The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
 the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
 before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
@@ -212,38 +103,14 @@ includes both buys and sells. Allocation reserves slippage and any current expos
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
-The reviewed sandbox mandate selects a $1,000,000 daily gross-turnover budget through its exact immutable policy hash.
-Retained sandbox mandates stay at $200,000 until explicitly rebound. Live and unspecified environments remain at $200,000.
-At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
-window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
-are unchanged. The paired research request binds the new strategy and policy hashes; historical requests and
-decisions remain immutable. Unknown hashes and the increased hash on live fail closed.
-Durable account/session turnover is retained across policy and worker changes, and completed
-decisions are not reopened. The image's policy-hash annotation verifies the available increased sandbox policy for its
-build-account sentinel; the durable mandate remains the authority for the active account policy.
-The runtime writes version-four Jev batches. Exact positive own and SPY-relative momentum gates precede Jev;
-Jev retains its probability-ranked accept/wait/avoid decision among eligible signals. Verified non-signals,
-wide-spread or zero-displayed-size entry quotes become explicit
-exclusions without a Jev call. An entry batch where every candidate is excluded for a verified momentum or entry-quote reason can
-yield a no-entry decision; missing source evidence cannot. Retained version-one through version-three batches keep their
+The runtime writes version-three Jev batches. Verified wide-spread or zero-displayed-size entry quotes become explicit
+exclusions without a Jev call. An entry batch where every candidate is excluded for a verified entry-quote reason can
+yield a no-entry decision; missing source evidence cannot. Retained version-one and version-two batches keep their
 original identity and quote-deadline binding. Position management still evaluates its held symbol. A complete
-version-four batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
+version-three batch must finish within its ten-second evidence lifetime. After the batch is accepted, entry risk uses
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
-quote deadline for version-three or version-four decisions. These parameters have not established an economic advantage under the
+quote deadline for version-three decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
-
-After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
-refreshed execution quote. A quote that widened or lost either side's displayed liquidity leaves the entry waiting
-for fresh evidence before an intent is built. The accepted model evidence remains immutable; quote freshness,
-quantity caps and final submission deadlines still apply. This entry check never suppresses a position-reducing exit.
-
-Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
-headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
-limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
-deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
-still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
-final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
-freshness limits are unchanged; the preparation ordering does not guarantee submission.
 
 Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
@@ -273,16 +140,6 @@ Malformed archive identities, hashes, ordering and lineage still fail. Unknown m
 inexact reconciliation, stale broker state and expired close authority still prevent submission. This exit policy
 preserves the reviewed close authority; entry decisions retain their evidence and LIMIT/IOC requirements.
 
-Before that session-close window, an unavailable archive does not trigger a redundant reconciliation for a fallback
-that cannot yet be used. Eligibility is sampled after the archive attempt, so work that crosses into the window may
-use the fallback immediately; the close deadline is checked again after fresh reconciliation. Other before-window
-waits continue on the next configured controller pass. Failed close attempts retain the original data reason in logs.
-A verified snapshot whose executable quote is stale records `CLOSE_QUOTE_PENDING` and requests a one-second durable
-continuation, bounded by the configured cadence and session deadline. Source/bootstrap failures and archive timeouts
-retain the normal cadence. Only one serialized controller pass runs at a time; a continuation rechecks all broker,
-authority, quantity, and quote-freshness gates. This reduces avoidable idle time but cannot guarantee a fill or a
-maximum-hold exit when fresh executable evidence is unavailable.
-
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
 `bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
 at or after the lookback start and available by observation, and 30 consecutive minute bars with their matching rolling feature.
@@ -308,22 +165,8 @@ Historical momentum targets remain readable for audit.
 Entry and position-management observations each commit at most once per completed signal window within a cycle.
 Later polls and process restarts consult the retained observation before creating another inference batch. The next
 evaluation requires the next completed minute and its decision delay. An interrupted or failed observation does not
-authorize another inference attempt on the same window. Entry recovers pending batches and checks the retained window
-before loading full signal history, so a consumed window can wait without rebuilding an unusable snapshot. New entry
-windows still require verified source evidence before observation or inference. Protective stops and the holding limit
-remain eligible on every management pass. Position management checks those protections first, then recovers pending
-batches and checks the retained observation window before loading full signal history. A consumed window therefore does not rebuild its
-signal snapshot; protective quote reads remain fresh on every eligible pass. A newly admitted window still requires
-the matching, verified signal snapshot, and source or durable-store failures cannot authorize an inference attempt.
-
-A newly committed terminal Jev cycle makes one best-effort attempt to seal its own expired pending batches, across
-that cycle's recorded authority generations. This runs after the authoritative cycle mutation and uses the existing
-configured operation timeout and cancellation-aware deadline clock. It never calls the model, waits for an original
-deadline, revives a decision, or scans historical terminal cycles. Unattempted and abandoned outcomes retain the
-original evidence semantics. A missing, unexpired, foreign-cycle or failed cleanup remains explicitly logged as
-incomplete; typed failures, defects and cleanup timeout do not replace the committed terminal receipt. External
-interruption still cancels and joins cleanup without undoing the terminal state. This is evidence closure, not a
-durable retry queue or a guarantee against process death after the terminal commit.
+authorize another inference attempt on the same window. Protective stops and the holding limit remain eligible on
+every management pass.
 
 Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
 does not relax those limits. Required benchmark and execution evidence must become available within the existing
@@ -347,29 +190,8 @@ The batch store commits the full plan before any candidate request can be claime
 database's request receipts and resolutions, serializes competing recovery, and seals unattempted requests at expiry.
 Requested candidates start concurrently across the complete source-verified batch, within its ten-second
 validity window; a slow, failed, or missing result still makes the batch unusable for an entry.
-If mandatory observation persistence consumes the original validity window before an unrecorded batch can start,
-admission returns typed expiry and observation evaluation waits with `INFERENCE_UNAVAILABLE`. It creates no plan,
-request claim, model call or decision. The retained observation still consumes its signal window, and protection
-checks remain first on every management pass. The admission span and JSON warning retain the batch and cycle IDs,
-original observation and expiry times, checked time and elapsed admission lag. Clock regression, corrupted evidence
-and persistence failures remain errors; recorded batches still recover against their original deadline.
 Lost acknowledgements and process restarts replay committed evidence without repeating inference. Late responses
 remain available for accounting but cannot change an abandoned resolution or a finalized batch.
-
-Completed batch rereads load all requested candidates' claims, receipts and resolutions together, then retrieve
-matching observations in one grouped query. Each distinct observation crosses the database boundary once and its
-canonical content hash is verified once per read, with exact cycle, generation, snapshot, symbol and time membership
-checked for every request. A batch with resolved candidate evidence uses three queries including its plan/result
-read, independent of candidate count. Single-candidate evidence reads use the same verifier. Missing or corrupt
-evidence and claims for sealed unattempted candidates still fail verification; validation is not cached across reads.
-
-The cycle store retains at most one fully validated decision's canonical wire JSON, up to eight MiB, after binding
-or a cold durable read. Every reread still queries PostgreSQL and requires full JSONB equality with that retained
-body. A match returns fresh completion and generation evidence without returning or decoding the full document body;
-changed documents return the complete body and take complete validation. Returned documents are detached, and
-completion, supersession, current authority, pricing and expiry checks remain fresh. A retained decoding result does
-not prove that its binding committed and cannot create a missing database row. The `bayn.cycle.decision-read` stage
-records retained wire bytes, match and body row counts, and elapsed read time without recording document contents.
 
 Native decision binding and position management use these contracts. Deployment and full lifecycle acceptance
 remain separate requirements. Historical inference evidence, an API response, or a batch result grants no execution
@@ -463,27 +285,6 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 
 ## Runtime architecture
 
-Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
-`last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
-successful batch-store results, including recovered batches. The journaled advance result binds these references
-into its version-two execution receipt; a completed research-capture event carries the same references alongside
-the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
-snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
-prove that an observation was selected, submitted, traded, or profitable.
-
-The `complete` flag describes only this pass's reference collection, not complete controller knowledge or capture
-coverage. Ordinary passes can create entry and management observations; pending-batch recovery has no fixed count.
-The collection retains at most sixteen unique hashes (about one KiB of hash data). A legitimate recovery touching
-more becomes explicitly incomplete rather than changing trading behavior. A failed store operation, unavailable
-store instrumentation, or invalid reference also marks the collection incomplete. Waiting and expected failure
-results keep references already collected; an aborted action without a returned result has no reference claim.
-An empty complete collection means no Jev observation references were returned by these instrumented operations.
-It does not rule out reuse of a previously bound decision or access to other evidence.
-
-Legacy journal and projection results keep the field absent, with unknown reference coverage and byte-identical
-version-one receipt hashes. Replays retain only their original references and do not rerun evaluation or fabricate
-a fresh capture. This linkage does not prove full-session capture completeness or repair missing historical links.
-
 - `BaynExecutionController` is the only scheduler. Restate serializes handlers by canonical account-binding hash,
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
@@ -499,7 +300,6 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   30-second budget gives statements 25 seconds, reserving five seconds for cancellation and rollback. Smaller budgets
   reserve half their time. The client closes a connection with no network activity halfway through that remaining
   allowance (27.5 seconds for the current budget), so a lost response cannot leave transaction cleanup waiting forever.
-  Its custom socket factory retains the SQL adapter's `TCP_NODELAY` setting for ordinary and cancellation connections.
   The aggregate execution deadline remains unchanged, and an uncertain mutation still requires durable lookup and reconciliation.
 - Connection acquisition and transaction startup are cancellable, including when both pool connections are occupied
   or a BEGIN/fence-query acknowledgment is lost. Interrupted startup still rolls back before releasing its connection
@@ -509,32 +309,12 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   return their pool slots. The integration regression cancels two queued writers and verifies that every pool slot
   remains usable; proving only one subsequent query misses a one-slot leak.
   Pool maintenance and connection deadlines use the live clock, so replay time jumps do not drive transport timers.
-- Authority transition timestamps retain PostgreSQL microsecond precision as UTC strings through SQL comparisons and
-  writes. Converting the transition cut through JavaScript `Date` can place it before a fresh reconciliation within the
-  same millisecond and leave recovery restricted. Public authority observations keep their canonical millisecond format.
 - The `effect@4.0.0` package patch exposes its SQL transaction semaphore. The writer fence supplies that semaphore
   with its reserved transaction connection, so nested SQL savepoints serialize while connection acquisition and
   transaction startup remain cancellable. The regression rolls back one nested transaction and preserves its sibling's writes.
-- Bayn enables SQL span propagation. The pinned PostgreSQL adapter records `postgresql.pid` from the backend startup
-  packet on statement and writer-control spans. Transaction startup and finalization stay under their owning
-  `sql.transaction` span, including empty and failed transactions. Streams that acquire another connection report
-  that connection's PID. Correlate the PID, database pod and exact span interval with PostgreSQL logs and wait samples;
-  process IDs can be reused after a connection ends. This adds no SQL, network requests, polling or metric labels.
-  Clients without SQL propagation leave shared caller spans unlabelled, and tracing-disabled calls keep their results.
-  Slow and failed stage logs retain the PID when their own span carries it, including native writer controls, so
-  PostgreSQL correlation survives an unavailable trace. Other span data is omitted and fast successful stages stay quiet.
 - Stages record failures, interruption, and successful operations taking at least one second. The logs include stage,
   dependency where known, operation, elapsed time, and trace identity. Connection acquisition, transaction begin/commit/
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
-- Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
-  preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
-- Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
-  telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
-  headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
-  quiet. These diagnostics run in the existing background
-  exporter and preserve its retry and shutdown limits; they add no execution or closure calls. The pinned exporter can
-  discard telemetry and disable exports for 60 seconds after failure, so retained structured pass profiles remain
-  necessary when Tempo coverage is incomplete. A failed attempt alone does not establish permanent trace loss.
 - A pass deadline records interruption request time and every active stage/dependency with elapsed time before joining
   cancellation. Nested deadlines share the pass's active-stage map; independent passes have separate maps. Its final warning separates
   `executionElapsedMs` from `cancellationElapsedMs`; `bayn.execution.timeout-recovery` and
@@ -568,15 +348,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
 - Forward performance deducts delayed fees by their trading date when that date belongs to one authority generation.
   Fees on dates shared by generations leave the receipt insufficient until allocation is supported. Account-wide
   ledger verification includes all fees; cash-yield calculations account for their actual observation window.
-  Fees first observed or posted after the selected reconciliation retain their economic-date attribution and
-  amounts, but leave the report `INSUFFICIENT_EVIDENCE` with `UNCLOSED_WINDOW`. A closed reconciliation cut cannot
-  certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
-  authority. Its readiness checks PostgreSQL, ledger, broker reconciliation, and the bound execution controller.
-  It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
-  `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
-  live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.
+  authority.
 - Broker egress is restricted to the configured Alpaca endpoint through the dedicated CONNECT proxy. Credentials and
   plaintext account identity must never appear in logs, metrics, traces, or status responses.
 
@@ -589,8 +363,8 @@ source matching, replay and delivery requirements.
 
 Alpaca WebSocket events enter the existing raw Kafka topics. Each execution worker owns a complete
 `@platformatic/kafka` projection for the 16-symbol core universe. Dorvud/Flink independently publishes rolling
-features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The strategy
-evaluates the fifteen non-SPY symbols, with SPY supplying the benchmark. The public status service does not consume Kafka.
+features to `torghut.market-features.v1`; the archive retains raw and feature messages in ClickHouse. The six strategy
+candidates and SPY benchmark remain unchanged. The public status service does not consume Kafka.
 
 The projection yields to the Node event loop every 256 consumed records, including records discarded after an
 assignment is revoked. Buffered history cannot monopolize the worker while broker I/O, deadlines, and scope
@@ -609,62 +383,7 @@ recovery behavior, and evidence boundaries.
 
 ## Operations
 
-### Runtime and historical-report configuration
-
-The live service, execution controller and activation hook use Kafka/Jev market inputs. Their runtime configuration
-does not require a pinned daily Signal snapshot or its evaluation dates. ClickHouse connection settings remain
-required by the shared configuration for offline evidence reads; they cause no archive acquisition in public status.
-This separation does not alter broker, authority, risk or provenance
-configuration. The three live manifests omit all eight historical settings below; a running service container does
-not supply a historical report context implicitly.
-
-Native intraday forward-performance reports need only the account-bound runtime configuration. They reconstruct
-their market evidence from each retained native snapshot, without an unrelated daily snapshot. Reports whose scope
-includes legacy daily SIP requests also require all eight settings from the intended immutable daily publication:
-
-| Setting                        | Historical input                 |
-| ------------------------------ | -------------------------------- |
-| `BAYN_SIGNAL_SNAPSHOT_ID`      | Immutable daily snapshot SHA-256 |
-| `BAYN_SIGNAL_PUBLICATION_ASOF` | Publication date, `YYYY-MM-DD`   |
-| `BAYN_SIGNAL_CALENDAR_VERSION` | Exact calendar identity          |
-| `BAYN_SIGNAL_DATA_START`       | First data date                  |
-| `BAYN_SIGNAL_DATA_END`         | Last data date                   |
-| `BAYN_SIGNAL_LOOKBACK_START`   | Lookback start date              |
-| `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
-| `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
-
-Use `node dist/forward-performance-command.js --authority-generation <generation-hash>` to scope the report to a
-native mandate without these settings. Only complete absence is optional: partial or malformed historical settings,
-including inconsistent evaluation bounds, still fail configuration before evidence reads. A legacy or mixed-history
-scope without historical settings fails with an explicit error before any market query or ClickHouse acquisition;
-it never omits legacy requests, selects a default snapshot, or implies zero trades or zero performance.
-Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
-identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
-`BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
-
-The live manifests require a binary with this configuration separation. For upgrades from a binary that still
-requires daily snapshot settings at live startup, publish and select the new binary before removing those settings.
-Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
-and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
-the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
-
-The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
-all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
-TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
-precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
-is unchanged. `operatingCostCoverage` remains `INCOMPLETE` until invoice and other operating-cost evidence exists;
-tariff estimates cannot establish fully costed profitability.
-
 ### Private inference operating-cost report
-
-The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
-coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
-`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Verified gross trading P&L and fees remain visible.
-Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
-Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
-receipts keep their original bytes and hashes; this correction applies to newly computed reports.
-Tariffs and expense packets are configured on the private command below. Their account/session scope is not
-silently applied to a generation or window report.
 
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
 Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
@@ -681,51 +400,11 @@ filter execute in a repeatable-read, read-only transaction. More than 10,000 cla
 than returning a partial session. Keep evidence, rate cards, and report outputs private; they are not public status
 endpoints, source fixtures, or CI artifacts. `node dist/inference-cost-command.js` is the corresponding compiled entry.
 
-The native execution server also owns an independent inference-expense projection. Every 30 seconds it reads at
-most 64 resolved requests for its bound account, freezes the original request/receipt/resolution hashes and tariff
-in `inference_expense_quotes`, and posts deterministic transfers to TigerBeetle ledger **7002**. That ledger's unit is
-**USD_PICO**: one USD is 1,000,000,000,000 units, so a single input token at the current Jev list price records 42,000
-units without rounding each call. Session accounts debit estimated inference expense (code 510) and credit
-estimate clearing (code 230). The trading ledger and broker cash balances retain their existing units and purpose.
-
-This projection starts with sessions on 2026-10-05 and the reviewed, frozen Jev 1.13.0 list-price assumption:
-$0.042 per million input tokens and zero output charge, verified at `https://docs.typesafe.ai/models` on
-2026-10-07 UTC. Its tariff interval identifies where Bayn applies that assumption; it is not evidence that the
-provider has guaranteed future prices. Later reviewed tariff changes apply to new quotes. Existing quotes cannot
-be repriced or deleted. A transfer ID binds the account and request independently of tariff revisions. A lost
-TigerBeetle or PostgreSQL acknowledgement replays the same record and verifies all metadata before completing.
-`verified_at` means the frozen quote was checked against its expected ledger records, not against an invoice.
-Retained rejected or abandoned responses with valid usage are included. Missing usage and unpriced models remain
-explicit quote gaps; they produce no fabricated zero charge. An immutable late receipt can add a priced quote to
-an abandoned gap without posting the request twice. Earlier sessions remain outside this projection's coverage.
-
-The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
-Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
-
-```sh
-node dist/inference-cost-command.js --ledger-session 2026-10-06
-```
-
-This mode needs the database/account settings above plus `BAYN_TIGERBEETLE_ADDRESSES` and the normal cluster ID
-(default 2001). It reads the frozen tariff rather than accepting a replacement rate card. It verifies every original
-request graph, the full scoped TigerBeetle account and transfer sets, and posted balances. `coverage` lists missing
-quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
-The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
-and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
-`invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
-expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
-
 Rate cards use `bayn.inference-rate-card.v1` with a `rates` array. Each rate has `provider: "typesafe"`, an exact `model`,
 `currency: "USD"`, a `source` description, canonical UTC `effectiveFrom` / exclusive `effectiveUntil` instants, and
 `inputMicrosPerMillionTokens` / `outputMicrosPerMillionTokens` as unsigned decimal integer strings. Supply the tariff
 applicable to the requested period; a list price is an estimate, not proof of a negotiated rate or an invoice. Model
 intervals may not overlap. Missing model/date coverage is unpriced, not free. An explicit zero output rate is valid.
-
-For non-200 Jev responses, the client reads at most 8 KiB within the original inference deadline and retains only
-validated pinned-model and input/output usage fields. The failed receipt's response hash binds that exact metering
-projection, not the complete HTTP error body. Error text, echoed prompts, credentials and arbitrary fields are not
-retained. Missing, malformed, oversized or interrupted bodies remain unknown; status failures never authorize a
-decision or trigger an inference retry. Previously saved receipts and their missing usage remain unchanged.
 
 The report verifies immutable request, receipt, rejected-response, and resolution hashes. A rejected or abandoned
 decision can still carry billable usage. A claim without retained usage stays unknown: it does not prove either that
@@ -767,19 +446,6 @@ hashes prove file identity, not issuer authenticity, correct classification or c
 reviewed input assertions. This read-only import never mutates broker cash, TigerBeetle, an invoice provider or a bank.
 
 ### Operational diagnostics
-
-Every native execution advance emits one correlated completion or failure record with its controller key, epoch,
-sequence, source revision, wall elapsed time, outcome, receipt and next delay when available, and a per-pass
-`stageTimings` profile. Each stage includes its dependency and operation, call count, inclusive elapsed time, maximum
-call time, failures and interruptions. Nested stages overlap; their times must not be added to estimate wall time.
-The profile uses the existing stage clocks and in-memory pass scope, without additional database or network work.
-Execution-document construction uses the complete durable-document decoder's active-strategy check and returns its
-validated document directly. Durable reads retain the same evidence, identity and risk validation.
-Broker submission distinguishes `entry` and `close`, while its transport stage records `SUBMIT` or `CANCEL` through
-the complete response and classification. SQL transaction acquisition, lease checks, begin, commit and rollback have
-separate spans. SQL `server.address`, `server.port` and `db.namespace` identify the configured connection target,
-including URI host, port, user and database overrides. See the
-[critical-path investigation](../../docs/runbooks/bayn-cycle-operations.md#execution-critical-path).
 
 Jev observation reconstruction failures retain a bounded `observationCheck` and, for broker snapshots, an
 `observationField`. The top-level error identifies schema, source reconstruction, observation time, universe/feed/topic,
@@ -845,12 +511,8 @@ They do not require a snapshot before the first full rolling window exists. `INP
 `EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
 `ABSTAINING`; it is distinct from a blocked session. The authenticated shared
 `BaynExecutionController/<account-key>/activateDeployment` handler verifies deployment ownership and handoff, warms
-the private broker-observation owner, and waits for a fresh completed native pass and its successor after the
-sequence observed at request entry. Reactivation wakes a deferred controller even on the same revision. Its immediate
-probe is bound to the activation invocation and worker revision; retries retain that identity, and a new explicit
-activation can retry an exhausted probe. Delayed deliveries remain subject to the existing exclusive sequence checks.
-Its verified result remains available for seven days, and the activation Job logs the invocation ID. The journal is
-removed at completion so the
+the private broker-observation owner, and waits for a completed native successor pass. Its verified result remains
+available for seven days, and the activation Job logs the invocation ID. The journal is removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
@@ -874,15 +536,6 @@ Candidate observations are stored in the append-only `intraday_candidate_observa
 Native content hashes bind the cycle, authority generation, protocol, snapshot manifest, raw rows, and reconciled
 portfolio. Entry and management decisions additionally bind the completed inference batch. The corresponding log
 contains that hash, candidate symbols, and source exclusions. A failed audit write fails the pass.
-
-Protective exits also emit `bayn.jev-protective-quote-diagnostics.v1`. Its
-`IEX_EXCHANGE_ONLY_NOT_NBBO` reference scope and `pairedFeedComparisonAvailable=false` make clear that the trigger was
-observed on the configured exchange-only feed, not proved against a consolidated quote. The event retains the exact
-quote timestamp, approximate spread in basis points, and the entry spread threshold for comparison, without quote
-prices, inventory, or account identifiers. A wide spread does not suppress a protective exit: entry eligibility and
-risk-reducing liquidation have different purposes. This diagnostic does not change the stop, decision identity,
-quote freshness, model input, data entitlement, or broker/capital authority. Consolidated-price comparisons require
-separately verified evidence and cannot be inferred from a subsequent paper fill.
 
 Execution latency metrics use separate clocks:
 
@@ -927,43 +580,11 @@ configured runtime:
 node dist/forward-performance-command.js --authority-generation <generation-hash>
 ```
 
-That invocation remains read-only. To append the generation report to the durable forward-performance receipt table,
-opt in explicitly after the evidence window has closed:
-
-```sh
-node dist/forward-performance-command.js --authority-generation <generation-hash> --persist-receipt
-```
-
-Receipt persistence requires a terminal PAPER generation with sufficient, closed, exactly reconciled evidence.
-Terminal means either already superseded, or still current but non-effective with the system-authored completion or
-activation-expiry restriction reconciled after that restriction. The latter permits the receipt required by normal
-authority rollover without first requiring rollover itself. Operator kills and retryable restrictions do not qualify.
-A non-null reconciliation timestamp alone does not prove terminality. The command rejects active or unsettled
-generations, open windows, unknown costs and other evidence gaps before inserting anything; use the read-only
-invocation for provisional diagnostics. Terminality and the final cycle are checked inside the append transaction.
-Appending a receipt does not update authority, clear a kill, or itself rearm a mandate.
-An expired sandbox mandate with no execution evidence may use the existing rearm path without a profitability
-receipt. That narrow exception requires a fresh exact reconciliation, a trusted flat position observation, no open
-or unknown orders, and settled mutations. Any fill, accounted execution or positive filled-order quantity bound to
-the generation retains the receipt requirement. Zero executions remain unqualified and never imply profitability.
-The write command acquires the execution writer fence before reading report evidence and holds it through the
-append and commit, so broker/accounting ingestion cannot change the snapshot between evaluation and persistence.
-The fenced operation is bounded by the configured operation timeout and fails without writing when the fence is busy.
-Read-only diagnostics retain their independent repeatable-read, read-only transaction and do not acquire that fence.
-Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
-evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
-
 Without that option, the command evaluates account history, which may span retired strategies and mandates.
-An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
-Native-only account history does not. A native scope without completed executions remains unqualified; successful
-configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
-`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
-attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
-`INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
-change the immutable per-generation receipt schema.
-The default report reads performance and inference-expense records in one read-only repeatable-read PostgreSQL
-transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
+The command emits `bayn.forward-performance-report.v1`. Its `receipt` contains the unchanged v3 financial receipt;
+`positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions, and `reportHash`
+binds both. Native controller persistence still writes only the original v3 receipt. The analysis report never changes
+an immutable per-generation receipt or requires mixed-version replicas to read a new stored field.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
 created before its generation activates; its creation timestamp does not override that durable binding. Account,
 research plan and protocol must still match, and an unbound cycle cannot establish a research strategy identity.
@@ -996,50 +617,9 @@ and any future cycle with durable execution work still prevent a sufficient rece
 
 ## Replay and backtesting
 
-`bayn-gap-recovery` is an offline, original-receipt decision replay command in the
-service image. It implements the fixed gap-recovery entry rule, with a separate
-pure position-exit evaluator, but does not replace the active strategy or submit
-orders. See [the gap-recovery contract](../../docs/bayn/gap-recovery.md) for exact
-inputs, limitations, and the command.
-
-`src/intraday-replay/six-bar-features.ts` extracts a separate offline research observation from an original-capture
-cursor. Each candidate and SPY require six exact consecutive completed regular-session minute bars. The seven
-ordered values are the candidate's one-minute close return, five-minute return relative to SPY, SPY's five-minute
-return, root-sum-square of five candidate log returns, quote spread in basis points, displayed-size imbalance, and
-elapsed calendar-session fraction. Missing minutes are explicit and are never filled from older bars.
-
-The research definition requires a two-second watermark delay, zero producer-clock allowance, and quotes no older
-than ten seconds. Each producer publication must precede or equal its original consumer receipt. Both symbols
-require positive displayed sizes and spread at most five basis points. Candidate
-trades may occur anywhere in the selected window. SPY requires post-window quotes and trades, and its trade must be
-no older than ten seconds at observation. This definition is stricter than the streaming source-clock allowance.
-
-Available values, evidenced spread or size exclusions, and unavailable inputs are separate outcomes. Each outcome
-binds the definition, source, query, original receipt cut, decoded record-text hashes, and selected availability times.
-`recordTextSha256` hashes the decoded UTF-8 text, which can differ from the original byte hash for malformed UTF-8.
-The verified capture export and source hashes bind original bytes and receipt coordinates. Callers must verify the
-capture interval and source bytes through `replayResearchCaptureInterval` and `openBacktestSource` before using its cursor.
-Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
-It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
-contract. Capture interval verification remains the caller's responsibility before economic research.
-
-The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
-control-study input v6 and artifact v2. It compares the seven-feature score with the genuine training-only
-day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
-30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
-existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
-no production registration, qualification or capital authority.
-
 ### Bounded mechanical control and turnover comparison
 
-The explicitly opted-in `bayn.control-study-input.v4` adds the research-only
-`SPY_RELATIVE_SHOCK_REBOUND_60S_V1` falsification candidate described in
-[control portfolios](../../docs/bayn/control-portfolios.md#frozen-residual-shock-falsification-candidate).
-It uses the same offline portfolio and execution accounting, with a frozen exact-rational signal and a
-poll-delayed 60-second exit target. It is not a profitability claim, qualification, production strategy registration,
-or trading activation. Legacy v2/v3 inputs retain their original three policies and definition hashes.
-
-`bayn-control-study` supports the strictly offline `MECHANICAL` management mode, which creates no provider
+`bun tools/control-study.ts` supports the strictly offline `MECHANICAL` management mode, which creates no provider
 client, broker account, database or capital authority. Its three fixed control policies share the native control
 portfolio's point-in-time quotes, finite displayed-liquidity consumption, IOC partial fills, fee accounting, loss and
 drawdown limits, close deadlines and explicit missing-data outcomes. A mechanical control is not an exact replay of
@@ -1060,11 +640,6 @@ output files. Current asset eligibility must be labeled counterfactual rather th
 charge is an explicit incremental-cost scenario, not proof of zero operating costs. Apply further cost/latency stress
 without selecting favorable dates or erasing missing observations. Development comparisons do not satisfy the frozen
 prospective qualification protocol and never activate a different model, prompt, threshold or trading policy.
-
-For the bounded paired Jev-versus-relative-momentum experiment with shared protective exits, abstentions,
-cost coverage and prospective completeness gates, use the
-[matched entry study](../../docs/bayn/matched-entry-study.md). It remains an offline opportunity test and grants no
-strategy promotion or trading authority.
 
 For a development comparison of retained Jev entry signals against fixed deterministic rules, use the
 [signal study command](../../docs/bayn/jev-signal-study.md). It verifies the original source and measures common
@@ -1249,40 +824,6 @@ additional full execution windows are needed, preserving the earlier dataset ver
 
 ## Validation
 
-### Property tests and structured fuzzing
-
-`bun run --cwd services/bayn test:property` runs the fixed seed `20261003` with 100 generated cases per property
-(20 for full streaming snapshots and acceptance bootstraps). These tests also run in the normal `test` command and
-existing Bayn CI gate.
-The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
-mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
-row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
-authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
-All data is synthetic; no broker, database, or live account is contacted.
-
-Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
-
-```sh
-BAYN_PROPERTY_SEED=123456789 bun run --cwd services/bayn test:fuzz
-# Or choose an explicit size (1–100000 cases per property):
-BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_RUNS=5000 bun run --cwd services/bayn test:property
-```
-
-Each property has a 120-second campaign budget; interruption fails rather than silently reducing coverage.
-The command allows 150 seconds per test. `fast-check` shrinks failures and reports their seed, path and minimal
-counterexample. The same information is retained under `services/bayn/.fuzz-failures/` (git-ignored).
-Replay one failure using the reported seed/path and the exact test name, for example:
-
-```sh
-cd services/bayn
-BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_PATH='0:1:2' bun test src/intraday-replay/ledger.property.test.ts \
-  --test-name-pattern 'property: a one-micro oversell' --timeout 150000
-```
-
-Never apply a shrink path to the whole suite. After fixing a discovered product defect, keep the minimized
-synthetic case as an ordinary named regression test so changing the campaign seed cannot lose coverage.
-`fast-check` is an exact, direct development dependency for shrinking and replay; it is not in the runtime image.
-
 ```sh
 bun run --filter @proompteng/bayn test
 bun run --filter @proompteng/bayn test:postgres
@@ -1303,8 +844,3 @@ BAYN_TEST_TIGERBEETLE_ADDRESS=127.0.0.1:39701 bun test services/bayn/src/ledger/
 
 Historical development candidates are terminal, non-executable records summarized in
 [`docs/bayn/candidate-terminal-history.md`](../../docs/bayn/candidate-terminal-history.md).
-
-OTLP failure warnings include consecutive failed attempts. The exporter logs a successful request after failures,
-with the attempt count and elapsed outage time. This confirms transport recovery for that request, not completeness
-of spans during the outage. Broker projection rejection logs distinguish stale, future, account and chronology
-failures with observation age, without recording account identifiers or payloads.

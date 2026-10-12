@@ -2,7 +2,8 @@ import { createPrivateKey, createPublicKey, X509Certificate } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { Code } from '@connectrpc/connect'
-import { Cause, Effect, Exit, Struct } from 'effect'
+import { Cause, Effect, Exit } from 'effect'
+import * as ParseResult from 'effect/ParseResult'
 import * as Schema from 'effect/Schema'
 import { defaultRetryPolicy, type TemporalRpcRetryPolicy } from './client/retries'
 import type { PayloadCodecConfig } from './common/payloads/codecs'
@@ -74,17 +75,17 @@ const TLSConfigSchema = Schema.Struct({
   serverNameOverride: Schema.optional(Schema.String),
   clientCertPair: Schema.optional(TLSCertPairSchema),
 })
-const LogLevelSchema = Schema.Literals(['debug', 'info', 'warn', 'error'])
-const LogFormatSchema = Schema.Literals(['json', 'pretty'])
-const DeterminismMarkerModeSchema = Schema.Literals(['always', 'interval', 'delta', 'never'])
-const MetricsExporterTypeSchema = Schema.Literals(['in-memory', 'file', 'otlp', 'prometheus'])
-const WorkflowGuardsModeSchema = Schema.Literals(['strict', 'warn', 'off'])
-const WorkflowLintModeSchema = Schema.Literals(['strict', 'warn', 'off'])
+const LogLevelSchema = Schema.Literal('debug', 'info', 'warn', 'error')
+const LogFormatSchema = Schema.Literal('json', 'pretty')
+const DeterminismMarkerModeSchema = Schema.Literal('always', 'interval', 'delta', 'never')
+const MetricsExporterTypeSchema = Schema.Literal('in-memory', 'file', 'otlp', 'prometheus')
+const WorkflowGuardsModeSchema = Schema.Literal('strict', 'warn', 'off')
+const WorkflowLintModeSchema = Schema.Literal('strict', 'warn', 'off')
 const MetricsExporterSpecSchema = Schema.Struct({
   type: MetricsExporterTypeSchema,
   endpoint: Schema.optional(Schema.String),
 })
-const PayloadCodecConfigSchema = Schema.Union([
+const PayloadCodecConfigSchema = Schema.Union(
   Schema.Struct({
     name: Schema.Literal('gzip'),
     order: Schema.optional(Schema.Number),
@@ -97,7 +98,7 @@ const PayloadCodecConfigSchema = Schema.Union([
     order: Schema.optional(Schema.Number),
     enabled: Schema.optional(Schema.Boolean),
   }),
-])
+)
 const TemporalRpcRetryPolicySchema = Schema.Struct({
   maxAttempts: Schema.Number,
   initialDelayMs: Schema.Number,
@@ -144,13 +145,13 @@ const TemporalConfigSchema = Schema.Struct({
   rpcRetryPolicy: TemporalRpcRetryPolicySchema,
   payloadCodecs: Schema.Array(PayloadCodecConfigSchema),
 })
-const TemporalConfigOverridesSchema = TemporalConfigSchema.mapFields(Struct.map(Schema.optional))
-const decodeTemporalConfig = Schema.decodeUnknownEffect(TemporalConfigSchema)
-const decodeTemporalConfigOverrides = Schema.decodeUnknownEffect(TemporalConfigOverridesSchema)
+const TemporalConfigOverridesSchema = Schema.partial(TemporalConfigSchema)
+const decodeTemporalConfig = Schema.decodeUnknown(TemporalConfigSchema)
+const decodeTemporalConfigOverrides = Schema.decodeUnknown(TemporalConfigOverridesSchema)
 
-const formatSchemaError = (error: Schema.SchemaError): string => error.message
+const formatSchemaError = (error: ParseResult.ParseError): string => ParseResult.TreeFormatter.formatErrorSync(error)
 const mapSchemaError = <A>(
-  effect: Effect.Effect<A, Schema.SchemaError, never>,
+  effect: Effect.Effect<A, ParseResult.ParseError, never>,
 ): Effect.Effect<A, TemporalConfigError, never> =>
   effect.pipe(Effect.mapError((error) => new TemporalConfigError(formatSchemaError(error))))
 

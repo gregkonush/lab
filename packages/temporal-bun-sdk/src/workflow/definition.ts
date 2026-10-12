@@ -4,9 +4,9 @@ import * as Schema from 'effect/Schema'
 import type { WorkflowContext } from './context'
 import type { WorkflowQueryHandle, WorkflowSignalHandle } from './inbound'
 
-export type WorkflowSchema<I> = Schema.Codec<I>
+export type WorkflowSchema<I> = Schema.Schema<I>
 
-const defaultWorkflowSchema = Schema.Array(Schema.Unknown) as Schema.Codec<readonly unknown[]>
+const defaultWorkflowSchema = Schema.Array(Schema.Unknown) as Schema.Schema<readonly unknown[]>
 
 export type WorkflowHandler<I, O> = (context: WorkflowContext<I>) => Effect.Effect<O, unknown, never>
 
@@ -16,7 +16,7 @@ export type WorkflowUpdateValidator<I> = (input: I) => void
 
 export interface WorkflowUpdateDefinition<I, O> {
   readonly name: string
-  readonly input: Schema.Codec<I>
+  readonly input: Schema.Schema<I>
   readonly handler: WorkflowUpdateHandler<I, O>
   readonly validator?: WorkflowUpdateValidator<I>
 }
@@ -81,7 +81,9 @@ export function defineWorkflow<
   if (typeof nameOrConfig === 'object') {
     const config = nameOrConfig
     const schema = config.schema ?? (defaultWorkflowSchema as unknown as WorkflowSchema<I>)
-    const decodeArgumentsAsArray = config.schema ? config.schema.ast._tag === 'Arrays' : schema.ast._tag === 'Arrays'
+    const decodeArgumentsAsArray = config.schema
+      ? config.schema.ast._tag === 'TupleType'
+      : schema.ast._tag === 'TupleType'
     if (typeof config.handler !== 'function') {
       throw new Error(`Workflow "${config.name}" must provide a handler`)
     }
@@ -104,7 +106,7 @@ export function defineWorkflow<
   const extras = Schema.isSchema(schemaOrHandler)
     ? (maybeExtras ?? (typeof maybeHandler === 'object' ? (maybeHandler as WorkflowDefinitionExtras) : undefined))
     : (maybeHandler as WorkflowDefinitionExtras | undefined)
-  const decodeArgumentsAsArray = Schema.isSchema(schemaOrHandler) ? schema.ast._tag === 'Arrays' : true
+  const decodeArgumentsAsArray = Schema.isSchema(schemaOrHandler) ? schema.ast._tag === 'TupleType' : true
   if (typeof handler !== 'function') {
     throw new Error(`Workflow "${nameOrConfig}" must provide a handler`)
   }

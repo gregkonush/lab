@@ -1,5 +1,4 @@
 import type { Effect } from 'effect'
-import type { BrokerEnvironment } from '../broker/identity'
 import { BrokerRead } from '../broker/alpaca'
 import type { CycleExecutionPolicy } from '../cycle'
 import type { CycleRunnerError, CycleRunResult } from '../cycle/runner'
@@ -23,6 +22,7 @@ import type { AutonomousCyclePassObservation } from '../runtime-state'
 import type { StrategyRuntime } from '../strategy'
 import type { BoundMutationCycleOutcome } from './mutation-decisions'
 import { CandidateObservationStore } from './candidate-observation'
+import type { IntradayExitTiming } from '../strategy/intraday-momentum/research'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
@@ -64,8 +64,6 @@ export type RecoveryFirstCycleAdvance = {
   readonly result?: CycleRunResult
   /** Optional one-shot durable scheduling override for the next Restate command. */
   readonly nextDelayMs?: number
-  /** Absolute cap retained until completion, so post-pass work cannot extend a selected wake. */
-  readonly nextWakeAt?: string
 }
 
 export type RecoveryFirstCycleDriver<R = RecoveryFirstRuntime> = {
@@ -82,15 +80,12 @@ export type RecoveryFirstCycleDriverOwner<R = RecoveryFirstRuntime> = (
 
 export type ObserveAutonomousCycleInput = {
   readonly accountId: string
-  readonly brokerEnvironment?: BrokerEnvironment
-  /** The exact policy hash from the verified durable mandate; absence retains the original policy. */
-  readonly riskPolicyHash?: string
   readonly authorityGenerationHash: string
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
   readonly reconciliationPassTimeoutMs: number
   readonly strategy: StrategyRuntime
-  readonly simulation?: { readonly runId: string }
+  readonly simulation?: { readonly runId: string; readonly exitTiming: IntradayExitTiming }
   /** Explicit archive dependency; required only for an INTRADAY strategy. */
   readonly intradayMarketData?: IntradayMarketDataService
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'

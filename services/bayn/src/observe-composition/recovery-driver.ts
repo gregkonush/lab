@@ -17,11 +17,9 @@ import {
 } from '../cycle/runner'
 import { validateCycleLoopInterval } from '../cycle/runner/decisions'
 import { type ReconciliationCadenceState } from '../cycle/runner/model'
-import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { CycleDecisionBindingEvidence } from '../cycle/store'
 import { OperationalError, operationalError } from '../errors'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
-import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { type IntradayMarketDataService } from '../market-data'
 import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
@@ -37,7 +35,6 @@ import type {
   ObserveDecisionRuntime,
   ObserveStartupPreparation,
   RecoveryFirstCycleDriver,
-  RecoveryFirstCycleAdvance,
   RecoveryFirstRuntime,
 } from './model'
 import { executionDecisionFinalizationHeadroomMs } from './model'
@@ -51,7 +48,6 @@ import {
   reconciliationRunnerError,
   runMutationPassWithinTimeout,
   type ReconciliationPassError,
-  type PricingReconciliationRead,
 } from './decision-builder'
 import {
   deferPostMutationReconciliation,
@@ -63,36 +59,7 @@ import {
 type RecoveryFirstDecisionBuilder = (
   cycle: AutonomousCycle,
   reconcile: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, ReconciliationRuntime>,
-  reconcileForPricing?: PricingReconciliationRead<ReconciliationRuntime>,
 ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, ObserveDecisionRuntime>
-
-const reconciliationReusableUntil = (
-  cached: ReconciliationPassResult,
-  authority: AuthorityState | undefined,
-  now: number,
-  maximumAgeMs: number,
-): number | undefined => {
-  if (
-    authority === undefined ||
-    cached.riskContext.authority?.generationHash !== authority.generationHash ||
-    cached.riskContext.authority.version !== authority.version ||
-    cached.report.reconciliation.status !== ReconciliationStatus.Exact ||
-    !cached.report.metrics.accountingExact ||
-    cached.riskContext.unknownMutationCount !== 0
-  )
-    return undefined
-  const state = cached.brokerState
-  const observations = [
-    state.account.observedAt,
-    state.positionsObservedAt,
-    state.ordersObservedAt,
-    cached.report.reconciliation.reconciledAt,
-    cached.riskContext.authorityObservedAt,
-  ]
-  if (observations.some((at) => at === null || !Number.isFinite(Date.parse(at)) || Date.parse(at) > now))
-    return undefined
-  return Math.min(...observations.map((at) => Date.parse(at ?? ''))) + maximumAgeMs
-}
 
 /** Owned by one serialized pass, discarded before its post-mutation continuation. */
 export const reconciliationForPreparation = <R>(
@@ -100,17 +67,11 @@ export const reconciliationForPreparation = <R>(
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
   readAuthority: Effect.Effect<AuthorityState | undefined, ReconciliationPassError, R>,
   maximumAgeMs: number,
-  pricingMaximumAgeMs = maximumAgeMs,
 ) =>
   Effect.gen(function* () {
     const previous = yield* Ref.make(initial)
     const preflightAvailable = yield* Ref.make(initial !== undefined)
-    const refreshAndRemember = refresh.pipe(
-      Effect.tap((facts) => Ref.set(previous, facts)),
-      Effect.tap(() => Ref.set(preflightAvailable, false)),
-    )
     return {
-      refresh: refreshAndRemember,
       read: Effect.gen(function* () {
         const cached = yield* Ref.get(previous)
         const firstUse = yield* Ref.getAndSet(preflightAvailable, false)
@@ -124,46 +85,35 @@ export const reconciliationForPreparation = <R>(
               cached.riskContext.authority.version === authority.version))
         )
           return cached
-        if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
-          return cached
-        return yield* refreshAndRemember
-      }),
-      readForPricing: (minimumRemainingMs: number) =>
-        Effect.gen(function* () {
-          // Unlike the ordinary first use, pricing must prove prospective coverage even for preflight facts.
-          yield* Ref.set(preflightAvailable, false)
-          const cached = yield* Ref.get(previous)
-          const authority = yield* readAuthority
-          const now = yield* Clock.currentTimeMillis
-          const reusableUntil =
-            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
-          const freshUntil =
-            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, pricingMaximumAgeMs)
+        if (cached !== undefined && authority !== undefined) {
+          const state = cached.brokerState
+          const observations = [
+            state.account.observedAt,
+            state.positionsObservedAt,
+            state.ordersObservedAt,
+            cached.report.reconciliation.reconciledAt,
+            cached.riskContext.authorityObservedAt,
+          ]
           if (
-            cached !== undefined &&
-            reusableUntil !== undefined &&
-            freshUntil !== undefined &&
-            now + minimumRemainingMs < Math.min(reusableUntil, freshUntil)
+            cached.riskContext.authority?.generationHash === authority.generationHash &&
+            cached.riskContext.authority.version === authority.version &&
+            cached.report.reconciliation.status === ReconciliationStatus.Exact &&
+            cached.report.metrics.accountingExact &&
+            cached.riskContext.unknownMutationCount === 0 &&
+            observations.every(
+              (at) =>
+                at !== null &&
+                Number.isFinite(Date.parse(at)) &&
+                Date.parse(at) <= now &&
+                now - Date.parse(at) < maximumAgeMs,
+            )
           )
-            return { reconciliation: cached, freshUntil: Math.min(reusableUntil, freshUntil) }
-          const reconciliation = yield* refreshAndRemember
-          const refreshedAuthority = yield* readAuthority
-          const refreshedAt = yield* Clock.currentTimeMillis
-          // Cadence controls reuse, not broker validity: short cadences may still refresh again after pricing.
-          const refreshedUntil = reconciliationReusableUntil(
-            reconciliation,
-            refreshedAuthority,
-            refreshedAt,
-            pricingMaximumAgeMs,
-          )
-          return {
-            reconciliation,
-            freshUntil:
-              refreshedUntil !== undefined && refreshedAt + minimumRemainingMs < refreshedUntil
-                ? refreshedUntil
-                : undefined,
-          }
-        }),
+            return cached
+        }
+        const current = yield* refresh
+        yield* Ref.set(previous, current)
+        return current
+      }),
     }
   })
 
@@ -260,7 +210,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
     const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
     let interruptionRequestedAt = startedAt
     return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
-      withObservedStage('bayn.execution.bounded-pass'),
+      withObservedStage('bayn.execution.advance'),
       Effect.provideService(ActiveExecutionStages, activeStages),
       operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
@@ -370,98 +320,7 @@ const observeMutationCycleResult = (
 export const recoveryFirstCycleNextDelayMs = (input: {
   readonly pollIntervalMs: number
   readonly reconciliationIntervalMs: number
-  readonly postMutationDelayMs?: number
-}): number => {
-  const cadence = Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
-  return input.postMutationDelayMs === undefined
-    ? cadence
-    : Math.min(cadence, Math.max(mutationConsistencyDelayMs, input.postMutationDelayMs))
-}
-
-/** Expected quote or broker publication waits use a short continuation; source failures keep their backoff. */
-export const closeQuoteContinuationDelayMs = (
-  result: CycleRunResult,
-  normalDelayMs: number,
-  observedAt: string,
-): number | undefined => {
-  if (
-    result.outcome !== 'RECOVERED' ||
-    result.action !== 'WAITING' ||
-    (result.waitReason !== 'CLOSE_QUOTE_PENDING' && result.waitReason !== 'BROKER_OBSERVATION_PENDING')
-  )
-    return undefined
-  const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
-  return remainingMs > 0 ? Math.min(1_000, normalDelayMs, remainingMs) : undefined
-}
-
-/** A known future signal boundary may shorten one durable wait, without accelerating missing-data retries. */
-export const decisionReadinessContinuationDelayMs = (
-  result: CycleRunResult,
-  normalDelayMs: number,
-  observedAt: string,
-): number | undefined => {
-  if (
-    result.outcome !== 'RECOVERED' ||
-    result.action !== 'WAITING' ||
-    result.readiness === undefined ||
-    (result.readiness.reason !== DecisionReadinessReason.LookbackWarmup &&
-      result.readiness.reason !== DecisionReadinessReason.SignalWindowObserved) ||
-    result.readiness.availableAt === undefined
-  )
-    return undefined
-  const availableAt = Date.parse(result.readiness.availableAt)
-  const remainingMs = availableAt - Date.parse(observedAt)
-  return Number.isSafeInteger(remainingMs) &&
-    remainingMs > 0 &&
-    remainingMs < normalDelayMs &&
-    availableAt < Date.parse(result.cycle.window.submissionCutoffAt)
-    ? remainingMs
-    : undefined
-}
-
-/** A holding deadline selected before eligibility caps one wait, without changing overdue retry cadence. */
-export const maximumHoldContinuationDelayMs = (
-  result: CycleRunResult,
-  normalDelayMs: number,
-  observedAt: string,
-): number | undefined => {
-  if (result.outcome !== 'RECOVERED' || result.action !== 'WAITING' || result.maximumHoldDueAt === undefined)
-    return undefined
-  const dueAt = Date.parse(result.maximumHoldDueAt)
-  const remainingMs = dueAt - Date.parse(observedAt)
-  if (!Number.isSafeInteger(remainingMs) || dueAt >= Date.parse(result.cycle.window.executionCloseAt)) return undefined
-  if (remainingMs > 0) return Math.min(remainingMs, normalDelayMs)
-  // Slow management work may cross a deadline that was still future when evaluated. Recheck once; the next
-  // fresh management pass takes the maximum-hold exit path and cannot emit this pre-eligibility wait again.
-  const evaluatedAt = Date.parse(result.maximumHoldEvaluatedAt ?? '')
-  return evaluatedAt < dueAt && evaluatedAt <= Date.parse(observedAt) ? 1 : undefined
-}
-
-/** Projection health is checked after the pass; a later failure owns its continuation timing. */
-export const checkAdvancedMarketProjection = <R>(
-  advanced: RecoveryFirstCycleAdvance,
-  check: IntradayMarketDataService['check'],
-  observeFailure: (cause: CycleRunnerError) => Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R>,
-): Effect.Effect<RecoveryFirstCycleAdvance, CycleRunnerError, R> =>
-  check.pipe(
-    Effect.matchEffect({
-      onFailure: (cause) =>
-        observeFailure(
-          new CycleRunnerError({
-            operation: 'build-decision',
-            failure: 'market-data',
-            message: 'Execution worker market projection is unavailable',
-            cause,
-          }),
-        ).pipe(
-          Effect.map((failed) => {
-            const { nextDelayMs: _nextDelayMs, ...completed } = advanced
-            return { ...completed, ...failed }
-          }),
-        ),
-      onSuccess: () => Effect.succeed(advanced),
-    }),
-  )
+}): number => Math.min(input.pollIntervalMs, input.reconciliationIntervalMs)
 
 const makeRecoveryFirstCycleDriverEffect = (
   input: ObserveAutonomousCycleInput,
@@ -493,10 +352,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.flatMap((observedAt) =>
             observeMutationPass(startup, { outcome: 'WAITING', observedAt, waitReason: 'BROKER_OBSERVATION_PENDING' }),
           ),
-          Effect.map((observation) => ({
-            observation,
-            nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs),
-          })),
+          Effect.map((observation) => ({ observation })),
         )
       return currentUtcInstant.pipe(
         Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
@@ -527,16 +383,11 @@ const makeRecoveryFirstCycleDriverEffect = (
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
         const authorityStore = yield* AuthorityGenerationStore
-        const {
-          read: reconcileForAdvance,
-          refresh: refreshForAdvance,
-          readForPricing,
-        } = yield* reconciliationForPreparation(
+        const { read: reconcileForAdvance } = yield* reconciliationForPreparation(
           preflight,
           reconcile,
           authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
           Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
-          policy.maxBrokerStateAgeMs,
         )
         const context: CycleRunContext<ObserveDecisionRuntime> = {
           cycleBindingId: startup.cycleBindingId,
@@ -545,17 +396,11 @@ const makeRecoveryFirstCycleDriverEffect = (
           accountId: input.accountId,
           authorityGenerationHash: input.authorityGenerationHash,
           executionPolicy: preparation.executionPolicy,
-          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance, readForPricing),
+          buildDecision: (cycle) => buildDecision(cycle, reconcileForAdvance),
           buildDecisionEvidence: (document) => verifyDecisionBindingEvidence(input.intradayMarketData, document),
         }
         const result = yield* runMutationPassWithinTimeout(
-          runRecoveryFirstCyclePass(
-            input,
-            policy,
-            context,
-            { read: reconcileForAdvance, refresh: refreshForAdvance },
-            capability,
-          ),
+          runRecoveryFirstCyclePass(input, policy, context, reconcileForAdvance, capability),
           cyclePassTimeoutMs,
         )
         if (isPostMutationReconciliation(result)) {
@@ -566,7 +411,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           yield* Ref.set(cadence, {})
           return {
             result: deferPostMutationReconciliation(result),
-            nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),
+            ...(result.delayMs > 0 ? { nextDelayMs: Math.min(result.delayMs, nextDelayMs) } : {}),
           }
         }
         return { result }
@@ -594,38 +439,22 @@ const makeRecoveryFirstCycleDriverEffect = (
               input.intradayMarketData === undefined ||
               advanced.observation.result === 'FAILURE'
                 ? Effect.succeed(advanced)
-                : checkAdvancedMarketProjection(advanced, input.intradayMarketData.check, observeCycleFailure),
+                : input.intradayMarketData.check.pipe(
+                    Effect.matchEffect({
+                      onFailure: (cause) =>
+                        observeCycleFailure(
+                          new CycleRunnerError({
+                            operation: 'build-decision',
+                            failure: 'market-data',
+                            message: 'Execution worker market projection is unavailable',
+                            cause,
+                          }),
+                        ).pipe(Effect.map((failed) => ({ ...advanced, ...failed }))),
+                      onSuccess: () => Effect.succeed(advanced),
+                    }),
+                  ),
             ),
           ),
-      }),
-      Effect.flatMap((advanced) => {
-        if (advanced.observation.result === 'FAILURE' || !('result' in advanced) || advanced.result === undefined)
-          return Effect.succeed(advanced)
-        return currentUtcInstant.pipe(
-          Effect.map((observedAt) => {
-            const cadence = advanced.nextDelayMs ?? nextDelayMs
-            const continuation =
-              closeQuoteContinuationDelayMs(advanced.result, cadence, observedAt) ??
-              decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
-            const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
-            if (maximumHold !== undefined) {
-              const delay = Math.min(continuation ?? cadence, maximumHold)
-              return {
-                ...advanced,
-                nextDelayMs: delay,
-                nextWakeAt: new Date(
-                  Math.min(
-                    continuation === undefined ? Number.POSITIVE_INFINITY : Date.parse(observedAt) + continuation,
-                    advanced.result.outcome === 'RECOVERED' && advanced.result.action === 'WAITING'
-                      ? Date.parse(advanced.result.maximumHoldDueAt ?? '')
-                      : Number.POSITIVE_INFINITY,
-                  ),
-                ).toISOString(),
-              }
-            }
-            return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }
-          }),
-        )
       }),
     )
     const advance = runRestateAdvanceWithinTimeout(
@@ -676,14 +505,13 @@ export const observeDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile, reconcileForPricing) =>
+  (cycle, reconcile) =>
     buildObserveCycleDecision({
       authorityGenerationHash: input.authorityGenerationHash,
       cycle,
       executionModel: preparation.executionModel,
       policy,
       reconcile,
-      ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
       strategy: input.strategy,
       decisionFinalizationHeadroomMs: executionDecisionFinalizationHeadroomMs(input),
       ...(input.intradayMarketData === undefined ? {} : { intradayMarketData: input.intradayMarketData }),
@@ -695,8 +523,7 @@ export const mutationDecisionBuilder =
     preparation: ObserveStartupPreparation,
     policy: Policy,
   ): RecoveryFirstDecisionBuilder =>
-  (cycle, reconcile, reconcileForPricing) =>
-    buildMutationShadowCycleDecision({
-      ...mutationDecisionInput(input, preparation, policy, cycle, reconcile),
-      ...(reconcileForPricing === undefined ? {} : { reconcileForPricing }),
-    }).pipe(Effect.mapError(decisionBuildError))
+  (cycle, reconcile) =>
+    buildMutationShadowCycleDecision(mutationDecisionInput(input, preparation, policy, cycle, reconcile)).pipe(
+      Effect.mapError(decisionBuildError),
+    )

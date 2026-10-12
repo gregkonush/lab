@@ -5,7 +5,7 @@ import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from 
 import { Authority, KillState } from './execution/contracts'
 import { legacyObserveSuccessorGenerationSchemaVersion } from './execution/legacy-wire'
 import type { WriterFenceService } from './execution/writer-fence'
-import { CapitalActivationReconciliationNotExact, OperationalError } from './errors'
+import { OperationalError } from './errors'
 import { canonicalHashV1Result, type CanonicalHashFailure } from './hash'
 import { currentUtcInstant } from './time'
 
@@ -54,11 +54,10 @@ const recoveryError = (message: string, cause?: unknown): OperationalError =>
     cause: cause === undefined ? { _tag: 'TerminalGenerationRecoveryRejected' } : cause,
   })
 
-const settlementNeedsRecovery = (error: OperationalError): boolean =>
-  (error.operation === 'terminal-generation-recovery' &&
-    error.cause instanceof BlockedCycleIntentStoreError &&
-    error.cause.failure === 'invariant') ||
-  (error.operation === 'capital-activation' && error.cause instanceof CapitalActivationReconciliationNotExact)
+const settlementNeedsMutationRecovery = (error: OperationalError): boolean =>
+  error.operation === 'terminal-generation-recovery' &&
+  error.cause instanceof BlockedCycleIntentStoreError &&
+  error.cause.failure === 'invariant'
 
 export type RestrictedGenerationRecoveryAdvance<A> =
   | { readonly _tag: 'Waiting'; readonly advance: A }
@@ -98,7 +97,7 @@ export const advanceRestrictedGenerationRecovery = <A, E, R>(
               : { _tag: 'Waiting', advance: advanced },
         ),
         Effect.catch((error) =>
-          settlementNeedsRecovery(error)
+          settlementNeedsMutationRecovery(error)
             ? Effect.succeed<RestrictedGenerationRecoveryAdvance<A>>({ _tag: 'Waiting', advance: advanced })
             : Effect.fail(error),
         ),

@@ -212,7 +212,7 @@ const executeReplayInternal = (
       historyDescription: historyOutcome.record.description,
     })
 
-    const baselineReplay = yield* Effect.catch(
+    const baselineReplay = yield* Effect.catchAll(
       ingestWorkflowHistory({
         info: workflowInfo,
         history: historyOutcome.record.events,
@@ -226,7 +226,7 @@ const executeReplayInternal = (
         ),
     )
     const actualReplay = baselineReplay.hasDeterminismMarker
-      ? yield* Effect.catch(
+      ? yield* Effect.catchAll(
           ingestWorkflowHistory({
             info: workflowInfo,
             history: historyOutcome.record.events,

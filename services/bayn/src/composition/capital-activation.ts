@@ -27,7 +27,7 @@ import {
   type ResearchCapitalBuildContinuation,
   type ResearchCapitalBuildLineage,
 } from '../execution/configuration'
-import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
+import { OperationalError } from '../errors'
 import { decideExecutionMandateAuthority, isExecutionCyclePreflightStoreRestriction } from '../execution/mandate'
 import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
@@ -300,12 +300,7 @@ export const validateResearchCapitalRiskPolicy = (
   plan: ApplicationPlanFor<'AutonomousService'>,
   request: ResearchCapitalActivationRequest,
 ): Effect.Effect<void, OperationalError> =>
-  loadStrategyExecutionRiskPolicy(
-    request.broker.accountId,
-    plan.strategy,
-    request.broker.environment,
-    request.riskPolicyHash,
-  ).pipe(
+  loadStrategyExecutionRiskPolicy(request.broker.accountId, plan.strategy).pipe(
     Effect.mapError((cause) =>
       capitalActivationOperationalError('source-controlled capital risk policy is invalid', cause),
     ),
@@ -416,10 +411,7 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <
       result.report.reconciliation.status === ReconciliationStatus.Exact
         ? Effect.succeed(result)
         : Effect.fail(
-            capitalActivationOperationalError(
-              'research capital pre-activation reconciliation was not exact',
-              new CapitalActivationReconciliationNotExact({ status: result.report.reconciliation.status }),
-            ),
+            capitalActivationOperationalError('research capital pre-activation reconciliation was not exact'),
           ),
     ),
   )

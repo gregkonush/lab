@@ -50,7 +50,7 @@ test('signals waitFor/on/drain decode payloads and record determinism entries', 
 
   const waiting = Effect.runFork(context.signals.waitFor(handles.unblock))
   try {
-    expect(waiting.pollUnsafe()).toBeUndefined()
+    expect(waiting.unsafePoll()).toBeNull()
     applyActivationJob({ type: 'signal', delivery: { name: 'unblock', args: ['later'] } })
     const delivered = await Effect.runPromise(Fiber.join(waiting))
     expect(delivered.payload).toBe('later')
@@ -126,7 +126,7 @@ for (const method of ['waitFor', 'on', 'drain'] as const) {
         const fiber = Effect.runFork(evaluation)
         try {
           await new Promise<void>((resolve) => setImmediate(resolve))
-          expect(fiber.pollUnsafe()).not.toBeNull()
+          expect(fiber.unsafePoll()).not.toBeNull()
           const result = await Effect.runPromise(Fiber.join(fiber))
           expect(Exit.isFailure(result)).toBe(true)
           const failure = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined

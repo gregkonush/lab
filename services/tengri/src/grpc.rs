@@ -15,7 +15,7 @@ use kube::{
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, oneshot};
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
@@ -25,18 +25,17 @@ use crate::{
         idle_deadline_passed, last_activity_at,
     },
     auth::{Authenticator, Principal, deterministic_agent_id},
-    authz::WorkspaceAuthorization,
     crd::{
         IDLE_MINUTES, MicroVM, MicroVMArchitecture, MicroVMDesiredState, MicroVMPhase,
-        MicroVMPowerSettings, MicroVMResources, MicroVMSpec,
+        MicroVMResources, MicroVMSpec,
     },
     gateway::PreviewOrigin,
     guest::{
-        BROWSER_PORT, CodexHistoryPart as GuestHistoryPart, CodexOptions, EDITOR_BRIDGE_PORT,
-        EDITOR_PORT, GuestClient, GuestError, GuestPool, TerminalCreation as GuestTerminalCreation,
+        CodexOptions, EDITOR_BRIDGE_PORT, EDITOR_PORT, GuestClient, GuestError,
+        TerminalCreation as GuestTerminalCreation,
     },
     metrics,
-    pod::{FINALIZER_NAME, SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
+    pod::{SINGLE_MOUNT_STORAGE_LAYOUT, STORAGE_LAYOUT_ANNOTATION},
     tickets::TicketStore,
 };
 
@@ -46,20 +45,19 @@ pub mod proto {
 
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
-    CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
-    CodexModels, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
-    CreateDirectoryRequest, CreateTerminalRequest, DeleteAgentRequest, DeleteFileRequest, Empty,
-    FileEntry, FileEvent, FileEventKind, GetAgentRequest, GetCodexAccountRequest,
-    GetCodexLoginRequest, InterruptCodexTurnRequest, IssueEditorSessionRequest,
-    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
-    ListCodexModelsRequest, ListFilesRequest, ListFilesResponse, ListTerminalsRequest,
-    ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
-    ResolveCodexApprovalRequest, ResumeAgentRequest, ResumeCodexThreadRequest,
-    RevokePreviewSessionRequest, SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest,
-    SleepAgentRequest, StartCodexLoginRequest, SteerCodexInputRequest, TerminalSession,
-    TerminalTicket, TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
-    WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
-    micro_vm_control_plane_server::MicroVmControlPlane,
+    CodexEvent, CodexEventKind, CodexLogin, CodexModels, CodexThread, CodexTurn,
+    CreateAgentRequest, CreateCodexThreadRequest, CreateDirectoryRequest, CreateTerminalRequest,
+    DeleteAgentRequest, DeleteFileRequest, Empty, FileEntry, FileEvent, FileEventKind,
+    GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest, InterruptCodexTurnRequest,
+    IssueEditorSessionRequest, IssuePreviewSessionRequest, IssueTerminalTicketRequest,
+    ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest, ListFilesRequest,
+    ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse, MoveFileRequest,
+    PreviewSession, ReadFileRequest, ReadFileResponse, ResolveCodexApprovalRequest,
+    ResumeAgentRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest, SearchFilesRequest,
+    SearchFilesResponse, SendCodexTurnRequest, SleepAgentRequest, StartCodexLoginRequest,
+    SteerCodexTurnRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
+    WatchAgentRequest, WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest,
+    WriteFileResponse, micro_vm_control_plane_server::MicroVmControlPlane,
 };
 
 const OWNER_LABEL: &str = "runtime.proompteng.ai/owner";
@@ -67,6 +65,7 @@ const CONTROL_PLANE_SERVICE: &str = "proompteng.runtime.v1.MicroVMControlPlane";
 const MAX_AGENTS: usize = 6;
 const MAX_CODEX_EVENT_TEXT_BYTES: usize = 512 << 10;
 const CODEX_LOGIN_ATTEMPT_TTL_MINUTES: i64 = 15;
+const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const TERMINAL_TICKET_TIMEOUT: Duration = Duration::from_secs(30);
 const PROVISIONAL_TERMINAL_CLEANUP_RETRY: Duration = Duration::from_secs(2);
 const PROVISIONAL_TERMINAL_ANNOTATION_PREFIX: &str = "runtime.proompteng.ai/provisional-terminal-";
@@ -76,13 +75,10 @@ const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
 #[derive(Clone)]
 pub struct ControlPlane {
     client: Client,
-    identity: crate::identity::WorkloadIdentity,
-    guests: GuestPool,
     namespace: Arc<str>,
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
     auth: Authenticator,
-    authorization: WorkspaceAuthorization,
     tickets: TicketStore,
     preview_origin: PreviewOrigin,
     activity: ActivityTracker,
@@ -92,8 +88,6 @@ pub struct ControlPlane {
 }
 
 pub struct ControlPlaneConfig {
-    pub identity: crate::identity::WorkloadIdentity,
-    pub authorization: WorkspaceAuthorization,
     pub namespace: String,
     pub default_image: String,
     pub architecture: MicroVMArchitecture,
@@ -116,18 +110,14 @@ impl ControlPlane {
             config.internal_hmac_secret,
         )?;
         let namespace: Arc<str> = config.namespace.into();
-        let guests = GuestPool::new(client.clone(), namespace.clone(), config.identity.clone());
         let provisional_terminal_leases =
-            ProvisionalTerminalLeaseManager::new(client.clone(), namespace.clone(), guests.clone());
+            ProvisionalTerminalLeaseManager::new(client.clone(), namespace.clone());
         Ok(Self {
-            guests,
             client,
-            identity: config.identity,
             namespace,
             default_image: config.default_image.into(),
             architecture: config.architecture,
             auth,
-            authorization: config.authorization,
             tickets: TicketStore::new(config.public_url, config.ticket_signing_secret)?,
             preview_origin: config.preview_origin,
             activity,
@@ -154,23 +144,22 @@ impl ControlPlane {
         self.auth.authorize(request, &rpc_path).await
     }
 
-    async fn authorized_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
+    async fn owned_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
         validate_resource_id(id)?;
-        self.authorization
-            .access(&self.namespace, id, &principal.owner_hash)
-            .require()
-            .await?;
+        if id != deterministic_agent_id(&principal.owner_hash) {
+            return Err(Status::permission_denied(
+                "agent belongs to another identity",
+            ));
+        }
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         let agent = api.get(id).await.map_err(map_kube_error)?;
+        ensure_owner(principal, &agent)?;
         Ok(agent)
     }
 
     async fn wake_agent(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
         for _ in 0..3 {
-            let agent = self.authorized_agent(principal, id).await?;
-            if agent.metadata.deletion_timestamp.is_some() {
-                return Err(Status::failed_precondition("agent is terminating"));
-            }
+            let agent = self.owned_agent(principal, id).await?;
             let now = Utc::now();
             let needs_wake_patch = agent.spec.desired_state != MicroVMDesiredState::Running
                 || idle_deadline_passed(&agent, now);
@@ -179,7 +168,7 @@ impl ControlPlane {
                 if agent_ready_for_guest(&agent) {
                     return Ok(agent);
                 }
-                return self.restore_agent(principal, &agent).await;
+                return self.wait_ready(principal, id).await;
             }
 
             let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
@@ -188,9 +177,9 @@ impl ControlPlane {
                 .patch(id, &PatchParams::default(), &Patch::Merge(&patch))
                 .await
             {
-                Ok(updated) => {
+                Ok(_) => {
                     self.activity.touch(id);
-                    return self.restore_agent(principal, &updated).await;
+                    return self.wait_ready(principal, id).await;
                 }
                 Err(error) if is_conflict(&error) => continue,
                 Err(error) => return Err(map_kube_error(error)),
@@ -201,37 +190,41 @@ impl ControlPlane {
         ))
     }
 
-    async fn restore_agent(
-        &self,
-        principal: &Principal,
-        agent: &MicroVM,
-    ) -> Result<MicroVM, Status> {
-        let restored = crate::controller::converge(
-            &self.client,
-            &self.namespace,
-            agent,
-            &self.identity,
-            &self.tickets,
-        )
-        .await
-        .map_err(|error| Status::unavailable(error.to_string()))?;
-        self.authorization
-            .access(&self.namespace, &agent.name_any(), &principal.owner_hash)
-            .require()
-            .await?;
-        Ok(restored)
+    async fn wait_ready(&self, principal: &Principal, id: &str) -> Result<MicroVM, Status> {
+        let deadline = Instant::now() + READY_TIMEOUT;
+        loop {
+            let agent = self.owned_agent(principal, id).await?;
+            if agent_ready_for_guest(&agent) {
+                return Ok(agent);
+            }
+            match agent.status.as_ref().map(|status| status.phase) {
+                Some(MicroVMPhase::Failed) => {
+                    let status = agent.status.as_ref().expect("checked status");
+                    return Err(Status::failed_precondition(format!(
+                        "{}: {}",
+                        status.failure_reason.as_deref().unwrap_or("GuestFailed"),
+                        status.message.as_deref().unwrap_or("guest failed to start"),
+                    )));
+                }
+                Some(MicroVMPhase::Terminating) => {
+                    return Err(Status::failed_precondition("agent is terminating"));
+                }
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(Status::deadline_exceeded(
+                    "agent did not become ready within 120 seconds",
+                ));
+            }
+            sleep(Duration::from_millis(750)).await;
+        }
     }
 
     async fn guest(&self, principal: &Principal, id: &str) -> Result<GuestClient, Status> {
-        let agent = self.wake_agent(principal, id).await?;
-        self.guests
-            .for_microvm(&agent)
+        self.wake_agent(principal, id).await?;
+        GuestClient::for_agent(self.client.clone(), &self.namespace, id)
             .await
             .map_err(map_guest_error)
-    }
-
-    pub fn guest_pool(&self) -> GuestPool {
-        self.guests.clone()
     }
 }
 
@@ -240,7 +233,7 @@ fn wake_patch(agent: &MicroVM, now: DateTime<Utc>) -> Value {
         "metadata": {"resourceVersion": agent.resource_version()},
         "spec": {
             "desiredState": MicroVMDesiredState::Running,
-            "idleDeadline": (now + chrono::Duration::minutes(i64::from(agent.spec.power.idle_timeout_minutes))).to_rfc3339(),
+            "idleDeadline": (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
         }
     });
     let resuming = agent.spec.desired_state == MicroVMDesiredState::Sleeping
@@ -262,7 +255,6 @@ fn agent_ready_for_guest(agent: &MicroVM) -> bool {
 }
 
 fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str, storage_layout: &str) {
-    microvm.metadata.finalizers = Some(vec![FINALIZER_NAME.to_owned()]);
     microvm
         .metadata
         .labels
@@ -289,21 +281,8 @@ impl MicroVmControlPlane for ControlPlane {
         let _create_guard = self.create_lock.lock().await;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         if let Some(existing) = api.get_opt(&id).await.map_err(map_kube_error)? {
-            self.authorization
-                .enroll(self.client.clone(), &self.namespace, &existing)
-                .await
-                .map_err(|error| {
-                    Status::unavailable(format!(
-                        "workspace authorization enrollment failed: {error:#}"
-                    ))
-                })?;
-            self.authorization
-                .access(&self.namespace, &id, &principal.owner_hash)
-                .require()
-                .await?;
-            drop(_create_guard);
-            let restored = self.wake_agent(&principal, &id).await?;
-            return Ok(Response::new(agent_from_microvm(&restored)));
+            ensure_owner(&principal, &existing)?;
+            return Ok(Response::new(agent_from_microvm(&existing)));
         }
         let count = api
             .list(&ListParams::default())
@@ -317,23 +296,6 @@ impl MicroVmControlPlane for ControlPlane {
                 "global six-agent capacity is full",
             ));
         }
-        let slot = crate::controller::prepared_slot(
-            &self.client,
-            &self.namespace,
-            &self.default_image,
-            &self.identity,
-        )
-        .await
-        .map_err(|error| {
-            if error
-                .downcast_ref::<crate::controller::NoPreparedSlot>()
-                .is_some()
-            {
-                Status::resource_exhausted(error.to_string())
-            } else {
-                Status::unavailable(error.to_string())
-            }
-        })?;
         let now = Utc::now();
         let mut microvm = MicroVM::new(
             &id,
@@ -344,10 +306,11 @@ impl MicroVmControlPlane for ControlPlane {
                 image: self.default_image.to_string(),
                 architecture: self.architecture,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                slot: Some(slot),
+                // Retained agents have no lifecycle deadline. Keep the CR field for old
+                // resources and schema compatibility, but do not invent a future deadline.
+                expires_at: String::new(),
             },
         );
         apply_new_agent_metadata(
@@ -358,7 +321,9 @@ impl MicroVmControlPlane for ControlPlane {
         let created = match api.create(&PostParams::default(), &microvm).await {
             Ok(created) => created,
             Err(kube::Error::Api(response)) if response.code == 409 => {
-                api.get(&id).await.map_err(map_kube_error)?
+                let existing = api.get(&id).await.map_err(map_kube_error)?;
+                ensure_owner(&principal, &existing)?;
+                existing
             }
             Err(error) => {
                 let status = map_kube_error(error);
@@ -368,21 +333,7 @@ impl MicroVmControlPlane for ControlPlane {
                 return Err(status);
             }
         };
-        self.authorization
-            .enroll(self.client.clone(), &self.namespace, &created)
-            .await
-            .map_err(|error| {
-                Status::unavailable(format!(
-                    "workspace authorization enrollment failed: {error:#}"
-                ))
-            })?;
-        self.authorization
-            .access(&self.namespace, &id, &principal.owner_hash)
-            .require()
-            .await?;
-        drop(_create_guard);
-        let restored = self.restore_agent(&principal, &created).await?;
-        Ok(Response::new(agent_from_microvm(&restored)))
+        Ok(Response::new(agent_from_microvm(&created)))
     }
 
     async fn list_agents(
@@ -391,24 +342,16 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<ListAgentsResponse>, Status> {
         let principal = self.authorize(&request, "ListAgents").await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        let mut agents = Vec::new();
-        for agent in api
-            .list(&ListParams::default())
+        let selector = format!("{OWNER_LABEL}={}", &principal.owner_hash[..32]);
+        let mut agents = api
+            .list(&ListParams::default().labels(&selector))
             .await
             .map_err(map_kube_error)?
             .items
-        {
-            match self
-                .authorization
-                .access(&self.namespace, &agent.name_any(), &principal.owner_hash)
-                .require()
-                .await
-            {
-                Ok(()) => agents.push(agent_from_microvm(&agent)),
-                Err(error) if error.code() == tonic::Code::PermissionDenied => {}
-                Err(error) => return Err(error),
-            }
-        }
+            .iter()
+            .filter(|agent| agent.spec.owner_hash == principal.owner_hash)
+            .map(agent_from_microvm)
+            .collect::<Vec<_>>();
         agents.sort_by(|left, right| right.created_at.cmp(&left.created_at));
         Ok(Response::new(ListAgentsResponse { agents }))
     }
@@ -418,9 +361,7 @@ impl MicroVmControlPlane for ControlPlane {
         request: Request<GetAgentRequest>,
     ) -> Result<Response<Agent>, Status> {
         let principal = self.authorize(&request, "GetAgent").await?;
-        let agent = self
-            .authorized_agent(&principal, &request.get_ref().id)
-            .await?;
+        let agent = self.owned_agent(&principal, &request.get_ref().id).await?;
         Ok(Response::new(agent_from_microvm(&agent)))
     }
 
@@ -432,12 +373,12 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Self::WatchAgentStream>, Status> {
         let principal = self.authorize(&request, "WatchAgent").await?;
         let id = request.into_inner().id;
-        self.authorized_agent(&principal, &id).await?;
+        self.owned_agent(&principal, &id).await?;
         let service = self.clone();
         let stream = try_stream! {
             let mut previous = String::new();
             loop {
-                let agent = service.authorized_agent(&principal, &id).await?;
+                let agent = service.owned_agent(&principal, &id).await?;
                 let current = serde_json::to_string(&agent).map_err(|error| Status::internal(error.to_string()))?;
                 if current != previous {
                     previous = current;
@@ -456,10 +397,9 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "SleepAgent").await?;
         let id = request.get_ref().id.clone();
         for _ in 0..3 {
-            let agent = self.authorized_agent(&principal, &id).await?;
+            let agent = self.owned_agent(&principal, &id).await?;
             if agent.spec.desired_state == MicroVMDesiredState::Sleeping {
-                let sleeping = self.restore_agent(&principal, &agent).await?;
-                return Ok(Response::new(agent_from_microvm(&sleeping)));
+                return Ok(Response::new(agent_from_microvm(&agent)));
             }
             let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
             match api
@@ -473,10 +413,7 @@ impl MicroVmControlPlane for ControlPlane {
                 )
                 .await
             {
-                Ok(updated) => {
-                    let sleeping = self.restore_agent(&principal, &updated).await?;
-                    return Ok(Response::new(agent_from_microvm(&sleeping)));
-                }
+                Ok(updated) => return Ok(Response::new(agent_from_microvm(&updated))),
                 Err(error) if is_conflict(&error) => continue,
                 Err(error) => return Err(map_kube_error(error)),
             }
@@ -495,48 +432,13 @@ impl MicroVmControlPlane for ControlPlane {
         Ok(Response::new(agent_from_microvm(&agent)))
     }
 
-    async fn update_power_settings(
-        &self,
-        request: Request<UpdatePowerSettingsRequest>,
-    ) -> Result<Response<Agent>, Status> {
-        let principal = self.authorize(&request, "UpdatePowerSettings").await?;
-        let request = request.into_inner();
-        let power = power_settings_from_request(&request)?;
-        for _ in 0..3 {
-            let agent = self.authorized_agent(&principal, &request.id).await?;
-            let now = Utc::now();
-            let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-            let patch = json!({
-                "metadata": {
-                    "resourceVersion": agent.resource_version(),
-                    "annotations": {crate::activity::LAST_ACTIVITY_ANNOTATION: now.to_rfc3339()},
-                },
-                "spec": {
-                    "power": power,
-                    "idleDeadline": (now + chrono::Duration::minutes(i64::from(power.idle_timeout_minutes))).to_rfc3339(),
-                },
-            });
-            match api
-                .patch(&request.id, &PatchParams::default(), &Patch::Merge(patch))
-                .await
-            {
-                Ok(updated) => return Ok(Response::new(agent_from_microvm(&updated))),
-                Err(error) if is_conflict(&error) => continue,
-                Err(error) => return Err(map_kube_error(error)),
-            }
-        }
-        Err(Status::aborted(
-            "agent settings changed concurrently; retry the request",
-        ))
-    }
-
     async fn delete_agent(
         &self,
         request: Request<DeleteAgentRequest>,
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request, "DeleteAgent").await?;
         let id = request.get_ref().id.clone();
-        self.authorized_agent(&principal, &id).await?;
+        self.owned_agent(&principal, &id).await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         api.delete(&id, &DeleteParams::default())
             .await
@@ -675,9 +577,6 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let activity = self.activity.clone();
         let agent_id = request.agent_id.clone();
-        let access = self
-            .authorization
-            .access(&self.namespace, &agent_id, &principal.owner_hash);
         let stream = self
             .guest(&principal, &request.agent_id)
             .await?
@@ -698,7 +597,7 @@ impl MicroVmControlPlane for ControlPlane {
                     })
                     .map_err(map_guest_error)
             });
-        Ok(Response::new(access.guard_stream(stream)))
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn create_terminal(
@@ -965,64 +864,50 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    type ResumeCodexThreadStream =
-        Pin<Box<dyn Stream<Item = Result<CodexHistoryPage, Status>> + Send>>;
-
     async fn resume_codex_thread(
         &self,
         request: Request<ResumeCodexThreadRequest>,
-    ) -> Result<Response<Self::ResumeCodexThreadStream>, Status> {
+    ) -> Result<Response<CodexThread>, Status> {
         let principal = self.authorize(&request, "ResumeCodexThread").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         let options = CodexOptions::parse(request.model, request.reasoning_effort)
             .map_err(Status::invalid_argument)?;
-        let access =
-            self.authorization
-                .access(&self.namespace, &request.agent_id, &principal.owner_hash);
-        let history = self
+        let snapshot = self
             .guest(&principal, &request.agent_id)
             .await?
             .resume_codex_thread(&request.thread_id, &options)
             .await
             .map_err(map_guest_error)?;
-        access.require().await?;
-        let stream = history.map(|page| {
-            page.map(|page| CodexHistoryPage {
-                part: match page.part {
-                    GuestHistoryPart::Thread => CodexHistoryPart::Thread,
-                    GuestHistoryPart::Items => CodexHistoryPart::Items,
-                    GuestHistoryPart::Turns => CodexHistoryPart::Turns,
-                }
-                .into(),
-                raw_json: page.snapshot.result.to_string(),
-                event_sequence: page.snapshot.event_sequence,
-            })
-            .map_err(map_guest_error)
-        });
-        Ok(Response::new(access.guard_stream(stream)))
+        let value = snapshot.result;
+        Ok(Response::new(CodexThread {
+            id: json_string(&value, &["/thread/id"]),
+            raw_json: value.to_string(),
+            event_sequence: snapshot.event_sequence,
+            item_event_sequences: snapshot.item_event_sequences,
+        }))
     }
 
-    async fn send_codex_input(
+    async fn send_codex_turn(
         &self,
-        request: Request<SendCodexInputRequest>,
+        request: Request<SendCodexTurnRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request, "SendCodexInput").await?;
+        let principal = self.authorize(&request, "SendCodexTurn").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
-        validate_codex_message(&request.text, &request.images)?;
+        let text = validate_prompt(&request.text)?;
         let options = CodexOptions::parse(request.model, request.reasoning_effort)
             .map_err(Status::invalid_argument)?;
-        let guest = self.guest(&principal, &request.agent_id).await?;
-        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
-        let value = guest
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
             .codex_call(
                 "turn/start",
                 json!({
                     "threadId": request.thread_id,
                     "model": options.model,
                     "effort": options.reasoning_effort,
-                    "input": input,
+                    "input": [{"type": "text", "text": text, "text_elements": []}],
                     "cwd": "/workspace",
                     "runtimeWorkspaceRoots": ["/workspace"],
                     "approvalPolicy": "on-request",
@@ -1038,24 +923,24 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn steer_codex_input(
+    async fn steer_codex_turn(
         &self,
-        request: Request<SteerCodexInputRequest>,
+        request: Request<SteerCodexTurnRequest>,
     ) -> Result<Response<CodexTurn>, Status> {
-        let principal = self.authorize(&request, "SteerCodexInput").await?;
+        let principal = self.authorize(&request, "SteerCodexTurn").await?;
         let request = request.into_inner();
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;
-        validate_codex_message(&request.text, &request.images)?;
-        let guest = self.guest(&principal, &request.agent_id).await?;
-        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
-        let value = guest
+        let text = validate_prompt(&request.text)?;
+        let value = self
+            .guest(&principal, &request.agent_id)
+            .await?
             .codex_call(
                 "turn/steer",
                 json!({
                     "threadId": request.thread_id,
                     "expectedTurnId": request.turn_id,
-                    "input": input,
+                    "input": [{"type": "text", "text": text, "text_elements": []}],
                 }),
             )
             .await
@@ -1123,9 +1008,6 @@ impl MicroVmControlPlane for ControlPlane {
         let request = request.into_inner();
         let activity = self.activity.clone();
         let agent_id = request.agent_id.clone();
-        let access = self
-            .authorization
-            .access(&self.namespace, &agent_id, &principal.owner_hash);
         let stream = self
             .guest(&principal, &request.agent_id)
             .await?
@@ -1138,7 +1020,7 @@ impl MicroVmControlPlane for ControlPlane {
                 }
                 event.map(codex_event).map_err(map_guest_error)
             });
-        Ok(Response::new(access.guard_stream(stream)))
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn issue_editor_session(
@@ -1156,17 +1038,21 @@ impl MicroVmControlPlane for ControlPlane {
         {
             return Err(Status::invalid_argument("invalid editor window identity"));
         }
-        let agent = self.authorized_agent(&principal, &request.agent_id).await?;
+        let agent = self.owned_agent(&principal, &request.agent_id).await?;
         let incarnation = agent
             .uid()
             .ok_or_else(|| Status::unavailable("agent identity is unavailable"))?;
-        self.guests
-            .for_microvm(&agent)
-            .await
-            .map_err(map_guest_error)?
-            .open_editor()
-            .await
-            .map_err(map_guest_error)?;
+        GuestClient::for_agent_incarnation(
+            self.client.clone(),
+            &self.namespace,
+            &request.agent_id,
+            Some(&incarnation),
+        )
+        .await
+        .map_err(map_guest_error)?
+        .open_editor()
+        .await
+        .map_err(map_guest_error)?;
         let issued = self.tickets.issue_editor(
             &principal.owner_hash,
             &request.agent_id,
@@ -1188,7 +1074,14 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssuePreviewSession").await?;
         let request = request.into_inner();
-        let port = validate_preview_port(request.port)?;
+        let port = u16::try_from(request.port)
+            .ok()
+            .filter(|port| *port >= 1024 && ![8080, EDITOR_PORT, EDITOR_BRIDGE_PORT].contains(port))
+            .ok_or_else(|| {
+                Status::invalid_argument(
+                    "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
+                )
+            })?;
         let path = validate_preview_path(&request.path)?;
         let fragment = validate_preview_fragment(&request.fragment)?;
         self.guest(&principal, &request.agent_id).await?;
@@ -1209,40 +1102,12 @@ impl MicroVmControlPlane for ControlPlane {
         }))
     }
 
-    async fn issue_browser_session(
-        &self,
-        request: Request<GetAgentRequest>,
-    ) -> Result<Response<PreviewSession>, Status> {
-        let principal = self.authorize(&request, "IssueBrowserSession").await?;
-        let request = request.into_inner();
-        self.guest(&principal, &request.id)
-            .await?
-            .open_browser()
-            .await
-            .map_err(map_guest_error)?;
-        let issued = self.tickets.issue_preview(
-            &principal.owner_hash,
-            &request.id,
-            BROWSER_PORT,
-            "/",
-            "",
-        )?;
-        let preview_origin = self.preview_origin.origin(&issued.id);
-        Ok(Response::new(PreviewSession {
-            id: issued.id,
-            launch_url: issued.url,
-            expires_at: issued.expires_at,
-            preview_origin,
-        }))
-    }
-
     async fn revoke_editor_sessions(
         &self,
         request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request, "RevokeEditorSessions").await?;
-        self.tickets
-            .revoke_desktop_previews(&principal.owner_hash)?;
+        self.tickets.revoke_editors(&principal.owner_hash)?;
         Ok(Response::new(Empty {}))
     }
 
@@ -1253,7 +1118,7 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "RevokePreviewSession").await?;
         let request = request.into_inner();
         validate_preview_session_id(&request.session_id)?;
-        self.authorized_agent(&principal, &request.agent_id).await?;
+        self.owned_agent(&principal, &request.agent_id).await?;
         if request.revocation_token.len() > 256 {
             return Err(Status::invalid_argument("invalid revocation token"));
         }
@@ -1280,7 +1145,6 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
     let resources = &microvm.spec.resources;
     Agent {
         id: microvm.name_any(),
-        uid: microvm.uid().unwrap_or_default(),
         display_name: microvm.spec.display_name.clone(),
         phase: phase_to_proto(agent_phase(microvm)) as i32,
         architecture: architecture_to_proto(microvm.spec.architecture) as i32,
@@ -1299,8 +1163,14 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
             .unwrap_or_default(),
         last_activity_at: last_activity_at(microvm)
             .unwrap_or_else(|| microvm.spec.created_at.clone()),
-        idle_deadline: effective_idle_deadline(microvm).unwrap_or_default(),
-        idle_timeout_minutes: Some(microvm.spec.power.idle_timeout_minutes),
+        idle_deadline: effective_idle_deadline(microvm)
+            .unwrap_or_else(|| microvm.spec.idle_deadline.clone()),
+        // This field is retained on the CR only for old-schema compatibility. A retained
+        // workspace has no destructive lifecycle deadline, so the public wire value is empty.
+        expires_at: String::new(),
+        pending_image: status
+            .and_then(|value| value.pending_image.clone())
+            .unwrap_or_default(),
         conditions: status
             .map(|value| {
                 value
@@ -1317,22 +1187,6 @@ fn agent_from_microvm(microvm: &MicroVM) -> Agent {
             })
             .unwrap_or_default(),
     }
-}
-
-fn power_settings_from_request(
-    request: &UpdatePowerSettingsRequest,
-) -> Result<MicroVMPowerSettings, Status> {
-    let idle_timeout_minutes = request
-        .idle_timeout_minutes
-        .ok_or_else(|| Status::invalid_argument("idle timeout must be supplied"))?;
-    if idle_timeout_minutes > 1440 {
-        return Err(Status::invalid_argument(
-            "idle timeout must be between 0 and 1440 minutes",
-        ));
-    }
-    Ok(MicroVMPowerSettings {
-        idle_timeout_minutes,
-    })
 }
 
 fn agent_phase(microvm: &MicroVM) -> MicroVMPhase {
@@ -1397,38 +1251,18 @@ fn bounded_codex_raw_json(event: &crate::guest::CodexEvent) -> String {
         return raw_json;
     }
 
-    let bounded = if !event.approval_id.is_empty()
-        && event.method == "mcpServer/elicitation/request"
-        && event
-            .raw
-            .pointer("/params/_meta/codex_approval_kind")
-            .and_then(Value::as_str)
-            == Some("mcp_tool_call")
+    let bounded = match event
+        .raw
+        .pointer("/params/availableDecisions")
+        .filter(|_| !event.approval_id.is_empty())
     {
-        let persist = event.raw.pointer("/params/_meta/persist");
-        let session_scope = persist.and_then(Value::as_str) == Some("session")
-            || persist
-                .and_then(Value::as_array)
-                .is_some_and(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("session")));
-        let mut meta = json!({"codex_approval_kind": "mcp_tool_call"});
-        if session_scope {
-            meta["persist"] = json!("session");
-        }
-        json!({"params": {"_meta": meta}, "rawOmitted": true})
-    } else {
-        match event
-            .raw
-            .pointer("/params/availableDecisions")
-            .filter(|_| !event.approval_id.is_empty())
-        {
-            Some(available_decisions) => json!({
-                "params": {
-                    "availableDecisions": bounded_approval_decisions(available_decisions),
-                },
-                "rawOmitted": true,
-            }),
-            None => json!({"rawOmitted": true}),
-        }
+        Some(available_decisions) => json!({
+            "params": {
+                "availableDecisions": bounded_approval_decisions(available_decisions),
+            },
+            "rawOmitted": true,
+        }),
+        None => json!({"rawOmitted": true}),
     }
     .to_string();
 
@@ -1791,7 +1625,7 @@ fn codex_collaboration_outcome(value: &Value) -> Option<String> {
 
     if let Some(states) = item.get("agentsStates").and_then(Value::as_object) {
         let mut states = states.iter().collect::<Vec<_>>();
-        states.sort_by_key(|(left, _)| *left);
+        states.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (thread_id, state) in states {
             let agent_status = state
                 .get("status")
@@ -1851,6 +1685,15 @@ fn architecture_to_proto(architecture: MicroVMArchitecture) -> Architecture {
     }
 }
 
+fn ensure_owner(principal: &Principal, agent: &MicroVM) -> Result<(), Status> {
+    if agent.spec.owner_hash != principal.owner_hash {
+        return Err(Status::permission_denied(
+            "agent belongs to another identity",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_display_name(value: &str) -> Result<String, Status> {
     let value = value.trim();
     if value.is_empty() || value.chars().count() > 64 {
@@ -1889,16 +1732,14 @@ fn validate_terminal_creation_id(value: &str) -> Result<(), Status> {
 #[derive(Clone)]
 struct ProvisionalTerminalLeaseManager {
     client: Client,
-    guests: GuestPool,
     namespace: Arc<str>,
     registry: ProvisionalTerminalLeaseRegistry,
 }
 
 impl ProvisionalTerminalLeaseManager {
-    fn new(client: Client, namespace: Arc<str>, guests: GuestPool) -> Self {
+    fn new(client: Client, namespace: Arc<str>) -> Self {
         Self {
             client,
-            guests,
             namespace,
             registry: ProvisionalTerminalLeaseRegistry::default(),
         }
@@ -1955,19 +1796,20 @@ impl ProvisionalTerminalLeaseManager {
     }
 
     async fn cleanup_once(&self, agent_id: &str, terminal_id: &str) -> bool {
-        let guest = match self.guests.for_agent(agent_id, None).await {
-            Ok(guest) => Some(guest),
-            Err(error) if agent_is_absent(&error) => None,
-            Err(error) => {
-                tracing::warn!(
-                    agent_id,
-                    terminal_id,
-                    %error,
-                    "failed to connect to the guest while cleaning up an unconfirmed terminal"
-                );
-                return false;
-            }
-        };
+        let guest =
+            match GuestClient::for_agent(self.client.clone(), &self.namespace, agent_id).await {
+                Ok(guest) => Some(guest),
+                Err(error) if agent_is_absent(&error) => None,
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id,
+                        terminal_id,
+                        %error,
+                        "failed to connect to the guest while cleaning up an unconfirmed terminal"
+                    );
+                    return false;
+                }
+            };
 
         if let Some(guest) = guest {
             match guest.terminate_terminal(terminal_id).await {
@@ -2304,107 +2146,14 @@ fn validate_codex_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
-fn validate_codex_message(text: &str, images: &[CodexImage]) -> Result<(), Status> {
-    if (text.trim().is_empty() && images.is_empty()) || text.trim().len() > 64 << 10 {
+fn validate_prompt(value: &str) -> Result<String, Status> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 64 << 10 {
         return Err(Status::invalid_argument(
-            "add a message or image; message text must not exceed 64 KiB",
+            "message must contain between 1 byte and 64 KiB",
         ));
     }
-    if images.len() > 4
-        || images
-            .iter()
-            .map(|image| image.content.len())
-            .sum::<usize>()
-            > 8 << 20
-    {
-        return Err(Status::invalid_argument(
-            "attach at most 4 images and 8 MiB total",
-        ));
-    }
-    for image in images {
-        if image.content.is_empty() || image.content.len() > 4 << 20 {
-            return Err(Status::invalid_argument("each image must be at most 4 MiB"));
-        }
-        image_extension(image)?;
-    }
-    Ok(())
-}
-
-fn image_extension(image: &CodexImage) -> Result<&'static str, Status> {
-    match image.media_type.as_str() {
-        "image/png" if image.content.starts_with(b"\x89PNG\r\n\x1a\n") => Ok("png"),
-        "image/jpeg" if image.content.starts_with(b"\xff\xd8\xff") => Ok("jpg"),
-        "image/webp"
-            if image.content.starts_with(b"RIFF") && image.content.get(8..12) == Some(b"WEBP") =>
-        {
-            Ok("webp")
-        }
-        _ => Err(Status::invalid_argument(
-            "attach a valid PNG, JPEG, or WebP image",
-        )),
-    }
-}
-
-pub(crate) async fn codex_turn_input(
-    guest: &GuestClient,
-    text: &str,
-    images: &[CodexImage],
-) -> Result<Vec<Value>, Status> {
-    validate_codex_message(text, images)?;
-    let mut input = Vec::new();
-    if !text.trim().is_empty() {
-        input.push(json!({"type": "text", "text": text.trim(), "text_elements": []}));
-    }
-    if !images.is_empty() {
-        let directory = "/workspace/.tengri-attachments";
-        if let Err(error) = guest.create_directory(directory).await
-            && !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
-        {
-            return Err(map_guest_error(error));
-        }
-        let mut written_paths = Vec::new();
-        for image in images {
-            let path = format!("{directory}/{}.{}", Uuid::new_v4(), image_extension(image)?);
-            if let Err(error) = guest.write_file(&path, &image.content, "missing").await {
-                if !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
-                {
-                    written_paths.push(path);
-                }
-                for staged_path in &written_paths {
-                    if let Err(cleanup_error) = guest.delete_file(staged_path, false).await
-                        && !matches!(&cleanup_error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::NOT_FOUND)
-                    {
-                        tracing::warn!(error = %cleanup_error, "failed to clean unsent Codex attachment");
-                    }
-                }
-                return Err(map_guest_error(error));
-            }
-            written_paths.push(path.clone());
-            input.push(json!({"type": "localImage", "path": path}));
-        }
-    }
-    Ok(input)
-}
-
-fn validate_preview_port(value: u32) -> Result<u16, Status> {
-    u16::try_from(value)
-        .ok()
-        .filter(|port| {
-            *port >= 1024
-                && ![
-                    8080,
-                    crate::guest::GUEST_API_PORT,
-                    EDITOR_PORT,
-                    EDITOR_BRIDGE_PORT,
-                    BROWSER_PORT,
-                ]
-                .contains(port)
-        })
-        .ok_or_else(|| {
-            Status::invalid_argument(
-                "preview port must be between 1024 and 65535 and cannot use a reserved guest port",
-            )
-        })
+    Ok(value.to_owned())
 }
 
 fn validate_preview_path(value: &str) -> Result<String, Status> {
@@ -2587,252 +2336,15 @@ fn map_guest_error(error: GuestError) -> Status {
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn validates_codex_images_and_image_only_messages() {
-        let png = CodexImage {
-            media_type: "image/png".into(),
-            content: b"\x89PNG\r\n\x1a\n".to_vec(),
-        };
-        assert!(validate_codex_message("", std::slice::from_ref(&png)).is_ok());
-        assert!(validate_codex_message("Inspect this", std::slice::from_ref(&png)).is_ok());
-        assert!(validate_codex_message("", &[]).is_err());
-        assert!(
-            validate_codex_message(
-                "",
-                &[CodexImage {
-                    media_type: "image/jpeg".into(),
-                    ..png.clone()
-                }]
-            )
-            .is_err()
-        );
-        assert!(validate_codex_message("", &vec![png.clone(); 5]).is_err());
-        let mut exact = png.clone();
-        exact.content.resize(4 << 20, 0);
-        assert!(validate_codex_message("", &[exact.clone(), exact.clone()]).is_ok());
-        assert!(validate_codex_message("", &[exact.clone(), exact.clone(), png]).is_err());
-        exact.content.push(0);
-        assert!(validate_codex_message("", &[exact]).is_err());
-    }
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::activity::LAST_ACTIVITY_ANNOTATION;
     use crate::auth::owner_hash;
-    use crate::crd::MicroVMStatus;
-    use hmac::{Hmac, Mac};
+    use crate::crd::{LIFETIME_HOURS, MicroVMStatus};
     use http::{Response as HttpResponse, StatusCode as HttpStatusCode};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
     use kube::client::Body as KubeBody;
-    use prost::Message;
-    use sha2::{Digest, Sha256};
-
-    fn test_control_plane(client: Client) -> ControlPlane {
-        let namespace = "tengri".to_owned();
-        ControlPlane::new(
-            client.clone(),
-            ControlPlaneConfig {
-                identity: crate::identity::WorkloadIdentity::Fixture(8080),
-                authorization: WorkspaceAuthorization::Fixture,
-                namespace: namespace.clone(),
-                default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
-                architecture: MicroVMArchitecture::Amd64,
-                internal_hmac_secret: "h".repeat(32),
-                ticket_signing_secret: "t".repeat(32),
-                public_url: "https://tengri.example.test".to_owned(),
-                preview_origin: PreviewOrigin::parse(
-                    "https://tengri-{session}.example.test".to_owned(),
-                    "https://tengri.example.test".to_owned(),
-                )
-                .unwrap(),
-            },
-            ActivityTracker::new(client, namespace),
-        )
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn workspace_access_uses_spicedb_instead_of_local_owner_metadata() {
-        let (service, mut handle) =
-            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let fixture = crate::authz::tests::SpiceFixture::new().await;
-        let mut control = test_control_plane(Client::new(service, "tengri"));
-        control.authorization = fixture.authorization.clone();
-        let agent = provisional_terminal_test_agent(Utc::now());
-        let id = agent.name_any();
-        let principal = Principal {
-            owner_hash: agent.spec.owner_hash.clone(),
-        };
-        fixture.mode.store(1, Ordering::SeqCst);
-        assert_eq!(
-            control
-                .authorized_agent(&principal, &id)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::PermissionDenied
-        );
-        fixture.mode.store(4, Ordering::SeqCst);
-        assert_eq!(
-            control
-                .authorized_agent(&principal, &id)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Unavailable
-        );
-
-        fixture.mode.store(0, Ordering::SeqCst);
-        let principal = Principal {
-            owner_hash: owner_hash("github:central-grant"),
-        };
-        assert_ne!(principal.owner_hash, agent.spec.owner_hash);
-        let expected = id.clone();
-        let task = tokio::spawn(async move { control.authorized_agent(&principal, &id).await });
-        let (request, response) = handle.next_request().await.unwrap();
-        assert!(request.uri().path().ends_with(&expected));
-        response.send_response(
-            HttpResponse::builder()
-                .header("content-type", "application/json")
-                .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
-                .unwrap(),
-        );
-        assert_eq!(task.await.unwrap().unwrap().name_any(), expected);
-    }
-
-    #[tokio::test]
-    async fn power_settings_persist_without_waking_and_reject_other_owners() {
-        let (service, mut handle) =
-            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let fixture = crate::authz::tests::SpiceFixture::new().await;
-        let mut control = test_control_plane(Client::new(service, "tengri"));
-        control.authorization = fixture.authorization.clone();
-        let mut sleeping = provisional_terminal_test_agent(Utc::now());
-        sleeping.spec.owner_hash = owner_hash("github:42");
-        let id = deterministic_agent_id(&sleeping.spec.owner_hash);
-        sleeping.metadata.name = Some(id.clone());
-        sleeping.metadata.resource_version = Some("7".to_owned());
-        sleeping.spec.desired_state = MicroVMDesiredState::Sleeping;
-        sleeping.status = Some(MicroVMStatus {
-            phase: MicroVMPhase::Sleeping,
-            ..Default::default()
-        });
-
-        for (requested_id, allowed) in [
-            (id.clone(), true),
-            (deterministic_agent_id(&owner_hash("github:43")), false),
-        ] {
-            fixture.mode.store(u8::from(!allowed), Ordering::SeqCst);
-            let mut request = Request::new(UpdatePowerSettingsRequest {
-                id: requested_id,
-                idle_timeout_minutes: Some(0),
-            });
-            let timestamp = Utc::now().timestamp().to_string();
-            let nonce = Uuid::new_v4().to_string();
-            let hash = format!("{:x}", Sha256::digest(request.get_ref().encode_to_vec()));
-            let mut mac = Hmac::<Sha256>::new_from_slice("h".repeat(32).as_bytes()).unwrap();
-            mac.update(format!("github:42\n{timestamp}\n{nonce}\n/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings\n{hash}").as_bytes());
-            let signature = format!("{:x}", mac.finalize().into_bytes());
-            for (key, value) in [
-                ("x-tengri-subject", "github:42"),
-                ("x-tengri-timestamp", timestamp.as_str()),
-                ("x-tengri-nonce", nonce.as_str()),
-                ("x-tengri-signature", signature.as_str()),
-            ] {
-                request.metadata_mut().insert(key, value.parse().unwrap());
-            }
-            let caller = control.clone();
-            let task = tokio::spawn(async move { caller.update_power_settings(request).await });
-
-            for method in [http::Method::GET, http::Method::PUT] {
-                let (request, response) = handle.next_request().await.unwrap();
-                assert_eq!(request.method(), method);
-                assert_eq!(
-                    request.uri().path(),
-                    "/api/v1/namespaces/tengri/configmaps/tengri-auth-nonces"
-                );
-                let state = if method == http::Method::GET {
-                    serde_json::to_vec(&json!({"apiVersion":"v1", "kind":"ConfigMap", "metadata":{"name":"tengri-auth-nonces", "resourceVersion":"1"}, "data":{}})).unwrap()
-                } else {
-                    request.into_body().collect_bytes().await.unwrap().to_vec()
-                };
-                response.send_response(
-                    HttpResponse::builder()
-                        .header("content-type", "application/json")
-                        .body(KubeBody::from(state))
-                        .unwrap(),
-                );
-            }
-            if !allowed {
-                let error = tokio::time::timeout(Duration::from_millis(500), task)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .unwrap_err();
-                assert_eq!(error.code(), tonic::Code::PermissionDenied);
-                continue;
-            }
-
-            let path =
-                format!("/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/{id}");
-            let (request, response) = handle.next_request().await.unwrap();
-            assert_eq!(request.method(), http::Method::GET);
-            assert_eq!(request.uri().path(), path);
-            response.send_response(
-                HttpResponse::builder()
-                    .header("content-type", "application/json")
-                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
-                    .unwrap(),
-            );
-            let (request, response) = handle.next_request().await.unwrap();
-            assert_eq!(request.method(), http::Method::PATCH);
-            assert_eq!(request.uri().path(), path);
-            let patch: Value =
-                serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
-                    .unwrap();
-            assert_eq!(patch["metadata"]["resourceVersion"], "7");
-            assert_eq!(patch["spec"]["power"]["idleTimeoutMinutes"], 0);
-            assert!(patch["spec"].get("desiredState").is_none());
-            sleeping.spec.power.idle_timeout_minutes = 0;
-            response.send_response(
-                HttpResponse::builder()
-                    .header("content-type", "application/json")
-                    .body(KubeBody::from(serde_json::to_vec(&sleeping).unwrap()))
-                    .unwrap(),
-            );
-            let saved = task.await.unwrap().unwrap().into_inner();
-            assert_eq!(saved.idle_timeout_minutes, Some(0));
-            assert_eq!(saved.phase, AgentPhase::Sleeping as i32);
-            assert!(saved.idle_deadline.is_empty());
-        }
-    }
-
-    #[test]
-    fn power_settings_bound_idle_time_and_allow_disabling_automatic_sleep() {
-        let mut request = UpdatePowerSettingsRequest {
-            id: "agent".to_owned(),
-            idle_timeout_minutes: Some(0),
-        };
-        assert_eq!(
-            power_settings_from_request(&request)
-                .unwrap()
-                .idle_timeout_minutes,
-            0
-        );
-        request.idle_timeout_minutes = Some(1440);
-        assert!(power_settings_from_request(&request).is_ok());
-        request.idle_timeout_minutes = Some(1441);
-        assert_eq!(
-            power_settings_from_request(&request).unwrap_err().code(),
-            tonic::Code::InvalidArgument
-        );
-        request.idle_timeout_minutes = None;
-        assert_eq!(
-            power_settings_from_request(&request).unwrap_err().code(),
-            tonic::Code::InvalidArgument
-        );
-    }
 
     #[test]
     fn recognizes_only_the_legacy_guest_model_allowlist_failure() {
@@ -2888,9 +2400,9 @@ mod tests {
             display_name: "My agent".to_owned(),
         };
         assert_eq!(request.display_name, "My agent");
-        assert_eq!(MicroVMResources::default().cpu_millis, 4_000);
-        assert_eq!(MicroVMResources::default().memory_mib, 8_192);
-        assert_eq!(MicroVMResources::default().workspace_gib, 32);
+        assert_eq!(MicroVMResources::default().cpu_millis, 2_000);
+        assert_eq!(MicroVMResources::default().memory_mib, 4_096);
+        assert_eq!(MicroVMResources::default().workspace_gib, 16);
     }
 
     #[test]
@@ -2903,16 +2415,12 @@ mod tests {
     }
 
     #[test]
-    fn new_agents_have_the_finalizer_and_single_mount_layout_at_creation() {
+    fn new_agents_are_marked_for_the_versioned_single_mount_layout() {
         let hash = owner_hash("github:42");
         let mut agent = provisional_terminal_test_agent(Utc::now());
 
         apply_new_agent_metadata(&mut agent, &hash, SINGLE_MOUNT_STORAGE_LAYOUT);
 
-        assert_eq!(
-            agent.metadata.finalizers.as_deref(),
-            Some([FINALIZER_NAME.to_owned()].as_slice()),
-        );
         assert_eq!(
             agent
                 .metadata
@@ -2972,10 +2480,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         );
         agent.status = Some(MicroVMStatus {
@@ -3001,10 +2508,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
                 idle_deadline: now.to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         );
         agent.status = Some(MicroVMStatus {
@@ -3035,10 +2541,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         );
         agent.metadata.generation = Some(2);
@@ -3066,10 +2571,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         );
         agent.status = Some(MicroVMStatus {
@@ -3098,10 +2602,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
                 idle_deadline: now.to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         );
         let activity_at = now + chrono::Duration::minutes(15);
@@ -3115,6 +2618,30 @@ mod tests {
         assert_eq!(
             projected.idle_deadline,
             (activity_at + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
+        );
+    }
+
+    #[test]
+    fn agent_projection_hides_legacy_expiry_and_exposes_pending_image() {
+        let now = Utc::now();
+        let mut agent = provisional_terminal_test_agent(now);
+        agent.status = Some(MicroVMStatus {
+            pending_image: Some(format!(
+                "registry.example/nanoagent@sha256:{}",
+                "c".repeat(64)
+            )),
+            ..MicroVMStatus::default()
+        });
+
+        let projected = agent_from_microvm(&agent);
+        assert!(projected.expires_at.is_empty());
+        assert_eq!(
+            projected.pending_image,
+            agent
+                .status
+                .as_ref()
+                .and_then(|status| status.pending_image.clone())
+                .unwrap_or_default()
         );
     }
 
@@ -3479,45 +3006,6 @@ mod tests {
     }
 
     #[test]
-    fn oversized_mcp_approvals_retain_kind_and_advertised_session_scope() {
-        for persist in [
-            json!("session"),
-            json!(["session", "always"]),
-            json!("always"),
-            Value::Null,
-        ] {
-            let event = codex_event(crate::guest::CodexEvent {
-                sequence: 10,
-                method: "mcpServer/elicitation/request".to_owned(),
-                approval_id: "mcp-large".to_owned(),
-                raw: json!({"params": {
-                    "threadId": "thread-large", "message": "Allow fixture tool?",
-                    "_meta": {"codex_approval_kind": "mcp_tool_call", "persist": persist,
-                        "tool_params": {"content": "x".repeat(MAX_CODEX_EVENT_TEXT_BYTES + 1)}}
-                }}),
-            });
-            assert_eq!(event.thread_id, "thread-large");
-            assert_eq!(event.approval_id, "mcp-large");
-            assert_eq!(event.text, "Allow fixture tool?");
-            assert!(event.raw_json.len() < 256);
-            let raw: Value =
-                serde_json::from_str(&event.raw_json).expect("bounded MCP approval JSON");
-            assert_eq!(
-                raw.pointer("/params/_meta/codex_approval_kind"),
-                Some(&json!("mcp_tool_call"))
-            );
-            let session_scope =
-                persist == json!("session") || persist == json!(["session", "always"]);
-            assert_eq!(
-                raw.pointer("/params/_meta/persist").is_some(),
-                session_scope
-            );
-            assert_eq!(raw.pointer("/rawOmitted"), Some(&json!(true)));
-            assert!(raw.pointer("/params/_meta/tool_params").is_none());
-        }
-    }
-
-    #[test]
     fn preview_path_is_normalized_and_cannot_smuggle_a_fragment() {
         assert_eq!(
             validate_preview_path("/app?mode=dev").expect("preview path"),
@@ -3527,19 +3015,6 @@ mod tests {
         assert!(validate_preview_path("https://private.example").is_err());
         assert!(validate_preview_path("/app#stolen").is_err());
         assert!(validate_preview_path("/app\r\nX-Injected: 1").is_err());
-    }
-
-    #[test]
-    fn preview_ports_reject_guest_control_and_editor_listeners() {
-        for port in [0, 22, 1023, 8080, 8443, 13337, 13338, 13339, 65536] {
-            assert_eq!(
-                validate_preview_port(port).unwrap_err().code(),
-                tonic::Code::InvalidArgument
-            );
-        }
-        for port in [1024, 3000, 65535] {
-            assert_eq!(validate_preview_port(port).unwrap(), port as u16);
-        }
     }
 
     #[test]
@@ -3718,10 +3193,9 @@ mod tests {
                 image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 resources: MicroVMResources::default(),
-                power: Default::default(),
                 created_at: now.to_rfc3339(),
                 idle_deadline: (now + chrono::Duration::minutes(IDLE_MINUTES)).to_rfc3339(),
-                slot: None,
+                expires_at: (now + chrono::Duration::hours(LIFETIME_HOURS)).to_rfc3339(),
             },
         )
     }
@@ -3730,15 +3204,9 @@ mod tests {
     async fn provisional_terminal_lease_is_persisted_on_the_microvm() {
         let (service, mut handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let client = Client::new(service, "tengri");
         let manager = ProvisionalTerminalLeaseManager::new(
-            client.clone(),
+            Client::new(service, "tengri"),
             Arc::<str>::from("tengri"),
-            GuestPool::new(
-                client,
-                "tengri",
-                crate::identity::WorkloadIdentity::Fixture(8080),
-            ),
         );
         let tracking_manager = manager.clone();
         let tracked_after = Utc::now();
@@ -3798,15 +3266,9 @@ mod tests {
     async fn terminal_cleanup_retry_is_registered_before_returning() {
         let (service, _handle) =
             tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let client = Client::new(service, "tengri");
         let manager = ProvisionalTerminalLeaseManager::new(
-            client.clone(),
+            Client::new(service, "tengri"),
             Arc::<str>::from("tengri"),
-            GuestPool::new(
-                client,
-                "tengri",
-                crate::identity::WorkloadIdentity::Fixture(8080),
-            ),
         );
 
         manager

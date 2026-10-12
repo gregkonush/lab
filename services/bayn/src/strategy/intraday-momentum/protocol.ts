@@ -24,8 +24,6 @@ import {
   intradayUniverse as coreUniverse,
   intradaySourceTopics,
   intradayExecutionModel,
-  intradayLookbackMinutes,
-  intradayDecisionDelaySeconds,
   intradayFeatureTopic,
   intradayStreamingContract,
   IntradayStreamingInputSchema as StreamingInputContract,
@@ -77,7 +75,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
 
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
-  if (protocol.lookbackMinutes !== intradayLookbackMinutes)
+  if (protocol.lookbackMinutes !== 30)
     issues.push({ path: ['lookbackMinutes'], issue: 'rolling-price-30m requires exactly 30 completed minutes' })
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
   const canonicalCandidates = [...new Set(protocol.candidateSymbols)].sort()
@@ -235,8 +233,8 @@ export const defaultIntradayMomentumProtocolDocument = Object.freeze({
   delayClass: 'real_time_exchange_only',
   sourceTopics: intradayMomentumSourceTopics,
   positionPolicy: 'long-only',
-  lookbackMinutes: intradayLookbackMinutes,
-  decisionDelaySeconds: intradayDecisionDelaySeconds,
+  lookbackMinutes: 30,
+  decisionDelaySeconds: 2,
   maximumDecisionLagMs: 60_000,
   maximumQuoteAgeMs: 10_000,
   warmupMinutesAfterOpen: 0,

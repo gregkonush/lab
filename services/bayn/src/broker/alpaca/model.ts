@@ -9,7 +9,6 @@ import {
 } from '../../schemas'
 import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
-import type { ObservedBrokerSnapshot } from './observed-snapshot'
 import { Pipeable } from '../../pipeable'
 
 export const defaultFillActivitiesPageSize = 100
@@ -417,7 +416,6 @@ export interface BrokerSubmissionSnapshot {
 }
 
 export interface BrokerReadProjection {
-  readonly healthSnapshot?: Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>
   readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
   readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape

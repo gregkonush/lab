@@ -80,7 +80,6 @@ export const makeProjectedBrokerRead = (
     return {
       ...fresh,
       projection: {
-        healthSnapshot: cached,
         fresh,
         invalidate,
         snapshot: cached.pipe(Effect.map((value) => value.snapshot)),

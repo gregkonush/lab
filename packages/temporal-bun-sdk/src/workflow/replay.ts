@@ -312,7 +312,7 @@ export const ingestWorkflowHistory = (intake: ReplayIntake): Effect.Effect<Repla
           continue
         }
 
-        const decoded = yield* Effect.catch(
+        const decoded = yield* Effect.catchAll(
           decodeDeterminismMarkerEnvelope({
             converter: intake.dataConverter,
             details: event.attributes.value.details,

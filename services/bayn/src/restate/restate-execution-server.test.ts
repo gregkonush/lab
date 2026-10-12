@@ -1,4 +1,6 @@
 import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
+import { createServer as createHttpServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
@@ -14,6 +16,16 @@ const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
 const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
+
+const reservePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createHttpServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address() as AddressInfo
+      server.close((cause) => (cause === undefined ? resolve(address.port) : reject(cause)))
+    })
+  })
 
 const connectSession = (origin: string): Promise<ClientHttp2Session> =>
   new Promise((resolve, reject) => {
@@ -86,15 +98,13 @@ describe('native Restate execution server', () => {
         pollIntervalMs: 30_000,
       },
     )
+    const port = await reservePort()
 
     const discovery = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const server = createHttp2Server(handler)
-          yield* acquireRestateHttp2Server(server, 0)
-          const address = server.address()
-          if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
+          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
           const manifest = yield* Effect.promise(() => readDiscovery(client))
           client.close()
           return manifest
@@ -205,15 +215,13 @@ describe('native Restate execution server', () => {
         pollIntervalMs: 30_000,
       },
     )
+    const port = await reservePort()
 
     const status = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const server = createHttp2Server(handler)
-          yield* acquireRestateHttp2Server(server, 0)
-          const address = server.address()
-          if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
+          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
           const responseStatus = yield* Effect.promise(() => readUnsignedDiscoveryStatus(client))
           client.close()
           return responseStatus

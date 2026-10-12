@@ -4,8 +4,6 @@ import { Effect, Schema } from 'effect'
 import { canonicalHashV1Result } from './hash'
 import { InferenceCostError, InferenceCostEvidenceSchema, type InferenceCostEvidence } from './inference-costs'
 import { IsoDateSchema, StrictNonEmptyStringSchema, UtcInstantSchema } from './schemas'
-import type { WriterFenceService } from './execution/writer-fence'
-import { forwardPerformanceSnapshot } from './forward-performance/postgres/snapshot'
 
 const maximumRequests = 10_000
 const CutSchema = Schema.Array(Schema.Struct({ as_of: UtcInstantSchema }))
@@ -15,7 +13,6 @@ export const readInferenceCostEvidence = (
   sql: PgClient.PgClient,
   accountId: string,
   sessionDate: string,
-  writerFence?: WriterFenceService,
 ): Effect.Effect<InferenceCostEvidence, InferenceCostError> =>
   Effect.gen(function* () {
     const scope = yield* Schema.decodeUnknownEffect(
@@ -26,9 +23,10 @@ export const readInferenceCostEvidence = (
     const accountBindingHash = yield* Effect.fromResult(
       canonicalHashV1Result({ schemaVersion: 'bayn.inference-cost-account.v1', accountId: scope.accountId }),
     ).pipe(Effect.mapError(() => new InferenceCostError({ message: 'Inference account binding cannot be hashed' })))
-    return yield* forwardPerformanceSnapshot(sql, writerFence)
+    return yield* sql
       .withTransaction(
         Effect.gen(function* () {
+          yield* sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`
           const cuts = yield* sql<Record<string, unknown>>`
             SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of
           `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(CutSchema)))
@@ -63,7 +61,7 @@ export const readInferenceCostEvidence = (
         Effect.mapError((cause) =>
           cause instanceof InferenceCostError
             ? cause
-            : new InferenceCostError({ message: 'Inference cost evidence snapshot failed', cause }),
+            : new InferenceCostError({ message: 'Inference cost read-only snapshot failed' }),
         ),
       )
   })

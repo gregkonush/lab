@@ -20,9 +20,7 @@ const verifiedUsage = (call: ReplayJevCall): JevResponse['usage'] | undefined =>
   if (outcome.status === 'RECEIVED') return outcome.inference.response.usage
   if (
     outcome.status !== 'FAILED' ||
-    (outcome.failure !== JevFailure.Response &&
-      outcome.failure !== JevFailure.Timeout &&
-      outcome.failure !== JevFailure.Status) ||
+    (outcome.failure !== JevFailure.Response && outcome.failure !== JevFailure.Timeout) ||
     outcome.responseHash === null
   )
     return undefined

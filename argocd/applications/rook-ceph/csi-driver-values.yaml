@@ -37,10 +37,6 @@ operatorConfig:
       # Turin is intentionally a control-plane node and needs CSI node plugins
       # so GPU workloads pinned there can mount rook-ceph-block PVCs.
       tolerations:
-        - key: workload.proompteng.ai/compute-local
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -53,11 +49,7 @@ operatorConfig:
       priorityClassName: system-cluster-critical
       affinity:
         nodeAffinity: {}
-      tolerations:
-        - key: workload.proompteng.ai/compute-local
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
+      tolerations: []
       imagePullPolicy: IfNotPresent
 
 drivers:
@@ -86,10 +78,6 @@ drivers:
         rollingUpdate:
           maxUnavailable: 1
       tolerations:
-        - key: workload.proompteng.ai/compute-local
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -121,11 +109,7 @@ drivers:
     controllerPlugin:
       hostNetwork: true
       replicas: 2
-      tolerations:
-        - key: workload.proompteng.ai/compute-local
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
+      tolerations: []
       imagePullPolicy: ""
       resources:
         attacher:
@@ -196,10 +180,6 @@ drivers:
         rollingUpdate:
           maxUnavailable: 1
       tolerations:
-        - key: workload.proompteng.ai/compute-local
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -229,11 +209,7 @@ drivers:
     controllerPlugin:
       hostNetwork: true
       replicas: 2
-      tolerations:
-        - key: workload.proompteng.ai/compute-local
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
+      tolerations: []
       imagePullPolicy: ""
       resources:
         attacher:

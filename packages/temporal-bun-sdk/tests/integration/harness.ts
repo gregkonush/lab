@@ -298,7 +298,7 @@ export const createIntegrationHarness = (
       return runTemporalCli(command).pipe(
         Effect.asVoid,
         Effect.tap(() => Effect.sync(() => trackedWorkflows.delete(workflowKey(handle)))),
-        Effect.catch((error) => {
+        Effect.catchAll((error) => {
           if (isWorkflowAlreadyClosedCliError(error)) {
             trackedWorkflows.delete(workflowKey(handle))
             return Effect.void
@@ -485,7 +485,7 @@ export const createIntegrationHarness = (
       return runTemporalCli(command).pipe(
         Effect.flatMap((stdout) => parseWorkflowExecutionHandle(stdout, workflowId, cliCommand)),
         Effect.map(trackWorkflow),
-        Effect.catch((error) => {
+        Effect.catchAll((error) => {
           if (error instanceof TemporalCliCommandError) {
             console.warn('[temporal-bun-sdk:test] CLI command failed, stdout:', error.stdout)
             console.warn('[temporal-bun-sdk:test] CLI command failed, stderr:', error.stderr)
@@ -525,7 +525,7 @@ export const createIntegrationHarness = (
         { ...scenarioEnv, ...(options?.env ?? {}) },
         Effect.sync(() => {
           console.info(`[temporal-bun-sdk] scenario: ${name}`)
-        }).pipe(Effect.andThen(scenario())),
+        }).pipe(Effect.zipRight(scenario())),
       )
 
     return {

@@ -274,7 +274,6 @@ describe('document-bound external operating costs', () => {
     expect(report.invoiceReconciled).toBe(false)
     expect(report.totalOperatingCostMicros).toBeNull()
     expect(report.netEconomicPnlMicros).toBeNull()
-    expect(report.qualificationInferenceCostMicros).toBeNull()
   })
 
   test('reconciles credits and all allocation shares, replacing rather than adding the tariff estimate', () => {

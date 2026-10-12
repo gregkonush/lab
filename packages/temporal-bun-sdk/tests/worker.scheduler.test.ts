@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Effect, Fiber, Ref } from 'effect'
 import * as Deferred from 'effect/Deferred'
+import * as FiberStatus from 'effect/FiberStatus'
 
 import { makeWorkerScheduler } from '../src/worker/concurrency'
 
@@ -98,12 +99,12 @@ test('stop waits for in-flight workflow tasks to finish', async () => {
 
       yield* Deferred.await(started)
 
-      const stopFiber = yield* Effect.forkChild(scheduler.stop)
+      const stopFiber = yield* Effect.fork(scheduler.stop)
 
       yield* Effect.sleep('20 millis')
-      const statusBefore = yield* Effect.sync(() => stopFiber.pollUnsafe())
+      const statusBefore = yield* Fiber.status(stopFiber)
       yield* Effect.sync(() => {
-        expect(statusBefore).toBeUndefined()
+        expect(FiberStatus.isDone(statusBefore)).toBeFalse()
       })
 
       yield* Deferred.succeed(release, undefined)
@@ -133,7 +134,7 @@ test('stop skips queued workflow tasks that have not started', async () => {
 
       yield* Deferred.await(firstStarted)
 
-      const stopFiber = yield* Effect.forkChild(scheduler.stop)
+      const stopFiber = yield* Effect.fork(scheduler.stop)
       yield* Effect.sleep('20 millis')
 
       const secondStartedBeforeRelease = yield* Deferred.isDone(secondStarted)
@@ -168,7 +169,7 @@ test('stop skips queued activity tasks that have not started', async () => {
 
       yield* Deferred.await(firstStarted)
 
-      const stopFiber = yield* Effect.forkChild(scheduler.stop)
+      const stopFiber = yield* Effect.fork(scheduler.stop)
       yield* Effect.sleep('20 millis')
 
       const secondStartedBeforeRelease = yield* Deferred.isDone(secondStarted)

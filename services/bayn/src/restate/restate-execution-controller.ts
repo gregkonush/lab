@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
 
 import * as restate from '@restatedev/restate-sdk'
-import { Clock, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { maximumConsistencyDelayMs } from '../execution/mutations'
 import {
@@ -28,14 +28,7 @@ import {
   type ExecutionControllerTick,
 } from '../execution/controller'
 import { sha256 } from '../hash'
-import {
-  recordResearchCapture,
-  CaptureInvalidation,
-  invalidateResearchCapture,
-  type ResearchCaptureEvent,
-  type ResearchCaptureObserver,
-} from '../research-capture/capture'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { strictParseOptions } from '../schemas'
 import { BrokerObservationOwnerStateSchema, brokerObservationJsonSerde } from './restate-broker-observations'
 
 const stateKey = 'controller'
@@ -94,7 +87,6 @@ export interface ExecutionControllerConfig {
 }
 
 export interface NativeExecutionRuntime {
-  readonly capture?: ResearchCaptureObserver
   readonly advance: (
     command: import('../execution/advance').AdvanceExecutionCommand,
     signal: AbortSignal,
@@ -127,28 +119,7 @@ interface ExecutionAdvanceFailureDiagnostic {
   readonly failureTag: string
 }
 
-const executionAdvanceFailureMetadataKey = 'bayn.execution-advance-failure.v1'
-const FailureLabelSchema = Schema.NonEmptyString.check(Schema.isMaxLength(80))
-const ExecutionAdvanceFailureDiagnosticSchema = Schema.fromJsonString(
-  Schema.Struct({
-    failureCauseCategory: Schema.optionalKey(FailureLabelSchema),
-    failureCauseOperation: Schema.optionalKey(FailureLabelSchema),
-    failureCauseTag: Schema.optionalKey(FailureLabelSchema),
-    failureFingerprint: Sha256Schema,
-    failureMessage: Schema.NonEmptyString.check(Schema.isMaxLength(240)),
-    failureOperation: FailureLabelSchema,
-    failureTag: FailureLabelSchema,
-  }),
-)
-
 const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFailureDiagnostic => {
-  if (cause instanceof restate.TerminalError) {
-    const retained = Schema.decodeUnknownResult(
-      ExecutionAdvanceFailureDiagnosticSchema,
-      strictParseOptions,
-    )(cause.metadata?.[executionAdvanceFailureMetadataKey])
-    if (Result.isSuccess(retained)) return retained.success
-  }
   const candidate =
     typeof cause === 'object' && cause !== null
       ? (cause as {
@@ -169,9 +140,7 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
         })
       : undefined
   const knownTag =
-    candidate?._tag === 'TransientExecutionFailure' ||
-    candidate?._tag === 'NativeExecutionRuntimeError' ||
-    candidate?._tag === 'OperationalError'
+    candidate?._tag === 'TransientExecutionFailure' || candidate?._tag === 'NativeExecutionRuntimeError'
       ? candidate._tag
       : undefined
   const failureTag =
@@ -182,11 +151,9 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
       ? candidate.operation.slice(0, 80)
       : 'unclassified'
   const failureMessage =
-    knownTag === 'OperationalError'
-      ? 'execution advance rejected an operational check'
-      : knownTag !== undefined && typeof candidate?.message === 'string'
-        ? candidate.message.slice(0, 240)
-        : 'execution advance rejected with an unclassified failure'
+    knownTag !== undefined && typeof candidate?.message === 'string'
+      ? candidate.message.slice(0, 240)
+      : 'execution advance rejected with an unclassified failure'
   const fingerprintMaterial =
     cause instanceof Error
       ? `${cause.name}:${cause.message}:${cause.stack ?? ''}`
@@ -202,18 +169,6 @@ const executionAdvanceFailureDiagnostic = (cause: unknown): ExecutionAdvanceFail
     failureOperation,
     failureTag,
   }
-}
-
-/** Restate records failures as TerminalError; preserve bounded domain diagnostics before the durable boundary. */
-const executionAdvanceRunFailure = (cause: unknown): unknown => {
-  const failure = executionAdvanceFailureDiagnostic(cause)
-  if (!['TransientExecutionFailure', 'NativeExecutionRuntimeError', 'OperationalError'].includes(failure.failureTag)) {
-    return cause
-  }
-  return new restate.TerminalError(failure.failureMessage, {
-    errorCode: cause instanceof restate.TerminalError ? cause.code : 500,
-    metadata: { [executionAdvanceFailureMetadataKey]: JSON.stringify(failure) },
-  })
 }
 
 type ControllerObjectState = { readonly controller: ExecutionControllerState }
@@ -386,54 +341,42 @@ const scheduleTick = (
   sourceCatchUpRevision?: string,
   retryWindowHash?: string,
   recoveryWindow?: number,
-  capture?: ResearchCaptureObserver,
 ): void => {
   let idempotencyKey: string
-  if (retryWindowHash !== undefined) {
-    idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
-      state.epoch,
-      state.nextSequence,
-      attempt,
-      retryWindowHash,
-    )
-  } else if (sourceCatchUpRevision !== undefined) {
+  if (sourceCatchUpRevision !== undefined) {
     idempotencyKey = executionControllerSourceCatchUpTickIdempotencyKey(
       state.epoch,
       state.nextSequence,
       attempt,
       sourceCatchUpRevision,
     )
+  } else if (retryWindowHash !== undefined) {
+    idempotencyKey = executionControllerRecoveryTickIdempotencyKey(
+      state.epoch,
+      state.nextSequence,
+      attempt,
+      retryWindowHash,
+    )
   } else {
     idempotencyKey = executionControllerTickIdempotencyKey(state.epoch, state.nextSequence, attempt)
-  }
-  const tick: ExecutionControllerTick = {
-    schemaVersion: 'bayn.execution-controller-tick.v1',
-    epoch: state.epoch,
-    sequence: state.nextSequence,
-    attempt,
-    ...(issuedAt === undefined ? {} : { issuedAt }),
-    ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
-    ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
-    ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
   }
   ctx.genericSend({
     service: 'BaynExecutionController',
     method: 'tick',
     key: ctx.key,
-    parameter: tick,
+    parameter: {
+      schemaVersion: 'bayn.execution-controller-tick.v1',
+      epoch: state.epoch,
+      sequence: state.nextSequence,
+      attempt,
+      ...(issuedAt === undefined ? {} : { issuedAt }),
+      ...(recoveryWindow === undefined ? {} : { recoveryWindow }),
+      ...(retryWindowHash === undefined ? {} : { retryWindowHash }),
+      ...(sourceCatchUpRevision === undefined ? {} : { sourceCatchUpRevision }),
+    },
     inputSerde: executionTickSerde,
     delay,
     idempotencyKey,
-  })
-  recordResearchCapture(capture, {
-    kind: 'controller-pass',
-    phase: 'SCHEDULED',
-    controllerKey: ctx.key,
-    invocationId: ctx.request().id,
-    sourceRevision: sourceCatchUpRevision ?? state.sourceRevision,
-    tick,
-    idempotencyKey,
-    delayMs: delay,
   })
 }
 
@@ -471,28 +414,7 @@ export const makeBaynExecutionController = (
   config: ExecutionControllerConfig & { readonly activationAuthorizationHash: string },
   runtime: NativeExecutionRuntime,
   hooks: readonly restate.HooksProvider[] = [],
-  transportClock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
-  const capture = runtime.capture
-  type PassReceipt = Extract<ResearchCaptureEvent, { readonly kind: 'controller-pass' }>
-  const capturePass = (
-    ctx: restate.ObjectContext<ControllerObjectState>,
-    tick: ExecutionControllerTick,
-    phase: PassReceipt['phase'],
-    detail: Pick<
-      PassReceipt,
-      'commandIssuedAt' | 'completedAt' | 'receiptHash' | 'reason' | 'runtimeAttempted' | 'jevObservationReferences'
-    > = {},
-  ): void =>
-    recordResearchCapture(capture, {
-      kind: 'controller-pass',
-      phase,
-      controllerKey: ctx.key,
-      invocationId: ctx.request().id,
-      sourceRevision: config.sourceRevision,
-      tick,
-      ...detail,
-    })
   const controller = restate.object({
     name: 'BaynExecutionController',
     handlers: {
@@ -512,17 +434,7 @@ export const makeBaynExecutionController = (
           )
           if (decision._tag === 'Activated') {
             ctx.set(stateKey, decision.state)
-            scheduleTick(
-              ctx,
-              decision.state,
-              executionControllerInitialTickDelayMs,
-              0,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
-              capture,
-            )
+            scheduleTick(ctx, decision.state, executionControllerInitialTickDelayMs)
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller activated', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
@@ -530,9 +442,10 @@ export const makeBaynExecutionController = (
               planHash: decision.state.planHash,
               sourceRevision: decision.state.sourceRevision,
             })
-          } else {
-            // A new activation must wake a delayed controller even on the same revision. Bind the probe to this
-            // invocation so a previous exhausted probe cannot deduplicate an explicit recovery attempt.
+          } else if (decision.state.sourceRevision !== config.sourceRevision) {
+            // A plan-compatible worker revision normally inherits the already-scheduled next tick. If that delivery
+            // was paused or cancelled, replaying activation is the only durable recovery signal available. Sending
+            // the current sequence again is safe because its Restate idempotency key is deterministic.
             scheduleTick(
               ctx,
               decision.state,
@@ -540,11 +453,8 @@ export const makeBaynExecutionController = (
               0,
               undefined,
               config.sourceRevision,
-              sha256(ctx.request().id),
-              undefined,
-              capture,
             )
-            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller scheduled an activation recovery pass', {
+            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller scheduled a source catch-up pass', {
               controllerKey: ctx.key,
               epoch: decision.state.epoch,
               invocationId: ctx.request().id,
@@ -566,7 +476,6 @@ export const makeBaynExecutionController = (
           const state = await readState(ctx)
           verifyTickBinding(config, ctx.key, state)
           if (tick.sourceCatchUpRevision !== undefined && tick.sourceCatchUpRevision !== config.sourceRevision) {
-            capturePass(ctx, tick, 'IGNORED', { reason: 'foreign-source-catch-up' })
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller quiesced a foreign source catch-up', {
               controllerKey: ctx.key,
               epoch: tick.epoch,
@@ -577,7 +486,6 @@ export const makeBaynExecutionController = (
             return
           }
           if (isPreviousBinding(config, state)) {
-            capturePass(ctx, tick, 'IGNORED', { reason: 'previous-binding' })
             await writeRuntimeLog(runtime, 'info', 'Bayn execution controller quiesced a previous-binding tick', {
               controllerKey: ctx.key,
               epoch: tick.epoch,
@@ -591,36 +499,18 @@ export const makeBaynExecutionController = (
           const decision = decisionOrTerminal(
             decideExecutionControllerTick(state, tick, ctx.key, issuedAt, config.sourceRevision),
           )
-          if (decision._tag === 'Ignored') {
-            capturePass(ctx, tick, 'IGNORED', { reason: decision.reason, commandIssuedAt: issuedAt })
-            return
-          }
+          if (decision._tag === 'Ignored') return
 
           let stepResult: ExecutionAdvanceStepResult
-          let runtimeAttempted = false
           try {
             stepResult = await ctx.run(
               'advance Bayn execution once',
-              async () => {
-                runtimeAttempted = true
-                capturePass(ctx, tick, 'STARTED', { commandIssuedAt: decision.command.issuedAt, runtimeAttempted })
-                try {
-                  return await runtime.advance(decision.command, ctx.request().attemptCompletedSignal)
-                } catch (cause) {
-                  throw executionAdvanceRunFailure(cause)
-                }
-              },
+              () => runtime.advance(decision.command, ctx.request().attemptCompletedSignal),
               executionControllerAdvanceRunOptions,
             )
           } catch (cause: unknown) {
             const attempt = tick.attempt ?? 0
             const failure = executionAdvanceFailureDiagnostic(cause)
-            capturePass(ctx, tick, 'FAILED', {
-              commandIssuedAt: decision.command.issuedAt,
-              reason: failure.failureTag,
-              runtimeAttempted,
-            })
-            if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
             const replacementFirstPass =
               config.previousBinding !== undefined &&
               state !== null &&
@@ -639,7 +529,6 @@ export const makeBaynExecutionController = (
                 tick.sourceCatchUpRevision,
                 tick.retryWindowHash,
                 tick.recoveryWindow,
-                capture,
               )
               await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller advance will retry', {
                 controllerKey: ctx.key,
@@ -698,17 +587,7 @@ export const makeBaynExecutionController = (
             const nextRecoveryWindow = currentRecoveryWindow + 1
             const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
             const recoveryDelayMs = executionControllerRecoveryDelayMs(nextRecoveryWindow)
-            scheduleTick(
-              ctx,
-              state,
-              recoveryDelayMs,
-              0,
-              issuedAt,
-              undefined,
-              retryWindowHash,
-              nextRecoveryWindow,
-              capture,
-            )
+            scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller scheduled a recovery window', {
               controllerKey: ctx.key,
               epoch: state.epoch,
@@ -730,26 +609,7 @@ export const makeBaynExecutionController = (
             completeExecutionControllerTick(state, tick, result, config.sourceRevision),
           )
           ctx.set(stateKey, completed)
-          capturePass(ctx, tick, 'COMPLETED', {
-            commandIssuedAt: decision.command.issuedAt,
-            completedAt: result.completedAt,
-            receiptHash: result.outcome.receiptHash,
-            ...(result.observation?.jevObservationReferences === undefined
-              ? {}
-              : { jevObservationReferences: result.observation.jevObservationReferences }),
-            runtimeAttempted,
-          })
-          if (!runtimeAttempted) invalidateResearchCapture(capture, CaptureInvalidation.ControllerReplay)
-          // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
-          // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
-          // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
-          const scheduleAt =
-            result.outcome.nextWakeAt === undefined ? undefined : transportClock.currentTimeMillisUnsafe()
-          const completionDelay =
-            completed.nextDueAt === undefined || scheduleAt === undefined
-              ? result.outcome.nextDelayMs
-              : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
-          scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined, capture)
+          scheduleTick(ctx, completed, result.outcome.nextDelayMs)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
             controllerKey: ctx.key,
             epoch: completed.epoch,
@@ -852,14 +712,10 @@ export const makeBaynExecutionController = (
           )
             throw terminal('execution controller deployment activation requires a fresh published broker observation')
           const activation = bindDeploymentActivation(activationState ?? null, request, config)
-          const completionBinding = {
-            ...activation,
-            firstSequence: Math.max(activation.firstSequence, state?.nextSequence ?? 0),
-          }
           let activated: ExecutionControllerState | null = await client.activate(activation)
           const maximumAttempts = executionControllerDeploymentCompletionMaximumAttempts(config.operationTimeoutMs)
           for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-            if (executionControllerSuccessorPassCompleted(activated, completionBinding)) return activated
+            if (executionControllerSuccessorPassCompleted(activated, activation)) return activated
             if (attempt === maximumAttempts) {
               throw terminal(
                 'execution controller deployment activation did not observe a completed durable successor pass',

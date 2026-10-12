@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Layer, Result, Schema } from 'effect'
+import { Effect, Layer, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { AuthorizationError, ConnectionError, SqlError } from 'effect/sql/SqlError'
 
 import type { OperationalError } from './errors'
-import { HistoricalSignalSnapshotConfigSchema } from './config/historical-signal'
 import { canonicalHashV1 } from './hash'
 import {
   MarketData,
@@ -30,9 +29,6 @@ import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './type
 const symbols = ['EEM', 'SPY'] as const
 const universeSymbolHash = '6b43cd8206b216a1f3cee28a6a3d9422a9bd4ef68003d1eca31d7c084f7f8d9a'
 const snapshotId = 'cd70797ebebbd9894292dd40dd1a9bd87a1c57bb422d655608dec7e094402d1a'
-
-const decodeHistoricalConfig = Schema.decodeUnknownResult(HistoricalSignalSnapshotConfigSchema)
-const historicalConfig = (input: unknown) => Result.getOrThrow(decodeHistoricalConfig(input))
 
 const verificationSuccess = <A>(result: Result.Result<A, MarketDataVerificationError>): A => Result.getOrThrow(result)
 
@@ -415,12 +411,15 @@ describe('finalized Signal snapshot reader', () => {
     const layer = MarketDataLive(
       {
         operationTimeoutMs: 5_000,
-        historicalSignal: historicalConfig({
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
           snapshotId,
           publicationAsOf: fixture.request.publicationAsOf,
           calendarVersion: fixture.request.calendarVersion,
           bounds: fixture.request.bounds,
-        }),
+        },
       },
       {
         universeId: fixture.request.universeId,
@@ -463,12 +462,15 @@ describe('finalized Signal snapshot reader', () => {
       const layer = MarketDataLive(
         {
           operationTimeoutMs: 5_000,
-          historicalSignal: historicalConfig({
+          clickhouse: {
+            url: 'http://clickhouse.test:8123',
+            username: 'bayn',
+            password: Redacted.make('secret'),
             snapshotId,
             publicationAsOf: fixture.request.publicationAsOf,
             calendarVersion: fixture.request.calendarVersion,
             bounds: fixture.request.bounds,
-          }),
+          },
         },
         {
           universeId: fixture.request.universeId,
@@ -721,12 +723,15 @@ describe('finalized Signal snapshot reader', () => {
     const layer = MarketDataLive(
       {
         operationTimeoutMs: 5_000,
-        historicalSignal: historicalConfig({
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
           snapshotId,
           publicationAsOf: fixture.request.publicationAsOf,
           calendarVersion: fixture.request.calendarVersion,
           bounds: fixture.request.bounds,
-        }),
+        },
       },
       contract,
     ).pipe(Layer.provide(Layer.succeed(ClickhouseClient.ClickhouseClient, client)))
@@ -792,12 +797,15 @@ describe('finalized Signal snapshot reader', () => {
     const layer = MarketDataLive(
       {
         operationTimeoutMs: 5_000,
-        historicalSignal: historicalConfig({
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
           snapshotId,
           publicationAsOf: fixture.request.publicationAsOf,
           calendarVersion: fixture.request.calendarVersion,
           bounds: fixture.request.bounds,
-        }),
+        },
       },
       {
         universeId: fixture.request.universeId,
@@ -852,12 +860,15 @@ describe('finalized Signal snapshot reader', () => {
     const layer = MarketDataLive(
       {
         operationTimeoutMs: 5_000,
-        historicalSignal: historicalConfig({
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
           snapshotId,
           publicationAsOf: fixture.request.publicationAsOf,
           calendarVersion: fixture.request.calendarVersion,
           bounds: fixture.request.bounds,
-        }),
+        },
       },
       {
         universeId: fixture.request.universeId,
@@ -931,12 +942,15 @@ describe('finalized Signal snapshot reader', () => {
     const layer = MarketDataLive(
       {
         operationTimeoutMs: 5_000,
-        historicalSignal: historicalConfig({
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
           snapshotId,
           publicationAsOf: fixture.request.publicationAsOf,
           calendarVersion: fixture.request.calendarVersion,
           bounds: fixture.request.bounds,
-        }),
+        },
       },
       {
         universeId: fixture.request.universeId,
@@ -996,7 +1010,10 @@ describe('finalized Signal snapshot reader', () => {
     const layer = MarketDataLive(
       {
         operationTimeoutMs: 5_000,
-        historicalSignal: historicalConfig({
+        clickhouse: {
+          url: 'http://clickhouse.test:8123',
+          username: 'bayn',
+          password: Redacted.make('secret'),
           snapshotId: staticSnapshotId,
           publicationAsOf: '2024-12-31',
           calendarVersion: 'static-calendar-v0',
@@ -1008,7 +1025,7 @@ describe('finalized Signal snapshot reader', () => {
             evaluationStart: '2024-12-02',
             evaluationEnd: '2024-12-31',
           },
-        }),
+        },
       },
       {
         universeId: fixture.request.universeId,
@@ -1060,12 +1077,15 @@ describe('finalized Signal snapshot reader', () => {
       const layer = MarketDataLive(
         {
           operationTimeoutMs: 5_000,
-          historicalSignal: historicalConfig({
+          clickhouse: {
+            url: 'http://clickhouse.test:8123',
+            username: 'bayn',
+            password: Redacted.make('secret'),
             snapshotId: '0'.repeat(64),
             publicationAsOf: fixture.request.publicationAsOf,
             calendarVersion: fixture.request.calendarVersion,
             bounds: fixture.request.bounds,
-          }),
+          },
         },
         {
           universeId: fixture.request.universeId,

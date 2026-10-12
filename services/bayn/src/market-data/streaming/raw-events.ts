@@ -72,10 +72,6 @@ const QuotePayloadSchema = Schema.Struct({
   t: Schema.String,
 })
 const TradePayloadSchema = Schema.Struct({ p: Schema.Finite, s: Schema.Finite, t: Schema.String })
-const decodeEnvelope = Schema.decodeUnknownResult(EnvelopeSchema)
-const decodeBarPayload = Schema.decodeUnknownResult(BarPayloadSchema)
-const decodeQuotePayload = Schema.decodeUnknownResult(QuotePayloadSchema)
-const decodeTradePayload = Schema.decodeUnknownResult(TradePayloadSchema)
 const fail = (message: string, cause?: unknown) =>
   new MarketFeatureFailure({ reason: 'schema', message, ...(cause === undefined ? {} : { cause }) })
 
@@ -98,7 +94,7 @@ export const decodeRawMarketRecord = (
       try: () => JSON.parse(record.value),
       catch: (cause) => fail('raw market message is not JSON', cause),
     })
-    const envelope = yield* decodeEnvelope(json).pipe(
+    const envelope = yield* Schema.decodeUnknownResult(EnvelopeSchema)(json).pipe(
       Result.mapError((cause) => fail('invalid raw market envelope', cause)),
     )
     if (!universe.symbols.includes(envelope.symbol))
@@ -111,8 +107,7 @@ export const decodeRawMarketRecord = (
           : universe.topics.trades
     if (record.topic !== expectedTopic) return yield* Result.fail(fail('raw market topic does not match its channel'))
     const eventAt = yield* canonicalRawTimestamp(envelope.eventTs)
-    const ingestedAt =
-      envelope.ingestTs === envelope.eventTs ? eventAt : yield* canonicalRawTimestamp(envelope.ingestTs)
+    const ingestedAt = yield* canonicalRawTimestamp(envelope.ingestTs)
     if (
       record.timestampMs !== undefined &&
       (!Number.isSafeInteger(record.timestampMs) || Math.abs(record.timestampMs - Date.parse(ingestedAt)) > 5000)
@@ -136,10 +131,10 @@ export const decodeRawMarketRecord = (
     switch (envelope.channel) {
       case 'bars':
       case 'updatedBars': {
-        const payload = yield* decodeBarPayload(envelope.payload).pipe(
+        const payload = yield* Schema.decodeUnknownResult(BarPayloadSchema)(envelope.payload).pipe(
           Result.mapError((cause) => fail('invalid raw bar', cause)),
         )
-        if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
+        if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('bar payload timestamp differs from envelope'))
         if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayBarRows([
@@ -162,10 +157,10 @@ export const decodeRawMarketRecord = (
         return { kind: RawMarketEventKind.Bar, value }
       }
       case 'quotes': {
-        const payload = yield* decodeQuotePayload(envelope.payload).pipe(
+        const payload = yield* Schema.decodeUnknownResult(QuotePayloadSchema)(envelope.payload).pipe(
           Result.mapError((cause) => fail('invalid raw quote', cause)),
         )
-        if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
+        if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('quote payload timestamp differs from envelope'))
         if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayQuoteRows([
@@ -179,10 +174,10 @@ export const decodeRawMarketRecord = (
         return { kind: RawMarketEventKind.Quote, value }
       }
       case 'trades': {
-        const payload = yield* decodeTradePayload(envelope.payload).pipe(
+        const payload = yield* Schema.decodeUnknownResult(TradePayloadSchema)(envelope.payload).pipe(
           Result.mapError((cause) => fail('invalid raw trade', cause)),
         )
-        if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
+        if ((yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('trade payload timestamp differs from envelope'))
         if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayTradeRows([{ ...identity, price: payload.p, size: payload.s }]).pipe(
