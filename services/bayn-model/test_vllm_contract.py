@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vllm.entrypoints.cli.serve import ServeSubcommand
+from vllm.entrypoints.openai.chat_completion.protocol import DeltaMessage
 from vllm.entrypoints.serve.utils.api_utils import with_cancellation
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
@@ -20,6 +21,12 @@ from runtime import read_lock, server_args
 
 
 class ServingContractTest(unittest.TestCase):
+    def test_stream_reasoning_field_matches_the_research_decoder(self):
+        delta = DeltaMessage(reasoning="fixture reasoning")
+        self.assertEqual(
+            delta.model_dump(exclude_none=True)["reasoning"], "fixture reasoning"
+        )
+
     def test_actual_vllm_parser_accepts_the_locked_launch_profile(self):
         lock = read_lock(Path(__file__).with_name("model-lock.json"))
         parser = FlexibleArgumentParser()
@@ -44,6 +51,13 @@ class ServingContractTest(unittest.TestCase):
 
 
 class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        image = patch.dict(
+            "os.environ", {"BAYN_MODEL_SERVING_IMAGE": "sha256:" + "1" * 64}
+        )
+        image.start()
+        self.addCleanup(image.stop)
+
     async def test_vllm_disconnect_precedes_framework_null_response(self):
         app = FastAPI()
         entered = asyncio.Event()
@@ -141,7 +155,8 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
         middleware = AdmissionMiddleware(app)
         with (
             redirect_stdout(io.StringIO()),
-            patch("admission.REQUEST_TIMEOUT_SECONDS", 180 if disconnect else 0.02),
+            # FastAPI builds its first route schema inside the request deadline.
+            patch("admission.REQUEST_TIMEOUT_SECONDS", 180 if disconnect else 1),
         ):
             await middleware(
                 {
@@ -155,6 +170,9 @@ class RealAsgiContractTest(unittest.IsolatedAsyncioTestCase):
                 },
                 receive,
                 send,
+            )
+            self.assertTrue(
+                streamed.is_set(), "Deadline must interrupt active streaming"
             )
             await asyncio.wait_for(stopped.wait(), timeout=1)
         self.assertEqual(middleware.inflight, 0)

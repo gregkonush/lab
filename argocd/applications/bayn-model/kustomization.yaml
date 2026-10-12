@@ -10,4 +10,4 @@ resources:
 images:
 - name: registry.ide-newton.ts.net/lab/bayn-model
   newName: registry.ide-newton.ts.net/lab/bayn-model
-  digest: sha256:caffbf2c9b9fc1791b1e42fa6343bed9bce998ed2a1d27f21cece6d939f63008
+  digest: sha256:4306f163882af53143edf4f01ef1b1f27ca1ebaf785122b7f6dc9cee6d7af03c

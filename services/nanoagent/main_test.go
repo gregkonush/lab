@@ -89,7 +89,7 @@ func TestConfigureToolchainEnvironmentUsesOnePersistentGlobalPrefix(t *testing.T
 	if got := os.Getenv("NPM_CONFIG_PREFIX"); got != wantPrefix {
 		t.Fatalf("NPM_CONFIG_PREFIX = %q, want %q", got, wantPrefix)
 	}
-	wantPaths := []string{localBin, filepath.Join(home, ".linuxbrew/bin"), filepath.Join(home, ".linuxbrew/sbin"), "/usr/bin"}
+	wantPaths := []string{localBin, "/opt/tengri/editor/bin", filepath.Join(home, ".linuxbrew/bin"), filepath.Join(home, ".linuxbrew/sbin"), "/usr/bin"}
 	if got := filepath.SplitList(os.Getenv("PATH")); !reflect.DeepEqual(got, wantPaths) {
 		t.Fatalf("PATH = %#v, want %#v", got, wantPaths)
 	}
