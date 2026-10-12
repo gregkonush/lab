@@ -58,18 +58,18 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   ])
   check(
     'three failures in the window',
-    [desired(), heartbeat, series('bayn_research_attempts_total{outcome="EXPIRED"}', '0+1x30')],
+    [desired(), heartbeat, series('bayn_research_attempts{outcome="EXPIRED"}', '0+1x30')],
     [failing],
   )
   check('successful attempts do not count as failures', [
     desired(),
     heartbeat,
-    series('bayn_research_attempts_total{outcome="COMPLETE"}', '0+1x30'),
+    series('bayn_research_attempts{outcome="COMPLETE"}', '0+1x30'),
   ])
   check('one failure does not alert', [
     desired(),
     heartbeat,
-    series('bayn_research_attempts_total{outcome="INVALID"}', '0 1+0x29'),
+    series('bayn_research_attempts{outcome="REJECTED"}', '0 1+0x29'),
   ])
   for (const metric of ['bayn_research_unpriced_attempts', 'bayn_research_ambiguous_attempts']) {
     check(`${metric} blocks cost qualification`, [desired(), heartbeat, series(metric, '1+0x30')], [costs])

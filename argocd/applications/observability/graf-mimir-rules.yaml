@@ -25,7 +25,7 @@ data:
               description: Inspect the isolated research worker and database access. Trading execution has no research dependency.
               runbook_url: services/bayn/README.md#independent-alpha-r1-research
           - alert: BaynResearchAttemptsFailing
-            expr: sum(increase(bayn_research_attempts_total{outcome!="COMPLETE"}[15m])) >= 3
+            expr: sum(increase(bayn_research_attempts{outcome!="COMPLETE"}[15m])) >= 3
             for: 5m
             labels:
               severity: warning

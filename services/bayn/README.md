@@ -1323,6 +1323,7 @@ finish. Intermediate counts never substitute for that final summary or complete 
 The request remains limited to 256 KiB. The raw response allows 2 MiB so per-token cumulative-usage frames fit the
 4,096-token ceiling. The receipt's base64 limit derives from that raw bound, and the operator limits the serialized
 receipt to 5 MiB, including base64 and JSON text escaping. Byte limits never replace token, deadline or termination checks.
+The failed-attempt alert uses the exported OTLP counter `bayn_research_attempts` without an added `_total` suffix.
 
 The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
 Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
