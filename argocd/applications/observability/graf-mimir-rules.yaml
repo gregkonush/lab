@@ -958,6 +958,29 @@ data:
               summary: Ceph reports slow operations
               description: Ceph has reported one or more slow operations continuously for 5 minutes.
               runbook_url: docs/torghut/storage-write-pressure-remediation-design.md
+          - alert: CephOsdReadLatencyHigh
+            expr: ceph_storage:osd_read_latency_seconds:mean5m > 0.5
+            for: 5m
+            labels:
+              severity: critical
+              service: ceph-storage
+              team: platform
+              notify: email
+            annotations:
+              summary: Ceph client reads are severely delayed
+              description: "{{ $labels.node }}/{{ $labels.ceph_daemon }} has averaged more than 500 ms per client read for five minutes. This is a counter-derived mean, not a percentile."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
+          - alert: CephOsdQueueWaitHigh
+            expr: ceph_storage:osd_queue_wait_seconds:estimated_mean5m > 0.1
+            for: 10m
+            labels:
+              severity: warning
+              service: ceph-storage
+              team: platform
+            annotations:
+              summary: Ceph client operations are waiting in queues
+              description: "{{ $labels.node }}/{{ $labels.ceph_daemon }} has an estimated mean queue wait above 100 ms for ten minutes. Compare client reads, scrub work, and host disk queues before changing scheduling."
+              runbook_url: docs/runbooks/ceph-performance-telemetry.md
           - alert: CephOsdCommitLatencyHigh
             expr: ceph_storage:osd_commit_latency_ms:max > 75
             for: 15m
@@ -3685,6 +3708,38 @@ data:
             annotations:
               summary: Tengri agent resume latency is high
               description: Average guest resume latency has exceeded one minute across at least two resumes in 15 minutes.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriTerminalHeartbeatLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_terminal_heartbeat_seconds_bucket{job="tengri",namespace="tengri"}[5m]))
+              ) > 0.1
+              and
+              sum(increase(tengri_terminal_heartbeat_seconds_count{job="tengri",namespace="tengri"}[5m])) >= 10
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri terminal guest round trips are slow
+              description: The guest terminal ping p95 has exceeded 100 ms for five minutes with at least ten observations per five-minute window. This excludes browser transport and inactive terminals without observations.
+              runbook_url: docs/tengri/operations.md
+          - alert: TengriGuestConnectLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                sum by (le) (rate(tengri_guest_connect_seconds_bucket{job="tengri",namespace="tengri"}[15m]))
+              ) > 0.3
+              and
+              sum(increase(tengri_guest_connect_seconds_count{job="tengri",namespace="tengri"}[15m])) >= 5
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: tengri
+            annotations:
+              summary: Tengri guest connection setup is slow
+              description: Guest connection setup and identity verification p95 has exceeded 300 ms for five minutes across at least five observations in fifteen minutes.
               runbook_url: docs/tengri/operations.md
           - alert: TengriQuotaRejections
             expr: |

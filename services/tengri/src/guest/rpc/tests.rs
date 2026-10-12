@@ -365,6 +365,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
     let WorkloadIdentity::Spiffe { source, .. } = identity else {
         panic!("missing SPIFFE source")
     };
+    let revision = bff.certificate_revision().unwrap();
     let before = source.svid().unwrap();
     let mut updates = source.updated();
     let mut bff_updates = bff_source.updated();
@@ -376,9 +377,11 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
     .await
     .unwrap();
     assert_ne!(before.cert_chain(), source.svid().unwrap().cert_chain());
+    assert_ne!(revision, bff.certificate_revision().unwrap());
     connect(&bff).verify_identity("tls-fixture").await.unwrap();
     server.abort();
     bff_source.shutdown().await;
+    assert!(bff.certificate_revision().is_err());
 }
 
 async fn attach(

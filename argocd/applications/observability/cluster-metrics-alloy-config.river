@@ -292,6 +292,47 @@ prometheus.scrape "tengri" {
 	forward_to      = [prometheus.relabel.tengri_metrics.receiver]
 }
 
+discovery.kubernetes "tengri_slots" {
+	role = "pod"
+
+	namespaces {
+		names = ["tengri"]
+	}
+
+	selectors {
+		role  = "pod"
+		label = "app.kubernetes.io/name=tengri-slot"
+	}
+}
+
+discovery.relabel "tengri_slots" {
+	targets = discovery.kubernetes.tengri_slots.targets
+
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name", "__meta_kubernetes_pod_container_port_name"]
+		regex         = "supervisor;health"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+
+	rule {
+		source_labels = ["__meta_kubernetes_pod_node_name"]
+		target_label  = "node"
+	}
+}
+
+prometheus.scrape "tengri_slots" {
+	job_name        = "tengri-slot-supervisor"
+	targets         = discovery.relabel.tengri_slots.output
+	scrape_interval = "30s"
+	scrape_timeout  = "10s"
+	forward_to      = [prometheus.relabel.tengri_metrics.receiver]
+}
+
 prometheus.relabel "restate_metrics" {
 	forward_to = [prometheus.remote_write.mimir.receiver]
 

@@ -60,6 +60,15 @@ datasources:
         access: proxy
         url: http://observability-mimir-gateway.observability.svc.cluster.local/prometheus
         isDefault: true
+      - name: Mimir Alertmanager
+        uid: mimir-alertmanager
+        type: alertmanager
+        access: proxy
+        url: http://observability-mimir-gateway.observability.svc.cluster.local
+        isDefault: false
+        jsonData:
+          implementation: mimir
+          handleGrafanaManagedAlerts: false
       - name: Tempo
         uid: tempo
         type: tempo

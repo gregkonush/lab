@@ -129,10 +129,82 @@ These registers cover CPU, RAM, and voltage regulators. They do not establish
 the temperature of an add-in NIC. Record that temperature as unknown until it
 is read from the NIC's telemetry.
 
-Sources:
+Temperature references:
 
 - [ADLINK's module bridge and CPU temperature command](https://www.ipi.wiki/community/forum/topic/119644/access-to-smpro-telemetry-from-the-bmc)
 - [Linux SMPro register map and temperature decoding](https://github.com/torvalds/linux/blob/aaed66fadba2d2de8fe0daa0aa3eac827d2076b9/drivers/hwmon/smpro-hwmon.c)
+
+## Fan headers and control limits
+
+Readback on 2026-10-11 identified an ADLINK carrier BMC with firmware `2.07`,
+manufacturer ID `24339`, and product ID `514`. Its web interface is MegaRAC
+SP-X. Use this identity when selecting commands; Supermicro and ASRock fan
+commands are not an interface for this carrier.
+
+The [ADLINK carrier manual, pages 33–34](https://www.adlinktech.com/Products/Download.ashx?file=1956%5CCOM-HPC_Server-Base_manual_50M-77106-1000-10_230720.pdf&isManual=yes&type=MDownload)
+identifies these four-pin headers. The RPM values are individual samples, not
+fixed settings or a physical front/rear fan map.
+
+| Carrier header | Controller  | Carrier sensor               | RPM on 2026-10-11 |
+| -------------- | ----------- | ---------------------------- | ----------------: |
+| `FAN_0`        | CPU module  | Not reported in carrier SDRs |           Unknown |
+| `FAN_1`        | Carrier BMC | `BMC_FAN1`                   |              2600 |
+| `FAN_2`        | Carrier BMC | `BMC_FAN2`                   |              3800 |
+| `FAN_4`        | Carrier BMC | `BMC_FAN4`                   |              3500 |
+| `FAN_5`        | Carrier BMC | `BMC_FAN5`                   |              3400 |
+
+There is no `FAN_3` header in that manual's fan table. The module-controlled
+`FAN_0` is separate from the four BMC-controlled headers. A sensor name does
+not identify a connected fan's brand or its position in the case. Trace the
+cable to the board label before assigning a front, rear, radiator, or pump role.
+
+### Verified interfaces
+
+No software fan-speed write is verified for this carrier on firmware `2.07`.
+The investigation used read commands only and left Altra's settings unchanged:
+
+| Read                                      | Carrier BMC             | Module at IPMB `0x82`   |
+| ----------------------------------------- | ----------------------- | ----------------------- |
+| PICMG properties, `raw 0x2c 0x00 0x00`    | `0xc1`, invalid command | `00 14 00 00`           |
+| Fan properties, `raw 0x2c 0x14 0x00 0x00` | `0xc1`, invalid command | `0xc1`, invalid command |
+| Fan level, `raw 0x2c 0x16 0x00 0x00`      | `0xc1`, invalid command | `0xc1`, invalid command |
+
+The module's PICMG identity response does not establish fan-control support.
+The local `ipmitool picmg` command also failed its address-information check;
+the raw reads above separate that client failure from the controller responses.
+
+An HTTPS request to `/redfish/v1/` returned the web application's HTML rather
+than a Redfish JSON service root. The served `/source.min.js` bundle contained
+fan sensor and event handling, but no fan-speed control route was identified.
+These observations establish the limits of the tested interfaces, not that
+every OEM interface or future firmware lacks fan control. Do not guess raw
+writes without a carrier-specific command definition and a verified restore path.
+
+To repeat a module identity read with `IPMI_PASSWORD` set, use the trusted BMC
+network and the tested `lan` transport described above:
+
+```bash
+ipmitool -I lan -H 192.168.0.100 -U admin -E -N 2 -R 1 \
+  -m 0x20 -b 0 -t 0x82 raw 0x2c 0x00 0x00
+```
+
+### Control PWM fans independently
+
+For the 12 V, four-pin `NF-A14 industrialPPC-2000 PWM`, an external PWM
+controller provides speed adjustment without an unverified BMC command.
+The [Noctua NA-FC1](https://www.noctua.at/en/products/na-fc1) supports manual
+PWM generation and includes a three-way splitter and SATA power adapter.
+
+```text
+PSU SATA power -> NA-FC1 power adapter -> NA-FC1 -> splitter -> case fans
+```
+
+This wiring is an option, not a verified installation on Altra. A powered PWM
+hub distributes its input signal and does not itself supply a speed curve.
+Keep pump power separate. Start at full duty and validate CPU, RAM, regulator,
+and [NIC temperatures](../../galactic/network/README.md#read-nic-temperature)
+with the final case airflow before reducing speed. A fixed manual setting does
+not provide a temperature-dependent curve.
 
 ## Power control
 
