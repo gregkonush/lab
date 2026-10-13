@@ -7,14 +7,14 @@ export BAYN_TEST_KAFKA_USERNAME="bayn-fixture-${run_id}"
 export BAYN_TEST_KAFKA_PASSWORD
 BAYN_TEST_KAFKA_PASSWORD=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')
 if [[ "${GITHUB_ACTIONS:-}" == true ]]; then printf '::add-mask::%s\n' "$BAYN_TEST_KAFKA_PASSWORD"; fi
-directory=$(mktemp -d "${root}/services/bayn/.native-receipts.XXXXXX")
-kafka_name="bayn-receipts-kafka-${run_id}"
-restate_name="bayn-receipts-restate-${run_id}"
+directory=$(mktemp -d "${root}/services/bayn/.market-data-replay.XXXXXX")
+kafka_name="bayn-market-data-replay-kafka-${run_id}"
+restate_name="bayn-market-data-replay-restate-${run_id}"
 kafka_id=
 cleanup() {
   status=$?
   for name in "$kafka_name" "$restate_name"; do
-    identity=$(docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-receipt-fixture"}}' "$name" 2>/dev/null) || continue
+    identity=$(docker inspect --format '{{.Id}} {{index .Config.Labels "bayn-market-data-replay-fixture"}}' "$name" 2>/dev/null) || continue
     read -r id owner <<< "$identity"
     if [[ "$owner" != "$run_id" || ! "$id" =~ ^[0-9a-f]{64}$ ]]; then continue; fi
     if [[ "$status" != 0 ]]; then docker logs --tail 100 "$id" >&2 || true; fi
@@ -30,7 +30,8 @@ restate_image='docker.restate.dev/restatedev/restate:1.7.9@sha256:3efeb748ebea40
 timeout 180s docker pull "$kafka_image" >/dev/null
 timeout 180s docker pull "$restate_image" >/dev/null
 kafka_id=$(docker run --detach --name "$kafka_name" --memory 2g --cpus 2 --pids-limit 512 \
-  --label "bayn-receipt-fixture=$run_id" \
+  --label "bayn-market-data-replay-fixture=$run_id" \
+  --tmpfs /tmp:rw,size=512m --env LOG_DIR=/tmp/kafka-logs \
   --publish 127.0.0.1:19092:9092 --env BAYN_TEST_KAFKA_USERNAME --env BAYN_TEST_KAFKA_PASSWORD \
   --entrypoint /bin/bash "$kafka_image" -euc '
 cat > /tmp/bayn-server.properties <<EOF
@@ -56,7 +57,8 @@ cluster=$(/opt/kafka/bin/kafka-storage.sh random-uuid)
 exec /opt/kafka/bin/kafka-server-start.sh /tmp/bayn-server.properties
 ')
 docker run --detach --name "$restate_name" --memory 2g --cpus 2 --pids-limit 512 \
-  --label "bayn-receipt-fixture=$run_id" \
+  --label "bayn-market-data-replay-fixture=$run_id" \
+  --tmpfs /restate-data:rw,size=512m \
   --publish 127.0.0.1:8080:8080 --publish 127.0.0.1:9070:9070 \
   --add-host host.docker.internal:host-gateway "$restate_image" >/dev/null
 ready=false
@@ -66,16 +68,11 @@ for ((attempt = 1; attempt <= 60; attempt++)); do
   fi
   sleep 1
 done
-[[ "$ready" == true ]] || { echo 'Native fixture startup timed out' >&2; exit 1; }
+[[ "$ready" == true ]] || { echo 'Market-data fixture startup timed out' >&2; exit 1; }
 
-bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
-  "$root/argocd/applications/kafka/torghut-topics.yaml" > "$directory/source-topics.json"
-bun -e 'const fs = require("node:fs"); process.stdout.write(JSON.stringify(Bun.YAML.parse(fs.readFileSync(process.argv[1], "utf8"))))' \
-  "$root/argocd/applications/bayn/execution-controller.yaml" > "$directory/execution-controller.json"
-
-bun build "$root/services/bayn/src/testing/kafka-receipts-native-node.mjs" --target=node \
+bun build "$root/services/bayn/src/testing/market-data-replay.integration.mjs" --target=node \
   --external @platformatic/kafka --outdir "$directory"
-timeout 90s node "$directory/kafka-receipts-native-node.js" "$directory/source-topics.json" "$directory/execution-controller.json"
+timeout 180s node "$directory/market-data-replay.integration.js"
 export BAYN_TEST_RESTATE_ADMIN_URL=http://127.0.0.1:9070
 export BAYN_TEST_RESTATE_INGRESS_URL=http://127.0.0.1:8080
 timeout 150s bun test "$root/services/bayn/src/restate/restate-execution-controller.integration.test.ts"
