@@ -64,7 +64,15 @@ spec:
             - name: restate
               containerPort: 9080
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bayn-valkey-connection
           env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-valkey-auth
+                  key: password
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -223,12 +231,19 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: valkey-client-tls
+              mountPath: /var/run/secrets/bayn/valkey
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
       volumes:
+        - name: valkey-client-tls
+          secret:
+            secretName: bayn-valkey-client-tls
+            defaultMode: 0440
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
