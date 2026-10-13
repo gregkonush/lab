@@ -33,6 +33,12 @@ Client certificate/key and CA: Secret `bayn-valkey-client-tls`, keys `tls.crt`,
 `tls.key`, `ca.crt`. Connection metadata is in `bayn-valkey-connection`.
 Use Secret references, never inline credentials or log their contents.
 
+The operator's User webhook limits passwords to 32 characters and requires
+letters, digits and special characters. Generate a 32-character credential in
+memory and seal it into `auth-sealedsecret.yaml`, preserving the Secret name and
+namespace. A synced SealedSecret does not prove User admission; verify the User
+and the authenticated acceptance Job after reconciliation.
+
 The application ACL permits normal data operations only under `bayn:*`, with
 cluster discovery and no destructive administration. The controller's separate
 operator credential is not an application credential. NetworkPolicy permits
