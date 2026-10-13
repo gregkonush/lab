@@ -95,9 +95,9 @@ class PrepareRestartTests(unittest.TestCase):
         dependency_path = pathlib.Path("/run/systemd/system") / dependency
         dependency_path.write_text(
             "[Service]\nType=oneshot\nRemainAfterExit=yes\n"
-            'ExecStart=/bin/sh -c \'test -f "'
+            "ExecStart=/bin/sh -c 'test -f \""
             + str(self.root / "docker-ready")
-            + '"\'\n'
+            + "\"'\n"
         )
         config = configparser.ConfigParser(interpolation=None)
         config.optionxform = str

@@ -35,6 +35,11 @@ Preparation retries after five seconds if a startup step fails. Codex can finish
 starting its daemon after the CLI's readiness deadline; a retry recognizes the
 running daemon and completes setup. The HTTP endpoint stays unready until setup
 succeeds. Failed attempts remain in the journal.
+Preparation starts independently of SSH and Docker. Their initial failures cannot
+leave preparation permanently blocked by a failed systemd dependency job. Nix and
+the user manager are wanted dependencies; command failures retry instead of
+preventing the preparation command from running. Readiness still requires setup,
+SSH, and Docker to succeed.
 Docker and containerd data both use the ext4 disk because overlayfs snapshots
 cannot use the image's virtio-fs filesystem as their writable backing store.
 
