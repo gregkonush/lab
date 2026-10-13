@@ -1,5 +1,6 @@
 import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib/tengri/types'
 import { readCodexHistory } from '@/lib/tengri/codex-history'
+import { tengriCreateAgentSchema } from '@/lib/tengri/schemas'
 import { z } from 'zod'
 
 export class TengriRequestError extends Error {
@@ -93,7 +94,11 @@ export async function runTengriAction<Result>(
   }
 }
 
-async function postTengriAction<Result>(action: TengriAction, options?: TengriActionOptions) {
+async function postTengriAction<Result>(
+  action: TengriAction,
+  options?: TengriActionOptions,
+  reconcileCreation = true,
+): Promise<Result> {
   const pending = await prepareLifecycleRequest(action, options?.principalId)
   const response = await fetch('/api/tengri', {
     method: 'POST',
@@ -117,8 +122,17 @@ async function postTengriAction<Result>(action: TengriAction, options?: TengriAc
     await pending.complete('committed')
     return payload.result
   } catch (error) {
-    if (error instanceof TengriRequestError && error.code === 'lifecycle_superseded')
+    if (error instanceof TengriRequestError && error.code === 'lifecycle_superseded') {
       await pending.complete('superseded')
+      if (
+        reconcileCreation &&
+        action.action === 'create-agent' &&
+        pending.action.action === 'create-agent' &&
+        action.displayName !== pending.action.displayName
+      ) {
+        return postTengriAction<Result>(action, options, false)
+      }
+    }
     throw error
   }
 }
@@ -154,7 +168,7 @@ async function prepareLifecycleRequest(action: TengriAction, principalId?: strin
   const pending = await navigator.locks.request(pendingLifecycleKey, () => {
     const entries = read()
     const existing = entries.find((entry) => entry.key === key)
-    if (existing && existing.payload !== payload) {
+    if (existing && existing.payload !== payload && action.action !== 'create-agent') {
       throw new Error('A workspace change is already recorded. Refresh the desktop or retry it with the same name.')
     }
     const pending = existing ?? { key, payload, operationId: crypto.randomUUID() }
@@ -164,8 +178,12 @@ async function prepareLifecycleRequest(action: TengriAction, principalId?: strin
     }
     return pending
   })
+  const request =
+    pending.payload === payload
+      ? action
+      : tengriCreateAgentSchema.omit({ operationId: true }).parse(JSON.parse(pending.payload))
   return {
-    action: { ...action, operationId: pending.operationId },
+    action: { ...request, operationId: pending.operationId },
     complete: (outcome: 'committed' | 'superseded') =>
       navigator.locks.request(pendingLifecycleKey, async () => {
         // A stale tab must recover this creation even after another tab receives its successful response.
