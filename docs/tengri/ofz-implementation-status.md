@@ -15,7 +15,7 @@ The service split is published in native GitHub stack [#14917](https://github.co
 | ---------------------------------------- | ------------------------------------------------------ | ------------------------------------------- |
 | Ofz lifecycle and control                | [#14908](https://github.com/proompteng/lab/pull/14908) | Pending cutover                             |
 | Tengri controller, runner and supervisor | [#14915](https://github.com/proompteng/lab/pull/14915) | Pending cutover                             |
-| Landing BFF and desktop authority        | [#14916](https://github.com/proompteng/lab/pull/14916) | Pending cutover                             |
+| Landing BFF and desktop authority        | [#14915](https://github.com/proompteng/lab/pull/14915) | Pending cutover                             |
 | Ofz, Keycloak and application HA         | [#14909](https://github.com/proompteng/lab/pull/14909) | Pending cutover and fault probes            |
 | Physical database promotion proof        | [#14910](https://github.com/proompteng/lab/pull/14910) | Pending native CNPG and independent restore |
 | Runtime epoch and preview binding        | [#14911](https://github.com/proompteng/lab/pull/14911) | Pending cutover                             |
@@ -23,6 +23,21 @@ The service split is published in native GitHub stack [#14917](https://github.co
 | Ofz Viewer policy                        | [#14920](https://github.com/proompteng/lab/pull/14920) | Pending bounded observers and cutover       |
 | Landing Viewer administration            | [#14921](https://github.com/proompteng/lab/pull/14921) | Pending bounded observers and cutover       |
 | Exact-target guest proof protocol        | [#14923](https://github.com/proompteng/lab/pull/14923) | Pending cutover                             |
+
+PR #14915 merged at `e4298be7be5afe2ab94300f003d6a2b31ef634a6` with its applicable PR checks passing.
+Its matching BFF and desktop changes include the original application scope of #14916. The rebased #14916 retains
+the signing-key documentation correction, fixes the identity fixture's cold-build timeout, and addresses its remaining
+review findings about stale creation records and deletion of failed workspaces. Both findings reproduced in focused
+regressions; stale creation also reproduced in Chromium with browser storage preserved across reload. The failing main run
+compiled Tengri inside the browser's three-minute deadline; compilation now precedes that clock.
+The new Ofz API and rollout credentials are still absent from the cluster. Publication remains held with
+`TENGRI_PREPARED_SLOT_CUTOVER_READY=false`, and the temporary creation fence remains active.
+
+The main Tengri image run built all four native images, then failed KVM qualification on both architectures during
+guest DNS resolution. Docker's `127.0.0.11` stub was copied into the guest. #14916 gives the guest a separate resolver
+file while preserving Docker DNS for the shared SQL fixture. A real Docker reproduction confirmed the stub, and both
+ARC architectures resolved the bootstrap host through the configured public resolvers. The launcher regression passes;
+both native KVM qualifications must pass on the new main revision before publication or cutover.
 
 Source delivery continues through required CI and automatic review. Production remains held until the reviewed Ofz,
 BFF, runtime, guest, migration and broker contracts can activate together. Remaining implementation includes bounded
