@@ -198,5 +198,8 @@ The runtime-epoch layer separates persistent slot allocation from executing runt
 canonical Ofz runtime UUID, and guest transports require exactly one current binding header for every identity field.
 Reconciliation stops an older runtime before restoring under fresh authority; a frozen guest can change runtime only
 within the same physical allocation. Never-started workspaces retain storage without inventing an executing runtime.
-This layer is being requalified on the hard-migration main base. Signed guest actions, bounded observers, independent
-execution fencing and deployed acceptance remain separate requirements.
+Requalification on main `5d9184e568` passed 135 Rust tests, three generated-CRD tests, all-target Clippy, 23 real TLS
+PostgreSQL/SpiceDB runtime tests, Rust/Go file-Codex-terminal interoperability and BFF identity/SVID renewal, and the
+native Linux/ARM64 guest suite. The Linux runtime-binding test also passed by exact selection. This includes the
+newly merged shared HTTP/2 fixture with its required runtime epoch. Native KVM, signed guest actions, bounded observers,
+independent execution fencing and deployed acceptance remain separate requirements.
