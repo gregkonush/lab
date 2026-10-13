@@ -22,6 +22,9 @@ Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
 [`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves HTTP/2 gRPC and preview
 HTTP over private vsock port 1024. Every RPC checks the slot's unique bootstrap credential. Only the host supervisor
 can reach this transport, after authenticating the exact Tengri SPIFFE identity and current owner/epoch headers.
+The binding includes the Ofz runtime epoch. Guest init requires that canonical epoch on every resume and returns its
+complete claim to the runner. It can change the runtime only from a frozen snapshot belonging to the same MicroVM UID
+and slot epoch; an active guest cannot be rebound. The runner rejects a resume reply that omits or changes that claim.
 Port 8080 binds guest loopback and serves health probes. Host mTLS terminates at the supervisor on port 8443.
 
 SPIRE credentials and its CSI socket stay in the host supervisor. Guest memory contains no SVID, PSAT token, Kubernetes

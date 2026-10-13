@@ -24,6 +24,19 @@ and epoch. The controller binds the MicroVM with resourceVersion compare-and-swa
 claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
 consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
+The Lease allocation identifies retained storage custody by MicroVM name, UID and slot epoch. An executing runtime
+claim additionally requires the canonical Ofz runtime epoch. Guest RPC, preview HTTP and WebSocket admission require
+one exact UID, slot-epoch and runtime-epoch header each. Existing connections close when that full claim changes.
+A newer runtime cannot reuse an earlier awake claim: reconciliation first saves the old runtime, then checks fresh
+Ofz authority before restoring the new epoch from the same allocation's committed snapshot. Guest init accepts a
+changed runtime only while frozen for that exact allocation. A never-started workspace retains its prepared home
+without creating a runtime claim. Termination observes the current claim under the installed leader fence; an unused
+slot receives a deterministic retirement identity solely for stop acknowledgement.
+
+Runtime epochs are mandatory in private lifecycle claims and owned journals. Paired controller/guest artifacts and
+new root disks are required at the coordinated hard cutover; retain the existing home PVCs. Signed per-action guest
+context, scoped observers and the independent host execution deadline remain separate authorization work.
+
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
