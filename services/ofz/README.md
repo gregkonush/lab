@@ -153,3 +153,20 @@ job repeats their real Kustomize renders and rejects the critical HA/credential/
 
 Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
 They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.
+
+## API image delivery
+
+`nix build .#ofz-image` builds the API for the native Linux architecture from the locked Cargo dependencies, canonical
+authorization protobuf, policy catalog, and both database migrations. The runtime contains the API and certificate
+roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`, and
+`migrate-runtime`.
+
+The Ofz workflow first qualifies policy, durable control state, synchronous physical promotion, and real browser
+identity. Its existing Nix image workflow then checks both native architectures. A successful main build publishes the
+multi-architecture index, release receipt, and immutable run-qualified Kargo alias. Pull requests build without
+publishing. Warehouse/Stage enrollment and API activation remain separate reviewed desired-state changes; creating an
+image does not admit users or activate runtime clients.
+
+Ofz image-packaging and documentation changes do not rebuild native Tengri guests. Ofz implementation, Cargo dependencies,
+build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
+shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
