@@ -1,9 +1,5 @@
-import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
-import type { CycleMutationReceipt } from './model'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
-import { ActiveResearchCapture, recordResearchCapture } from '../../research-capture/observer'
-import { currentUtcInstant } from '../../time'
 import type { DatabaseClock } from '../../db/clock'
 
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
@@ -45,35 +41,12 @@ const fenceMutation = <A>(
     ),
   )
 
-export const captureEntryDecisionCommit = (
-  committed: Effect.Effect<CycleMutationReceipt, CycleStoreError>,
-  document: { readonly contentHash: string; readonly strategyDecision?: ExecutionDecisionDocument['strategyDecision'] },
-) =>
-  committed.pipe(
-    Effect.tap((receipt) =>
-      Effect.gen(function* () {
-        const capture = yield* ActiveResearchCapture
-        const decision = document.strategyDecision
-        if (capture === undefined || !receipt.changed || decision?.schemaVersion !== 'bayn.jev-entry-target.v1') return
-        const decisionCommittedAt = yield* currentUtcInstant
-        yield* recordResearchCapture(capture, {
-          kind: 'entry-commit',
-          batchId: decision.evidence.batchPlan.batchId,
-          observationHash: decision.evidence.batchPlan.observationHash,
-          decisionHash: document.contentHash,
-          decisionCommittedAt,
-        })
-      }),
-    ),
-  )
-
 export const withWriterFenceCycleStore = (store: CycleStoreShape, fence: WriterFenceService): CycleStoreShape => ({
   ...store,
   acquire: (...args) => fenceMutation('acquire', store.acquire(...args), fence),
   bindSnapshot: (...args) => fenceMutation('bind-snapshot', store.bindSnapshot(...args), fence),
   activate: (...args) => fenceMutation('activate', store.activate(...args), fence),
-  bindDecision: (...args) =>
-    captureEntryDecisionCommit(fenceMutation('bind-decision', store.bindDecision(...args), fence), args[1]),
+  bindDecision: (...args) => fenceMutation('bind-decision', store.bindDecision(...args), fence),
   finish: (...args) => fenceMutation('finish', store.finish(...args), fence),
   block: (...args) => fenceMutation('block', store.block(...args), fence),
 })
