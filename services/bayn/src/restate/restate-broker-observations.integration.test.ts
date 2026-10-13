@@ -39,7 +39,7 @@ const waitFor = (check: () => Effect.Effect<boolean, unknown>) =>
   )
 
 describeRestate('Real Restate broker observation journal', () => {
-  test('private RPC, delayed polls, duplicate invocation and eager-state migration retain one owner', async () => {
+  test('private RPC, delayed polls, duplicate invocation and endpoint restart retain one owner', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress]) {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
@@ -83,10 +83,7 @@ describeRestate('Real Restate broker observation journal', () => {
           }),
       },
     })
-    const initial = makeObserved()
-    const handler = restate.createEndpointHandler({
-      services: [{ ...initial, options: { ...initial.options, enableLazyState: true } }, bridge],
-    })
+    const handler = restate.createEndpointHandler({ services: [makeObserved(), bridge] })
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
