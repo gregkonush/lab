@@ -124,9 +124,10 @@ def run(context, plan_path, reference_path):
                 timeout=1760,
             )
         if process.returncode:
+            log = plan_path.with_suffix(".prepare.log")
             raise RuntimeError(
-                "Preparation failed; inspect "
-                + str(plan_path.with_suffix(".prepare.log"))
+                f"Preparation failed (exit {process.returncode}): {log.read_text()[-8192:]}"
+                f"\nFull preparation log: {log}"
             )
         current_pvc = client.get("registry", "pvc", "registry-data")
         if (
