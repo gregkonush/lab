@@ -46,6 +46,10 @@ references, collects for at most four minutes and purges with uploads open.
 An empty plan skips the read-only restart. Missing protected content or incomplete
 cluster discovery fails the run before collection.
 
+Preparation validates retained blobs once while traversing their manifest graph;
+the candidate scan skips those already protected blobs. If preparation fails, the
+Job log includes its exit status and final diagnostics before collection can start.
+
 Keep at least five recent build tags per repository, every image uploaded in the
 last seven days, and all digests referenced by workload templates or retained Kargo
 Freight, Stage history, and promotions. Preserve the platform manifests and
