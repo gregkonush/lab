@@ -46,7 +46,7 @@ describe('Tengri image workflow', () => {
     expect(workflow.jobs.publish.needs).toContain('validate-kvm')
   })
 
-  it('exports registry caches only on main and reuses the native harness cache', () => {
+  it('separates main and same-repository PR caches and reuses the native harness cache', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<
         string,
@@ -55,6 +55,12 @@ describe('Tengri image workflow', () => {
     }
     const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
     expect(runtime?.with?.['cache-to']).toContain("github.event_name != 'pull_request'")
+    for (const setting of ['cache-from', 'cache-to']) {
+      expect(runtime?.with?.[setting]).toContain(
+        "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository",
+      )
+      expect(runtime?.with?.[setting]).toContain(':cache-pr-{1}-{2}')
+    }
     expect(runtime?.with?.['cache-to']).toContain('mode=max')
     expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
     expect(runtime?.['continue-on-error']).not.toBe(true)
