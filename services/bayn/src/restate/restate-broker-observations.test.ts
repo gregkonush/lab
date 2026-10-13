@@ -125,6 +125,13 @@ describe('Restate broker observation owner', () => {
     expect(h.calls().polls).toBe(0)
     expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
   })
+  test('deployment activation waits for reserved quota and returns its fresh published cut', async () => {
+    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, budgetDeadline: 180_000 })
+    const state = await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.sleeps).toEqual([180_000])
+    expect(state.lastSnapshotHash).toBe('c'.repeat(64))
+    expect(h.calls().polls).toBe(1)
+  })
   test.each(['before-journal', 'after-journal'] as const)(
     'lost poll proof retains the reservation until durable replay (%s)',
     async (losePollResult) => {

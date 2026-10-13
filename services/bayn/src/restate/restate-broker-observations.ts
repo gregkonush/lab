@@ -78,11 +78,16 @@ export const makeBaynBrokerObservations = (
     })
   const sample = async (
     ctx: restate.ObjectContext,
+    waitForQuota: boolean,
   ): Promise<{ readonly poll: BrokerObservationPoll; readonly startedAt: number }> => {
     const stored = await ctx.get<unknown>(budgetKey)
     const notBefore = stored === null ? 0 : decode(BudgetDeadlineSchema, stored)
-    const startedAt = await ctx.date.now()
-    if (notBefore > startedAt) return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: notBefore }, startedAt }
+    let startedAt = await ctx.date.now()
+    if (notBefore > startedAt) {
+      if (!waitForQuota) return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: notBefore }, startedAt }
+      await ctx.sleep({ milliseconds: notBefore - startedAt })
+      startedAt = await ctx.date.now()
+    }
     const captureStartDeadlineMs = startedAt + config.operationTimeoutMs
     const interruptedNotBeforeMs = captureStartDeadlineMs + abortTimeoutMs + brokerObservationQuotaWindowMs
     ctx.set(budgetKey, interruptedNotBeforeMs)
@@ -129,7 +134,7 @@ export const makeBaynBrokerObservations = (
             () => runtime.activate(ctx.request().attemptCompletedSignal),
             { maxRetryAttempts: 0 },
           )
-        const { poll, startedAt } = await sample(ctx)
+        const { poll, startedAt } = await sample(ctx, true)
         const sameRevision = current?.sourceRevision === config.sourceRevision
         const state: State = {
           sourceRevision: config.sourceRevision,
@@ -154,7 +159,7 @@ export const makeBaynBrokerObservations = (
           tick.sequence !== current.sequence
         )
           return
-        const { poll, startedAt } = await sample(ctx)
+        const { poll, startedAt } = await sample(ctx, false)
         const next: State = {
           sourceRevision: current.sourceRevision,
           epoch: current.epoch,
