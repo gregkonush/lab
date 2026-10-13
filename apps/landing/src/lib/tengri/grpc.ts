@@ -31,7 +31,13 @@ import type {
 import { signTengriMetadata } from './internal-auth'
 import type { TengriIdentity } from './auth'
 import { humanContext } from './authorization'
-import { lifecycleCommand, lifecycleId, recoverLifecycleCommand, type LifecycleIntent } from './lifecycle-command'
+import {
+  lifecycleCommand,
+  lifecycleId,
+  recoverLifecycleCommand,
+  workspaceRemovalComplete,
+  type LifecycleIntent,
+} from './lifecycle-command'
 import type { CommandReceipt } from './generated/proompteng/authz/v1/authz_pb'
 import { readTengriBffSecret } from './runtime-secrets'
 import { OfzError } from './ofz'
@@ -251,11 +257,18 @@ export async function updatePowerSettings(identity: TengriIdentity, id: string, 
 export async function deleteAgent(identity: TengriIdentity, id: string, workspaceUid: string, operationId: string) {
   const intent: LifecycleIntent = { operationId, action: 'delete', agentId: id, workspaceUid }
   const command = { case: 'removeWorkspace' as const, value: { workspaceUid } }
-  if (await recoverLifecycleCommand(identity, intent, 'remove', workspaceUid)) return
-  const agent = await setRuntime(identity, id, workspaceUid, intent, false)
-  if (agent.phase !== 'sleeping')
-    throw new TengriUnavailableError('Another request resumed the workspace. Refresh before deleting.', 409)
-  await lifecycleCommand(identity, intent, 'remove', command, workspaceUid, agent.runtimeEpoch)
+  if (!(await recoverLifecycleCommand(identity, intent, 'remove', workspaceUid))) {
+    const agent = await setRuntime(identity, id, workspaceUid, intent, false)
+    if (agent.phase !== 'sleeping')
+      throw new TengriUnavailableError('Another request resumed the workspace. Refresh before deleting.', 409)
+    await lifecycleCommand(identity, intent, 'remove', command, workspaceUid, agent.runtimeEpoch)
+  }
+  const deadline = Date.now() + LIFECYCLE_GRPC_DEADLINE_MS
+  do {
+    if (await workspaceRemovalComplete(identity, intent)) return
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  } while (Date.now() < deadline)
+  throw new TengriUnavailableError('Workspace cleanup is still pending. Retry to recover its current state.', 504)
 }
 
 export async function listFiles(identity: TengriIdentity, agentId: string, filePath: string) {

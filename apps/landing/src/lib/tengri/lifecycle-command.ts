@@ -36,16 +36,35 @@ export async function recoverLifecycleCommand(
 ) {
   const id = lifecycleId(identity, intent.operationId, phase)
   try {
-    const recovered = await ofzCall(AuthorizationService.method.getCommand, {
-      context: humanContext(identity, workspaceUid, runtimeEpoch),
-      operationId: id,
-      clientRequestHash: requestHash(intent),
-    })
+    const recovered = await readLifecycleCommand(identity, intent, phase, workspaceUid, runtimeEpoch)
     return checkedReceipt(recovered.receipt, id)
   } catch (error) {
     if (error instanceof OfzError && error.status === 404) return undefined
     throw error
   }
+}
+
+function readLifecycleCommand(
+  identity: TengriIdentity,
+  intent: LifecycleIntent,
+  phase: string,
+  workspaceUid: string,
+  runtimeEpoch = '',
+) {
+  return ofzCall(AuthorizationService.method.getCommand, {
+    context: humanContext(identity, workspaceUid, runtimeEpoch),
+    operationId: lifecycleId(identity, intent.operationId, phase),
+    clientRequestHash: requestHash(intent),
+  })
+}
+
+export async function workspaceRemovalComplete(
+  identity: TengriIdentity,
+  intent: Exclude<LifecycleIntent, { action: 'create' }>,
+) {
+  const response = await readLifecycleCommand(identity, intent, 'remove', intent.workspaceUid)
+  checkedReceipt(response.receipt, lifecycleId(identity, intent.operationId, 'remove'))
+  return response.workspaceRemoved
 }
 
 export function lifecycleId(identity: TengriIdentity, operationId: string, phase: string) {

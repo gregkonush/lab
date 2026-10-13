@@ -22,6 +22,10 @@ const staleAgents: Record<string, unknown>[] = []
 let delayedRuntimeReads = 0
 let agentReads = 0
 let removedAgent = false
+let cleanupComplete = true
+let cleanupUnavailable = false
+let removalCheck: (() => void) | undefined
+const removalOperations = new Set<string>()
 let loseCommandResponse = false
 let supersedeRuntimeCommand = false
 const identity: TengriIdentity = {
@@ -127,8 +131,17 @@ beforeAll(async () => {
         )
       ) {
         callback(serviceError(grpc.status.ALREADY_EXISTS, 'operation payload changed'), null)
-      } else if (receipt) callback(null, { receipt })
-      else callback(serviceError(grpc.status.NOT_FOUND, 'operation not found'), null)
+      } else if (receipt) {
+        if (removalOperations.has(String(call.request.operationId)) && cleanupUnavailable) {
+          callback(serviceError(grpc.status.UNAVAILABLE, 'cleanup status unavailable'), null)
+          return
+        }
+        callback(null, {
+          receipt,
+          workspaceRemoved: removalOperations.has(String(call.request.operationId)) && cleanupComplete,
+        })
+        if (removalOperations.has(String(call.request.operationId))) removalCheck?.()
+      } else callback(serviceError(grpc.status.NOT_FOUND, 'operation not found'), null)
     },
     executeCommand(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -169,7 +182,10 @@ beforeAll(async () => {
           runtimePolicyVersion = ++lifecycleVersion
         }
       }
-      if (call.request.removeWorkspace) removedAgent = true
+      if (call.request.removeWorkspace) {
+        removedAgent = true
+        removalOperations.add(id)
+      }
       if (loseCommandResponse) {
         loseCommandResponse = false
         callback(serviceError(grpc.status.UNAVAILABLE, 'committed reply lost'), null)
@@ -933,6 +949,57 @@ describe('Tengri gRPC BFF transport', () => {
     expect(lifecycleReceipts.size).toBe(count)
     expect(agentReads).toBe(reads)
     removedAgent = false
+  })
+
+  test('waits for confirmed cleanup on fresh and recovered deletion requests', async () => {
+    const { createAgent, deleteAgent } = await import('./grpc')
+    await createAgent(identity, 'Pending cleanup', randomUUID())
+    const operationId = randomUUID()
+    try {
+      for (const recovered of [false, true]) {
+        cleanupComplete = false
+        const checked = new Promise<void>((resolve) => {
+          removalCheck = resolve
+        })
+        let settled = false
+        const deletion = deleteAgent(identity, 'agent-test', workspaceUid, operationId).then(() => {
+          settled = true
+        })
+        await checked
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        expect(settled).toBe(false)
+        const commands = lifecycleReceipts.size
+        const reads = agentReads
+        cleanupComplete = true
+        await deletion
+        expect(settled).toBe(true)
+        expect(lifecycleReceipts.size).toBe(commands)
+        if (recovered) expect(agentReads).toBe(reads)
+      }
+    } finally {
+      cleanupComplete = true
+      removalCheck = undefined
+      removedAgent = false
+    }
+  })
+
+  test('retains the deletion operation when cleanup status is unavailable', async () => {
+    const { createAgent, deleteAgent } = await import('./grpc')
+    await createAgent(identity, 'Unavailable cleanup', randomUUID())
+    const operationId = randomUUID()
+    try {
+      cleanupUnavailable = true
+      expect(await rejection(deleteAgent(identity, 'agent-test', workspaceUid, operationId))).toMatchObject({
+        status: 503,
+      })
+      const commands = lifecycleReceipts.size
+      cleanupUnavailable = false
+      await deleteAgent(identity, 'agent-test', workspaceUid, operationId)
+      expect(lifecycleReceipts.size).toBe(commands)
+    } finally {
+      cleanupUnavailable = false
+      removedAgent = false
+    }
   })
 
   test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {
