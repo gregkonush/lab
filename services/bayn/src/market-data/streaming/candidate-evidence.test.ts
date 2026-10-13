@@ -8,6 +8,7 @@ import { persistIntradayRecordRows, verifyIntradaySnapshotQuery } from '../intra
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from './snapshot'
 import { reproduceSimulatedSnapshot, reproduceStreamingSnapshot } from './replay'
 import { simulationFixture } from '../../testing/simulated-streaming-fixture'
+import { diagnoseStreamingInputs } from './inputs'
 
 const fixture = streamingFixture()
 const query = {
@@ -32,6 +33,34 @@ const replay = (snapshot: typeof fixture.snapshot) =>
   )
 
 describe('candidate executable quote and window trade evidence', () => {
+  test('diagnostics retain decision-time holes after a later bar arrives', () => {
+    const missingAt = '2026-09-04T14:10:00.000Z'
+    const bars = new Map(fixture.cut.projection.bars)
+    bars.set(
+      'AAPL',
+      (bars.get('AAPL') ?? []).map((entry) =>
+        entry.value.eventAt === missingAt ? { ...entry, availableAtMs: Date.parse(query.observedAt) + 1 } : entry,
+      ),
+    )
+    const diagnosed = Result.getOrThrow(diagnoseStreamingInputs({ ...fixture.cut.projection, bars }, query))
+    expect(diagnosed.candidates.find((entry) => entry.symbol === 'AAPL')).toMatchObject({
+      eligibility: { status: 'EXCLUDED', reason: 'not-ready' },
+      window: { requiredBarCount: 30, observedBarCount: 29, missingBarAt: [missingAt] },
+      quote: { ageMs: 1000, sourceTopic: query.sourceTopics.quotes },
+    })
+  })
+
+  test('diagnostics preserve the full excluded inventory when no candidate is ready', () => {
+    const state = {
+      ...fixture.cut.projection,
+      features: new Map([...fixture.cut.projection.features].filter(([symbol]) => symbol === 'SPY')),
+    }
+    const diagnosed = Result.getOrThrow(diagnoseStreamingInputs(state, query))
+    expect(diagnosed.candidates).toHaveLength(query.candidateSymbols?.length ?? 0)
+    expect(diagnosed.candidates.every((entry) => entry.eligibility.status === 'EXCLUDED')).toBe(true)
+    expect(Result.isFailure(constructStreamingSnapshot({ ...fixture.cut, projection: state }, query))).toBe(true)
+  })
+
   test('uses a current quote with an older real window trade and exposes its actual age to Jev', () => {
     const { snapshot } = streamingFixtureFromRaw(
       withTimes('AAPL', '2026-09-04T14:30:01.000Z', '2026-09-04T14:20:00.000Z'),

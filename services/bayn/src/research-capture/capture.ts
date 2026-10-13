@@ -4,6 +4,8 @@ import { ExecutionControllerTickSchema } from '../execution/controller'
 import { JevObservationReferencesSchema } from '../cycle/runner/pass-observation'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
 import { sha256 } from '../hash'
+import { EntryCommitTimingSchema, EntryReadinessTimingSchema } from './entry-timing'
+import { ResearchOpportunitySchema, ResearchScheduleRegistrationSchema } from './opportunity'
 import {
   GitSourceRevisionSchema,
   NonNegativeIntegerSchema,
@@ -165,6 +167,10 @@ export const restoreKafkaTransportTimestamp = (
 }
 
 export const ResearchCaptureEventSchema = Schema.Union([
+  ResearchOpportunitySchema,
+  ResearchScheduleRegistrationSchema,
+  Schema.Struct({ kind: Schema.Literal('entry-readiness'), ...EntryReadinessTimingSchema.fields }),
+  Schema.Struct({ kind: Schema.Literal('entry-commit'), ...EntryCommitTimingSchema.fields }),
   CaptureIntervalCutSchema,
   Schema.Struct({
     kind: Schema.Literal('session-attempt'),

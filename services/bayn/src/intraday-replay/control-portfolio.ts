@@ -31,6 +31,7 @@ export enum ControlPolicy {
   RetainedBreakout = 'RETAINED_BREAKOUT_CLOSE',
   RepeatedBreakout = 'REPEATED_BREAKOUT',
   RelativeMomentum = 'REPEATED_RELATIVE_MOMENTUM',
+  JevEntry = 'REPEATED_JEV_ENTRY',
   ResidualShock = ResidualShockCandidate.SpyRelativeShockRebound60s,
   Ridge = RidgeControlPolicy.Ridge,
   TrainingMean = RidgeControlPolicy.TrainingMean,
@@ -95,12 +96,13 @@ export const controlCandidates = (policy: ControlPolicy, protocol: JevProtocol) 
 export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: ControlPolicy, protocol: JevProtocol) =>
   Result.gen(function* () {
     if (
+      policy === ControlPolicy.JevEntry ||
       policy === ControlPolicy.Ridge ||
       policy === ControlPolicy.TrainingMean ||
       policy === ControlPolicy.FixedCandidateTraining
     )
       return yield* Result.fail(
-        new ControlStudyFailure({ message: 'Ridge controls require their bound entry adapter' }),
+        new ControlStudyFailure({ message: 'This policy requires its bound native entry adapter' }),
       )
     if (policy === ControlPolicy.ResidualShock) return (yield* selectResidualShock(snapshot, protocol)).selectedSymbol
     const latestTrades = Object.fromEntries(

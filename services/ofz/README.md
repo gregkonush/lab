@@ -51,6 +51,18 @@ native version/command-marker write; SQL effects, immutable audit, outbox and re
 Retries return the original receipt without returning an agent credential again. Ownership transfer, Developer removal,
 membership offboarding and grant revocation restrict SQL access in the intent transaction, so a crash after native policy
 changes cannot expose an uncleansed guest. Retained homes still count against quota while quarantined.
+Offboarding preserves an already approved `removing` state, including when the affected human is the owner,
+a Developer or an emergency user. Only exact controller confirmation of home removal releases its quota;
+offboarding cannot prevent that confirmation or release storage capacity early.
+
+Unbound creation reservations expire after five minutes on the database clock. Expired reservations no longer
+consume quota and cannot be enrolled or reused. Their IDs remain recorded so an old retry cannot allocate new capacity.
+Before claiming a slot, the controller commits `BeginWorkspaceEnrollment`, binding the reservation to the exact MicroVM
+UID. This `enrolling` state remains quota-counted across the creation deadline and retries; only that UID can enroll its
+home. If its owner is offboarded after that binding, enrollment records the retained home as quarantined, denies
+runtime and content access, and retains its quota. The controller deletes an expired, unbound MicroVM using its exact UID and resource version before touching the
+pool; its finalizer releases only a proven unclaimed candidate. Enrolled and quarantined homes remain counted until
+confirmed removal.
 
 Only the BFF submits human policy commands; the controller's separate workload branch admits its enrollment and stop
 commands. Human roster and audit reads also require the exact BFF identity. Privileged policy/audit reads require
@@ -75,6 +87,10 @@ Archive health requires a recent acknowledgement and no unacknowledged receipt o
 against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
 permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
 fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
+
+Controller runtime reads compare workspace authority and global policy/fence state from one SQL snapshot immediately
+before disclosure. Restrictive intent can quarantine a workspace before native policy finalization advances the global
+version; an in-flight read must abort if that workspace authority changes, even when the policy version stays the same.
 
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
@@ -109,6 +125,12 @@ passkeys. It exercises duplicate-email identity separation, membership and quota
 minimum-administrator protection, stale MFA and fresh step-up, downgraded assurance denial, nonmember admission denial,
 cookie replacement, logout and replay. Production custodian enrollment, runtime enforcement, HA and deployed acceptance
 remain migration gates.
+
+The shared-runtime checkpoint additionally exercises the real Rust controller client against Ofz over SPIFFE mTLS,
+versioned lifecycle intent and receipt recovery, exact retained-home removal completion, and a stream closed after a
+committed stop. Two real Ofz processes share the same control database; killing the serving process and routing new
+connections to its peer preserves the original opaque passkey session. This fixture models service endpoint removal;
+Kubernetes, synchronous database and Keycloak failover require the separate HA qualification.
 
 Prepared cutover resources live in [`argocd/applications/ofz/control-plane`](../../argocd/applications/ofz/control-plane/README.md).
 They are excluded from the active application until coordinated release, identity, archive, credential and migration gates pass.

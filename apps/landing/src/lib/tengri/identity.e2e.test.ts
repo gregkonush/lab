@@ -34,7 +34,7 @@ afterAll(async () => {
     }),
   )
   for (const cleanup of cleanups.reverse()) await cleanup()
-})
+}, 15_000)
 
 identityTest(
   'real browser, GitHub broker, passkey, BFF, SPIFFE Ofz and shared SQL sessions',
@@ -171,12 +171,18 @@ identityTest(
     updates.push(relation('policy_version', 'lab', 'current', 'workload', 'version_1'))
     await nativeCall('/v1/relationships/write', { updates })
     await control.query('UPDATE ofz.platform_state SET version=1,fenced=false')
-    const heartbeat = setInterval(
-      () => void control.query('UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()').catch(() => undefined),
-      1000,
-    )
+    // Synthetic acknowledgements keep identity scenarios independent of the archive-loss gate.
+    const acknowledgeFixtureArchive = () =>
+      control.query(
+        "BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='identity-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;",
+      )
+    const heartbeat = setInterval(() => {
+      void acknowledgeFixtureArchive().catch((cause: unknown) => {
+        throw new Error('Synthetic identity archive acknowledgement failed', { cause })
+      })
+    }, 1000)
     cleanups.push(() => clearInterval(heartbeat))
-    await control.query('UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()')
+    await acknowledgeFixtureArchive()
     const codes = new Map<string, string>(),
       tokens = new Map<string, string>()
     let githubSecret = 'fixture-github-secret'
@@ -459,7 +465,7 @@ identityTest(
     kc.stderr?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
     const adminBase = `http://127.0.0.1:${kcHttp}`
     for (let attempt = 0; ; attempt++) {
-      if (kc.exitCode !== null || attempt > 180)
+      if (kc.exitCode !== null || attempt > 240)
         throw new Error(`Fixture Keycloak startup failed: ${readFileSync(kcLog, 'utf8').slice(-1000)}`)
       try {
         if ((await fetch(adminBase + '/realms/master/.well-known/openid-configuration')).ok) break

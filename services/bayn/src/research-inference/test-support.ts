@@ -69,8 +69,30 @@ export const researchFixture = () =>
   )
 export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>') =>
   [
-    { id: 'chatcmpl-synthetic', model: alphaModel, choices: [{ index: 0, delta: { content }, finish_reason: null }] },
-    { id: 'chatcmpl-synthetic', model: alphaModel, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+      usage: { prompt_tokens: 10, completion_tokens: 0, total_tokens: 10 },
+    },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: { reasoning: 'thinking' }, finish_reason: null }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+      usage: { prompt_tokens: 10, completion_tokens: 19, total_tokens: 29 },
+    },
+    {
+      id: 'chatcmpl-synthetic',
+      model: alphaModel,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    },
     {
       id: 'chatcmpl-synthetic',
       model: alphaModel,
@@ -80,3 +102,29 @@ export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>') =>
   ]
     .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
     .join('') + 'data: [DONE]\n\n'
+
+export const fullTokenBudgetStreamFixture = () => {
+  const chunk = (completion: number, delta: Record<string, string>, finish: string | null = null) => ({
+    id: 'chatcmpl-synthetic',
+    object: 'chat.completion.chunk',
+    created: 1791792592,
+    model: alphaModel,
+    choices: [{ index: 0, delta, logprobs: null, finish_reason: finish, token_ids: null }],
+    usage: {
+      prompt_tokens: 10,
+      completion_tokens: completion,
+      total_tokens: 10 + completion,
+      completion_tokens_details: { reasoning_tokens: Math.min(completion, 4095) },
+    },
+  })
+  return (
+    [
+      chunk(0, { role: 'assistant', content: '' }),
+      ...Array.from({ length: 4095 }, (_, index) => chunk(index + 1, { reasoning: ' test' })),
+      chunk(4096, { content: '<alpha_list>alpha001</alpha_list>' }, 'stop'),
+      { ...chunk(4096, {}), choices: [] },
+    ]
+      .map((frame) => `data: ${JSON.stringify(frame)}\n\n`)
+      .join('') + 'data: [DONE]\n\n'
+  )
+}

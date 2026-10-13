@@ -3,6 +3,8 @@ import { Clock, ConfigProvider, Deferred, Effect, Exit, Fiber, Result, type Scop
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
+import { canonicalHashV1 } from '../hash'
+import { momentumFirstJevProtocolDocument } from '../jev/protocol'
 import { KafkaMarketFailure } from '../market-data/streaming/kafka'
 import { CaptureInvalidation, CaptureQualification, ResearchCaptureFailure, type CaptureIntervalCut } from './capture'
 import { captureEvent, recoverCaptureFromStoredObjects } from './capture.test-support'
@@ -10,13 +12,16 @@ import { researchCaptureObjectKey, verifyResearchCaptureExportPrefix } from './e
 import { makeResearchCaptureSession } from './session'
 import { decodeResearchCaptureSessionConfig, researchCaptureSessionConfig } from './session-config'
 import { sessionConfig, sessionMemory, sessionStart, sessionUniverse } from './session.test-support'
+import { decodeResearchCaptureChunk } from './capture'
+import { prepareResearchSchedule } from './opportunity'
 
 const run = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+const activeProtocolHash = canonicalHashV1(sessionConfig.researchSchedule.protocol)
 const start = (saved = sessionMemory(), bootstrapped = true) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(sessionStart)
-    const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+    const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
     yield* session.start(saved.store, Effect.succeed(saved.objectStore), sessionUniverse)
     session.observer.record(captureEvent('STARTED'))
     if (bootstrapped)
@@ -55,12 +60,42 @@ test('default configuration is dormant without any S3 configuration; one explici
     )
 })
 
+test.each([
+  ['candidates', { ...sessionConfig.researchSchedule.protocol, candidateSymbols: ['AAPL'] }],
+  ['spread limit', { ...sessionConfig.researchSchedule.protocol, maximumSpreadBps: 6 }],
+  ['inference deadline', { ...sessionConfig.researchSchedule.protocol, inferenceValidityMs: 9000 }],
+  ['entry policy', momentumFirstJevProtocolDocument],
+] as const)('capture rejects a different active protocol %s before acquiring evidence resources', (_field, protocol) =>
+  run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(sessionStart)
+      const config = { ...sessionConfig, researchSchedule: { ...sessionConfig.researchSchedule, protocol } }
+      expect(Result.isSuccess(decodeResearchCaptureSessionConfig(JSON.stringify(config)))).toBeTrue()
+      const saved = sessionMemory()
+      const session = yield* makeResearchCaptureSession(config, 'a'.repeat(40), activeProtocolHash)
+      let acquisitions = 0
+      yield* session.start(
+        saved.store,
+        Effect.sync(() => {
+          acquisitions++
+          return saved.objectStore
+        }),
+        sessionUniverse,
+      )
+      expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.InvalidEvent })
+      expect(acquisitions).toBe(0)
+      expect(saved.writes).toEqual([])
+      expect(session.workerObserver).toBeUndefined()
+    }),
+  ),
+)
+
 test('an unacquired worker finishes incomplete at the fixed bootstrap deadline and never starts another session', () =>
   run(
     Effect.gen(function* () {
       yield* TestClock.setTime(sessionStart)
       const saved = sessionMemory()
-      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
       yield* TestClock.adjust(5000)
       expect(yield* session.status).toEqual({ phase: 'finished', reason: CaptureInvalidation.MissedBootstrap })
       yield* session.start(saved.store, Effect.die('must not acquire'), sessionUniverse)
@@ -75,7 +110,7 @@ test('a future session has no early claim, object acquisition, raw mode, or dela
     Effect.gen(function* () {
       yield* TestClock.setTime(sessionStart - 86_400_000)
       const saved = sessionMemory()
-      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
       expect(yield* session.status).toEqual({ phase: 'waiting' })
       expect(session.workerObserver).toBeUndefined()
       yield* TestClock.adjust(1000)
@@ -100,6 +135,7 @@ test('one successful native cut closes once while the worker remains alive and e
       const { saved, session } = yield* start()
       let cuts = 0
       session.bind({
+        read: Effect.fail(new KafkaMarketFailure({ operation: 'read', message: 'No snapshot in cut fixture' })),
         captureInterval: (request) =>
           Effect.sync(() => {
             cuts++
@@ -155,6 +191,26 @@ test('one successful native cut closes once while the worker remains alive and e
       expect(Result.isSuccess(verified) && verified.success.exportVerified).toBe(true)
       expect(Result.isSuccess(verified) && verified.success.complete).toBe(false)
       expect(saved.chunks[0]?.payload).toContain('session-attempt')
+      const receipts = saved.chunks.flatMap((chunk) => Result.getOrThrow(decodeResearchCaptureChunk(chunk)).receipts)
+      const research = Result.getOrThrow(prepareResearchSchedule(receipts))
+      expect(research.schedule).not.toBeNull()
+      expect(research.expectedCount).toBe(10)
+      expect(research.observedCount).toBe(10)
+      expect(research.missingOrdinals).toEqual([])
+      expect(
+        Result.isFailure(
+          prepareResearchSchedule(
+            receipts.filter((receipt) => receipt.event.kind !== 'research-opportunity' || receipt.event.ordinal !== 3),
+          ),
+        ),
+      ).toBeFalse()
+      expect(
+        Result.getOrThrow(
+          prepareResearchSchedule(
+            receipts.filter((receipt) => receipt.event.kind !== 'research-opportunity' || receipt.event.ordinal !== 3),
+          ),
+        ).missingOrdinals,
+      ).toEqual([3])
     }),
   ))
 
@@ -165,6 +221,7 @@ test.each(['failed-cut', 'stalled-cut', 'missing-bootstrap', 'replacement', 'inv
       Effect.gen(function* () {
         const { saved, session } = yield* start(sessionMemory(), scenario !== 'missing-bootstrap')
         session.bind({
+          read: Effect.fail(new KafkaMarketFailure({ operation: 'read', message: 'No snapshot in cut fixture' })),
           captureInterval: () =>
             scenario === 'stalled-cut'
               ? Effect.never
@@ -199,7 +256,7 @@ test('worker scope interruption closes the attempt and cannot be repaired by the
     Effect.gen(function* () {
       yield* TestClock.setTime(sessionStart)
       const saved = sessionMemory()
-      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
       let released = 0
       const worker = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -234,7 +291,7 @@ test('a capture acquisition clock defect cannot fail or acquire resources for na
       yield* TestClock.setTime(sessionStart)
       const clock = yield* Clock.Clock
       let reads = 0
-      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40)).pipe(
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash).pipe(
         Effect.provideService(Clock.Clock, {
           currentTimeMillis: clock.currentTimeMillis,
           currentTimeNanos: clock.currentTimeNanos,
@@ -262,7 +319,7 @@ test('S3 acquisition that crosses the bootstrap deadline cannot claim or export 
       yield* TestClock.setTime(sessionStart)
       const saved = sessionMemory()
       const objects = yield* Deferred.make<typeof saved.objectStore>()
-      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+      const session = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
       const acquiring = yield* session
         .start(saved.store, Deferred.await(objects), sessionUniverse)
         .pipe(Effect.forkChild)
@@ -291,6 +348,7 @@ test.each(['before-commit', 'unknown-acknowledgement'] as const)(
         const session = yield* makeResearchCaptureSession(
           { ...sessionConfig, bootstrapDeadlineMs: sessionStart + 100 },
           'a'.repeat(40),
+          activeProtocolHash,
         )
         const acquiring = yield* session
           .start(
@@ -335,7 +393,7 @@ test.each(['before-claim', 'lost-claim-ack', 'after-claim'] as const)(
       Effect.gen(function* () {
         yield* TestClock.setTime(sessionStart)
         const saved = sessionMemory()
-        const first = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+        const first = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
         const fail = Effect.fail(new ResearchCaptureFailure({ message: 'unknown capture write' }))
         yield* first.start(
           {
@@ -354,7 +412,7 @@ test.each(['before-claim', 'lost-claim-ack', 'after-claim'] as const)(
         expect(saved.objects).toEqual([])
         expect(saved.seals).toEqual([])
         if (failure !== 'before-claim') {
-          const second = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40))
+          const second = yield* makeResearchCaptureSession(sessionConfig, 'a'.repeat(40), activeProtocolHash)
           yield* second.start(saved.store, Effect.succeed(saved.objectStore), sessionUniverse)
           yield* TestClock.adjust(1000)
           expect((yield* second.status).phase).toBe('finished')

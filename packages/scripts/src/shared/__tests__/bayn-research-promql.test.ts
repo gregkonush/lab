@@ -28,7 +28,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   }
   const series = (name: string, values: string) => ({ series: name, values })
   const desired = (values = '1+0x30') =>
-    series('kube_deployment_spec_replicas{namespace="bayn",deployment="bayn-research-v1"}', values)
+    series('kube_replicaset_spec_replicas{namespace="bayn",replicaset="bayn-research-v1"}', values)
   const heartbeat = series('bayn_research_worker_heartbeat_seconds', '0+60x30')
   const stale = 'BaynResearchWorkerStale'
   const failing = 'BaynResearchAttemptsFailing'
@@ -50,6 +50,11 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   check('no desired worker', [])
   check('paused worker has no stale alert', [desired('0+0x30')])
   check('missing heartbeat while worker is desired', [desired()], [stale])
+  check(
+    'retired revision does not hide a missing heartbeat',
+    [desired(), series('kube_replicaset_spec_replicas{namespace="bayn",replicaset="bayn-research-v0"}', '0+0x30')],
+    [stale],
+  )
   check('stopped heartbeat', [desired(), series('bayn_research_worker_heartbeat_seconds', '0+0x30')], [stale])
   check('missing heartbeat stays pending before five minutes', [desired()], [], '4m')
   check('heartbeat recovery clears stale alert', [
@@ -58,18 +63,18 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   ])
   check(
     'three failures in the window',
-    [desired(), heartbeat, series('bayn_research_attempts_total{outcome="EXPIRED"}', '0+1x30')],
+    [desired(), heartbeat, series('bayn_research_attempts{outcome="EXPIRED"}', '0+1x30')],
     [failing],
   )
   check('successful attempts do not count as failures', [
     desired(),
     heartbeat,
-    series('bayn_research_attempts_total{outcome="COMPLETE"}', '0+1x30'),
+    series('bayn_research_attempts{outcome="COMPLETE"}', '0+1x30'),
   ])
   check('one failure does not alert', [
     desired(),
     heartbeat,
-    series('bayn_research_attempts_total{outcome="INVALID"}', '0 1+0x29'),
+    series('bayn_research_attempts{outcome="REJECTED"}', '0 1+0x29'),
   ])
   for (const metric of ['bayn_research_unpriced_attempts', 'bayn_research_ambiguous_attempts']) {
     check(`${metric} blocks cost qualification`, [desired(), heartbeat, series(metric, '1+0x30')], [costs])

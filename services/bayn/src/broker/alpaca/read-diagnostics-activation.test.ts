@@ -97,8 +97,6 @@ test('normal broker polling emits diagnostics while native deployment activation
         { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 },
         {
           activate: async () => undefined,
-          preparePoll: async () => 'synthetic-capture',
-          nextPollNotBeforeMs: async () => 0,
           poll: (signal) =>
             execute(
               Effect.gen(function* () {
