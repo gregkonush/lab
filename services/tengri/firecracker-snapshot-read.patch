@@ -1,24 +1,12 @@
 --- a/src/vmm/src/vstate/memory.rs
 +++ b/src/vmm/src/vstate/memory.rs
-@@ -51,6 +51,8 @@
-     MemfdSetLen(std::io::Error),
-     /// Total sum of memory regions exceeds largest possible file offset
-     OffsetTooLarge,
+@@ -53,0 +54,2 @@
 +    /// Cannot advise snapshot memory mapping: {0}
 +    Madvise(std::io::Error),
-     /// Cannot retrieve snapshot file metadata: {0}
-     FileMetadata(std::io::Error),
-     /// Memory region has zero slots
-@@ -593,12 +595,23 @@
-         return Err(MemoryError::OffsetTooLarge);
-     }
- 
+@@ -596 +598 @@
 -    create(
 +    let memory = create(
-         regions.into_iter(),
-         libc::MAP_PRIVATE,
-         Some(file),
-         track_dirty_pages,
+@@ -601 +603,12 @@
 -    )
 +    )?;
 +    // Guest physical addresses are sparse during demand-paged restore.
@@ -32,13 +20,7 @@
 +        }
 +    }
 +    Ok(memory)
- }
- 
- /// Defines the interface for snapshotting memory.
-@@ -699,6 +712,16 @@
- 
-     /// Dumps all contents of GuestMemoryMmap to a writer.
-     fn dump<T: WriteVolatile + std::io::Seek>(&self, writer: &mut T) -> Result<(), MemoryError> {
+@@ -701,0 +715,10 @@
 +        // Full capture reads every page sequentially, including untouched snapshot-backed pages.
 +        for region in self.iter() {
 +            // SAFETY: Each region is a valid mapping for its complete length.
@@ -49,6 +31,3 @@
 +                return Err(MemoryError::Madvise(std::io::Error::last_os_error()));
 +            }
 +        }
-         self.iter()
-             .flat_map(|region| region.slots())
-             .try_for_each(|(mem_slot, plugged)| {
