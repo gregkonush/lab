@@ -137,10 +137,11 @@ ExternalSecret change and verify its rendered data. Then bump the pod's
 `observability.proompteng.ai/alertmanager-fallback-config-revision` annotation in a separate reviewed change.
 An annotation bump in the same sync as a Secret update can start Mimir with the previous configuration.
 
-The named `SignalAdjustedDailyPublicationMissed` warning has an explicit route to the existing `critical-email`
-receiver, with a four-hour repeat interval. The receiver name does not make the alert critical. Other warning alerts
-retain their existing routing, and critical alerts still require `notify="email"`. Validate both the Secret's route
-and the running tenant configuration after the revision bump; the rule's `notify` label alone does not establish delivery.
+Warnings with `notify="email"` use the existing `critical-email` receiver with a four-hour repeat interval. This
+includes the publisher deadline, Bayn input and execution warnings and Restate metadata lag. The receiver name does
+not make a warning critical. Warnings without that opt-in remain quiet, and critical alerts still require it. Validate
+both the Secret's route and the running tenant configuration after the revision bump; the rule's `notify` label alone
+does not establish delivery.
 
 ## Validation
 
