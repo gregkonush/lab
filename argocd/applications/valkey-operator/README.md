@@ -7,7 +7,10 @@ Valkey database.
 The platform ApplicationSet owns the `valkey-operator` Application and the
 `valkey-system` namespace. The upstream v2.1.0 Kustomize source is pinned to its
 commit and the multi-architecture operator image is pinned by digest. The helper
-image used for managed instances is pinned to the same release. The overlay
+image used for managed instances uses the same release tag. `operatorVersion`
+must remain a semantic version because it also selects reconciliation actors;
+it cannot contain an image digest. Per-instance helper digest overrides use the
+upstream `buf.red/imageversions-valkey-helper` annotation instead. The overlay
 prefixes upstream resource names to avoid collisions with other operators.
 
 Two leader-electing controller replicas run with restricted pod security and
