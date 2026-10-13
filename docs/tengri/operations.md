@@ -55,12 +55,14 @@ The plaintext inputs are these case-sensitive environment variables:
 - `BETTER_AUTH_SECRET`: at least 32 random bytes for encrypted, stateless web sessions.
 - `GITHUB_CLIENT_ID`: the Tengri GitHub OAuth application client ID.
 - `GITHUB_CLIENT_SECRET`: the matching GitHub OAuth application client secret.
-- `TENGRI_INTERNAL_HMAC_SECRET`: one base64url signing key of at least 32 bytes, or `new,current` during rotation. The
-  controller and BFF must receive the same value.
+- `TENGRI_INTERNAL_HMAC_SECRET`: one 32-byte signing key encoded as exactly 64 lowercase hexadecimal characters
+  (`openssl rand -hex 32`). The controller and BFF must receive the same value. Base64url keys and comma-separated
+  rotation bundles are rejected.
 - `TENGRI_TICKET_SIGNING_SECRET`: at least 32 random bytes for one-use terminal and preview tickets.
 
 The BFF reads the first four values. The controller reads the final two. Both manifests must be generated in one run so
-the controller and BFF receive the same HMAC signing bundle. The sealing script validates every input, keeps plaintext
+the controller and BFF receive the same HMAC signing key. Rotate that single key as part of the coordinated rollout;
+both services must use the replacement before admitting traffic. The sealing script validates every input, keeps plaintext
 out of command arguments and files, uses namespace/name-bound strict scope, and writes only encrypted manifests. Before
 sealing, it also submits a random invalid authorization code with the production callback URL and requires GitHub to
 return `bad_verification_code`. GitHub returns `incorrect_client_credentials` for a wrong client pair and
