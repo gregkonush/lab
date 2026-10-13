@@ -125,7 +125,7 @@ const WorkerMarketDataLive = (
 
 const PostgresLive = (config: PostgresResourceConfig) => {
   const client = sqlResource(PostgresClientResourceLive(config))
-  const migrations = PostgresMigrationsLive(config).pipe(Layer.provide(client))
+  const migrations = PostgresMigrationsLive(config)
   return Layer.merge(client, migrations)
 }
 

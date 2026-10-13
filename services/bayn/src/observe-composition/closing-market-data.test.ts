@@ -34,7 +34,7 @@ import { currentUtcInstant } from '../time'
 import { CandidateObservationStore } from './candidate-observation'
 import {
   checkAdvancedMarketProjection,
-  closeQuoteContinuationDelayMs,
+  executionEvidenceContinuationDelayMs,
   reconciliationForPreparation,
 } from './recovery-driver'
 import { advanceExecutionOnce } from '../execution/advance'
@@ -455,7 +455,7 @@ describe('closing market-data fallback boundaries', () => {
                 pending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
               )
               expect(
-                closeQuoteContinuationDelayMs(
+                executionEvidenceContinuationDelayMs(
                   {
                     outcome: 'RECOVERED',
                     action: 'WAITING',
@@ -877,10 +877,10 @@ describe('closing market-data fallback boundaries', () => {
       cycle: activeCycle,
     } as const
     const close = Date.parse(activeCycle.window.executionCloseAt)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close - 750).toISOString())).toBe(750)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close + 1).toISOString())).toBeUndefined()
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 750).toISOString())).toBe(750)
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close + 1).toISOString())).toBeUndefined()
     expect(
-      closeQuoteContinuationDelayMs(
+      executionEvidenceContinuationDelayMs(
         {
           outcome: 'RECOVERED',
           action: 'COMPLETED',
@@ -902,7 +902,7 @@ describe('closing market-data fallback boundaries', () => {
           TestClock.setTime(close),
           () => Effect.die(new Error('unexpected failure')),
         )
-        expect(closeQuoteContinuationDelayMs(waiting, 30_000, yield* currentUtcInstant)).toBeUndefined()
+        expect(executionEvidenceContinuationDelayMs(waiting, 30_000, yield* currentUtcInstant)).toBeUndefined()
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })
@@ -964,7 +964,7 @@ describe('closing market-data fallback boundaries', () => {
           observedAt: first instanceof ExecutionCloseAwaitingMarketData ? first.observedAt : '',
           cycle: request.cycle,
         } as const
-        const nextDelayMs = closeQuoteContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
+        const nextDelayMs = executionEvidenceContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
         expect(nextDelayMs).toBe(1_000)
         const command = {
           controllerKey: 'a'.repeat(64),
@@ -1051,31 +1051,36 @@ describe('closing market-data fallback boundaries', () => {
       observedAt: at,
       cycle: activeCycle,
     } as const
-    expect(closeQuoteContinuationDelayMs(waiting, 500, at)).toBe(500)
+    expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(500)
     expect(
-      closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'CLOSE_MARKET_DATA_UNAVAILABLE' }, 30_000, at),
+      executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'CLOSE_MARKET_DATA_UNAVAILABLE' }, 30_000, at),
     ).toBeUndefined()
-    expect(closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'JEV_POSITION_HELD' }, 30_000, at)).toBeUndefined()
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+    expect(
+      executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'JEV_POSITION_HELD' }, 30_000, at),
+    ).toBeUndefined()
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
   })
 
-  test('nested broker observation waits use the durable short continuation without relaxing the close deadline', () => {
-    const waiting = {
-      outcome: 'RECOVERED',
-      action: 'WAITING',
-      waitReason: 'BROKER_OBSERVATION_PENDING',
-      observedAt: at,
-      cycle: activeCycle,
-    } as const
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
-    expect(closeQuoteContinuationDelayMs(waiting, 500, at)).toBe(500)
-    const close = Date.parse(activeCycle.window.executionCloseAt)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
-    expect(
-      closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
-    ).toBeUndefined()
-  })
+  test.each(['BROKER_OBSERVATION_PENDING', 'JEV_POSITION_AWAITING_RECONCILIATION'] as const)(
+    'pending broker evidence %s uses a short continuation within the close deadline',
+    (waitReason) => {
+      const waiting = {
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        waitReason,
+        observedAt: at,
+        cycle: activeCycle,
+      } as const
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
+      expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(500)
+      const close = Date.parse(activeCycle.window.executionCloseAt)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+      expect(
+        executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
+      ).toBeUndefined()
+    },
+  )
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
     const request = await fixture()

@@ -99,6 +99,32 @@ spec:
                   argocd.argoproj.io/sync-wave: "-1"
                 automation: auto
                 enabled: "true"
+              - name: valkey-operator
+                path: argocd/applications/valkey-operator
+                namespace: valkey-system
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "-1"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+                ignoreDifferences:
+                  - group: admissionregistration.k8s.io
+                    kind: MutatingWebhookConfiguration
+                    name: chideat-mutating-webhook-configuration
+                    jqPathExpressions:
+                      - .webhooks[].clientConfig.caBundle
+                  - group: admissionregistration.k8s.io
+                    kind: ValidatingWebhookConfiguration
+                    name: chideat-validating-webhook-configuration
+                    jqPathExpressions:
+                      - .webhooks[].clientConfig.caBundle
               - name: cockroach-operator-system
                 path: argocd/applications/cockroach-operator
                 namespace: cockroach-operator-system

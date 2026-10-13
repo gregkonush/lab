@@ -44,7 +44,17 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
-The observation owner's child runtimes share the worker's configured logger and tracer. The
+A polling invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
+`broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later polls and
+source rotation, so a repeated or late invocation cannot repeat its capture. Publication and failure settle the claim
+atomically with their existing database update. Replaying an unfinished claim invalidates and fences its generation;
+a published lost result and a newer cut remain usable. A reserved quota window schedules a
+successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
+before capturing the fresh snapshot required to start execution. Only a returned journaled result releases the conservative
+unknown-work quota reservation. The database generation continues to fence publication after mutations and rotation.
+
+The observation owner's child runtimes share the worker's configured logger and tracer. The polling span inherits
+the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
 `bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
@@ -64,7 +74,8 @@ without scanning historical payloads. Events without a retained snapshot cannot 
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
-for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
+for elapsed polling time using the live transport clock, with a one-second minimum delay. Position closures waiting
+for fresh broker evidence resume after one second instead of the normal 30-second controller cadence. Capture is bounded by the smaller of the operation timeout
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
 observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
 poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
@@ -992,6 +1003,19 @@ never manufactures bars or changes the decision snapshot's entry freshness rules
 A standing mandate's next scheduled cycle does not make the reconciled performance window incomplete while its
 submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
 and any future cycle with durable execution work still prevent a sufficient receipt.
+
+Completion checks materialize the exact cycle and bound decision before evaluating JSON evidence, so unrelated
+historical decision bodies cannot enter the completion scan. Account/time indexes support the reconciliation cutoff
+and latest broker-event timestamp across every event kind. Identity, terminal-order, partial-fill, unknown-mutation
+and exact-reconciliation predicates are unchanged; the indexes do not grant authority or cache mutable evidence.
+Migration 0095 builds these indexes transactionally through normal startup migration. Schedule its first rollout
+while the account is flat outside the regular session because ordinary index creation blocks table writes.
+Startup migrations use a private single-connection pool with a five-minute overall deadline, a 295-second SQL
+deadline and a 297.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
+query, socket and trading deadlines remain unchanged. The additive indexes and compatible completion predicate can remain when
+rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
+The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
+readiness and liveness probes retain their normal cadence after startup.
 
 ## Replay and backtesting
 
