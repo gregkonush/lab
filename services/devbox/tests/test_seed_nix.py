@@ -115,6 +115,28 @@ class PersistentNixTests(unittest.TestCase):
         self.assertTrue((self.store / "var/nix/db/db.sqlite").exists())
         self.assertEqual(self.calls.read_text().splitlines().count("register"), 2)
 
+    def test_missing_toolchain_invalidates_the_completed_seed(self):
+        self.assertEqual(self.run_seed().returncode, 0)
+        shutil.rmtree(self.store / "store/toolchain")
+        self.assertEqual(self.run_seed().returncode, 0)
+        self.assertTrue((self.store / "store/toolchain/bin/nix-store").exists())
+        self.assertEqual(self.calls.read_text().splitlines().count("register"), 2)
+
+    def test_failed_upgrade_keeps_old_receipt_and_retries_new_closure(self):
+        self.assertEqual(self.run_seed().returncode, 0)
+        receipt = self.store / "var/nix/devbox-registration.sha256"
+        original = receipt.read_text()
+        self.registration.write_text("closure two\n")
+        failure = self.root / "fail-register"
+        failure.touch()
+        self.assertEqual(self.run_seed().returncode, 8)
+        self.assertEqual(receipt.read_text(), original)
+        failure.unlink()
+        self.assertEqual(self.run_seed().returncode, 0)
+        self.assertNotEqual(receipt.read_text(), original)
+        self.assertEqual(self.run_seed().returncode, 0)
+        self.assertEqual(self.calls.read_text().splitlines().count("register"), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,14 @@ container is privileged inside its guest so systemd, Docker, Nix, and Codex's Li
 sandbox can work. No host directories, containerd socket, or Kubernetes service
 account credential are exposed to the devbox.
 
+Nix initialization runs once per image registration digest. A completed seed
+mounts the existing store on later boots without scanning it or importing the
+database again. Image upgrades copy missing store paths and use Nix's
+`--register-validity --hash-given` operation to register only unknown paths.
+The completion receipt is written after registration and the toolchain GC root
+succeed. Interrupted copies and imports retry; a missing database or toolchain
+also invalidates the receipt. User-installed packages remain in the store.
+
 Readiness uses the guest's internal HTTP endpoint on port 8080. It requires setup
 to finish and both SSH and Docker to be active. The LAN Service exposes only SSH.
 Systemd delegates cgroup v2 subtrees for Docker; the installed Kata agent cannot
