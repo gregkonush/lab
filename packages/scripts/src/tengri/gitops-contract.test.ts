@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { isMap, isSeq, parseDocument } from 'yaml'
+import { execFileSync } from 'node:child_process'
+import { isMap, isSeq, parseAllDocuments, parseDocument } from 'yaml'
 
 type Rule = {
   resources?: string[]
@@ -63,6 +64,26 @@ const rbac = documents<Role>('argocd/applications/tengri/rbac.yaml')
 const services = documents<Service>('argocd/applications/tengri/services.yaml')
 const ingressRoutes = documents<IngressRoute>('argocd/applications/tengri/ingressroute.yaml')
 const networkPolicies = documents<NetworkPolicy>('argocd/applications/tengri/network-policies.yaml')
+
+const cutover = new Map(
+  ['tengri', 'proompteng'].map((app) => [
+    app,
+    parseAllDocuments(
+      execFileSync('kustomize', ['build', new URL(`../../../../argocd/prepared/${app}`, import.meta.url).pathname], {
+        encoding: 'utf8',
+      }),
+    ),
+  ]),
+)
+
+function cutoverManifest(app: string, kind: string, name: string) {
+  const document = cutover
+    .get(app)
+    ?.find((entry) => entry.get('kind') === kind && entry.getIn(['metadata', 'name']) === name)
+  if (!document) throw new Error(`Missing cutover ${kind}/${name}`)
+  expect(document.errors).toEqual([])
+  return document
+}
 
 function manifest(path: string) {
   const document = parseDocument(readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8'))
@@ -296,8 +317,9 @@ test('the controller and supervisors reach only their required Ofz endpoints', (
     to: [{ namespaceSelector: namespace, podSelector: { matchLabels: { 'cnpg.io/cluster': 'ofz-db' } } }],
     ports: [{ protocol: 'TCP', port: 5432 }],
   }
+  const targetPolicies = cutover.get('tengri')!.map((entry) => entry.toJSON() as NetworkPolicy)
   const ofzRules = (name: string) =>
-    networkPolicies
+    targetPolicies
       .find((policy) => policy.metadata?.name === name)
       ?.spec?.egress?.filter((rule) =>
         rule.to?.some((target) => target.namespaceSelector?.matchLabels?.['kubernetes.io/metadata.name'] === 'ofz'),
@@ -317,7 +339,7 @@ test('the controller and supervisors reach only their required Ofz endpoints', (
 })
 
 test('the controller mounts its request key and verified-TLS database credential', () => {
-  const deployment = manifest('argocd/applications/tengri/deployment.yaml')
+  const deployment = cutoverManifest('tengri', 'Deployment', 'tengri')
   const pod = deployment.getIn(['spec', 'template', 'spec'])
   if (!isMap(pod)) throw new Error('Deployment pod spec must be a mapping')
   expect(pod.toJSON()).toMatchObject({
@@ -358,7 +380,7 @@ test('the controller mounts its request key and verified-TLS database credential
 })
 
 test('the BFF reads the same dedicated request key contract as the controller', () => {
-  const deployment = manifest('argocd/applications/proompteng/deployment.yaml')
+  const deployment = cutoverManifest('proompteng', 'Deployment', 'proompteng')
   const volumes = deployment.getIn(['spec', 'template', 'spec', 'volumes'])
   if (!isSeq(volumes)) throw new Error('BFF volumes must be explicit')
   const key = volumes.items.find((entry) => isMap(entry) && entry.get('name') === 'tengri-bff')
@@ -366,4 +388,50 @@ test('the BFF reads the same dedicated request key contract as the controller', 
   expect(key.getIn(['secret', 'secretName'])).toBe('tengri-internal-request-key')
   expect(key.getIn(['secret', 'defaultMode'])).toBe(288)
   expect(deployment.getIn(['spec', 'template', 'spec', 'securityContext', 'fsGroup'])).toBe(1001)
+})
+
+test('active deployments do not switch authority before cutover dependencies exist', () => {
+  for (const app of ['tengri', 'proompteng']) {
+    const active = manifest(`argocd/applications/${app}/deployment.yaml`).toString()
+    expect(active).not.toContain('OFZ_GRPC_ENDPOINT')
+    expect(active).not.toContain('tengri-internal-request-key')
+    expect(active).not.toContain('ofz-database-ca')
+  }
+})
+
+test('the BFF cutover includes every required Ofz, identity and TLS database setting', () => {
+  const deployment = cutoverManifest('proompteng', 'Deployment', 'proompteng')
+  const pod = deployment.getIn(['spec', 'template', 'spec'])
+  if (!isMap(pod)) throw new Error('BFF pod required')
+  expect(pod.toJSON()).toMatchObject({
+    containers: [
+      expect.objectContaining({
+        env: expect.arrayContaining([
+          { name: 'OFZ_GRPC_ENDPOINT', value: 'ofz-api.ofz.svc.cluster.local:9443' },
+          { name: 'TENGRI_OIDC_ISSUER', value: 'https://auth.proompteng.ai/realms/tengri' },
+          { name: 'TENGRI_OIDC_CLIENT_SECRET_FILE', value: '/var/run/tengri/oidc/client-secret' },
+          {
+            name: 'TENGRI_DATABASE_DSN',
+            value: 'postgres://tengri_bff@ofz-db-rw.ofz.svc.cluster.local:5432/tengri_control',
+          },
+          { name: 'TENGRI_DATABASE_PASSWORD_FILE', value: '/var/run/tengri/database/password' },
+          { name: 'TENGRI_DATABASE_CA_FILE', value: '/var/run/tengri/database-ca/ca.crt' },
+        ]),
+        volumeMounts: expect.arrayContaining([
+          { name: 'oidc', mountPath: '/var/run/tengri/oidc', readOnly: true },
+          { name: 'database', mountPath: '/var/run/tengri/database', readOnly: true },
+          { name: 'database-ca', mountPath: '/var/run/tengri/database-ca', readOnly: true },
+        ]),
+      }),
+    ],
+    volumes: expect.arrayContaining([
+      { name: 'oidc', secret: { secretName: 'tengri-oidc-client', defaultMode: 0o440 } },
+      { name: 'database', secret: { secretName: 'tengri-bff-db', defaultMode: 0o440 } },
+      { name: 'database-ca', secret: { secretName: 'ofz-database-ca', defaultMode: 0o440 } },
+    ]),
+  })
+  const policies = cutoverManifest('proompteng', 'NetworkPolicy', 'proompteng-web').toJSON() as NetworkPolicy
+  for (const port of [9443, 5432, 8443]) {
+    expect(policies.spec?.egress?.some((rule) => rule.ports?.some((entry) => entry.port === port))).toBe(true)
+  }
 })

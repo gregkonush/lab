@@ -35,7 +35,6 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
-        fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -121,5 +120,4 @@ spec:
             sizeLimit: 256Mi
         - name: tengri-bff
           secret:
-            secretName: tengri-internal-request-key
-            defaultMode: 288
+            secretName: tengri-bff

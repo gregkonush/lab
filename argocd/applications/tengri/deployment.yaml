@@ -37,7 +37,6 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
-        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -78,20 +77,19 @@ spec:
               value: https://proompteng.ai
             - name: TENGRI_PREVIEW_ADDRESS
               value: 0.0.0.0:8081
-            - name: OFZ_GRPC_ENDPOINT
-              value: ofz-api.ofz.svc.cluster.local:9443
-            - name: TENGRI_INTERNAL_HMAC_KEY_FILE
-              value: /var/run/tengri/internal/TENGRI_INTERNAL_HMAC_SECRET
-            - name: TENGRI_DATABASE_DSN
-              value: host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_controller sslmode=require
-            - name: TENGRI_DATABASE_PASSWORD_FILE
-              value: /var/run/tengri/database/password
-            - name: TENGRI_DATABASE_CA_FILE
-              value: /var/run/tengri/database-ca/ca.crt
+            - name: TENGRI_RUNTIME_SECRET_DIRECTORY
+              value: /var/run/secrets/tengri-runtime
+            - name: TENGRI_AUTHZ_ENDPOINT
+              value: http://ofz.ofz.svc.cluster.local:8443
+            - name: TENGRI_AUTHZ_KEY_FILE
+              value: /var/run/secrets/tengri-authz/preshared_key
             - name: TENGRI_POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+          envFrom:
+            - secretRef:
+                name: tengri-runtime
           startupProbe:
             httpGet:
               path: /livez
@@ -131,14 +129,11 @@ spec:
             - name: workload-api
               mountPath: /spiffe-workload-api
               readOnly: true
-            - name: internal-request-key
-              mountPath: /var/run/tengri/internal
+            - name: runtime-secret
+              mountPath: /var/run/secrets/tengri-runtime
               readOnly: true
-            - name: database
-              mountPath: /var/run/tengri/database
-              readOnly: true
-            - name: database-ca
-              mountPath: /var/run/tengri/database-ca
+            - name: authz-secret
+              mountPath: /var/run/secrets/tengri-authz
               readOnly: true
             - name: tmp
               mountPath: /tmp
@@ -147,18 +142,12 @@ spec:
           csi:
             driver: csi.spiffe.io
             readOnly: true
-        - name: internal-request-key
+        - name: runtime-secret
           secret:
-            secretName: tengri-internal-request-key
-            defaultMode: 288
-        - name: database
+            secretName: tengri-runtime
+        - name: authz-secret
           secret:
-            secretName: tengri-controller-db
-            defaultMode: 288
-        - name: database-ca
-          secret:
-            secretName: ofz-database-ca
-            defaultMode: 288
+            secretName: tengri-spicedb-key
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
