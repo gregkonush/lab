@@ -4,6 +4,16 @@ The TA job consumes the existing Alpaca bars, quotes, and trades. It retains the
 publish rolling market features for Bayn. The separate market-data archive job retains raw records and feature
 messages in ClickHouse. See the [streaming design](../../../docs/bayn/streaming-market-data-design.md).
 
+## Continuous crypto feature branch
+
+The same TA job can consume the native crypto topic with `TA_CRYPTO_TOPIC`, `TA_CRYPTO_LOCATION`, `TA_CRYPTO_SYMBOLS`,
+and `TA_CRYPTO_FEATURES_TOPIC`. This branch publishes `dorvud.crypto-continuous-1m.v1`, using provider minute bars and
+updated bars, the shared indicator calculations, continuous recursive seeds, and bounded canonical correction state.
+It uses no equity session calendar and carries state through midnight and weekends. Raw events remain in the separate
+raw archive. Derived messages go through Kafka to `signal.crypto_market_features_v1` in the archive job.
+See [the crypto feature contract](../README.md#crypto-flink-features) for readiness, precision, provenance, retention,
+and rollout acceptance. The equity feature contracts below retain their own source and session definitions.
+
 ## Event-time microbars and canonical technical signals
 
 Microbars use Kafka topic, partition, and offset to deduplicate transport redelivery. Each event-time second has its
