@@ -19,40 +19,8 @@ resources:
   - historical-datasets-schema-job.yaml
   - bayn-universe-v2-configmap.yaml
   - signal-publisher-cronjob.yaml
-  - signal-publisher-recovery-job.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
     newTag: sha-f34b6492c746608bcaa6e068328c60da4d39754a
     digest: sha256:1c89ed7305214f9896ebcf59c6f6b1e289fdbdfdf1fb7f41e6c7f699386e9ffa
-replacements:
-  - source:
-      kind: CronJob
-      name: signal-adjusted-daily-publisher
-      fieldPath: spec.jobTemplate.spec.template.spec.containers.[name=publish].env.[name=SIGNAL_CODE_REVISION].value
-    targets:
-      - select:
-          kind: Job
-          name: signal-adjusted-daily-recovery-20261013
-        fieldPaths:
-          - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_CODE_REVISION].value
-  - source:
-      kind: CronJob
-      name: signal-adjusted-daily-publisher
-      fieldPath: spec.jobTemplate.spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_REPOSITORY].value
-    targets:
-      - select:
-          kind: Job
-          name: signal-adjusted-daily-recovery-20261013
-        fieldPaths:
-          - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_REPOSITORY].value
-  - source:
-      kind: CronJob
-      name: signal-adjusted-daily-publisher
-      fieldPath: spec.jobTemplate.spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_DIGEST].value
-    targets:
-      - select:
-          kind: Job
-          name: signal-adjusted-daily-recovery-20261013
-        fieldPaths:
-          - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_DIGEST].value
