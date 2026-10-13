@@ -685,6 +685,7 @@ async fn control_integration_durability_authority_and_quota() {
         identities,
         service,
     };
+    Box::pin(verify_maintenance_state_during_audit(&fixture)).await;
     Box::pin(verify_session_bootstrap(&fixture)).await;
     let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
     Box::pin(verify_runtime_reads(
@@ -728,6 +729,109 @@ async fn control_integration_durability_authority_and_quota() {
     Box::pin(verify_offboarding_preserves_removal(&fixture)).await;
     Box::pin(verify_offboarding_during_enrollment(&fixture)).await;
     Box::pin(verify_journal_loss(&fixture, &workspace)).await;
+}
+
+async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
+    let uid = Uuid::new_v4();
+    let reservation = Uuid::new_v4();
+    let home = Uuid::new_v4();
+    let epoch = Uuid::new_v4();
+    let client = fixture.admin.pool.get().await.unwrap();
+    client.execute(
+        "INSERT INTO ofz.reservations(id,owner_id,home_bytes,workspace_uid,state) VALUES($1,$2,34359738368,$3,'enrolled')",
+        &[&reservation, &fixture.identities[0].0, &uid],
+    ).await.unwrap();
+    client.execute(
+        "INSERT INTO ofz.workspaces(uid,owner_id,home_uid,reservation_id,home_bytes,running,runtime_epoch) VALUES($1,$2,$3,$4,34359738368,true,$5)",
+        &[&uid,&fixture.identities[0].0,&home,&reservation,&epoch],
+    ).await.unwrap();
+    for (before, during) in [
+        (
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()-61000",
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()",
+        ),
+        (
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()",
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()-61000",
+        ),
+        (
+            "UPDATE ofz.platform_state SET fenced=true",
+            "UPDATE ofz.platform_state SET fenced=false",
+        ),
+        (
+            "UPDATE ofz.platform_state SET fenced=false",
+            "UPDATE ofz.platform_state SET fenced=true",
+        ),
+    ] {
+        acknowledge_fixture_archive(&fixture.admin).await;
+        client.batch_execute(before).await.unwrap();
+        let mut audit_connection = fixture.admin.pool.get().await.unwrap();
+        let audit_lock = audit_connection.transaction().await.unwrap();
+        audit_lock
+            .batch_execute("LOCK TABLE ofz.audit IN SHARE MODE")
+            .await
+            .unwrap();
+        let mut context = controller_request(
+            &fixture.database,
+            &fixture.identities[0],
+            Command::ReserveWorkspace(ReserveWorkspace::default()),
+        )
+        .await
+        .context
+        .unwrap();
+        context.workspace_uid = uid.to_string();
+        context.runtime_epoch = epoch.to_string();
+        let trace = context.trace_id.clone();
+        let service = fixture.service.clone();
+        let request = AuthorizeGuestMaintenanceRequest {
+            context: Some(context),
+            workspace_uid: uid.to_string(),
+            purpose: GuestMaintenancePurpose::Probe as i32,
+            terminal_id: String::new(),
+        };
+        let in_flight = tokio::spawn(async move {
+            service
+                .authorize_guest_maintenance(rpc_as(request, CONTROLLER_ID))
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let blocked: bool = audit_lock.query_one(
+                    "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='ofz.audit'::regclass AND mode='RowExclusiveLock' AND NOT granted)", &[],
+                ).await.unwrap().get(0);
+                if blocked { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.expect("maintenance must reach its audit write before authority changes");
+        client.batch_execute(during).await.unwrap();
+        audit_lock.commit().await.unwrap();
+        let outcome = in_flight.await.unwrap();
+        assert_eq!(
+            outcome.unwrap_err().code(),
+            Code::Aborted,
+            "maintenance cannot return a decision from a different archive or fence state than its receipt"
+        );
+        let receipt: AuditReceipt = store::decode(client.query_one(
+            "SELECT receipt FROM ofz.audit WHERE receipt->>'trace_id'=$1 ORDER BY sequence DESC LIMIT 1", &[&trace],
+        ).await.unwrap().get(0)).unwrap();
+        assert!(
+            !receipt.allowed,
+            "an aborted disclosure requires a terminal denial receipt"
+        );
+        client
+            .batch_execute("UPDATE ofz.platform_state SET fenced=false")
+            .await
+            .unwrap();
+    }
+    client
+        .execute("DELETE FROM ofz.workspaces WHERE uid=$1", &[&uid])
+        .await
+        .unwrap();
+    client
+        .execute("DELETE FROM ofz.reservations WHERE id=$1", &[&reservation])
+        .await
+        .unwrap();
+    acknowledge_fixture_archive(&fixture.admin).await;
 }
 
 async fn verify_offboarding_preserves_removal(fixture: &ControlFixture) {

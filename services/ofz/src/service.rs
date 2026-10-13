@@ -163,7 +163,7 @@ impl Service {
         let mut receipt = store::receipt(
             &context,
             peer,
-            audit_resource,
+            audit_resource.clone(),
             audit_action,
             audit_allowed,
             "",
@@ -176,8 +176,22 @@ impl Service {
         if current != authority
             || finished.version != after.version
             || finished.recovery_generation != after.recovery_generation
+            || finished.fenced != after.fenced
+            || finished.archive_healthy != after.archive_healthy
             || finished.now_ms >= valid_until
         {
+            let mut denial = store::receipt(
+                &context,
+                peer,
+                audit_resource,
+                audit_action,
+                false,
+                "",
+                "runtime authority changed before disclosure",
+            );
+            denial.revision = revision;
+            denial.recovery_generation = finished.recovery_generation;
+            self.database.audit(&denial, target).await?;
             return Err(Status::aborted(
                 "runtime authority changed before disclosure",
             ));
