@@ -55,8 +55,6 @@ import {
   WorkerMarketProjectionLive,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
-import { makeResearchCaptureSession } from '../research-capture/session'
-import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -686,23 +684,9 @@ export const acquireNativeExecutionRuntime = (
     const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
     const config: ExecutionControllerConfig =
       previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
-    const requestedCapture = yield* researchCaptureSessionConfig.pipe(Effect.result)
-    const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
-    const capture =
-      decodedCapture !== undefined && Result.isSuccess(decodedCapture)
-        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision, plan.parameterHash).pipe(
-            Effect.catchCause(() =>
-              Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
-                Effect.as(undefined),
-              ),
-            ),
-          )
-        : undefined
-    if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
-      yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
-    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan, capture))
+    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
-      AutonomousWorkerApplicationResourcesLive(plan, capture, prewarmedProjection),
+      AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
     ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
     const executionResources = Layer.merge(
@@ -728,5 +712,5 @@ export const acquireNativeExecutionRuntime = (
       logManaged,
       config.planHash,
     )
-    return { config, runtime: capture === undefined ? runtime : { ...runtime, capture: capture.observer } }
+    return { config, runtime }
   })

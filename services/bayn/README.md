@@ -466,8 +466,7 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
 `last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
 successful batch-store results, including recovered batches. The journaled advance result binds these references
-into its version-two execution receipt; a completed research-capture event carries the same references alongside
-the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
+into its version-two execution receipt. Each hash resolves the exact persisted observation, whose manifest identifies its
 snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
 prove that an observation was selected, submitted, traded, or profitable.
 

@@ -48,14 +48,7 @@ import {
 import { JevPositionStore } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
 import { type JevProtocol } from './protocol'
-import {
-  jevEntryQuoteExclusion,
-  jevMomentumEntryCandidates,
-  jevStalePricingSymbols,
-  makeJevTradingSignalBatch,
-} from './trading-signals'
-import { ActiveResearchCapture, recordResearchCapture } from '../research-capture/observer'
-import { JevPurpose } from './portfolio'
+import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
   readonly message: string
@@ -191,21 +184,6 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         message: `Jev is waiting for fresh signal pricing for ${staleSymbols.join(', ')}`,
         readiness: DecisionReadinessReason.SnapshotStale,
       })
-    const capture = yield* ActiveResearchCapture
-    const entryTiming =
-      capture === undefined || input.portfolio.purpose !== JevPurpose.Entry
-        ? null
-        : yield* Effect.gen(function* () {
-            const inputAvailableAt = yield* currentUtcInstant
-            const selected = jevMomentumEntryCandidates(snapshot, input.protocol)
-            if (Result.isFailure(selected)) return null
-            const deterministicSelectedAt = yield* currentUtcInstant
-            return {
-              inputAvailableAt,
-              deterministicSelectedAt,
-              deterministicSymbol: selected.success[0]?.symbol ?? null,
-            }
-          })
     const observation = yield* recordJevObservation({ ...input, snapshot })
     const batchPlan = yield* Effect.suspend(() =>
       Effect.fromResult(
@@ -242,15 +220,6 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
       ),
     )
     const decidedAt = yield* currentUtcInstant
-    if (capture !== undefined && entryTiming !== null && saved.result !== null)
-      yield* recordResearchCapture(capture, {
-        kind: 'entry-readiness',
-        batchId: saved.plan.batchId,
-        observationHash: observation.contentHash,
-        snapshotHash: snapshot.manifest.contentHash,
-        ...entryTiming,
-        batchCompletedAt: saved.result.completedAt,
-      })
     if (
       saved.result === null ||
       Result.isFailure(usableJevBatchInferences(saved.plan, saved.result, Date.parse(decidedAt)))

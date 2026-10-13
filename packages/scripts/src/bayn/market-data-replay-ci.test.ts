@@ -17,8 +17,8 @@ const workflow = YAML.parse(
   readonly jobs: Record<string, WorkflowJob>
 }
 const required = workflow.jobs.required
-const native = workflow.jobs['native-receipts']
-if (required === undefined || native === undefined) throw new Error('Missing native receipt release gates')
+const replay = workflow.jobs['market-data-replay']
+if (required === undefined || replay === undefined) throw new Error('Missing market-data replay release gates')
 const gate = required.steps.find((step) => step.name === 'Require every applicable Bayn release check')
 if (gate?.run === undefined) throw new Error('Missing executable release gate')
 const command = gate.run
@@ -31,7 +31,7 @@ const successful = {
   EFFECT_RESULT: 'success',
   BROKER_RESULT: 'success',
   POSTGRES_RESULT: 'success',
-  NATIVE_RECEIPTS_RESULT: 'success',
+  MARKET_DATA_REPLAY_RESULT: 'success',
   DEPENDENCY_INPUT_RESULT: 'success',
   IMAGE_RESULT: 'skipped',
 }
@@ -52,7 +52,7 @@ const run = async (overrides: Record<string, string>) => {
 test.each(['kafka', 'restate', 'foreign'] as const)(
   'created-but-failed %s fixture removes only verified job-owned container IDs',
   async (mode) => {
-    const directory = await mkdtemp(join(tmpdir(), 'bayn-native-cleanup-'))
+    const directory = await mkdtemp(join(tmpdir(), 'bayn-replay-cleanup-'))
     try {
       await writeFile(
         join(directory, 'docker'),
@@ -86,7 +86,7 @@ esac
       )
       await writeFile(join(directory, 'removed'), '')
       const root = join(import.meta.dir, '../../../..')
-      const child = Bun.spawn(['bash', join(root, 'services/bayn/scripts/test-native-receipts.sh')], {
+      const child = Bun.spawn(['bash', join(root, 'services/bayn/scripts/test-market-data-replay.sh')], {
         cwd: root,
         env: {
           PATH: `${directory}:${process.env.PATH ?? ''}`,
@@ -112,25 +112,25 @@ esac
   },
 )
 
-test('native fixture runs for Bayn changes and participates in the existing release gate', () => {
-  expect(native.if).toBe("needs.changes.outputs.bayn == 'true'")
-  expect(native.needs).toBe('changes')
-  expect(native['timeout-minutes']).toBeLessThanOrEqual(15)
-  expect(required.needs).toContain('native-receipts')
-  expect(gate.env?.NATIVE_RECEIPTS_RESULT).toBe('${{ needs.native-receipts.result }}')
+test('market-data fixture runs for Bayn changes and participates in the existing release gate', () => {
+  expect(replay.if).toBe("needs.changes.outputs.bayn == 'true'")
+  expect(replay.needs).toBe('changes')
+  expect(replay['timeout-minutes']).toBeLessThanOrEqual(15)
+  expect(required.needs).toContain('market-data-replay')
+  expect(gate.env?.MARKET_DATA_REPLAY_RESULT).toBe('${{ needs.market-data-replay.result }}')
 })
 
-test('a relevant change cannot pass without successful native receipt acceptance', async () => {
+test('a relevant change cannot pass without successful market-data replay acceptance', async () => {
   expect((await run({})).exit).toBe(0)
   for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
-    const result = await run({ NATIVE_RECEIPTS_RESULT: outcome })
+    const result = await run({ MARKET_DATA_REPLAY_RESULT: outcome })
     expect(result.exit).not.toBe(0)
-    expect(result.stderr).toContain('NATIVE_RECEIPTS_RESULT must be success')
+    expect(result.stderr).toContain('MARKET_DATA_REPLAY_RESULT must be success')
   }
 })
 
 test('irrelevant changes retain the existing skip policy but detection and required image failures still fail', async () => {
-  expect((await run({ BAYN_RELEVANT: 'false', NATIVE_RECEIPTS_RESULT: 'skipped' })).exit).toBe(0)
+  expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)
   expect((await run({ BAYN_RELEVANT: 'false', CHANGES_RESULT: 'failure' })).exit).not.toBe(0)
   expect((await run({ IMAGE_RELEVANT: 'true', IMAGE_RESULT: 'failure' })).exit).not.toBe(0)
 })
