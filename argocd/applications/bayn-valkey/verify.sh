@@ -11,13 +11,15 @@ cli() {
 # The native User controller applies the application ACL after cluster creation.
 # Only this new credential is mounted; no broker or operator credential is used.
 ready=false
-for attempt in $(seq 1 60); do
+attempt=1
+while [ "$attempt" -le 60 ]; do
   info=$(cli CLUSTER INFO 2>/dev/null | tr -d '\r') || info=''
   if printf '%s\n' "$info" | grep -qx 'cluster_state:ok' &&
      printf '%s\n' "$info" | grep -qx 'cluster_slots_assigned:16384'; then
     ready=true
     break
   fi
+  attempt=$((attempt + 1))
   sleep 3
 done
 test "$ready" = true
@@ -25,7 +27,7 @@ printf '%s\n' "$info" | grep -E '^cluster_(state|slots_assigned|slots_ok|known_n
 
 # Multiple hash tags exercise cluster-client redirections, not only one shard.
 for tag in 0 1 2 3 4 5 6 7 8 9 10 11; do
-  key="bayn:acceptance:{$tag}:$HOSTNAME"
+  key="bayn:acceptance:{$tag}:${TEST_RUN_ID:?}"
   test "$(cli SET "$key" verified EX 600)" = OK
   test "$(cli GET "$key")" = verified
   test "$(cli DEL "$key")" = 1

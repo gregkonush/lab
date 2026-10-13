@@ -31,6 +31,10 @@ spec:
             - configMapRef:
                 name: bayn-valkey-connection
           env:
+            - name: TEST_RUN_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             - name: REDISCLI_AUTH
               valueFrom:
                 secretKeyRef:
