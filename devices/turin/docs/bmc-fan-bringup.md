@@ -212,7 +212,7 @@ setting or continuous fan controller was left running.
 
 ### Operator-requested manual case-fan setting
 
-On 2026-10-12, the operator requested approximately 1,300 RPM for the case-fan
+On 2026-10-12, the operator selected approximately 1,300 RPM for the case-fan
 headers. With manual bypass already active, the tested duties were 70% for
 group 0 and 72% for group 1:
 
@@ -226,13 +226,13 @@ turin_ipmi sensor get FAN1 FAN2 FAN3 FAN4 FANA FANB
 
 The request bytes `0x47,0x49` are 71% and 73%; readback `0x46,0x48` is 70%
 and 72% after rounding. `FAN1,FAN3,FANA,FANB` reported 1,260 RPM, the closest
-reported step to the target. The radiator's shared group put `FAN2` at 1,680 RPM;
-the `FAN4` pump stayed at 3,780 RPM. These commands assume the existing
-manual bypass; they do not establish a temperature-controlled fan policy.
+reported step to the target. The radiator's shared group put `FAN2` at
+1,680 RPM; the `FAN4` pump stayed at 3,780 RPM. The radiator cannot receive
+an independent duty while it shares group 0 with `FAN1,FAN3`.
+These commands assume the existing manual bypass; they do not establish a
+temperature-controlled fan policy.
 
-After settling, the hottest DIMM group was 77 C against an 85 C upper-critical
-threshold; the other DIMM group was 64 C, CPU was 43 C, and the add-in NIC
-was 92 C. Read both DIMM groups and the add-in NIC after a fan change:
+Read both DIMM groups and the add-in NIC after a fan change:
 
 ```bash
 turin_ipmi sensor get 'DIMMA~F Temp' 'DIMMG~L Temp' 'AOC_NIC1 Temp'
