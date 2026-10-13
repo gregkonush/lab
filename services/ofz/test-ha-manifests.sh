@@ -10,5 +10,5 @@ for target in tengri proompteng keycloak ofz; do
   bash scripts/kubeconform.sh "$ofz_ha_output/$target.yaml"
   yq eval-all -o=json -I=0 '[.]' "$ofz_ha_output/$target.yaml" >"$ofz_ha_output/$target.json"
 done
-yq eval-all -o=json -I=0 '[.]' argocd/prepared/tengri/crd.yaml >"$ofz_ha_output/crd.json"
+yq eval-all -o=json -I=0 '[.]' services/tengri/crd.yaml >"$ofz_ha_output/crd.json"
 python3 services/ofz/tests/ha_manifests.py "$ofz_ha_output"

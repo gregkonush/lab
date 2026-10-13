@@ -249,7 +249,7 @@ Normal delivery uses the paired image publisher, Kargo, and Argo. Native AMD64/A
 checksummed kernel/root disk. The controller image also supplies the host runner, supervisor, TAP script, and pinned
 Firecracker. Keep the paired source revision and immutable image digests together. Withhold discoverable Kargo aliases
 until real KVM acceptance passes. See the [operations runbook](../../docs/tengri/operations.md) for the permission
-review, retained-home enrollment, release boundary, and recovery procedure. Do not run historical node-mutating spikes.
+review, fresh-workspace acceptance, release boundary, and recovery procedure. Do not run historical node-mutating spikes.
 
 ## Validation
 
@@ -260,7 +260,7 @@ cargo test --manifest-path services/tengri/Cargo.toml --locked --all-targets
 bash services/tengri/test-rpc-interop.sh
 cargo run --manifest-path services/tengri/Cargo.toml --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
 diff -u /tmp/tengri-crd.yaml services/tengri/crd.yaml
-diff -u /tmp/tengri-crd.yaml argocd/prepared/tengri/crd.yaml
+diff -u /tmp/tengri-crd.yaml argocd/applications/tengri/crd.yaml
 shellcheck services/tengri/network.sh services/tengri/test-kvm*.sh
 ```
 

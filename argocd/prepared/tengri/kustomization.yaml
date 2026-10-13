@@ -5,7 +5,6 @@ resources:
   - ../../applications/tengri
 patches:
   - path: deployment.patch.yaml
-  - path: crd.yaml
   - path: resource-quota.patch.yaml
   - path: rbac.patch.yaml
   - target:

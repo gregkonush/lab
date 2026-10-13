@@ -12,15 +12,6 @@ const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dock
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
 describe('Tengri image workflow', () => {
-  it('regenerates the prepared CRD when only that deployment contract changes', () => {
-    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      on: { pull_request: { paths: string[] }; push: { paths: string[] } }
-    }
-    for (const event of [workflow.on.pull_request, workflow.on.push]) {
-      expect(event.paths).toContain('argocd/prepared/tengri/crd.yaml')
-    }
-  })
-
   it('validates Nanoagent once without losing protobuf or guest checks', () => {
     const validation = readFileSync(imagesPath, 'utf8').match(/validate-nanoagent:\n[\s\S]*?\n  build:/)?.[0]
 
@@ -277,9 +268,7 @@ exit 0
     expect(controllerValidation).toContain('cargo fmt --check')
     expect(controllerValidation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(controllerValidation).toContain('cargo test --locked --all-targets')
-    expect(controllerValidation).toContain(
-      'diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml',
-    )
+    expect(controllerValidation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
     expect(guestValidation).toContain('GOWORK=off go test -race ./...')
     expect(guestValidation).toContain('GOWORK=off go vet ./...')
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
@@ -423,7 +412,6 @@ exit 0
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
-    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml')
   })
 
   it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {

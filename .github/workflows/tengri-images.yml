@@ -11,7 +11,6 @@ on:
       - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
-      - 'argocd/prepared/tengri/crd.yaml'
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
@@ -27,7 +26,6 @@ on:
       - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
-      - 'argocd/prepared/tengri/crd.yaml'
       - 'argocd/applications/tengri/crd.yaml'
       - 'packages/scripts/src/tengri/**'
       - 'packages/scripts/src/shared/cli.ts'
@@ -109,7 +107,6 @@ jobs:
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
-          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml
 
   validate-nanoagent:
     if: github.event.action != 'edited' || github.event.changes.base
