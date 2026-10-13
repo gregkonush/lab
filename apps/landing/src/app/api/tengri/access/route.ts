@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   accessCommandSchema,
   accessResourceSchema,
+  MAX_ACCESS_COMMAND_BYTES,
   workspaceUidSchema,
   type AccessCommand,
 } from '@/lib/tengri/access-schemas'
@@ -107,7 +108,7 @@ export async function POST(request: Request) {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)
     const parsed = accessCommandSchema.parse(
-      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: 65536 }),
+      await readTengriJsonBody(request, { subject: identity.subject, maxBytes: MAX_ACCESS_COMMAND_BYTES }),
     )
     const input: MessageInitShape<typeof ExecuteCommandRequestSchema> = {
       context: humanContext(identity, workspace(parsed)),

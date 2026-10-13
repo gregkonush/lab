@@ -972,6 +972,19 @@ identityTest(
     expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
       versionBeforeInvalidScope,
     )
+    await roots.fill(
+      Array.from({ length: 16 }, (_, index) => {
+        const prefix = `/workspace/project-${index}/`
+        return prefix + 'x'.repeat(4096 - prefix.length)
+      }).join('\n'),
+    )
+    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'Access request exceeds 64 KiB' })).toBeVisible()
+    expect(identityLookups).toBe(lookupsBeforeInvalidScope)
+    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
+      versionBeforeInvalidScope,
+    )
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
     await roots.fill('/workspace/src')
     await page.getByLabel('Codex thread IDs', { exact: true }).fill('thread-approved')
     await page.getByLabel('Terminal IDs', { exact: true }).fill('terminal-approved')

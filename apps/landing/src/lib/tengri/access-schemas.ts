@@ -25,6 +25,7 @@ export const accessResourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('connector'), id: workspaceUidSchema }).strict(),
 ])
 const utf8 = new TextEncoder()
+export const MAX_ACCESS_COMMAND_BYTES = 64 * 1024
 const credentialSegments = new Set([
   '.ssh',
   '.aws',
@@ -89,7 +90,7 @@ const collaborator = {
   workspaceUid: workspaceUidSchema,
   login: githubLoginSchema,
 }
-export const accessCommandSchema = z.discriminatedUnion('action', [
+const commandSchema = z.discriminatedUnion('action', [
   z
     .object({
       ...common,
@@ -169,4 +170,8 @@ export const accessCommandSchema = z.discriminatedUnion('action', [
     })
     .strict(),
 ])
+export const accessCommandSchema = commandSchema.refine(
+  (command) => utf8.encode(JSON.stringify(command)).byteLength <= MAX_ACCESS_COMMAND_BYTES,
+  'Access request exceeds 64 KiB. Reduce the selected targets or reason.',
+)
 export type AccessCommand = z.infer<typeof accessCommandSchema>

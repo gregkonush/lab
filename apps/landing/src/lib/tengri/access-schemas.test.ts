@@ -125,4 +125,33 @@ describe('workspace collaborator command boundary', () => {
       )
     }
   })
+
+  test('aggregate scope must fit the 64 KiB request budget including JSON overhead', () => {
+    const root = `/workspace/${'x'.repeat(4096 - '/workspace/'.length)}`
+    const command = { ...collaborator, scope: { ...scope, fileRoots: Array(16).fill(root) } }
+    expect(new TextEncoder().encode(JSON.stringify(command)).byteLength).toBeGreaterThan(64 * 1024)
+    expect(accessCommandSchema.safeParse(command).success).toBe(false)
+  })
+
+  test('command budget counts escaped and multibyte targets', () => {
+    const root = `/workspace/${'界"'.repeat(1000)}`
+    expect(new TextEncoder().encode(root).byteLength).toBeLessThanOrEqual(4096)
+    const command = { ...collaborator, scope: { ...scope, fileRoots: Array(16).fill(root) } }
+    expect(new TextEncoder().encode(JSON.stringify(command)).byteLength).toBeGreaterThan(64 * 1024)
+    expect(accessCommandSchema.safeParse(command).success).toBe(false)
+  })
+
+  test('accepts the exact encoded command limit and rejects one byte more', () => {
+    const prefix = '/workspace/'
+    const root = prefix + 'x'.repeat(4096 - prefix.length)
+    const roots = [...Array<string>(15).fill(root), prefix]
+    const command = { ...collaborator, scope: { ...scope, fileRoots: roots } }
+    const remaining = 64 * 1024 - new TextEncoder().encode(JSON.stringify(command)).byteLength
+    const finalRoot = prefix + 'x'.repeat(remaining)
+    roots[15] = finalRoot
+    expect(new TextEncoder().encode(JSON.stringify(command)).byteLength).toBe(64 * 1024)
+    expect(accessCommandSchema.safeParse(command).success).toBe(true)
+    roots[15] = finalRoot + 'x'
+    expect(accessCommandSchema.safeParse(command).success).toBe(false)
+  })
 })

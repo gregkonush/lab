@@ -45,7 +45,8 @@ session through exact SPIFFE mTLS. The browser never receives Kubernetes credent
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
 the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
-inline before submission; the BFF independently validates the same command. Developer assignments and removals cannot
+inline before submission; the BFF independently validates the same command. The full encoded command, including JSON
+escaping and metadata, must fit the shared 64 KiB request budget. Developer assignments and removals cannot
 carry a Viewer scope. The roster shows the exact approved targets and budgets, or `Metadata only` after scope removal.
 Selected content can contain private information. Scoped guest content remains denied until the separate bounded
 observer handlers are implemented and qualified.
