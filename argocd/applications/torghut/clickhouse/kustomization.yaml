@@ -33,7 +33,7 @@ replacements:
     targets:
       - select:
           kind: Job
-          name: signal-adjusted-daily-recovery-20261012
+          name: signal-adjusted-daily-recovery-20261013
         fieldPaths:
           - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_CODE_REVISION].value
   - source:
@@ -43,7 +43,7 @@ replacements:
     targets:
       - select:
           kind: Job
-          name: signal-adjusted-daily-recovery-20261012
+          name: signal-adjusted-daily-recovery-20261013
         fieldPaths:
           - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_REPOSITORY].value
   - source:
@@ -53,6 +53,6 @@ replacements:
     targets:
       - select:
           kind: Job
-          name: signal-adjusted-daily-recovery-20261012
+          name: signal-adjusted-daily-recovery-20261013
         fieldPaths:
           - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_DIGEST].value
