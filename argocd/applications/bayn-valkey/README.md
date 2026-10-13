@@ -94,7 +94,11 @@ objects, with UID, deletion timestamp and finalizer-list preconditions. Verify
 all retained PVC/PV identities first and afterward. Let the operator clean its
 User and Secret finalizers; never strip those or a delete-PVC finalizer. Do not
 recreate the instance until both old children, all old Users and the old Valkey
-owner are absent.
+owner are absent. Check the actual `bayn-valkey-auth` Secret before restoring
+the User: a SealedSecret's stale `Synced` condition does not prove its Secret
+survived owner cleanup. Reconcile the unchanged encrypted credential through
+a reviewed Secret-template change if the Secret is absent; do not create a
+plaintext Secret or rotate credentials to bypass admission.
 
 Recovery uses a reviewed source reversion. If changing architecture again,
 repeat the reviewed owner removal and recreation; changing `arch` in place
