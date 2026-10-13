@@ -107,6 +107,25 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(self.store.blob(recent).exists())
         self.assertEqual(self.prepare()["blobs"], [])
 
+    def test_prepare_does_not_restat_retained_layers_after_graph_validation(self):
+        orphan = self.blob(b"old orphan")
+        retained = self.store.blob(self.layer)
+        original_signature = cleanup.signature
+        reads = 0
+
+        def read_signature(path):
+            nonlocal reads
+            if path == retained:
+                reads += 1
+                if reads > 1:
+                    raise OSError("redundant retained-blob metadata read")
+            return original_signature(path)
+
+        with patch.object(cleanup, "signature", side_effect=read_signature):
+            plan = self.prepare()
+        self.assertEqual(reads, 1)
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+
     def test_new_tag_and_fresh_kargo_reference_rescue_prepared_candidates(self):
         layer = self.blob(b"previously orphaned layer")
         image = self.image_manifest(layer)

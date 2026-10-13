@@ -72,8 +72,6 @@ describeRestate('Real Restate execution deployment activation', () => {
     const observations = makeBaynBrokerObservations(
       { ...config, pollIntervalMs: 1_000 },
       {
-        nextPollNotBeforeMs: async () => 0,
-        preparePoll: async () => 'test-capture',
         activate: async () => {
           brokerActivations += 1
         },

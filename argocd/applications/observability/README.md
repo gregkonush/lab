@@ -196,5 +196,8 @@ vLLM metrics and admission metrics every fifteen seconds and retains both provis
 namespace, pod, container and service identity. `bayn-model-performance` shows readiness, queue time, TTFT,
 prefill/decode latency, throughput, token volume, KV occupancy and bounded-admission failures. Request logs contain
 generated request IDs, validated trace IDs and durations; request/response bodies are disabled in vLLM.
+The same log pipeline retains the independent `research` container. Its Effect metrics reach Mimir through the
+gateway's pod port 8080; the research egress policy must allow that destination port even though the Service exposes
+port 80. `bayn-research.rules` covers worker heartbeat, failed attempts and incomplete expense coverage.
 Research-model unavailability and repeated deadline expiry are warnings without email paging. A model outage does
 not change Bayn execution readiness. See [the model runbook](../../../services/bayn-model/README.md).

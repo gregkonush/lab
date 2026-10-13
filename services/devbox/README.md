@@ -23,6 +23,10 @@ to finish and both SSH and Docker to be active. The LAN Service exposes only SSH
 Systemd delegates cgroup v2 subtrees for Docker; the installed Kata agent cannot
 add `kubectl exec` processes to that non-leaf cgroup. Use SSH for administration.
 HTTP probes avoid that exec limitation while checking the same guest services.
+Preparation retries after five seconds if a startup step fails. Codex can finish
+starting its daemon after the CLI's readiness deadline; a retry recognizes the
+running daemon and completes setup. The HTTP endpoint stays unready until setup
+succeeds. Failed attempts remain in the journal.
 Docker and containerd data both use the ext4 disk because overlayfs snapshots
 cannot use the image's virtio-fs filesystem as their writable backing store.
 
@@ -31,7 +35,8 @@ cannot use the image's virtio-fs filesystem as their writable backing store.
 The `Codex devbox` workflow builds and exercises one development image on both
 native architectures, then publishes a signed immutable index. The release receipt
 must upload successfully before the Kargo discovery tag is exposed. Publication
-uses the shared Docker retry helper and the registry's 5 MiB/s single bulk writer.
+uses the shared Docker retry helper and the registry's
+[shared upload budget](../../argocd/applications/registry/README.md).
 
 The `devbox` Warehouse and Stage bind the image to its source commit and successful
 workflow run. Kargo updates `argocd/applications/devbox` on `kargo/devbox`; the

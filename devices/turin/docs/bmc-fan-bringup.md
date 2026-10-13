@@ -206,9 +206,42 @@ group. The radiator and pump roles above come from the recorded wiring;
 front/rear case-fan positions and Noctua-to-header assignments remain unverified.
 The BMC reports header names and RPM, not cable routing or fan model numbers.
 
-The final readback at 16:49 PDT was `Optimal`, with automatic duties of `63%`
+The 2026-10-11 readback at 16:49 PDT was `Optimal`, with automatic duties of `63%`
 and `100%`, CPU `43 C`, NIC `93 C`, and all fan sensors OK. No fixed manual
 setting or continuous fan controller was left running.
+
+### Operator-requested manual case-fan setting
+
+On 2026-10-12, the operator requested approximately 1,300 RPM for the case-fan
+headers. With manual bypass already active, the tested duties were 70% for
+group 0 and 72% for group 1:
+
+```bash
+turin_ipmi raw 0x30 0x70 0x66 0x01 0x00 0x47
+turin_ipmi raw 0x30 0x70 0x66 0x01 0x01 0x49
+turin_ipmi raw 0x30 0x70 0x66 0x00 0x00
+turin_ipmi raw 0x30 0x70 0x66 0x00 0x01
+turin_ipmi sensor get FAN1 FAN2 FAN3 FAN4 FANA FANB
+```
+
+The request bytes `0x47,0x49` are 71% and 73%; readback `0x46,0x48` is 70%
+and 72% after rounding. `FAN1,FAN3,FANA,FANB` reported 1,260 RPM, the closest
+reported step to the target. The radiator's shared group put `FAN2` at 1,680 RPM;
+the `FAN4` pump stayed at 3,780 RPM. These commands assume the existing
+manual bypass; they do not establish a temperature-controlled fan policy.
+
+After settling, the hottest DIMM group was 77 C against an 85 C upper-critical
+threshold; the other DIMM group was 64 C, CPU was 43 C, and the add-in NIC
+was 92 C. Read both DIMM groups and the add-in NIC after a fan change:
+
+```bash
+turin_ipmi sensor get 'DIMMA~F Temp' 'DIMMG~L Temp' 'AOC_NIC1 Temp'
+turin_ipmi sel elist last 10
+```
+
+Compare the actual reading and threshold even when IPMI labels the sensor
+`ok`. An asserted upper-critical event or a reading above its threshold
+requires more cooling; the requested RPM alone is not thermal acceptance.
 
 ## Hardware Fan-Control Path
 

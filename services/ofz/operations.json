@@ -613,6 +613,18 @@
   },
   {
     "surface": "ofz",
+    "operation": "GetWorkspaceState",
+    "action": "ACTION_WORKSPACE_ENROLL",
+    "internal_only": true
+  },
+  {
+    "surface": "ofz",
+    "operation": "GetWorkspaceReservation",
+    "action": "ACTION_WORKSPACE_CREATE",
+    "internal_only": true
+  },
+  {
+    "surface": "ofz",
     "operation": "AuthorizeCommand",
     "action": "ACTION_POLICY_CHECK"
   },

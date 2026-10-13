@@ -1,3 +1,5 @@
+import brokerObservationCaptures from '../../migrations/0094_broker_observation_captures'
+import researchInference from '../../migrations/0093_research_inference'
 import expiredZeroExecutionRearm from '../../migrations/0092_expired_zero_execution_rearm'
 import inferenceExpenseQuotes from '../../migrations/0091_inference_expense_quotes'
 import momentumFirstJevCompatibility from '../../migrations/0090_momentum_first_jev_compatibility'
@@ -94,6 +96,8 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '94_broker_observation_captures': brokerObservationCaptures,
+  '93_research_inference': researchInference,
   '92_expired_zero_execution_rearm': expiredZeroExecutionRearm,
   '91_inference_expense_quotes': inferenceExpenseQuotes,
   '90_momentum_first_jev_compatibility': momentumFirstJevCompatibility,

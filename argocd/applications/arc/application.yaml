@@ -11,7 +11,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-controller
-        skipCrds: false
         valuesObject:
           nodeSelector:
             kubernetes.io/arch: amd64
@@ -20,7 +19,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -31,7 +29,7 @@ spec:
           scaleSetLabels:
             - arc-arm64
           minRunners: 1
-          maxRunners: 5
+          maxRunners: 8
           listenerTemplate:
             spec:
               nodeSelector:
@@ -150,7 +148,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-amd64
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -161,7 +158,7 @@ spec:
           scaleSetLabels:
             - arc-amd64
           minRunners: 2
-          maxRunners: 5
+          maxRunners: 9
           listenerTemplate:
             spec:
               nodeSelector:
@@ -329,7 +326,7 @@ spec:
                   resources:
                     requests:
                       cpu: "2"
-                      memory: "13Gi"
+                      memory: "8Gi"
                       ephemeral-storage: "4Gi"
                     limits:
                       cpu: "8"
@@ -439,7 +436,9 @@ spec:
                   value: "true"
                   effect: NoSchedule
               topologySpreadConstraints:
-                - maxSkew: 1
+                # Four 16Gi runners cannot fit Ryzen's 61.82Gi allocatable. Allow the
+                # nine shared-label slots to reach three on Ryzen and six on Turin.
+                - maxSkew: 3
                   minDomains: 2
                   topologyKey: kubernetes.io/hostname
                   whenUnsatisfiable: DoNotSchedule
@@ -453,7 +452,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-analysis
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
