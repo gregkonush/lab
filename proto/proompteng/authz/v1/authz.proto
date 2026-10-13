@@ -189,6 +189,8 @@ message SetWorkspaceRole {
   string human_id = 2;
   WorkspaceRole role = 3;
   bool enabled = 4;
+  // Viewer content access is explicit. Omission grants metadata only.
+  ObservationScope scope = 5;
 }
 
 message TransferWorkspace {

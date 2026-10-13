@@ -7,11 +7,12 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is [#14913](https://github.com/proompteng/lab/pull/14913). Its published sub-operation correction
-at `b1d3ecaab3add0448b29b929145a5e0d3ccda4ae` passes the current CI validation, both Ofz API builds and all four native
-Tengri/Nanoagent image builds. The following archive/fence consistency correction and PR cache change have passed
-local checks and require CI on their new published head. Passing image builds do not establish native KVM performance
-or deployed authorization.
+The active source frontier is [#14920](https://github.com/proompteng/lab/pull/14920), the explicit Viewer scope policy.
+Its parent, [#14913](https://github.com/proompteng/lab/pull/14913), merged at
+`9bb95305b8dc72e7465fba35de6998714168a37b` after CI and both actionable review fixes passed. This includes the Ofz API
+builds and all four native Tengri/Nanoagent image builds. The Viewer layer is rebased onto current main, with unchanged
+tested policy code; its published head must pass CI and review before merge. Work stays on this PR until it merges.
+Passing image builds do not establish native KVM performance or deployed authorization.
 
 The 2026-10-13 live readback uses `galactic-tailscale`. Ofz has three SpiceDB replicas and two Playground replicas,
 with three PostgreSQL Pods. There is no Ofz API Deployment and there are no Tengri MicroVMs. The
@@ -24,19 +25,19 @@ the new VMM/protocol. Fresh workspaces must use the final contract. No legacy au
 
 ## Service delivery
 
-| Service or contract                                                               | Source delivery                                             | Remaining release boundary                                                  |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                               | Bootstrap, independent exporter, delivery enrollment and API activation     |
-| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                    | Coordinated activation and fresh-workspace browser proof                    |
-| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                               | Live host loss and three-node CNPG qualification                            |
-| Physical database promotion                                                       | #14910 merged                                               | Native CNPG and independent restore                                         |
-| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727` | Coordinated runtime/guest activation                                        |
-| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda` | Warehouse/Stage enrollment and API deployment                               |
-| Signed guest and preview admission                                                | #14913 open                                                 | Current review-fix CI, native performance and independent execution fencing |
-| Explicit Viewer scopes                                                            | #14920 published; local continuation prepared               | Merge after #14913, bounded observers and cutover                           |
-| Viewer administration UI                                                          | #14921 published; local continuation qualified              | Merge after #14920 and deployed UI acceptance                               |
-| Exact-target protocol 4                                                           | #14923 published; local continuation qualified              | Merge after #14921, native proof and coordinated activation                 |
-| Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                     |
+| Service or contract                                                               | Source delivery                                             | Remaining release boundary                                              |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                               | Bootstrap, independent exporter, delivery enrollment and API activation |
+| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                    | Coordinated activation and fresh-workspace browser proof                |
+| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                               | Live host loss and three-node CNPG qualification                        |
+| Physical database promotion                                                       | #14910 merged                                               | Native CNPG and independent restore                                     |
+| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727` | Coordinated runtime/guest activation                                    |
+| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda` | Warehouse/Stage enrollment and API deployment                           |
+| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b` | Native performance, independent execution fencing and activation        |
+| Explicit Viewer scopes                                                            | #14920 is the only active PR                                | Current-head CI and review, bounded observers and cutover               |
+| Viewer administration UI                                                          | #14921 published; local continuation qualified              | Merge after #14920 and deployed UI acceptance                           |
+| Exact-target protocol 4                                                           | #14923 published; local continuation qualified              | Merge after #14921, native proof and coordinated activation             |
+| Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                 |
 
 The verified API factory receipt is main run `38397202365`. Its two-platform index is
 `registry.ide-newton.ts.net/lab/ofz@sha256:05cd35b48a1ce68085705167fe91a495d4c5635cddf1bd947412066b16e0e71a`,
@@ -61,7 +62,9 @@ That receipt proves publication of the factory revision, not deployment or compl
 - Real Chromium, production Keycloak 26.7.4, Ofz, SPIFFE and SQL pass 60 assertions after the maintenance correction.
   Ofz serving-process loss preserves the session. Keycloak loss during a passkey challenge recovers within 30 seconds.
   These checks use synthetic GitHub identities and virtual passkeys.
-- The prepared Viewer continuation passes 338 BFF/component tests, TypeScript, lint and 71 real browser assertions.
+- The Viewer policy continuation, rebased onto the maintenance correction, passes nine Ofz unit tests, Clippy and
+  55 real control commands with 174 immutable receipts. Both pending-scope and in-flight narrowing regressions pass.
+- The prepared Viewer UI continuation passes 338 BFF/component tests, TypeScript, lint and 71 real browser assertions.
   It verifies metadata-only defaults, inline rejection before identity lookup, exact scopes, new-subject consent,
   narrowing, screenshot consent and content removal without starting the workspace.
 - The prepared protocol-4 continuation passes Rust units/contracts, Go race/vet on macOS and native Linux, real RPC/SPIFFE
@@ -75,8 +78,9 @@ That receipt proves publication of the factory revision, not deployment or compl
   still fail the unchanged one-second target. Both native architectures, fifty-sample qualification and live acceptance
   remain required.
 - The PR cache policy passes Actionlint and 57 routing/release contract tests. Same-repository PRs use separate
-  `cache-pr-<number>-<architecture>` tags per service. Main retains its own cache. Cache export and reuse still require
-  readback from the new CI run; no timing improvement is claimed yet.
+  `cache-pr-<number>-<architecture>` tags per service. Main retains its own cache. The first Nanoagent cache exports
+  took about 25.5 minutes per architecture. Exported registry manifests are verified; warm reuse and any timing benefit
+  remain unmeasured.
 
 ## Remaining implementation and cutover
 
