@@ -119,7 +119,7 @@ A native Viewer relationship cannot authorize content without its committed SQL 
 scope clears content access in the durable intent transaction, before native finalization advances the policy version.
 The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
 stream-receipt lookup; changed authority returns a denial and records it. The real control fixture reproduces both
-pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 165 immutable
+pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 174 immutable
 receipts afterward.
 
 The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
