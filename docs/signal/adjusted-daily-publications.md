@@ -75,17 +75,31 @@ check that deadline before importing the publisher or making external calls. Kee
 resource is removed through GitOps; a TTL would let Argo recreate it. Never resume or reapply a completed Job under
 the same name; Kubernetes Job templates are immutable.
 
-The October 12 recovery republishes January 4, 2016 through October 12, 2026. It refuses to start unless its full
-15-minute lifetime fits before October 13 at 13:00 UTC, ahead of the 13:30 UTC market open and 22:30 UTC scheduled
-writer. Kustomize copies the CronJob's Kargo-managed source revision, image repository, and image digest into the
+The October 13 recovery republishes January 4, 2016 through October 12, 2026. It refuses to start unless its full
+one-hour lifetime fits before October 13 at 22:15 UTC, leaving fifteen minutes before the 22:30 UTC scheduled
+writer. It recovers finalized historical input during the current session without broker or capital authority.
+Kustomize copies the CronJob's Kargo-managed source revision, image repository, and image digest into the
 recovery Job. Remove that Job and its replacements after retaining the snapshot evidence. If the CronJob was
 deactivated, reactivate it in the same reviewed cleanup change. The base application retains no dormant backfill Job.
+
+The initial `signal-adjusted-daily-recovery-20261012` attempt failed on a 120-second server deadline and a
+60-second quorum wait. Its logs are retained, and the replacement uses the unique name
+`signal-adjusted-daily-recovery-20261013`. Both the scheduled writer and this recovery allow one hour with three
+retries. Each insert keeps two-replica quorum and derives its 144-second quorum wait and 162-second server clock
+limit from the unchanged 180-second client budget. Unknown outcomes remain partial; a retry verifies retained rows
+and inserts only the exact missing rows. Neither a timeout nor a Job retry finalizes a snapshot by itself.
 
 This one-off Job references the existing publisher CronJob's verified UID. Kubernetes records its successful
 completion in that CronJob's `lastSuccessfulTime`, allowing the existing Argo health check to recover from the failed
 October 12 run. Verify the UID before rollout; a recreated CronJob needs a new reviewed recovery identity. This does
 not substitute for the two scheduled observations required below. The absolute deadline still prevents overlap;
 manually owned Jobs are not automatically added to the CronJob's active list.
+
+`SignalAdjustedDailyPublicationMissed` alerts when the latest scheduled run remains newer than the last successful
+completion for two hours, followed by a five-minute hold. That budget covers the CronJob's one-hour start deadline
+and one-hour active lifetime. The alert also handles a first scheduled run that has never succeeded, deduplicates
+kube-state-metrics replicas, resolves after a successful owned recovery, and stays clear over weekends after success.
+The collector retains both CronJob timestamps; no additional Kubernetes permissions or Job collector are required.
 
 Completion evidence requires the bounded backfill plus two distinct scheduled publication observations. For each one,
 retain the Job name, source revision, image digest, universe ID and symbol hash, snapshot ID, publication as-of date,

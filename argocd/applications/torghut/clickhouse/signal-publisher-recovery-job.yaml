@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: signal-adjusted-daily-recovery-20261012
+  name: signal-adjusted-daily-recovery-20261013
   namespace: torghut
   labels:
     app.kubernetes.io/name: signal-adjusted-daily-publisher
@@ -16,8 +16,8 @@ metadata:
       controller: true
       blockOwnerDeletion: false
 spec:
-  backoffLimit: 1
-  activeDeadlineSeconds: 900
+  backoffLimit: 3
+  activeDeadlineSeconds: 3600
   template:
     metadata:
       labels:
@@ -42,7 +42,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - >
-              if (Date.now() + 900_000 >= Date.parse('2026-10-13T13:00:00Z')) {
+              if (Date.now() + 3_600_000 >= Date.parse('2026-10-13T22:15:00Z')) {
                 throw new Error('Recovery start deadline passed; preserving the next scheduled writer window')
               }
 

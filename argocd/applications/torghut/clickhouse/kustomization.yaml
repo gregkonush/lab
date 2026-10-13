@@ -23,8 +23,8 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-3ff4cd1d38af3a28bd372508be090d61be92db66
-    digest: sha256:c4c27715db56166e19757ab4ce3fef3ad50ce8c91d8072c92e78240a37e030a8
+    newTag: kargo-sha-864e832055368f64e1cbacfef257c11e62717311
+    digest: sha256:dcd93b1f12867f86a37593bdee9eebd46ebff79d7998ff1e4d868260db5d4498
 replacements:
   - source:
       kind: CronJob
@@ -33,7 +33,7 @@ replacements:
     targets:
       - select:
           kind: Job
-          name: signal-adjusted-daily-recovery-20261012
+          name: signal-adjusted-daily-recovery-20261013
         fieldPaths:
           - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_CODE_REVISION].value
   - source:
@@ -43,7 +43,7 @@ replacements:
     targets:
       - select:
           kind: Job
-          name: signal-adjusted-daily-recovery-20261012
+          name: signal-adjusted-daily-recovery-20261013
         fieldPaths:
           - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_REPOSITORY].value
   - source:
@@ -53,6 +53,6 @@ replacements:
     targets:
       - select:
           kind: Job
-          name: signal-adjusted-daily-recovery-20261012
+          name: signal-adjusted-daily-recovery-20261013
         fieldPaths:
           - spec.template.spec.containers.[name=publish].env.[name=SIGNAL_IMAGE_DIGEST].value
