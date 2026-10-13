@@ -318,6 +318,9 @@ CI builds these artifacts without executing the KVM fixture. It requires no SSH 
 requires the scoped approval below.
 Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
 as the native images, including the KVM harness cache, to reuse the release compilation.
+Native image builds for same-repository PRs also import and export `cache-pr-<number>-<architecture>` per service.
+Later edits reuse that PR's compiled layers. Main builds import and export only their existing main cache; fork PRs
+export no registry cache. These cache tags remain outside Kargo image discovery.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The retained Tengri fixture includes the native `runner-seccomp.json` profile.

@@ -221,8 +221,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
           tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
-          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max,ignore-error=true', matrix.image, matrix.architecture) || '' }}
+          cache-from: |
+            type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('type=registry,ref={0}:cache-pr-{1}-{2}', matrix.image, github.event.pull_request.number, matrix.architecture) || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max,ignore-error=true', matrix.image, matrix.architecture) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('type=registry,ref={0}:cache-pr-{1}-{2},mode=max,ignore-error=true', matrix.image, github.event.pull_request.number, matrix.architecture) || '' }}
           provenance: mode=max
           sbom: true
 
