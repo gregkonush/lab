@@ -81,6 +81,12 @@ writer. Kustomize copies the CronJob's Kargo-managed source revision, image repo
 recovery Job. Remove that Job and its replacements after retaining the snapshot evidence. If the CronJob was
 deactivated, reactivate it in the same reviewed cleanup change. The base application retains no dormant backfill Job.
 
+This one-off Job references the existing publisher CronJob's verified UID. Kubernetes records its successful
+completion in that CronJob's `lastSuccessfulTime`, allowing the existing Argo health check to recover from the failed
+October 12 run. Verify the UID before rollout; a recreated CronJob needs a new reviewed recovery identity. This does
+not substitute for the two scheduled observations required below. The absolute deadline still prevents overlap;
+manually owned Jobs are not automatically added to the CronJob's active list.
+
 Completion evidence requires the bounded backfill plus two distinct scheduled publication observations. For each one,
 retain the Job name, source revision, image digest, universe ID and symbol hash, snapshot ID, publication as-of date,
 exact row counts and hashes, one manifest row, and duplicate-key readbacks from both ClickHouse replicas. Also prove
