@@ -167,5 +167,6 @@ multi-architecture index, release receipt, and immutable run-qualified Kargo ali
 publishing. Warehouse/Stage enrollment and API activation remain separate reviewed desired-state changes; creating an
 image does not admit users or activate runtime clients.
 
-Ofz API, lockfile, and documentation changes do not rebuild native Tengri guests. Shared operation-catalog, authorization
-protobuf, and KVM fixture changes retain native runtime qualification.
+Ofz image-packaging and documentation changes do not rebuild native Tengri guests. Ofz implementation, Cargo dependencies,
+build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
+shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
