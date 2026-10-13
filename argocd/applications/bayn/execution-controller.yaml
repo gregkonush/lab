@@ -69,12 +69,6 @@ spec:
                 name: bayn-valkey-connection
                 optional: true
           env:
-            - name: VALKEY_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-valkey-auth
-                  key: password
-                  optional: true
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -197,6 +191,12 @@ spec:
                 secretKeyRef:
                   name: bayn-jev-auth
                   key: api-key
+                  optional: true
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-valkey-auth
+                  key: password
                   optional: true
           startupProbe:
             tcpSocket:
