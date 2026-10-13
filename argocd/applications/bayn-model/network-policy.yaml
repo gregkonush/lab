@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bayn-model-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: bayn-model
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: bayn
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-research
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: observability-cluster-metrics-alloy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-model
+      ports:
+        - protocol: TCP
+          port: 8080

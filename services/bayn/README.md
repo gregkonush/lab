@@ -44,7 +44,17 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
-The observation owner's child runtimes share the worker's configured logger and tracer. The
+A polling invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
+`broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later polls and
+source rotation, so a repeated or late invocation cannot repeat its capture. Publication and failure settle the claim
+atomically with their existing database update. Replaying an unfinished claim invalidates and fences its generation;
+a published lost result and a newer cut remain usable. A reserved quota window schedules a
+successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
+before capturing the fresh snapshot required to start execution. Only a returned journaled result releases the conservative
+unknown-work quota reservation. The database generation continues to fence publication after mutations and rotation.
+
+The observation owner's child runtimes share the worker's configured logger and tracer. The polling span inherits
+the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
 `bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
@@ -52,7 +62,9 @@ observation time, next HTTP-budget deadline and trace/span IDs. The child runtim
 Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
-projection. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
+projection. Each continuous health pass reads and validates one complete projected cut for all six broker components,
+rather than fetching and decoding the full history six times. The next pass revalidates a new read; no successful or
+failed cut is memoized across passes. Unprojected broker health retains its independent endpoint probes. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
@@ -62,7 +74,8 @@ without scanning historical payloads. Events without a retained snapshot cannot 
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
-for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
+for elapsed polling time using the live transport clock, with a one-second minimum delay. Position closures waiting
+for fresh broker evidence resume after one second instead of the normal 30-second controller cadence. Capture is bounded by the smaller of the operation timeout
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
 observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
 poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
@@ -843,8 +856,12 @@ They do not require a snapshot before the first full rolling window exists. `INP
 `EVALUATION_UNAVAILABLE`, `DECISION_LAGGING`, `BLOCKED` and `RECOVERY_ONLY` are not ready. An ordinary no-trade result is
 `ABSTAINING`; it is distinct from a blocked session. The authenticated shared
 `BaynExecutionController/<account-key>/activateDeployment` handler verifies deployment ownership and handoff, warms
-the private broker-observation owner, and waits for a completed native successor pass. Its verified result remains
-available for seven days, and the activation Job logs the invocation ID. The journal is removed at completion so the
+the private broker-observation owner, and waits for a fresh completed native pass and its successor after the
+sequence observed at request entry. Reactivation wakes a deferred controller even on the same revision. Its immediate
+probe is bound to the activation invocation and worker revision; retries retain that identity, and a new explicit
+activation can retry an exhausted probe. Delayed deliveries remain subject to the existing exclusive sequence checks.
+Its verified result remains available for seven days, and the activation Job logs the invocation ID. The journal is
+removed at completion so the
 bearer header is not retained with the result. Private activation, deactivation, ticks and
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
@@ -988,6 +1005,19 @@ A standing mandate's next scheduled cycle does not make the reconciled performan
 submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
+Completion checks materialize the exact cycle and bound decision before evaluating JSON evidence, so unrelated
+historical decision bodies cannot enter the completion scan. Account/time indexes support the reconciliation cutoff
+and latest broker-event timestamp across every event kind. Identity, terminal-order, partial-fill, unknown-mutation
+and exact-reconciliation predicates are unchanged; the indexes do not grant authority or cache mutable evidence.
+Migration 0095 builds these indexes transactionally through normal startup migration. Schedule its first rollout
+while the account is flat outside the regular session because ordinary index creation blocks table writes.
+Startup migrations use a private single-connection pool with a five-minute overall deadline, a 295-second SQL
+deadline and a 297.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
+query, socket and trading deadlines remain unchanged. The additive indexes and compatible completion predicate can remain when
+rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
+The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
+readiness and liveness probes retain their normal cadence after startup.
+
 ## Replay and backtesting
 
 `bayn-gap-recovery` is an offline, original-receipt decision replay command in the
@@ -1018,7 +1048,7 @@ It does not prove capture completeness, train a model, produce an executable sna
 contract. Capture interval verification remains the caller's responsibility before economic research.
 
 The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
-control-study input v6 and artifact v2. It compares the seven-feature score with the genuine training-only
+control-study input v7 with deterministic entry and artifact v2. It compares the seven-feature score with the genuine training-only
 day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
 30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
 existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
@@ -1026,27 +1056,24 @@ no production registration, qualification or capital authority.
 
 ### Bounded mechanical control and turnover comparison
 
-The explicitly opted-in `bayn.control-study-input.v4` adds the research-only
-`SPY_RELATIVE_SHOCK_REBOUND_60S_V1` falsification candidate described in
-[control portfolios](../../docs/bayn/control-portfolios.md#frozen-residual-shock-falsification-candidate).
-It uses the same offline portfolio and execution accounting, with a frozen exact-rational signal and a
-poll-delayed 60-second exit target. It is not a profitability claim, qualification, production strategy registration,
-or trading activation. Legacy v2/v3 inputs retain their original three policies and definition hashes.
+The sole development contract is `bayn.control-study-input.v7`, with explicit `entry`, `management` and
+`turnoverPolicy`. It retains the deterministic controls, optional frozen residual-shock candidate and Ridge pair.
+Older development input versions are rejected. See [control portfolios](../../docs/bayn/control-portfolios.md).
 
-`bayn-control-study` supports the strictly offline `MECHANICAL` management mode, which creates no provider
-client, broker account, database or capital authority. Its three fixed control policies share the native control
-portfolio's point-in-time quotes, finite displayed-liquidity consumption, IOC partial fills, fee accounting, loss and
-drawdown limits, close deadlines and explicit missing-data outcomes. A mechanical control is not an exact replay of
-the production Jev decision/persistence pipeline and is not a matched live-performance claim.
+`entry: "JEV"` adds a native Jev entry portfolio beside deterministic controls and requires mechanical exits and
+matching native allocation. It evaluates the native model against its own flat ledger, retains each observation,
+batch and committed decision, and advances market time through measured provider and fsync journal work before
+order pricing. It retains costs for abstentions and incomplete model work. This is an independent policy comparison;
+it does not reuse historical model answers or establish profitability. A new evidence directory is required.
 
-`bayn.control-study-input.v3` requires `turnoverPolicy`: `IMMEDIATE_ADJUSTMENT` preserves the existing entry-admission
-calculation; `ENTRY_AND_EXPECTED_EXIT` additionally reserves the proposed entry limit notional and a modeled future
-sale at reference price plus the risk policy's bounded allowance. The integer calculation rounds costs upward,
-respects existing reservations and whole-share sizing, and cannot authorize an order itself. Legacy v2 study inputs
-keep their previous immediate-adjustment behavior. The reservation applies only to control entry sizing; it cannot
-block risk-reducing exits, and a price move beyond the modeled allowance can exceed the reserved amount. It is not
-a hard bound on unknown future exit prices. Production entry sizing, turnover mandates and exit exceptions are
-unchanged by an offline experiment.
+`entry: "DETERMINISTIC"` with `management: "MECHANICAL"` creates no provider client. Selecting `management: "JEV"`
+instead gives each repeated deterministic portfolio its own actual-position management observations. Entry and
+management comparisons remain separate. All portfolios share native IOC fills, finite liquidity, fees, turnover,
+loss/drawdown, stop, holding and close rules. None opens a broker account or supplies capital authority.
+
+`turnoverPolicy: "ENTRY_AND_EXPECTED_EXIT"` reserves both entry notional and a modeled exit allowance;
+`IMMEDIATE_ADJUSTMENT` uses immediate entry admission. These scenario choices cannot block mandatory reducing exits
+or guarantee a bound on unknown future exit prices. Freeze them before evaluating outcomes.
 
 Freeze the input, source receipt, exact source revision or file-hash snapshot, and comparison policy before results.
 Run each registered input with `--input-sha256` and `--source-receipt-sha256`, preserving failed runs and distinct
@@ -1302,3 +1329,37 @@ OTLP failure warnings include consecutive failed attempts. The exporter logs a s
 with the attempt count and elapsed outage time. This confirms transport recovery for that request, not completeness
 of spans during the outage. Broker projection rejection logs distinguish stale, future, account and chronology
 failures with observation age, without recording account identifiers or payloads.
+
+## Independent Alpha-R1 research
+
+`BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
+The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
+original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
+The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research) defines the approved restricted
+database identity, separate run-approval credential and normal Kargo release path. The source includes no broker or capital capability in the research server.
+
+The pinned vLLM endpoint supplies cumulative usage on streaming chunks. The decoder requires stable prompt counts,
+nondecreasing completion counts within the approved budget, and one final usage summary after normal generation
+finish. Intermediate counts never substitute for that final summary or complete stream termination.
+The request remains limited to 256 KiB. The raw response allows 2 MiB so per-token cumulative-usage frames fit the
+4,096-token ceiling. The receipt's base64 limit derives from that raw bound, and the operator limits the serialized
+receipt to 5 MiB, including base64 and JSON text escaping. Byte limits never replace token, deadline or termination checks.
+The failed-attempt alert uses the exported OTLP counter `bayn_research_attempts` without an added `_total` suffix.
+The worker alert checks the native Restate ReplicaSets' desired replicas. Metrics include the worker instance ID,
+matching trace identity and keeping cumulative series separate during revision overlap.
+
+The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
+Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
+Submission requires `BAYN_RESEARCH_APPROVAL_KEY` from the approved secret-management path. The CLI signs the exact
+run identity; only its approval proof is submitted, and the key is never logged or journaled in Restate.
+
+```sh
+bayn-research --validate run.json
+RESTATE_INGRESS_ORIGIN=http://restate.restate.svc.cluster.local:8080 \
+  bayn-research --run run.json --output new-receipt.json
+```
+
+Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFIED. The original full-session capture,
+Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
+measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
+the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.

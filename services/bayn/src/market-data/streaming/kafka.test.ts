@@ -111,6 +111,7 @@ test('projection cuts preserve current offsets and fresh advancing outputs', asy
       const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
       yield* TestClock.adjust(1000)
       const initial = yield* market.readForLiquidation
+      expect(initial.consumerSequence).toBe(0)
       const position = initial.positions.find((row) => row.topic === 'quotes')
       if (position === undefined) throw new Error('missing quote position')
       const offsets = initial.projection.offsets as Map<string, string>
@@ -249,6 +250,7 @@ test('projection cuts follow replaced positions and reject an invalidated epoch'
       yield* TestClock.adjust(1000)
       const replaced = yield* market.readForLiquidation
       expect(replaced.positions.find((row) => row.topic === 'quotes')?.offset).toBe('20')
+      expect(replaced.deliveredPositions.every((row) => row.offset === '0')).toBeTrue()
       transport.invalidated?.(new Error('replace test epoch'))
       expect(Result.isFailure(yield* market.readForLiquidation.pipe(Effect.result))).toBe(true)
       yield* TestClock.adjust(3000)
@@ -410,6 +412,7 @@ test.each([false, true])('capture observes dispositions and exact transport time
     )
   const transport = new FakeTransport()
   const payloads = [quote('AAPL'), Buffer.from([0x80]), quote('ZZZ'), quote('ZZZ')]
+  transport.drained = positions('99')
   transport.queue = payloads.map((value, index) => ({
     topic: 'quotes',
     partition: 0,
@@ -473,6 +476,9 @@ test.each([false, true])('capture observes dispositions and exact transport time
         bootstrap: true,
       })
       expect(cut.projection.sequence).toBe(3)
+      expect(cut.consumerSequence).toBe(4)
+      expect(cut.positions.every((position) => position.offset === '99')).toBeTrue()
+      expect(cut.deliveredPositions.find((position) => position.topic === 'quotes')?.offset).toBe('3')
     }),
   )
   expect(transport.closeCount).toBe(1)

@@ -6,6 +6,7 @@ permissions:
 
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
     branches:
       - main
     paths:
@@ -17,7 +18,9 @@ on:
       - 'apps/synthesis/**'
       - 'packages/backend/**'
       - 'packages/design/**'
-      - 'services/tengri/**'
+      - 'services/tengri/proto/**'
+      - 'services/tengri/migrations/**'
+      - 'services/tengri/fixtures/**'
       - 'nix/images/app.nix'
       - 'nix/check-bun-dependency-closure.sh'
       - '.github/workflows/nix-bun-dependency-closure.yml'
@@ -98,11 +101,15 @@ on:
         type: boolean
         default: true
 concurrency:
-  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}
+  group: product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
+    if: >-
+      (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.base.ref == github.event.repository.default_branch && !github.event.pull_request.draft))
     runs-on: ubuntu-latest
     permissions:
       contents: read

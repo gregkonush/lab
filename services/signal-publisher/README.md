@@ -19,3 +19,8 @@ bun run --filter @proompteng/signal-publisher lint:oxlint
 bun run --filter @proompteng/signal-publisher lint:oxlint:type
 bun run --filter @proompteng/signal-publisher build
 ```
+
+Quorum inserts group bars and exchange sessions by the tables' yearly `session_date` partition, then split each year
+into batches of at most 5,000 rows. Symbol-ordered input therefore does not create a new part for the same year in
+each mixed-year batch. Each insert retains deterministic content deduplication, both-replica acknowledgment and
+sequentially consistent readback. Finalization still verifies every staged row before appending the manifest.

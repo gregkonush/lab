@@ -1,13 +1,13 @@
 # Matched Jev entry experiment
 
 `services/bayn/tools/matched-entry-study.ts` tests one frozen question: does retained Jev entry selection add value
-over positive exact benchmark-relative momentum on the same observed opportunities? It runs entirely offline and
+over immediately executable positive benchmark-relative momentum on the same observed opportunities? It runs entirely offline and
 never calls a provider, places orders, changes safeguards or promotes a strategy.
 
 The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive sessions,
 at least twenty different selections, a USD 10,000 whole-share budget per opportunity, five-second management polls,
-a 50 bp protective stop, a 15-minute maximum hold and the five-minute close window. Both rules use the original
-complete batch time, identical execution assumptions and mechanical management. One IOC entry is followed by
+a 50 bp protective stop, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts
+at witnessed deterministic completion; delayed momentum and Jev start at witnessed decision commitment. One IOC entry is followed by
 persistent reducing exit retries; actual partial fills and consumed quote liquidity remain in the ledger.
 Idle management keeps the five-second cadence regardless of routing latency. Only an actual pending exit skips
 crossed polls; a partial exit retries on the next eligible poll after its arrival. No model management is used.
@@ -40,20 +40,22 @@ their query ranges must cover the complete registered date interval, including c
 coverage cannot be inferred from a later batch; prospective timing always uses the earliest registered open.
 
 Measure routing/persistence latency from completed-batch-to-order evidence, including tails and exit retries.
-Original inference work is already included in the batch completion time; both rules wait for it, isolating selection.
+Inference and acknowledged persistence are measured separately. The immediate arm does not wait for either;
+the delayed and Jev arms use the same witnessed commitment clock.
 Nominal API duration is insufficient. Supplied latency without a calibration witness remains incomplete.
 Quote size units, source timing and executable capacity need separate evidence; paper fills do not prove capacity.
 
 ## Private input
 
-`MatchedStudyInputSchema` defines `bayn.matched-entry-input.v1`:
+`MatchedStudyInputSchema` defines `bayn.matched-entry-input.v2`:
 
-| Field       | Evidence                                                                                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `study`     | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches. |
-| `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too.                          |
-| `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                         |
-| `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                  |
+| Field       | Evidence                                                                                                                                                                                                                      |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `study`     | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches.                                                            |
+| `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too.                                                                                     |
+| `timings`   | Per entry `batchId`, a native timing witness or explicit `null`. The witness contains input readiness, deterministic completion, batch completion, decision commitment, selected momentum symbol, the timing file SHA-256 `evidenceHash`, and the native execution-decision file SHA-256 `decisionEvidenceHash`. |
+| `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                                                                                    |
+| `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                                                                             |
 
 Use the native inference-cost report with request/receipt/resolution coverage and effective-dated tariffs.
 Allocate every entry call, including abstentions, failures and unselected symbols. Missing/unpriced calls remain
@@ -61,6 +63,10 @@ unknown: an unpriced known subtotal of zero is not zero expense. Carry missing c
 Shared infrastructure, data and subscription allocations need explicit witnessed scope; otherwise use `null`.
 These are witnessed allocation scenarios, not invoice reconciliation. Hashes establish identity; review the
 allocation's source joins and accounting scope independently.
+
+Every referenced witness is read and hashed as raw bytes, including latency, capacity, zero-batch inventories and
+both cost allocations. Missing, unreadable or changed files fail the command before evaluation. Timing and native
+decision decoders consume those same verified bytes without rereading a mutable path.
 
 Every original native observation remains independently validated. Its selected bars, quotes, trades, feature
 payloads (including optional technical indicators), model-relevant session/window context and exact source
@@ -74,17 +80,24 @@ Both captured-Kafka and original-capture sources retain their own independently 
 recognizing either transport does not waive source verification, session coverage or any other completeness witness.
 Candidate exclusions remain in the report; omitted entire batches fail the independent inventory gate.
 
-### Evidence-comparison version
+### Timing and report versions
 
-The definition and report are now `bayn.matched-entry-definition.v2` and `bayn.matched-entry-study.v2`.
-Input and registration structures remain v1; the required definition hash changes. Old registrations are rejected.
-Earlier v1 reports did not bind optional technical indicators or all model-relevant time context in their
-cross-source comparison. Treat their completeness claims as unqualified; preserve them as historical artifacts,
-and rerun their original evidence under a newly reviewed v2 registration for development only. Do not rewrite an
-old prospective timestamp or relabel an old report as v2. A new prospective window needs a new pre-open registration.
+Definition and report are `bayn.matched-entry-definition.v3` and `bayn.matched-entry-study.v3`. Input is v2;
+registration remains v1 with the new definition hash. Old input contracts and registrations are rejected.
+Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
-The [incremental-value audit](jev-incremental-audit.md) contains executable counterexamples and the separate
-three-arm protocol needed to study inference delay.
+Each timing witness points to a private `bayn.jev-entry-timing.v1` file produced from verified native capture by
+`replayResearchCaptureInterval`. The command reads and hashes that file, checks source revision, batch, observation
+and snapshot identities, clock order, retained batch completion and frozen momentum selection. The required
+`decisionEvidenceHash` references the complete committed native execution-decision document exported read-only from
+the cycle store. The native decoder verifies its semantic and content identity; the study binds the timing receipt's
+`decisionHash` to that document's `contentHash`, its exact entry batch/result and snapshot, and requires creation before
+acknowledged commitment. Another valid decision for the same batch cannot replace the committed document. An inline timing
+claim cannot replace the retained file. Preserve the verified capture seal/frame chain and independent review
+receipt; a JSON hash alone cannot prove clocks were genuinely observed. Missing or uncommitted timing makes the
+comparison incomplete. Earlier captures without the producer cannot supply an immediate counterfactual.
+
+The [incremental-value audit](jev-incremental-audit.md) explains why selection and delay require separate arms.
 
 ## Run
 
@@ -104,16 +117,19 @@ Historical sessions remain development. Passing command tests does not complete 
 
 ## Decision
 
-Every opportunity is paired, including abstentions and known unfilled entries. Both have zero execution P&L.
+Every opportunity has three arms, including abstentions and known unfilled entries. An evidenced abstention or unfilled entry has zero execution P&L.
 Unavailable answers, missing entry tasks or stop observations, residual inventory, partial exits and unknown costs
-remain missing. Jev pays inference even when it abstains; both sides pay the same shared allocation.
-Returns use the fixed budget. Identical selections share a lifecycle and have zero execution increment before costs.
+remain missing. Jev pays inference even when it abstains; all arms pay the same shared allocation.
+Returns use the fixed budget. Each arm owns its lifecycle even when symbols match, because entry fills, stops and hold deadlines can differ.
+Selection is `Jev - delayed momentum`; delay is `delayed momentum - immediate momentum`; total is
+`Jev - immediate momentum`. The three net micro-USD differences satisfy selection plus delay equals total.
+All three resolved arms are required for the common headline population.
 
 Missing any session inventory, source coverage/availability, calibration, selected outcome or cost blocks all headline
 means. Fewer than twenty different selections is inconclusive. Every fill, exit trigger, order, quote hash, candidate
 exclusion and failure remains reviewable.
 
-With complete prospective evidence, nonpositive Jev net budget return or paired increment in either the base
+With complete prospective evidence, nonpositive Jev net budget return or total increment over immediate momentum in either the base
 scenario or an additional ten bps per filled leg stops prioritizing this entry hypothesis. Positive results only earn
 the separate frozen portfolio acceptance test. No outcome grants authority or strategy promotion. Preserve all five
 scheduled sessions and failed runs; do not retune thresholds, prompts, universe, exits, sampling or costs mid-window.
