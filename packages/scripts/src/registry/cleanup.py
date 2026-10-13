@@ -298,12 +298,14 @@ class Store:
             for directory in prefix.iterdir():
                 digest = "sha256:" + directory.name
                 encoded(digest)
+                if digest in marked:
+                    continue
                 path = directory / "data"
                 try:
                     value = signature(path)
                 except FileNotFoundError:
                     continue
-                if digest not in marked and value[3] < cutoff_ns:
+                if value[3] < cutoff_ns:
                     result.append({"digest": digest, "signature": value})
             return result
 

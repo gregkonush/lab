@@ -23,6 +23,10 @@ to finish and both SSH and Docker to be active. The LAN Service exposes only SSH
 Systemd delegates cgroup v2 subtrees for Docker; the installed Kata agent cannot
 add `kubectl exec` processes to that non-leaf cgroup. Use SSH for administration.
 HTTP probes avoid that exec limitation while checking the same guest services.
+Preparation retries after five seconds if a startup step fails. Codex can finish
+starting its daemon after the CLI's readiness deadline; a retry recognizes the
+running daemon and completes setup. The HTTP endpoint stays unready until setup
+succeeds. Failed attempts remain in the journal.
 Docker and containerd data both use the ext4 disk because overlayfs snapshots
 cannot use the image's virtio-fs filesystem as their writable backing store.
 

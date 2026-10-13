@@ -15,6 +15,7 @@ import {
   ResearchReceiptSchema,
   researchRequest,
   researchServingIdentity,
+  maximumResearchStreamBytes,
   sealResearchReceipt,
   type ResearchReceipt,
   type ResearchRun,
@@ -64,7 +65,7 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
       return yield* Result.fail(
         new ResearchError({ message: 'Complete research receipt lacks valid timing, factor or usage evidence' }),
       )
-    if (Buffer.from(receipt.responseBase64, 'base64').length > 262144)
+    if (Buffer.from(receipt.responseBase64, 'base64').length > maximumResearchStreamBytes)
       return yield* Result.fail(new ResearchError({ message: 'Research response bytes exceed the serving bound' }))
     if (receipt.outcome === 'COMPLETE') {
       const stream = makeResearchStreamDecoder(run)

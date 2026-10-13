@@ -1,3 +1,4 @@
+import { makeJevEntryQuery } from './observation-query'
 import { Data, Duration, Effect, Option, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
@@ -46,8 +47,15 @@ import {
 } from './exit'
 import { JevPositionStore } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
-import { jevSnapshotSymbols, type JevProtocol } from './protocol'
-import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
+import { type JevProtocol } from './protocol'
+import {
+  jevEntryQuoteExclusion,
+  jevMomentumEntryCandidates,
+  jevStalePricingSymbols,
+  makeJevTradingSignalBatch,
+} from './trading-signals'
+import { ActiveResearchCapture, recordResearchCapture } from '../research-capture/observer'
+import { JevPurpose } from './portfolio'
 
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
   readonly message: string
@@ -88,26 +96,15 @@ export const jevObservationQuery = (
         ),
       }),
     )
-  return Result.succeed({
-    sessionDate: cycle.identity.executionSessionDate,
-    calendar,
-    observedAt,
-    rangeStartAt: utcInstantFromEpochMillis(start),
-    rangeEndAt: utcInstantFromEpochMillis(end),
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    universe: protocol.universe,
-    symbols: jevSnapshotSymbols(protocol, candidates),
-    candidateSymbols: candidates,
-    ...(protocol.candidateEvidencePolicy === undefined
-      ? {}
-      : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-    feed: protocol.feed,
-    delayClass: protocol.delayClass,
-    sourceTopics: protocol.sourceTopics,
-    maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
-    minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
-  })
+  return Result.succeed(
+    makeJevEntryQuery({
+      protocol,
+      calendar,
+      sessionDate: cycle.identity.executionSessionDate,
+      observedAtMs: Date.parse(observedAt),
+      candidates,
+    }),
+  )
 }
 
 export const jevPricingQuery = (
@@ -194,6 +191,21 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         message: `Jev is waiting for fresh signal pricing for ${staleSymbols.join(', ')}`,
         readiness: DecisionReadinessReason.SnapshotStale,
       })
+    const capture = yield* ActiveResearchCapture
+    const entryTiming =
+      capture === undefined || input.portfolio.purpose !== JevPurpose.Entry
+        ? null
+        : yield* Effect.gen(function* () {
+            const inputAvailableAt = yield* currentUtcInstant
+            const selected = jevMomentumEntryCandidates(snapshot, input.protocol)
+            if (Result.isFailure(selected)) return null
+            const deterministicSelectedAt = yield* currentUtcInstant
+            return {
+              inputAvailableAt,
+              deterministicSelectedAt,
+              deterministicSymbol: selected.success[0]?.symbol ?? null,
+            }
+          })
     const observation = yield* recordJevObservation({ ...input, snapshot })
     const batchPlan = yield* Effect.suspend(() =>
       Effect.fromResult(
@@ -230,6 +242,15 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
       ),
     )
     const decidedAt = yield* currentUtcInstant
+    if (capture !== undefined && entryTiming !== null && saved.result !== null)
+      yield* recordResearchCapture(capture, {
+        kind: 'entry-readiness',
+        batchId: saved.plan.batchId,
+        observationHash: observation.contentHash,
+        snapshotHash: snapshot.manifest.contentHash,
+        ...entryTiming,
+        batchCompletedAt: saved.result.completedAt,
+      })
     if (
       saved.result === null ||
       Result.isFailure(usableJevBatchInferences(saved.plan, saved.result, Date.parse(decidedAt)))
