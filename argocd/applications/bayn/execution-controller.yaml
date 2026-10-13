@@ -67,12 +67,14 @@ spec:
           envFrom:
             - configMapRef:
                 name: bayn-valkey-connection
+                optional: true
           env:
             - name: VALKEY_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+                  optional: true
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_IMAGE_REPOSITORY
@@ -243,6 +245,7 @@ spec:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
+            optional: true
             defaultMode: 0440
         - name: tmp
           emptyDir:

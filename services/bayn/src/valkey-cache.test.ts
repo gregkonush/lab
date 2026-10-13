@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
 import { NodeRedis } from '@effect/platform-node'
-import { Effect, Fiber, Layer, Option, Result } from 'effect'
+import { ConfigProvider, Effect, Fiber, Layer, Option, Result } from 'effect'
 import { createClient } from 'redis'
 
-import { makeValkeyCache, ValkeyCache, ValkeyCacheError, ValkeyCacheInputError } from './valkey-cache'
+import { makeValkeyCache, ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyCacheLive } from './valkey-cache'
 
 const rejectedInput = async (
   operation: (
@@ -34,6 +34,20 @@ const rejectedInput = async (
 }
 
 describe('Valkey cache trust boundary', () => {
+  test('missing optional cache configuration is a typed availability failure', async () => {
+    const result = await Effect.void.pipe(
+      Effect.provide(ValkeyCacheLive),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+      Effect.result,
+      Effect.runPromise,
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ValkeyCacheError)
+      expect(result.failure.operation).toBe('configure')
+    }
+  })
+
   test('rejects foreign and empty namespaces before opening a socket', async () => {
     for (const key of ['other:private', 'bayn:', 'bayn:\n']) {
       const error = await rejectedInput((cache) => cache.get(key))

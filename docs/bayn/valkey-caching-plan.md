@@ -93,7 +93,10 @@ the shared connection; concurrent cache operations can fail, and the next call
 can reconnect. Callers must retain their authoritative fallback and may not use
 a cache error to weaken a trading guard. Connection acquisition also returns a
 `ValkeyCacheError`; handle it at the optional cache boundary rather than making
-cache connectivity a requirement for service startup or readiness.
+cache connectivity a requirement for service startup or readiness. The workload's
+ConfigMap, password and TLS Secret references are optional so missing cache
+artifacts cannot block authoritative service recovery. Missing cache
+configuration and TLS material remain typed availability failures.
 
 `node dist/valkey-command.js` verifies miss, write/read, deletion and expiry using
 synthetic keys with the same client. Configuration comes from

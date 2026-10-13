@@ -99,7 +99,12 @@ export const makeValkeyCache = Effect.gen(function* () {
 
 export const ValkeyCacheLive = Layer.unwrap(
   Effect.gen(function* () {
-    const config = yield* valkeyConfig
+    const config = yield* valkeyConfig.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ValkeyCacheError({ operation: 'configure', message: 'Valkey configuration is unavailable', cause }),
+      ),
+    )
     const readTls = (name: string) =>
       Effect.tryPromise({
         try: (signal) => readFile(`${config.tlsDirectory}/${name}`, { encoding: 'utf8', signal }),
