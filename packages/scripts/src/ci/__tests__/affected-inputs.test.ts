@@ -165,6 +165,31 @@ const text = (value: unknown): string => {
   return value
 }
 
+test('planner implementation, action, and map changes retain their owning validation', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing scripts CI trigger paths')
+    for (const file of [
+      'packages/scripts/src/ci/affected-inputs.ts',
+      '.github/actions/affected-inputs/action.yml',
+      '.github/ci/root-script-map.yml',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
+test.each(['orbit-salvage', 'ricochet-rush'])('%s does not rebuild for unrelated impact-map edits', (name) => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${name}-ci.yml`, 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing game CI trigger paths')
+    expect(paths.some((pattern) => matchesGlob('.github/ci/impact-map.yml', text(pattern)))).toBe(false)
+    expect(paths.some((pattern) => matchesGlob(`apps/${name}/project.godot`, text(pattern)))).toBe(true)
+  }
+})
+
 test('runtime-only PRs skip desktop builds while main publishes coordinated images', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
@@ -264,8 +289,25 @@ test.each([
   const plan = selectAffectedInputs(['bun.lock', 'apps/landing/package.json'], configured, base, head)
   expect(plan).toEqual(Object.fromEntries(Object.keys(configured).map((name) => [name, name === 'proompteng'])))
   expect(selectAffectedInputs(['.github/actions/affected-inputs/action.yml'], configured, base, base)).toEqual(
-    Object.fromEntries(Object.keys(configured).map((name) => [name, true])),
+    Object.fromEntries(Object.keys(configured).map((name) => [name, false])),
   )
+  for (const path of [
+    'packages/scripts/src/ci/affected-inputs.ts',
+    'packages/scripts/src/ci/__tests__/impact-router.test.ts',
+    'packages/scripts/src/shared/__tests__/kargo.test.ts',
+  ]) {
+    expect(selectAffectedInputs([path], configured, base, base)).toEqual(
+      Object.fromEntries(Object.keys(configured).map((name) => [name, false])),
+    )
+  }
+  expect(
+    selectAffectedInputs(
+      ['.github/actions/affected-inputs/action.yml', 'bun.lock', 'apps/landing/package.json'],
+      configured,
+      base,
+      head,
+    ),
+  ).toEqual(plan)
   expect(selectAffectedInputs(['packages/scripts/src/bumba/deploy-service.ts'], configured, base, base)).toEqual(
     Object.fromEntries(Object.keys(configured).map((name) => [name, false])),
   )

@@ -953,7 +953,9 @@ describe('Kargo direct-push GitOps contract', () => {
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(sourcePaths).toEqual(buildPaths)
+      expect(
+        event === 'push' ? sourcePaths : sourcePaths.filter((path: string) => !path.endsWith('/kargo.test.ts')),
+      ).toEqual(buildPaths)
     }
   })
 
