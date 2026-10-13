@@ -62,8 +62,10 @@ the reviewed revision with `Force=true` and `Replace=true` for the Valkey,
 force options as Application automation or resource annotations.
 
 Before replacement, verify the Valkey has no `delete-pvc` finalizer and all six
-old PVCs have no Cluster owner references. Replacement retires the old child
-Cluster and six pods. The six old `valkey-data-drc-bayn-valkey-*` volumes remain
+old PVCs have no Cluster owner references. Use cascading replacement of the Valkey owner, not an orphaning delete. The
+old protected User has owner references to the old Cluster and Valkey UIDs;
+replacing those owners garbage-collects that User independently of Argo pruning.
+Replacement retires the old child Cluster and six pods. The six old `valkey-data-drc-bayn-valkey-*` volumes remain
 retained for recovery; do not delete them during this rollout. Verify the new
 Failover child is Ready, exactly two data pods run on separate hosts, the old
 Cluster and old User are absent, and acceptance-v2 succeeds. Argo must converge
