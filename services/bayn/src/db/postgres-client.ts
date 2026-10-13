@@ -9,7 +9,13 @@ import { classifyDatabaseError, databaseError, runDatabase } from './database-er
 
 export const postgresHealthCheck = (sql: PgClient.PgClient) => runDatabase('health', sql`SELECT 1`.pipe(Effect.asVoid))
 
-export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres' | 'alpaca'>) => {
+export const PostgresClientLive = (
+  config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'postgres' | 'alpaca'>,
+  options: { readonly maxConnections: number; readonly applicationName: string } = {
+    maxConnections: 8,
+    applicationName: 'bayn',
+  },
+) => {
   const passBudgetMs = Math.min(
     config.operationTimeoutMs,
     config.alpaca?.reconciliationIntervalMs ?? config.operationTimeoutMs,
@@ -68,7 +74,7 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
                   username,
                   database,
                   ssl: ca === undefined ? undefined : { ca, rejectUnauthorized: true },
-                  applicationName: 'bayn',
+                  applicationName: options.applicationName,
                   connectTimeout: statementTimeoutMs,
                   stream: () => {
                     const socket = new Socket()
@@ -79,7 +85,7 @@ export const PostgresClientLive = (config: Pick<RuntimeConfig, 'operationTimeout
                     return socket.connect(host.startsWith('/') ? { path: `${host}/.s.PGSQL.${port}` } : { host, port })
                   },
                   idleTimeout: '30 seconds',
-                  maxConnections: 8,
+                  maxConnections: options.maxConnections,
                   minConnections: 0,
                   transformJson: false,
                 }).pipe(

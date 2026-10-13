@@ -15,6 +15,7 @@ import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, type JevEvaluat
 import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { JevPurpose } from '../jev/portfolio'
+import { JevEntryTargetSchema } from '../jev/decision'
 import {
   decodeJevResolution,
   JevResolutionStatus,
@@ -313,8 +314,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             if (
               observation.schemaVersion !== 'bayn.jev-observation.v1' ||
               observation.contentHash !== contentHash ||
-              observation.portfolio.purpose !== JevPurpose.Manage ||
-              observation.portfolio.brokerState.account.accountId !== `research-control-management-${runId}` ||
+              observation.portfolio.brokerState.account.accountId !== `research-control-${runId}` ||
               observation.cycleId !==
                 (yield* Effect.fromResult(
                   canonicalHashV1Result({ runId, sessionDate: observation.snapshot.manifest.sessionDate }),
@@ -323,7 +323,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 (yield* Effect.fromResult(
                   canonicalHashV1Result({
                     runId,
-                    scope: 'SIMULATED_CONTROL_MANAGEMENT',
+                    scope: 'SIMULATED_CONTROL',
                     protocol: observation.protocol,
                   }),
                 ))
@@ -343,6 +343,28 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
       evaluations,
       batches: batchStore,
       observations,
+      usable: Effect.sync(() => !interrupted),
+      retainEntryDecision: (raw: unknown) =>
+        atomic(
+          Effect.gen(function* () {
+            const decision = yield* Schema.decodeUnknownEffect(JevEntryTargetSchema, strictParseOptions)(raw)
+            const storedBatch = yield* readBatch(decision.evidence.batchPlan.batchId)
+            if (storedBatch?.result?.resultHash !== decision.evidence.batchResult.resultHash)
+              return yield* failure('Entry decision has no identical committed batch result')
+            const observation = yield* Effect.fromResult(
+              reproduceJevCandidateObservation(yield* readObservation(decision.evidence.batchPlan.observationHash)),
+            )
+            if (
+              observation.schemaVersion !== 'bayn.jev-observation.v1' ||
+              observation.portfolio.purpose !== JevPurpose.Entry ||
+              observation.portfolio.brokerState.account.accountId !== `research-control-${runId}`
+            )
+              return yield* failure('Entry decision belongs to another independent portfolio')
+            const hash = yield* Effect.fromResult(canonicalHashV1Result(decision))
+            yield* write('entry-decision', hash, decision)
+            return hash
+          }),
+        ),
       calls: Effect.sync((): readonly ReplayJevCall[] => [...calls]),
       retainCall: (call: ReplayJevCall) =>
         atomic(

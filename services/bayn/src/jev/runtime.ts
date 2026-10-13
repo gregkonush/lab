@@ -1,3 +1,4 @@
+import { makeJevEntryQuery } from './observation-query'
 import { Data, Duration, Effect, Option, Result } from 'effect'
 
 import type { MarketCalendarObservation } from '../broker/alpaca'
@@ -46,7 +47,7 @@ import {
 } from './exit'
 import { JevPositionStore } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
-import { jevSnapshotSymbols, type JevProtocol } from './protocol'
+import { type JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
 
 export class JevAwaitingEvidence extends Data.TaggedError('JevAwaitingEvidence')<{
@@ -88,26 +89,15 @@ export const jevObservationQuery = (
         ),
       }),
     )
-  return Result.succeed({
-    sessionDate: cycle.identity.executionSessionDate,
-    calendar,
-    observedAt,
-    rangeStartAt: utcInstantFromEpochMillis(start),
-    rangeEndAt: utcInstantFromEpochMillis(end),
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    universe: protocol.universe,
-    symbols: jevSnapshotSymbols(protocol, candidates),
-    candidateSymbols: candidates,
-    ...(protocol.candidateEvidencePolicy === undefined
-      ? {}
-      : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-    feed: protocol.feed,
-    delayClass: protocol.delayClass,
-    sourceTopics: protocol.sourceTopics,
-    maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
-    minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
-  })
+  return Result.succeed(
+    makeJevEntryQuery({
+      protocol,
+      calendar,
+      sessionDate: cycle.identity.executionSessionDate,
+      observedAtMs: Date.parse(observedAt),
+      candidates,
+    }),
+  )
 }
 
 export const jevPricingQuery = (

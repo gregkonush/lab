@@ -63,11 +63,11 @@ const sourceEntries = [
 ]
 
 function previewTicket(sequence: number) {
-  return `${'a'.repeat(47)}${sequence.toString(36)}.${'b'.repeat(43)}`
+  return createHash('sha256').update(`fixture-preview-ticket-${sequence}`).digest('base64url')
 }
 
 function previewSessionToken(sequence: number) {
-  return `${'c'.repeat(47)}${sequence.toString(36)}.${'d'.repeat(43)}`
+  return createHash('sha256').update(`fixture-preview-session-${sequence}`).digest('base64url')
 }
 
 function mockRevision(content: string) {
@@ -133,11 +133,14 @@ type TerminalStore = { sessions: Record<string, unknown>[] }
 type MockOptions = {
   activeCodexLogin?: boolean
   authenticated?: boolean
+  userId?: string
   agent?: typeof readyAgent | null
   blockDraftStorage?: boolean
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
   failCodexModels?: boolean
+  failCreateOnce?: boolean
+  commitFailedCreate?: boolean
   failSendTurnOnce?: boolean
   legacyCodexModels?: boolean
   paginateCodexModels?: boolean
@@ -160,6 +163,7 @@ type MockOptions = {
   searchTruncated?: boolean
   preserveDraftStorageOnReload?: boolean
   terminalStore?: TerminalStore
+  supersedeSleepOnce?: boolean
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -167,6 +171,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let snapshotFailuresRemaining = 0
   let snapshotRequests = 0
   let authenticated = options.authenticated ?? true
+  let failCreate = options.failCreateOnce ?? false
+  let supersedeSleep = options.supersedeSleepOnce ?? false
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
@@ -457,7 +463,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           controlPlaneConfigured: true,
           previewGatewayOrigin,
           authenticated,
-          user: authenticated ? user : null,
+          user: authenticated ? { ...user, id: options.userId ?? user.id } : null,
           agents: authenticated && agent ? [agent] : [],
         }),
       })
@@ -466,6 +472,29 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
     const action = request.postDataJSON() as Record<string, unknown>
     actions.push(action)
+    if (action.action === 'create-agent' && failCreate) {
+      failCreate = false
+      if (options.commitFailedCreate) {
+        const owner = createHash('sha256')
+          .update(`github:${options.userId ?? user.id}`)
+          .digest('hex')
+        const id = `agent-${createHash('sha256')
+          .update(`ofz.workspace.v1\n${owner}\n${String(action.operationId)}`)
+          .digest('hex')
+          .slice(0, 32)}`
+        agent = { ...readyAgent, id, displayName: String(action.displayName) }
+      }
+      await route.fulfill({ status: 503, json: { error: 'Creation response is uncertain' } })
+      return
+    }
+    if (action.action === 'sleep-agent' && supersedeSleep) {
+      supersedeSleep = false
+      await route.fulfill({
+        status: 409,
+        json: { error: 'A newer workspace transition replaced this request.', code: 'lifecycle_superseded' },
+      })
+      return
+    }
     let result: unknown = null
     switch (action.action) {
       case 'create-agent':
@@ -1342,6 +1371,36 @@ test('connects while the icon font is stalled and redraws icons when it arrives'
     await client.detach()
   } finally {
     releaseFont()
+  }
+})
+
+test('connects and accepts input while an optional terminal addon chunk is stalled', async ({ page }) => {
+  const mock = await mockTengri(page)
+  let releaseAddon = () => {}
+  const addonGate = new Promise<void>((resolve) => {
+    releaseAddon = resolve
+  })
+  let blockedAddons = 0
+  await page.route('**/_next/static/chunks/**', async (route) => {
+    if (route.request().resourceType() !== 'script') return route.continue()
+    const response = await route.fetch()
+    const source = await response.text()
+    if (/(?:"WebglAddon"\s*,|["']?WebglAddon["']?\s*:)\s*\(\)\s*=>/.test(source)) {
+      blockedAddons += 1
+      await addonGate
+    }
+    await route.fulfill({ response })
+  })
+  try {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    const terminal = page.getByRole('region', { name: 'Terminal window' })
+    await expect.poll(() => blockedAddons).toBeGreaterThan(0)
+    await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+    await terminal.getByRole('textbox', { name: 'Terminal input' }).pressSequentially('addon still loading')
+    await expect.poll(() => mock.terminalInput.join('')).toBe('addon still loading')
+  } finally {
+    releaseAddon()
   }
 })
 
@@ -2400,6 +2459,23 @@ test('does not refresh the guest account after sleep starts', async ({ page }) =
 
   mock.releaseHeldLifecycleAction()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('keeps the desktop active after superseded sleep and allocates a fresh operation on retry', async ({ page }) => {
+  const mock = await mockTengri(page, { supersedeSleepOnce: true })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByText('A newer workspace transition replaced this request.')).toBeVisible()
+  await expect(dock).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  const sleeps = mock.actions.filter((action) => action.action === 'sleep-agent')
+  expect(sleeps).toHaveLength(2)
+  expect(sleeps[1].operationId).not.toBe(sleeps[0].operationId)
 })
 
 test('keeps a committed delete transition gated when snapshot refresh fails', async ({ page }) => {
@@ -3538,6 +3614,86 @@ test('shows native-feeling unauthenticated and create-agent states', async ({ pa
   await create.getByLabel('Agent name').fill('Ada')
   await create.getByRole('button', { name: 'Create Agent' }).click()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+})
+
+for (const timing of ['concurrently', 'after the first response'] as const) {
+  test(`shares one creation operation across two empty desktop tabs submitting ${timing}`, async ({
+    page,
+    context,
+  }) => {
+    const other = await context.newPage()
+    const first = await mockTengri(page, { agent: null })
+    const second = await mockTengri(other, { agent: null })
+    await Promise.all([page.goto('/'), other.goto('/')])
+    const firstForm = page.getByRole('dialog', { name: 'Create your agent' })
+    const secondForm = other.getByRole('dialog', { name: 'Create your agent' })
+    await Promise.all([
+      firstForm.getByLabel('Agent name').fill('Shared workspace'),
+      secondForm.getByLabel('Agent name').fill('Shared workspace'),
+    ])
+    if (timing === 'concurrently') {
+      await Promise.all([
+        firstForm.getByRole('button', { name: 'Create Agent' }).click(),
+        secondForm.getByRole('button', { name: 'Create Agent' }).click(),
+      ])
+    } else {
+      await firstForm.getByRole('button', { name: 'Create Agent' }).click()
+      await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+      await secondForm.getByRole('button', { name: 'Create Agent' }).click()
+    }
+    await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+    await expect(other.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+    const firstCreates = first.actions.filter((action) => action.action === 'create-agent')
+    const secondCreates = second.actions.filter((action) => action.action === 'create-agent')
+    expect(firstCreates).toHaveLength(1)
+    expect(secondCreates).toHaveLength(1)
+    expect(firstCreates[0].operationId).toBeTruthy()
+    expect(secondCreates[0].operationId).toBe(firstCreates[0].operationId)
+  })
+}
+
+test('creates with a new name after deleting a workspace whose creation reply was lost', async ({ page }) => {
+  const mock = await mockTengri(page, { agent: null, failCreateOnce: true, commitFailedCreate: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByText('Creation response is uncertain')).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  await page.getByRole('region', { name: 'Settings window' }).getByRole('button', { name: 'Delete Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Original workspace”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+  await expect(create).toBeVisible()
+  await create.getByLabel('Agent name').fill('Different workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const creates = mock.actions.filter((action) => action.action === 'create-agent')
+  expect(creates).toHaveLength(2)
+  expect(creates[1].operationId).not.toBe(creates[0].operationId)
+})
+
+test('creates after an uncertain request from a previous account in the same tab', async ({ page }) => {
+  const first = await mockTengri(page, { agent: null, failCreateOnce: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByText('Creation response is uncertain')).toBeVisible()
+  const originalId = first.actions.find((action) => action.action === 'create-agent')?.operationId
+  expect(originalId).toBeTruthy()
+
+  await page.unrouteAll({ behavior: 'wait' })
+  const second = await mockTengri(page, { agent: null, userId: 'second-human' })
+  await page.reload()
+  await create.getByLabel('Agent name').fill('Different')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const replacementId = second.actions.find((action) => action.action === 'create-agent')?.operationId
+  expect(replacementId).toBeTruthy()
+  expect(replacementId).not.toBe(originalId)
 })
 
 test('has no serious or critical Axe violations', async ({ page }) => {

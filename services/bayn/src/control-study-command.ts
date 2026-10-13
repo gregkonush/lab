@@ -7,6 +7,7 @@ import { ControlStudyFailure } from './intraday-replay/control-portfolio'
 import { ControlInputCoverage, runControlPreflight } from './intraday-replay/control-preflight'
 import {
   ControlManagementMode,
+  ControlEntryMode,
   ControlStudyInputSchema,
   runControlStudy,
   type ControlStudyManagement,
@@ -113,7 +114,7 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       return
     }
     let management: ControlStudyManagement
-    if (input.management === ControlManagementMode.Jev) {
+    if (input.management === ControlManagementMode.Jev || input.entry === ControlEntryMode.Jev) {
       if (evidenceDirectory === undefined)
         return yield* new ControlStudyFailure({ message: 'JEV controls require a new evidence directory' })
       const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))
@@ -124,7 +125,7 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
         ),
       )
       management = {
-        mode: ControlManagementMode.Jev,
+        mode: input.management,
         evidenceDirectory,
         providerClock,
         provider: Context.get(providerContext, JevClient),

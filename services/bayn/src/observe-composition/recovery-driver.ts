@@ -379,7 +379,7 @@ export const recoveryFirstCycleNextDelayMs = (input: {
 }
 
 /** Expected quote or broker publication waits use a short continuation; source failures keep their backoff. */
-export const closeQuoteContinuationDelayMs = (
+export const executionEvidenceContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
@@ -387,7 +387,9 @@ export const closeQuoteContinuationDelayMs = (
   if (
     result.outcome !== 'RECOVERED' ||
     result.action !== 'WAITING' ||
-    (result.waitReason !== 'CLOSE_QUOTE_PENDING' && result.waitReason !== 'BROKER_OBSERVATION_PENDING')
+    (result.waitReason !== 'CLOSE_QUOTE_PENDING' &&
+      result.waitReason !== 'BROKER_OBSERVATION_PENDING' &&
+      result.waitReason !== 'JEV_POSITION_AWAITING_RECONCILIATION')
   )
     return undefined
   const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
@@ -605,7 +607,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.map((observedAt) => {
             const cadence = advanced.nextDelayMs ?? nextDelayMs
             const continuation =
-              closeQuoteContinuationDelayMs(advanced.result, cadence, observedAt) ??
+              executionEvidenceContinuationDelayMs(advanced.result, cadence, observedAt) ??
               decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
             const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
             if (maximumHold !== undefined) {

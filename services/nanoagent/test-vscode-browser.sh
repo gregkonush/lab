@@ -2,6 +2,9 @@
 set -euo pipefail
 
 repository="$(cd "$(dirname "$0")/../.." && pwd)"
+if [[ "${TENGRI_RUNTIME_STATE_FIXTURE:-}" != 1 ]]; then
+  exec bash "$repository/services/ofz/test-control.sh" editor "$@"
+fi
 if [[ "$(uname -s)" == Linux && -z "${TENGRI_BROWSER_TEST_IMAGE:-}" && "${1:-}" != --editor-only ]]; then
   # Native editor acceptance shares files with the test driver. Browser acceptance
   # gets a separate container because ARC's host disables user namespaces.
@@ -127,15 +130,14 @@ fixture_pids="$fixture_pids $!"
   printf '%s' 'isolated-playwright-client-secret-not-production' > "$fixture_root/oidc-secret"
   export TENGRI_DESKTOP_ORIGIN="$TENGRI_PLAYWRIGHT_BASE_URL"
   export TENGRI_OIDC_CLIENT_SECRET_FILE="$fixture_root/oidc-secret"
-  export TENGRI_DATABASE_DSN=postgres://tengri_bff@localhost:65534/tengri_control
-  export TENGRI_DATABASE_PASSWORD_FILE="$fixture_root/oidc-secret"
-  export TENGRI_DATABASE_CA_FILE="$fixture_root/tls.crt"
+  export TENGRI_DATABASE_DSN="${TENGRI_BFF_DATABASE_DSN:?Disposable BFF database required}"
   export OFZ_GRPC_ENDPOINT=localhost:65535
   export TENGRI_GRPC_ENDPOINT=localhost:65535
   export SPIFFE_ENDPOINT_SOCKET="unix://$fixture_root/workload-api.sock"
   export SPIFFE_ID=spiffe://proompteng.ai/ns/proompteng/sa/proompteng
   export TENGRI_SPIFFE_ID=spiffe://proompteng.ai/ns/tengri/sa/tengri
-  export TENGRI_INTERNAL_HMAC_SECRET=playwright-tengri-hmac-secret-0000000000
+  printf '%s' '6868686868686868686868686868686868686868686868686868686868686868' > "$fixture_root/TENGRI_INTERNAL_HMAC_SECRET"
+  export TENGRI_BFF_SECRET_DIR="$fixture_root"
   if [[ "${TENGRI_EDITOR_NEXT_MODE:-dev}" == start ]]; then
     mkdir -p "$fixture_root/desktop/apps/landing/.next" "$fixture_root/desktop/services/tengri"
     cp -R .next/standalone/. "$fixture_root/desktop/"

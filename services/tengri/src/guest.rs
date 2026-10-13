@@ -1,9 +1,4 @@
-use std::{
-    net::{IpAddr, SocketAddr},
-    pin::Pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use futures::Stream;
 use k8s_openapi::api::core::v1::Secret;
@@ -14,17 +9,16 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{
-    crd::{MicroVM, MicroVMPhase},
-    identity::WorkloadIdentity,
-};
+use crate::identity::WorkloadIdentity;
 
 mod codex_history;
 pub use codex_history::CodexHistoryPart;
 mod codex_options;
+mod pool;
 pub(crate) mod rpc;
 
 pub use codex_options::CodexOptions;
+pub use pool::GuestPool;
 
 pub(crate) const GUEST_API_PORT: u16 = 8443;
 pub const EDITOR_PORT: u16 = 13337;
@@ -190,58 +184,19 @@ pub struct CodexCallResult {
 }
 
 impl GuestClient {
-    pub async fn for_agent(
+    async fn for_target(
         client: Client,
         namespace: &str,
-        agent_id: &str,
+        target: pool::GuestTarget,
         identity: &WorkloadIdentity,
     ) -> Result<Self, GuestError> {
-        Self::for_agent_incarnation(client, namespace, agent_id, None, identity).await
-    }
-
-    pub async fn for_agent_incarnation(
-        client: Client,
-        namespace: &str,
-        agent_id: &str,
-        incarnation: Option<&str>,
-        identity: &WorkloadIdentity,
-    ) -> Result<Self, GuestError> {
-        let microvms: Api<MicroVM> = Api::namespaced(client.clone(), namespace);
-        let microvm = microvms.get(agent_id).await?;
-        if incarnation.is_some_and(|expected| microvm.metadata.uid.as_deref() != Some(expected)) {
-            return Err(GuestError::Api {
-                status: StatusCode::GONE,
-                message: "This editor session belongs to a previous agent. Reopen Code.".to_owned(),
-            });
-        }
-        let status = microvm
-            .status
-            .as_ref()
-            .filter(|status| {
-                status.phase == MicroVMPhase::Ready
-                    && status.guest_ready
-                    && status.observed_generation >= microvm.metadata.generation.unwrap_or_default()
-            })
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let guest_ip = status
-            .pod_ip
-            .as_ref()
-            .ok_or_else(|| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let pod_uid = status
-            .pod_uid
-            .as_deref()
-            .filter(|uid| !uid.is_empty())
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        let slot = microvm
-            .spec
-            .slot
-            .as_ref()
-            .ok_or_else(|| GuestError::NotReady(agent_id.to_owned()))?;
-        if slot.pod_uid != pod_uid {
-            return Err(GuestError::NotReady(agent_id.to_owned()));
-        }
-        let claim = crate::slot::client::claim_for(&microvm)?;
-        let secret_name = crate::pod::bootstrap_secret_name(&slot.name);
+        let pool::GuestTarget {
+            claim,
+            pod_uid,
+            address,
+            slot_name,
+        } = target;
+        let secret_name = crate::pod::bootstrap_secret_name(&slot_name);
         let secrets: Api<Secret> = Api::namespaced(client, namespace);
         let secret = secrets.get(&secret_name).await?;
         let token_bytes = secret
@@ -252,17 +207,7 @@ impl GuestClient {
         let token = String::from_utf8(token_bytes.0.clone())
             .map_err(|_| GuestError::MissingToken(secret_name))?;
 
-        let ip: IpAddr = guest_ip
-            .parse()
-            .map_err(|_| GuestError::MissingGuestIp(agent_id.to_owned()))?;
-        let port = GUEST_API_PORT;
-        #[cfg(test)]
-        let port = match identity {
-            WorkloadIdentity::Fixture(port) => *port,
-            _ => port,
-        };
-        let address = SocketAddr::new(ip, port);
-        let tls = identity.guest_tls(identity.guest_id(namespace, pod_uid)?)?;
+        let tls = identity.guest_tls(identity.guest_id(namespace, &pod_uid)?)?;
         let channel = identity.guest_channel(address, tls.clone())?;
         let preview_tls = tls.map(|config| {
             let mut config = config.as_ref().clone();
@@ -299,7 +244,7 @@ impl GuestClient {
         let base_url = format!("{scheme}://{address}");
         let mut rpc = rpc::RpcClient::new(channel, &token)?;
         rpc.bind_claim(claim);
-        rpc.verify_identity(pod_uid).await?;
+        rpc.verify_identity(&pod_uid).await?;
         Ok(Self {
             base_url,
             token,
@@ -505,7 +450,7 @@ mod tests {
                 move |request: http::Request<kube::client::Body>| async move {
                     let value = if request.uri().path().ends_with("/microvms/agent-fixture") {
                         serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"agent-fixture","uid":"microvm-uid","generation":1},"spec":{
-                        "displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                        "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"44444444-4444-4444-8444-444444444444","displayName":"Guest fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
                         "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-10-01T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
                         "slot": {"name":"slot-fixture","podUid":"current-pod-uid","pvcName":"home-fixture","pvcUid":"home-uid","epoch":1}
                     },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":pod_uid}})
@@ -526,12 +471,12 @@ mod tests {
                     )
                 },
             );
-            let result = GuestClient::for_agent(
+            let result = GuestPool::new(
                 Client::new(service, "tengri"),
                 "tengri",
-                "agent-fixture",
-                &WorkloadIdentity::Fixture(fixture_port),
+                WorkloadIdentity::Fixture(fixture_port),
             )
+            .for_agent("agent-fixture", None)
             .await;
             assert_eq!(
                 result.is_ok(),
@@ -554,7 +499,7 @@ mod tests {
                 "stale session read a bootstrap secret"
             );
             let value = serde_json::json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"new-incarnation"},"spec":{
-                "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+                "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"44444444-4444-4444-8444-444444444444","displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
                 "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z"
             }});
             Ok::<_, std::io::Error>(
@@ -564,13 +509,12 @@ mod tests {
                     .unwrap(),
             )
         });
-        let result = GuestClient::for_agent_incarnation(
+        let result = GuestPool::new(
             Client::new(service, "tengri"),
             "tengri",
-            "editor-fixture",
-            Some("old-incarnation"),
-            &WorkloadIdentity::Fixture(8080),
+            WorkloadIdentity::Fixture(8080),
         )
+        .for_agent("editor-fixture", Some("old-incarnation"))
         .await;
         assert!(matches!(
             result,

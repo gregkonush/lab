@@ -26,7 +26,7 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
         requiredDuringSchedulingIgnoredDuringExecution: {
           nodeSelectorTerms: [
             {
-              matchExpressions: [{ key: 'kubernetes.io/arch', operator: 'In', values: ['amd64'] }],
+              matchExpressions: [{ key: 'network.proompteng.ai/100g', operator: 'In', values: ['true'] }],
             },
           ],
         },
@@ -78,6 +78,31 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(queries.bayn_replication.primary).toBe(true)
 })
 
+test('Bayn preserves three ledger identities across the two 100G hosts', () => {
+  const ledger = readManifest('argocd/applications/bayn/tigerbeetle-cluster.yaml')
+  expect(ledger.spec).toMatchObject({
+    clusterID: '122731676035874920802382025803517750735',
+    replicas: 3,
+    storage: { className: 'local-path', size: '100Gi' },
+    nodeSelector: { 'network.proompteng.ai/100g': 'true' },
+    pdb: { enabled: true, minAvailable: 2 },
+    deletionPolicy: 'Retain',
+    topologySpreadConstraints: [
+      {
+        maxSkew: 1,
+        minDomains: 2,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'DoNotSchedule',
+        nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: { 'app.kubernetes.io/instance': 'ledger' } },
+      },
+    ],
+  })
+  expect(ledger.spec.tolerations).toBeUndefined()
+  expect(ledger.spec.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution).toBeUndefined()
+  expect(ledger.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution).toHaveLength(1)
+})
+
 test('Bayn compares CNPG resources after admission defaulting', () => {
   const applicationSet = readManifest('argocd/applicationsets/product.yaml')
   const elements = applicationSet.spec.generators[0].matrix.generators[1].list.elements
@@ -102,10 +127,11 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   const kustomization = readManifest('argocd/applications/bayn/kustomization.yaml')
 
   expect(deployment.spec.replicas).toBe(2)
-  expect(deployment.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(deployment.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(deployment.spec.template.spec.topologySpreadConstraints).toEqual([
     {
       maxSkew: 1,
+      minDomains: 2,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
@@ -132,13 +158,15 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
       rollingUpdate: { maxSurge: 1, maxUnavailable: 0 },
     },
   })
-  expect(egressProxy.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(egressProxy.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(egressProxy.spec.template.spec.topologySpreadConstraints).toEqual([
     {
       maxSkew: 1,
+      minDomains: 2,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
+      matchLabelKeys: ['pod-template-hash'],
       labelSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-egress-proxy' } },
     },
   ])
@@ -154,10 +182,11 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
   })
 
   expect(controller.spec.replicas).toBe(2)
-  expect(controller.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(controller.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
   expect(controller.spec.template.spec.topologySpreadConstraints).toEqual([
     {
       maxSkew: 1,
+      minDomains: 2,
       topologyKey: 'kubernetes.io/hostname',
       whenUnsatisfiable: 'DoNotSchedule',
       nodeTaintsPolicy: 'Honor',
@@ -176,7 +205,7 @@ test('Bayn keeps the read plane and serialized execution service tolerant of one
     },
   })
   expect(kustomization.resources).toContain('execution-controller-pdb.yaml')
-  expect(activation.spec.template.spec.nodeSelector).toBeUndefined()
+  expect(activation.spec.template.spec.nodeSelector).toEqual({ 'network.proompteng.ai/100g': 'true' })
 })
 
 test('the CNPG platform installs the pinned Barman Cloud plugin', () => {

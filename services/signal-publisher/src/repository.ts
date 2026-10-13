@@ -104,10 +104,20 @@ const storage = <A>(message: string) =>
 
 export const insertBatchSize = 5_000
 
-export const partitionInsertRows = <A>(rows: readonly A[]): readonly (readonly A[])[] => {
+export const partitionInsertRows = <A extends { readonly session_date: string }>(
+  rows: readonly A[],
+): readonly (readonly A[])[] => {
+  const partitions = new Map<string, A[]>()
+  for (const row of rows) {
+    const year = row.session_date.slice(0, 4)
+    const partition = partitions.get(year)
+    if (partition === undefined) partitions.set(year, [row])
+    else partition.push(row)
+  }
   const batches: A[][] = []
-  for (let offset = 0; offset < rows.length; offset += insertBatchSize) {
-    batches.push(rows.slice(offset, offset + insertBatchSize))
+  for (const [, partition] of [...partitions].sort(([left], [right]) => left.localeCompare(right))) {
+    for (let offset = 0; offset < partition.length; offset += insertBatchSize)
+      batches.push(partition.slice(offset, offset + insertBatchSize))
   }
   return batches
 }
@@ -204,9 +214,9 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
         ),
       )
 
-    const insert = <A>(table: string, snapshotId: string, kind: string, values: readonly A[]) =>
+    const insert = <A>(table: string, snapshotId: string, kind: string, batches: readonly (readonly A[])[]) =>
       Effect.forEach(
-        partitionInsertRows(values),
+        batches,
         (batch, index) =>
           sql.insertQuery({ table, values: [...batch], format: 'JSONEachRow' }).pipe(
             sql.withQueryId(`signal-${kind}-${snapshotId.slice(-32)}-${index}`),
@@ -226,8 +236,10 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
       loadBars,
       loadSessions,
       loadManifests,
-      insertBars: (snapshotId, rows) => insert('signal.adjusted_daily_bars_v2', snapshotId, 'bars', rows),
-      insertSessions: (snapshotId, rows) => insert('signal.exchange_sessions_v1', snapshotId, 'sessions', rows),
-      insertManifest: (row) => insert('signal.snapshot_manifests_v2', row.snapshot_id, 'manifest', [row]),
+      insertBars: (snapshotId, rows) =>
+        insert('signal.adjusted_daily_bars_v2', snapshotId, 'bars', partitionInsertRows(rows)),
+      insertSessions: (snapshotId, rows) =>
+        insert('signal.exchange_sessions_v1', snapshotId, 'sessions', partitionInsertRows(rows)),
+      insertManifest: (row) => insert('signal.snapshot_manifests_v2', row.snapshot_id, 'manifest', [[row]]),
     }
   })

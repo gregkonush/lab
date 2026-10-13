@@ -1,5 +1,47 @@
 # Bayn GitOps rollout notes
 
+## Isolated Alpha-R1 research
+
+`research-worker.yaml` runs only `BaynResearchRun`, with one inference in flight and a separate two-connection
+PostgreSQL pool. It has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
+existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads. Research rolls
+out after execution activation and the public service, so its initial grants cannot delay their rollout.
+Recovery pauses only the research worker through GitOps; it does not change trading authority.
+
+The approved `bayn_research` CNPG-managed role uses `bayn-research-db` for its password and connection URI. It is
+neither a superuser nor a role/database creator and has a two-connection limit. After migration 0093 has created the
+tables, apply these approved grants through the existing database administration path:
+
+```sql
+GRANT CONNECT ON DATABASE bayn TO bayn_research;
+GRANT USAGE ON SCHEMA public TO bayn_research;
+GRANT SELECT, INSERT ON research_inference_runs, research_inference_receipts TO bayn_research;
+```
+
+Verify that it cannot UPDATE receipts, access trading tables, create schema objects or post expenses. Existing
+accounting workers own expense posting and verification. The worker fails closed until the tables and grants exist.
+The paired source-egress and database-ingress rules permit only the required PostgreSQL connection.
+
+Each run requires HMAC-SHA256 operator approval over its exact canonical identity, including source, study, context,
+attempt, deadline/token budget and cost basis. The operator CLI and worker receive the separate 32-byte random
+approval key from `bayn-research-authority`, key `run-approval-key`, as `BAYN_RESEARCH_APPROVAL_KEY`. Only the signed proof
+travels through Restate. Changed or unsigned runs are rejected before the durable inference step; a signed run can
+transmit once. Do not print credentials or put plaintext in source or process arguments.
+
+Worker metrics are exported to Mimir and native/Effect traces to Tempo. `bayn-research.rules` in the existing Mimir
+rule source covers missing telemetry, repeated failed attempts and incomplete expense coverage. Verify actual
+factor selection, cancellation, retained replay, expense recovery and matching Loki/Tempo/Mimir evidence against
+the deployed revision. Synthetic acceptance does not establish economic qualification or session latency.
+
+The model provisioner and Bayn worker each follow their existing Kargo Stage. Verify both promoted revisions and
+the model response's five serving-identity fields before the first signed acceptance run. An older model endpoint
+without the identity header is rejected; research cannot fall back to alias-only provenance. Updating the model
+provisioner restarts only the independent model endpoint and re-verifies the cached checkpoint.
+
+Original-session eligibility, preparation expenses and comparison requirements are described in the
+[research contract](../../../docs/bayn/alpha-r1-research-plan.md). Invalidated or unsealed captures cannot establish
+complete original coverage; do not manufacture descriptions or later outcomes to make old captures eligible.
+
 Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and
 exponent-looking commit prefixes as YAML strings, as Kubernetes requires for label values. The activation Job name,
 full source revision, immutable image digest and authored research lineage retain their existing contracts.
@@ -23,14 +65,13 @@ the reflected resources after this reconciliation; a Bound claim alone does not 
 applications to be Synced and the reflected Secret and ConfigMap data to match their sources without logging credentials.
 The Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the ConfigMap supplies `BUCKET_NAME`,
 `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_REGION`. Keep credential values in Secret references. No separate
-RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required for this path.
-The existing controller-scoped RGW egress permits TCP 8080, the target of service port 80.
+RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required to retain
+these resources.
 
-The execution worker receives the existing reflected owner keys through `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`
-and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`. Its bucket and region come from the reflected ConfigMap.
-The public status service and activation hook receive no research credential. This approved access change leaves
-`BAYN_RESEARCH_CAPTURE_SESSION` absent, so it starts no recorder, S3 client or capture writes. Before enabling a fixed
-session, verify the source/reflection match without printing keys and pass native integrity and representative capacity.
+The execution worker receives no research bucket credential and has no research-specific RGW egress rule.
+The in-process capture configuration and recorder are removed. The public status service and activation hook also
+receive no research credential. Longer-lived market-data archives must run outside trading through the separate
+[market-data archive boundary](../../../docs/bayn/market-data-archive.md).
 
 Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
 `bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
@@ -130,12 +171,12 @@ catch-up completed in 223 seconds on the slower worker. Freshness and entry chec
 content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
 progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
 
-Without a configured research capture, each worker starts its existing read-only Kafka projection when the endpoint
+Each worker starts its existing read-only Kafka projection when the endpoint
 starts. The trading driver, broker session, model client and capital activation remain lazy. The same server-scoped
 projection is reused by the first execution runtime and its replacements, without another consumer. Bootstrap remains
 asynchronous: an accepting TCP endpoint does not imply complete signal history, and existing snapshot checks still
-reject rebuilding, missing or late input. A configured capture retains its existing lazy recorder/consumer lifecycle;
-prewarm does not start SQL/S3 recording on standby replicas.
+reject rebuilding, missing or late input. Research does not claim storage, acquire clients, hash or copy records,
+or wait for persistence in this startup or consumption path.
 
 Prewarm moves the eventual per-replica consumption earlier. Both current replicas, and old/new replicas overlapping
 during rollout, can consume concurrently; it is not a claim of zero additional aggregate CPU or memory. Keep the
@@ -183,6 +224,28 @@ expires. Missing or invalid Job identity fails before invocation. A recreated Jo
 terminal failure after its dependency recovers. This identity does not deduplicate separate Job incarnations.
 The acceptance log records the attempt UID, `activationInvocationId`, source revision and receipt status before waiting.
 The verified log retains the completed successor proof after the successful hook is removed.
+
+## 100G host placement
+
+All Bayn components require `network.proompteng.ai/100g=true`, supplied by Omni on Turin and Altra. Ryzen is reserved
+for compute and local CI scratch. Status, the current execution revision, and egress each retain two replicas with
+`minDomains: 2` and strict hostname spreading, so each pair uses both eligible hosts. Retained execution revisions
+must finish draining through Restate; their replicas cannot satisfy the current revision's spread constraint.
+
+The two PostgreSQL instances require separate hostnames and use the pinned PostgreSQL 18.6 multi-architecture image.
+The architecture restriction is removed. Before migration, the existing Buzz cluster demonstrated streaming/quorum
+replication across Altra ARM64 and Turin/Ryzen AMD64 with the exact same image, control-file layout, glibc and ICU
+versions. Verify Bayn's actual synchronous replication and data/index behavior after its move. Preserve the existing
+PVCs, synchronous replica count and writer fences. Switch over to the healthy Turin instance before moving Ryzen's
+former primary to Altra through CNPG maintenance.
+
+TigerBeetle retains its cluster ID, three replica identities, three local PVCs and a minimum-two disruption budget.
+Its placement is two-plus-one across the 100G hosts. The target is replicas 0 and 1 on Turin and replica 2 on Altra.
+Losing the host with two replicas loses quorum. Moving replica 1 requires an offline, checksum-verified handoff of its
+existing ledger file before rebinding local storage; never let a replacement format an empty ledger. A reviewed
+placement commit alone does not complete that data handoff. Keep the two healthy peers available throughout it.
+Follow the [replica 1 local-volume handoff](../../../devices/galactic/scheduling/tigerbeetle-ledger1-handoff.md)
+for the offline copy, retained PV metadata replacement, and unchanged-PVC acceptance.
 
 The execution controller runs two ready replicas spread across Kubernetes hostnames. The topology constraint matches the
 operator-added `pod-template-hash`, so retained draining ReplicaSets cannot satisfy spreading for the current revision and
