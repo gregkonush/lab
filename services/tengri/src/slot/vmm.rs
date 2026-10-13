@@ -33,7 +33,7 @@ impl Vmm {
         }
     }
 
-    async fn start(config: &SlotConfig) -> anyhow::Result<Self> {
+    pub async fn spawn(config: &SlotConfig) -> anyhow::Result<Self> {
         #[cfg(test)]
         let started = Instant::now();
         let api_socket = config.directory.join("firecracker.sock");
@@ -97,26 +97,32 @@ impl Vmm {
                 Ok(())
             });
         }
+        let api = Client::builder()
+            .unix_socket(api_socket.as_path())
+            .no_proxy()
+            .timeout(Duration::from_secs(300))
+            .build()?;
         let child = command.spawn().context("launch Firecracker")?;
         #[cfg(test)]
         eprintln!(
             "real KVM VMM spawn: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let api = Client::builder()
-            .unix_socket(api_socket.as_path())
-            .no_proxy()
-            .timeout(Duration::from_secs(300))
-            .build()?;
         #[cfg(test)]
         eprintln!(
             "real KVM VMM API client: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let mut vm = Self { child, api };
+        Ok(Self { child, api })
+    }
+
+    async fn wait_api(&mut self, config: &SlotConfig) -> anyhow::Result<()> {
+        #[cfg(test)]
+        let started = Instant::now();
+        let api_socket = config.directory.join("firecracker.sock");
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            ensure!(vm.running()?, "Firecracker exited before opening its API");
+            ensure!(self.running()?, "Firecracker exited before opening its API");
             if fs::try_exists(&api_socket).await? {
                 break;
             }
@@ -131,11 +137,12 @@ impl Vmm {
             "real KVM VMM API open: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        Ok(vm)
+        Ok(())
     }
 
-    pub async fn boot(config: &SlotConfig) -> anyhow::Result<Self> {
-        let vm = Self::start(config).await?;
+    pub async fn boot(&mut self, config: &SlotConfig) -> anyhow::Result<()> {
+        self.wait_api(config).await?;
+        let vm = &*self;
         vm.request(
             Method::PUT,
             "/machine-config",
@@ -175,22 +182,22 @@ impl Vmm {
             json!({"action_type": "InstanceStart"}),
         )
         .await?;
-        Ok(vm)
+        Ok(())
     }
 
-    pub async fn load(config: &SlotConfig, directory: &Path) -> anyhow::Result<Self> {
+    pub async fn load(&mut self, config: &SlotConfig, directory: &Path) -> anyhow::Result<()> {
         ensure!(
             fs::metadata(directory.join("memory.bin")).await?.len()
                 == u64::from(config.memory_mib) << 20,
             "snapshot memory length does not match the guest"
         );
-        let vm = Self::start(config).await?;
-        vm.request(Method::PUT, "/snapshot/load", json!({
+        self.wait_api(config).await?;
+        self.request(Method::PUT, "/snapshot/load", json!({
             "snapshot_path": directory.join("state.bin"),
             "mem_backend": { "backend_type": "File", "backend_path": directory.join("memory.bin") },
             "resume_vm": false
         })).await?;
-        Ok(vm)
+        Ok(())
     }
 
     pub async fn resume(&self) -> anyhow::Result<()> {

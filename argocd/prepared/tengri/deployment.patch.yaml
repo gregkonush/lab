@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tengri
+  namespace: tengri
+spec:
+  template:
+    spec:
+      securityContext:
+        fsGroup: 65532
+      containers:
+        - name: tengri
+          envFrom: null
+          env:
+            - name: TENGRI_RUNTIME_SECRET_DIRECTORY
+              $patch: delete
+            - name: TENGRI_AUTHZ_ENDPOINT
+              $patch: delete
+            - name: TENGRI_AUTHZ_KEY_FILE
+              $patch: delete
+            - name: OFZ_GRPC_ENDPOINT
+              value: ofz-api.ofz.svc.cluster.local:9443
+            - name: TENGRI_INTERNAL_HMAC_KEY_FILE
+              value: /var/run/tengri/internal/TENGRI_INTERNAL_HMAC_SECRET
+            - name: TENGRI_DATABASE_DSN
+              value: host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_controller sslmode=require
+            - name: TENGRI_DATABASE_PASSWORD_FILE
+              value: /var/run/tengri/database/password
+            - name: TENGRI_DATABASE_CA_FILE
+              value: /var/run/tengri/database-ca/ca.crt
+          volumeMounts:
+            - name: runtime-secret
+              $patch: delete
+            - name: authz-secret
+              $patch: delete
+            - name: internal-request-key
+              mountPath: /var/run/tengri/internal
+              readOnly: true
+            - name: database
+              mountPath: /var/run/tengri/database
+              readOnly: true
+            - name: database-ca
+              mountPath: /var/run/tengri/database-ca
+              readOnly: true
+      volumes:
+        - name: runtime-secret
+          $patch: delete
+        - name: authz-secret
+          $patch: delete
+        - name: internal-request-key
+          secret:
+            secretName: tengri-internal-request-key
+            defaultMode: 0440
+        - name: database
+          secret:
+            secretName: tengri-controller-db
+            defaultMode: 0440
+        - name: database-ca
+          secret:
+            secretName: ofz-database-ca
+            defaultMode: 0440

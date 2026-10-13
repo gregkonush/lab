@@ -65,14 +65,13 @@ the reflected resources after this reconciliation; a Bound claim alone does not 
 applications to be Synced and the reflected Secret and ConfigMap data to match their sources without logging credentials.
 The Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; the ConfigMap supplies `BUCKET_NAME`,
 `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_REGION`. Keep credential values in Secret references. No separate
-RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required for this path.
-The existing controller-scoped RGW egress permits TCP 8080, the target of service port 80.
+RGW account, additional application user, IAM policy, policy allowlist change, or bootstrap Job is required to retain
+these resources.
 
-The execution worker receives the existing reflected owner keys through `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`
-and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`. Its bucket and region come from the reflected ConfigMap.
-The public status service and activation hook receive no research credential. This approved access change leaves
-`BAYN_RESEARCH_CAPTURE_SESSION` absent, so it starts no recorder, S3 client or capture writes. Before enabling a fixed
-session, verify the source/reflection match without printing keys and pass native integrity and representative capacity.
+The execution worker receives no research bucket credential and has no research-specific RGW egress rule.
+The in-process capture configuration and recorder are removed. The public status service and activation hook also
+receive no research credential. Longer-lived market-data archives must run outside trading through the separate
+[market-data archive boundary](../../../docs/bayn/market-data-archive.md).
 
 Bayn-specific acceptance does not run as a hook of the shared Rook application. The former
 `bayn-research-storage-bootstrap` Job, code-only ConfigMap generator, and obsolete scripts are absent from desired state.
@@ -172,12 +171,12 @@ catch-up completed in 223 seconds on the slower worker. Freshness and entry chec
 content hash, all three build-lineage bindings, the native activation hook, exact reconciliation, and natural controller
 progress. Retained-data diagnostics establish observation now; they do not establish historical live availability.
 
-Without a configured research capture, each worker starts its existing read-only Kafka projection when the endpoint
+Each worker starts its existing read-only Kafka projection when the endpoint
 starts. The trading driver, broker session, model client and capital activation remain lazy. The same server-scoped
 projection is reused by the first execution runtime and its replacements, without another consumer. Bootstrap remains
 asynchronous: an accepting TCP endpoint does not imply complete signal history, and existing snapshot checks still
-reject rebuilding, missing or late input. A configured capture retains its existing lazy recorder/consumer lifecycle;
-prewarm does not start SQL/S3 recording on standby replicas.
+reject rebuilding, missing or late input. Research does not claim storage, acquire clients, hash or copy records,
+or wait for persistence in this startup or consumption path.
 
 Prewarm moves the eventual per-replica consumption earlier. Both current replicas, and old/new replicas overlapping
 during rollout, can consume concurrently; it is not a claim of zero additional aggregate CPU or memory. Keep the

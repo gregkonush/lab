@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'packages/scripts/**'
+      - '.github/actions/affected-inputs/**'
+      - '.github/ci/**'
       - 'scripts/jangar/**'
       - 'argocd/root.yaml'
       - 'argocd/applications/argocd/**'
@@ -62,6 +64,8 @@ on:
   pull_request:
     paths:
       - 'packages/scripts/**'
+      - '.github/actions/affected-inputs/**'
+      - '.github/ci/**'
       - 'scripts/jangar/**'
       - '.github/workflows/pull-request.yml'
       - '.github/workflows/scripts-ci.yml'

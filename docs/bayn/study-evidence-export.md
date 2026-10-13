@@ -70,5 +70,6 @@ and [ridge](six-bar-ridge.md) requirements continue to govern their own inputs a
 Stored decision snapshots reproduce the observations Bayn retained. They do not recreate every original consumer
 arrival, missed poll, unobserved candidate window or alternative portfolio path. The receipt therefore always reports
 `sourceCoverage: RECORDED_OBSERVATIONS_ONLY`, `qualification: UNQUALIFIED` and `controllerCoverage: UNKNOWN`.
-Keep the separate [original capture](../../services/bayn/src/research-capture/README.md) requirements intact.
+The [market-data archive boundary](market-data-archive.md) preserves these coverage limits while removing
+the in-process recorder. An independent archive does not establish the trading worker's original arrival timeline.
 Neither this export nor a positive retrospective label grants trading or capital authority.

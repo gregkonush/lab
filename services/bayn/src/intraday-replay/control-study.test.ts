@@ -15,8 +15,6 @@ import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
 import { ControlExit, ControlPolicy } from './control-portfolio'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { ActiveResearchCapture } from '../research-capture/observer'
-import type { ResearchCaptureEvent, ResearchCaptureObserver } from '../research-capture/capture'
 import { residualShockDefinition } from './residual-shock'
 import { makeControlJevJournal } from './control-jev-journal'
 import { ControlInputCoverage, runControlPreflight } from './control-preflight'
@@ -45,7 +43,6 @@ const simulate = (
     managedLatencyMs?: number
     nativeEntry?: boolean
     entryAction?: string
-    capture?: ResearchCaptureObserver
     managedCleanupLatencyMs?: number
     residualShock?: boolean
     entrySize?: number
@@ -236,22 +233,17 @@ const simulate = (
         market,
         management: options.nativeEntry === true ? null : management,
         ...(options.nativeEntry === true && management !== null ? { entry: management } : {}),
-      }).pipe(
-        Effect.provideService(Clock.Clock, marketClock),
-        Effect.provideService(ActiveResearchCapture, options.capture),
-      )
+      }).pipe(Effect.provideService(Clock.Clock, marketClock))
       return { report, snapshots, observations }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
 test('native Jev entry uses measured commitment before execution and mechanical exits on its own portfolio', async () => {
-  const events: ResearchCaptureEvent[] = []
   const { report } = await simulate({
     nativeEntry: true,
     managedLatencyMs: 25,
     sessionDurationMs: 45 * 60_000,
     decisionLatencyMs: 9000,
-    capture: { record: (event) => events.push(event), invalidate: () => undefined },
   })
   expect(report.entryMode).toBe(ControlEntryMode.Jev)
   expect(report.managementMode).toBe(ControlManagementMode.Mechanical)
@@ -266,12 +258,6 @@ test('native Jev entry uses measured commitment before execution and mechanical 
   expect(committedAtMs).toBeGreaterThan(Date.parse(selected.observedAt))
   expect(committedAtMs - Date.parse(selected.observedAt)).toBeLessThan(9000)
   expect(report.orders[0]?.submittedAt).toBe(selected.nativeEntry.committedAt)
-  const ready = events.find((event) => event.kind === 'entry-readiness')
-  if (ready?.kind !== 'entry-readiness') throw new Error('Expected native readiness capture')
-  expect(ready.batchId).toBe(selected.nativeEntry.batchId)
-  expect(Date.parse(ready.inputAvailableAt)).toBeLessThanOrEqual(Date.parse(ready.deterministicSelectedAt))
-  expect(Date.parse(ready.deterministicSelectedAt)).toBeLessThan(Date.parse(ready.batchCompletedAt))
-  expect(Date.parse(ready.batchCompletedAt)).toBeLessThanOrEqual(committedAtMs)
   const accounting = report.simulatedOpportunityAccounting
   if (accounting === undefined) throw new Error('Expected schedule accounting')
   expect(accounting.scheduledPollCount).toBe(90)

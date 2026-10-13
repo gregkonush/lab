@@ -18,7 +18,7 @@ import {
   captureKafkaTransport,
   OriginalKafkaTransportSchema,
   restoreKafkaTransportTimestamp,
-} from '../../research-capture/capture'
+} from './transport-evidence'
 import { decodeRollingMarketFeature, featureBarContentHash } from '../features/contract'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
 import {
