@@ -498,6 +498,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   persists timers and retries, and resumes after worker replacement.
 - The execution worker runs one bounded `advanceExecutionOnce` pass per tick. Restate is not treated as broker
   exactly-once delivery; durable intents and deterministic IDs remain the external-side-effect boundary.
+- Execution inherits the native Restate attempt's trace across lazy acquisition and recovering Effect runtimes.
+  Controller scheduling, internal stages, PostgreSQL and broker spans can be inspected together in Tempo and joined
+  to structured logs. Propagation reads existing context without adding durable commands or I/O.
 - PostgreSQL is the authoritative cycle, grant, intent, mutation, reconciliation, and controller-status ledger.
 - Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
   rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
