@@ -74,5 +74,13 @@ unresolved and unfilled hypotheses alongside it and retains fill and quote hashe
 hypotheses into a portfolio P&L or drop unresolved labels to qualify a policy. Model and data costs are not allocated
 to the hypothetical returns. Quote-size units and market impact need independent calibration before capacity claims.
 
+Definition/report v2 also retain every validated native answer under `rows[].factors`, including action, regime,
+continuation, exhaustion and setup quality, for selected and unselected candidates. `factorOutcomes` groups fixed
+probability bins and native choice/score values by all observations, session date and symbol. Read candidate,
+resolved, unresolved, no-entry-fill and positive counts together with the conditional mean. Missing model answers
+have an explicit unavailable group. Bins are fixed in source; this report fits no threshold or trading policy.
+Validated answers remain available for factor research when another candidate failed or the batch expired.
+Their presence does not make that batch usable for entry selection; decision availability is reported separately.
+
 Use the screen to choose a development hypothesis for a complete lifecycle simulation. Freeze any final candidate
 and its portfolio controls before starting an untouched acceptance window.

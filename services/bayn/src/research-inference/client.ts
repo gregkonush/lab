@@ -11,10 +11,11 @@ import {
   researchServingIdentity,
   researchRequest,
   sealResearchReceipt,
+  maximumResearchStreamBytes,
   type ResearchRun,
 } from './contract'
 
-const maximumBytes = 262144
+const maximumRequestBytes = 262144
 const TokenCount = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
 const ChunkSchema = Schema.Struct({
   id: Schema.optionalKey(Schema.String),
@@ -47,6 +48,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
   let firstTokenAtMs: number | null = null
   let serverRequestId: string | null = null
   let usage: typeof ChunkSchema.Type.usage = null
+  let finalUsage = false
   const decoder = new TextDecoder('utf-8', { fatal: true })
   const consume = (frame: string, now: number) =>
     Result.gen(function* () {
@@ -76,14 +78,27 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         serverRequestId = chunk.id
       }
       if (chunk.usage !== undefined && chunk.usage !== null) {
-        if (usage !== null && usage !== undefined)
-          return yield* Result.fail(new ResearchError({ message: 'Research stream repeated usage' }))
+        if (finalUsage)
+          return yield* Result.fail(new ResearchError({ message: 'Research stream continued after final usage' }))
         if (chunk.usage.total_tokens !== chunk.usage.prompt_tokens + chunk.usage.completion_tokens)
           return yield* Result.fail(new ResearchError({ message: 'Research token usage does not add up' }))
         if (chunk.usage.completion_tokens > run.policy.max_tokens)
           return yield* Result.fail(
             new ResearchError({ message: 'Research completion exceeds its approved token budget' }),
           )
+        if (
+          usage !== null &&
+          usage !== undefined &&
+          (chunk.usage.prompt_tokens !== usage.prompt_tokens || chunk.usage.completion_tokens < usage.completion_tokens)
+        )
+          return yield* Result.fail(
+            new ResearchError({ message: 'Research cumulative token usage changed or decreased' }),
+          )
+        if (chunk.choices.length === 0) {
+          if (!finished)
+            return yield* Result.fail(new ResearchError({ message: 'Research final usage precedes generation finish' }))
+          finalUsage = true
+        }
         usage = chunk.usage
       }
       if (chunk.choices.length > 1)
@@ -108,8 +123,8 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
   const push = (bytes: Uint8Array, now: number) =>
     Result.gen(function* () {
       totalBytes += bytes.length
-      if (totalBytes > maximumBytes)
-        return yield* Result.fail(new ResearchError({ message: 'Research stream exceeds 256 KiB' }))
+      if (totalBytes > maximumResearchStreamBytes)
+        return yield* Result.fail(new ResearchError({ message: 'Research stream exceeds 2 MiB' }))
       received.push(new Uint8Array(bytes))
       pending += yield* Result.try({
         try: () => decoder.decode(bytes, { stream: true }),
@@ -146,6 +161,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         !finished ||
         !done ||
         !modelObserved ||
+        !finalUsage ||
         usage === null ||
         usage === undefined ||
         serverRequestId === null
@@ -182,7 +198,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
     const response = yield* Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
       const body = JSON.stringify(request)
-      if (Buffer.byteLength(body) > maximumBytes)
+      if (Buffer.byteLength(body) > maximumRequestBytes)
         return yield* new ResearchError({ message: 'Research request exceeds 256 KiB' })
       const incoming = yield* http.execute(
         HttpClientRequest.post(endpoint).pipe(

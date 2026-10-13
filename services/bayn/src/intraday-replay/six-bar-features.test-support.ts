@@ -12,7 +12,7 @@ import {
 } from '../market-data/streaming/historical'
 import { kafkaCaptureDisposition } from '../market-data/streaming/kafka'
 import { emptyStreamingProjection, incorporateSimulatedMarketRecord } from '../market-data/streaming/projection'
-import { captureKafkaTransport } from '../research-capture/capture'
+import { captureKafkaTransport } from '../market-data/streaming/transport-evidence'
 
 export const sixBarOpenMs = Date.parse('2026-09-04T13:30:00.000Z')
 export const sixBarEndMs = sixBarOpenMs + 360_000

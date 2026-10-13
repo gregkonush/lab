@@ -847,6 +847,78 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     )
   })
 
+  test('uses bounded account-time reads for reconciliation and every broker event kind', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Copy the migrated table/index definitions without the unrelated typed-payload triggers.
+            yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING INDEXES) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE reconciliations (LIKE public.reconciliations INCLUDING INDEXES) ON COMMIT DROP`
+            yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          )
+          SELECT lpad(to_hex(sequence), 64, '0'), 'bayn.paper-broker-event.v1', repeat('a', 64),
+            'ORDER', 'ALPACA', CASE WHEN sequence % 2 = 0 THEN 'account' ELSE 'other' END,
+            sequence::text, sequence, '2026-09-08T17:00:00Z'::timestamptz,
+            '2026-09-08T17:00:00Z'::timestamptz + sequence * interval '1 millisecond'
+          FROM generate_series(1, 20000) AS sequence
+        `
+            yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          )
+          SELECT lpad(to_hex(sequence), 64, '0'), 'bayn.paper-reconciliation.v1',
+            CASE WHEN sequence % 2 = 0 THEN 'account' ELSE 'other' END,
+            repeat('a', 64), repeat('a', 64), repeat('b', 64), 'EXACT', '[]'::jsonb,
+            '2026-09-08T17:00:00Z'::timestamptz + sequence * interval '1 millisecond'
+          FROM generate_series(1, 20000) AS sequence
+        `
+            yield* sql`ANALYZE broker_events`
+            yield* sql`ANALYZE reconciliations`
+
+            const cutoff = '2026-09-08T17:00:19.999Z'
+            const decodeInstants = Schema.decodeUnknownEffect(
+              Schema.Tuple([Schema.Struct({ observed_at: Schema.String })]),
+            )
+            const broker = yield* sql`
+          SELECT to_char(max(observed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
+          FROM broker_events WHERE account_id = 'account' AND observed_at <= ${cutoff}::timestamptz
+        `.pipe(Effect.flatMap(decodeInstants))
+            const reconciliation = yield* sql`
+          SELECT to_char(reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
+          FROM reconciliations
+          WHERE account_id = 'account' AND reconciled_at <= ${cutoff}::timestamptz
+          ORDER BY reconciled_at DESC LIMIT 1
+        `.pipe(Effect.flatMap(decodeInstants))
+            expect(broker).toEqual([{ observed_at: '2026-09-08T17:00:19.998Z' }])
+            expect(reconciliation).toEqual(broker)
+
+            const brokerPlan = yield* sql`
+          EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+          SELECT max(observed_at) FROM broker_events
+          WHERE account_id = 'account' AND observed_at <= ${cutoff}::timestamptz
+        `
+            const reconciliationPlan = yield* sql`
+          EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+          SELECT reconciled_at FROM reconciliations
+          WHERE account_id = 'account' AND reconciled_at <= ${cutoff}::timestamptz
+          ORDER BY reconciled_at DESC LIMIT 1
+        `
+            for (const plan of [brokerPlan, reconciliationPlan]) {
+              expect(JSON.stringify(plan)).not.toContain('Seq Scan')
+              expect(JSON.stringify(plan)).toContain('Index Only Scan')
+            }
+          }),
+        )
+      }),
+    )
+  }, 30_000)
+
   test('bounds terminal recovery reads over a large history without admitting stale or incomplete evidence', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {

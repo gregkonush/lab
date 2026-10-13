@@ -94,7 +94,13 @@ Once recovery and backfill finish, restore the Git-owned profile through reviewe
 The direct rollback below requires explicit authorization for this runtime change or an authorized emergency procedure:
 
 ```bash
-kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile custom
+kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_client_ops
+for service in client background_recovery background_best_effort; do
+  for setting in res wgt lim; do
+    kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- \
+      ceph config rm osd "osd_mclock_scheduler_${service}_${setting}"
+  done
+done
 kubectl --context galactic-lan -n rook-ceph exec deploy/rook-ceph-tools -- ceph config get osd osd_mclock_profile
 ```
 
@@ -120,8 +126,7 @@ print(json.dumps({"osd": sys.argv[1], **{key: config[key] for key in keys}}, ind
 done
 ```
 
-Require `custom` and compare all nine values with the merged
-[Rook values](../../../argocd/applications/rook-ceph/cluster-values.yaml).
-After every OSD uses `custom`, check the monitor store for missing scheduler keys and follow the owning procedure
-for any mismatch. Confirm all effective values again after the last OSD restart before accepting restoration.
+Require `high_client_ops` and compare all nine effective values with Ceph Tentacle's built-in profile in the
+[owning procedure](../../../docs/runbooks/rook-ceph-on-talos.md#scrub-catch-up-posture). The monitor store must not retain
+custom scheduler overrides. Confirm all effective values after the last OSD restart before accepting restoration.
 Record residual scrub or slow-operation warnings separately. Do not purge or recreate OSDs to clear them.

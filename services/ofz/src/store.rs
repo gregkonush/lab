@@ -86,7 +86,7 @@ impl Database {
             config.clone(),
             tls.clone(),
             ManagerConfig {
-                recycling_method: RecyclingMethod::Verified,
+                recycling_method: RecyclingMethod::Fast,
             },
         );
         let pool = Pool::builder(manager)
@@ -314,8 +314,7 @@ pub struct State {
     pub archive_healthy: bool,
 }
 
-pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status> {
-    let row = client.query_one(r#"
+pub(crate) const STATE_QUERY: &str = r#"
         SELECT p.version,p.recovery_generation,p.fenced,ofz.now_ms(),
             a.acknowledged_at_ms BETWEEN ofz.now_ms()-60000 AND ofz.now_ms()
             AND NOT EXISTS (
@@ -326,7 +325,13 @@ pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status>
                 )
             )
         FROM ofz.platform_state p CROSS JOIN ofz.archive_state a
-    "#, &[]).await.map_err(sql_error)?;
+    "#;
+
+pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status> {
+    let row = client
+        .query_one(STATE_QUERY, &[])
+        .await
+        .map_err(sql_error)?;
     Ok(State {
         version: row.get::<_, i64>(0) as u64,
         recovery_generation: row.get::<_, i64>(1) as u64,

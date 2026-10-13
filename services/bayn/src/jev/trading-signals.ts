@@ -168,7 +168,11 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, pro
       )
         signals.push({ symbol, excessReturn })
     }
-    return signals
+    return signals.sort((a, b) => {
+      const difference =
+        a.excessReturn.numerator * b.excessReturn.denominator - b.excessReturn.numerator * a.excessReturn.denominator
+      return difference === 0n ? a.symbol.localeCompare(b.symbol) : difference > 0n ? -1 : 1
+    })
   })
 
 export const jevTradingQuestions = {

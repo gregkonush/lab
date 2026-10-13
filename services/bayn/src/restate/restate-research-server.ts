@@ -48,8 +48,9 @@ export const researchServerProgram = Effect.gen(function* () {
   if (embeddedBuildMetadata !== undefined && embeddedBuildMetadata.sourceRevision !== config.sourceRevision)
     return yield* new ResearchError({ message: 'Research server source revision differs from its immutable image' })
   const identityKeys = yield* Effect.fromResult(decodeRestateRequestIdentityKeys(config.identityKeys))
+  const telemetryConfig = yield* telemetryRuntimeConfig('bayn-research')
   const telemetry = yield* acquireRestateTelemetry({
-    ...(yield* telemetryRuntimeConfig('bayn-research')),
+    ...telemetryConfig,
     serviceVersion: config.sourceRevision,
   })
   const servingPolicyHash = yield* Effect.fromResult(hashResearch(config.policy))
@@ -120,7 +121,13 @@ export const researchServerProgram = Effect.gen(function* () {
       Layer.mergeAll(
         OtlpMetrics.layer({
           url: 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
-          resource: { serviceName: 'bayn-research', serviceVersion: config.sourceRevision },
+          resource: {
+            serviceName: 'bayn-research',
+            serviceVersion: config.sourceRevision,
+            ...(telemetryConfig.instanceId === undefined
+              ? {}
+              : { attributes: { 'service.instance.id': telemetryConfig.instanceId } }),
+          },
           exportInterval: '30 seconds',
           shutdownTimeout: '3 seconds',
         }).pipe(Layer.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, OtlpSerialization.layerProtobuf))),
