@@ -1,3 +1,4 @@
+import completionEvidenceIndexes from '../../migrations/0095_completion_evidence_indexes'
 import brokerObservationCaptures from '../../migrations/0094_broker_observation_captures'
 import researchInference from '../../migrations/0093_research_inference'
 import expiredZeroExecutionRearm from '../../migrations/0092_expired_zero_execution_rearm'
@@ -96,6 +97,7 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '95_completion_evidence_indexes': completionEvidenceIndexes,
   '94_broker_observation_captures': brokerObservationCaptures,
   '93_research_inference': researchInference,
   '92_expired_zero_execution_rearm': expiredZeroExecutionRearm,
