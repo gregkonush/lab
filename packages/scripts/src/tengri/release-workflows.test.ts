@@ -146,9 +146,13 @@ describe('Tengri image workflow', () => {
           resolve(fixture, 'docker'),
           `#!/bin/sh
 if [ "$1" = run ]; then
+  consume_stdin=false
+  input_destination=/dev/null
   for argument do
-    if [ "$argument" = /artifacts/resolv.conf ]; then /bin/cat > "$GUEST_DNS"; fi
+    if [ "$argument" = -i ]; then consume_stdin=true; fi
+    if [ "$argument" = /artifacts/resolv.conf ]; then input_destination="$GUEST_DNS"; fi
   done
+  if [ "$consume_stdin" = true ]; then /bin/cat > "$input_destination"; fi
 fi
 if [ "$1" = cp ]; then
   case "$2" in *:/work/result.json)
