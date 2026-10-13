@@ -203,3 +203,38 @@ PostgreSQL/SpiceDB runtime tests, Rust/Go file-Codex-terminal interoperability a
 native Linux/ARM64 guest suite. The Linux runtime-binding test also passed by exact selection. This includes the
 newly merged shared HTTP/2 fixture with its required runtime epoch. Native KVM, signed guest actions, bounded observers,
 independent execution fencing and deployed acceptance remain separate requirements.
+
+The API image factory merged in #14985 at `844d149ff29dc884290e19241645926d8cee3bda`. Its successful main run
+`38397202365` published both architectures and the immutable alias
+`kargo-sha-844d149ff29dc884290e19241645926d8cee3bda-run-38397202365`. Registry readback matches the release receipt:
+`registry.ide-newton.ts.net/lab/ofz@sha256:05cd35b48a1ce68085705167fe91a495d4c5635cddf1bd947412066b16e0e71a`.
+API activation still needs the reviewed credentials, initialization, independent archive and delivery enrollment.
+Runtime epoch #14911 then merged through GitHub's native asynchronous stack API at
+`fe2acf427ab4ec53733a4960fc9af1d5f67e8727`, with its applicable checks green and no actionable open findings.
+
+The next signed guest layer binds actor, full claim, leader fence, recovery generation, action, exact target and payload,
+scope, deadline and nonce. Controllers retain the Ed25519 seed; supervisors and guests receive the public bundle.
+Supervisors consume proof nonces in shared SQL before forwarding. Rust/Go wire interoperability, native Linux guest
+race tests and vet, 141 runtime tests, three CRD tests and eleven authorization contract tests pass. The final native
+Linux/ARM64 release build also passes 142 runtime tests, three CRD tests and eleven contracts. All 25 real shared
+SQL tests pass, including one-use proofs across supervisors. The real control fixture passes 50 commands and 132 receipts;
+587 policy assertions, 22 inventory regressions, four prepared HA renders with 15 rejected regressions, and all 332 BFF
+unit tests and TypeScript pass. The Chromium/Keycloak/SPIFFE/SQL fixture passes 60 assertions, including both serving
+Ofz loss and Keycloak loss during a passkey challenge. Identities in this isolated fixture remain synthetic.
+
+Browser qualification reproduced a fresh signed creation rejected by the independent replay database's future bound.
+A deterministic 500 ms clock-lead regression failed before the fix. The SQL guard now allows at most one second of
+lead, reads its clock after acquiring the replay lock, and retains the exact signed expiry. The authenticator still
+rejects deadlines outside five seconds, including the new 5.5-second signed regression; expired and replayed requests
+remain rejected. The fixed browser and shared-state suites pass without relaxing their product or recovery deadlines.
+
+Two isolated NUC memory-advice probes completed functional guest checks across three sleep/resume cycles. Random-read
+advice reduced first-resume reads from 347 MB to 27 MB in the sampled baseline comparison. Resetting normal readahead
+before full capture avoids the first probe's small-read penalty. The second probe still fails latency qualification:
+creation is 1.66 seconds and the slowest resume is 1.24 seconds. The release candidate records the change as
+`1.16.1+tengri-async-io.3`; its two upstream memory-dump tests pass. Both native release performance gates remain required.
+The new SQL checksum also passes synchronous physical promotion: unchanged clients recover in 2.84 seconds, the
+original five-second nonce stays consumed, and all 18 Ofz control-table hashes match. The final native Linux check
+initially hit the local Docker disk limit; removing only this task's compiler image and its identified cache record
+freed 2.15 GB, and the cache-only recheck passes.
+Bounded observers, independent execution fencing, brokers, independent recovery and the deployed cutover remain open.
