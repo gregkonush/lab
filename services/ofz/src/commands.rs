@@ -304,7 +304,7 @@ pub(crate) async fn prepare(
             return Err(Status::permission_denied("policy caller denied"));
         }
         decision::human(context)?;
-        let (allowed, _, _, _) = decision::evaluate(
+        let (allowed, _, _, _, _) = decision::evaluate(
             database,
             native,
             peer,

@@ -29,6 +29,7 @@ use tokio::{
 
 use super::{
     Claim, GUEST_API_PORT, SlotState,
+    admission::GuestAdmission,
     runner::{self, CommandRequest, SlotStatus},
     vmm::connect_vsock,
 };
@@ -50,6 +51,7 @@ struct Supervisor {
     leadership: watch::Sender<Option<crate::control::Fence>>,
     fencing_failed: Arc<AtomicBool>,
     runner_socket: PathBuf,
+    admission: GuestAdmission,
 }
 
 struct GuestConnection {
@@ -205,6 +207,15 @@ pub async fn run() -> anyhow::Result<()> {
     let database = Arc::new(crate::control::Database::from_environment("tengri_supervisor").await?);
     database.verify_schema().await?;
     let readiness_database = database.clone();
+    let admission = GuestAdmission::new(
+        tengri::guest_authorization::GuestVerifier::from_file(&PathBuf::from(env::var(
+            "TENGRI_GUEST_VERIFICATION_KEY_FILE",
+        )?))?,
+        pod_uid,
+        tengri::guest_authorization::recovery_generation_from_file(&PathBuf::from(env::var(
+            "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
+        )?))?,
+    )?;
     let health = Router::new()
         .route(
             "/metrics",
@@ -232,7 +243,7 @@ pub async fn run() -> anyhow::Result<()> {
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
-        result = serve(listener, tls, database) => result,
+        result = serve(listener, tls, database, admission) => result,
         result = health_task => { result??; anyhow::bail!("supervisor health listener stopped") },
     }
 }
@@ -263,6 +274,7 @@ pub(super) async fn serve(
     listener: TcpListener,
     tls: Arc<rustls::ServerConfig>,
     database: Arc<crate::control::Database>,
+    admission: GuestAdmission,
 ) -> anyhow::Result<()> {
     let (state, _) = watch::channel(SlotState::Preparing);
     let supervisor = Supervisor {
@@ -274,6 +286,7 @@ pub(super) async fn serve(
         leadership: watch::channel(None).0,
         fencing_failed: Arc::new(AtomicBool::new(false)),
         runner_socket: runner::sockets_directory().join("control.sock"),
+        admission,
     };
     let router = Router::new()
         .route("/slot/status", get(status))
@@ -541,6 +554,28 @@ async fn forward(
         ));
     }
     supervisor.state.send_replace(status.state);
+    let (opening, forwarded) = supervisor.admission.opening(request).await.map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            "invalid signed guest RPC opening".into(),
+        )
+    })?;
+    supervisor
+        .admission
+        .consume(&opening, &claim, leadership, &supervisor.database)
+        .await
+        .map_err(|error| {
+            let status = match error.code() {
+                tonic::Code::PermissionDenied | tonic::Code::Unauthenticated => {
+                    StatusCode::FORBIDDEN
+                }
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            (status, "signed guest RPC admission unavailable".into())
+        })?;
+    supervisor.require_leadership(Some(leadership)).await?;
+    request = forwarded;
+    drop(opening);
     #[cfg(test)]
     eprintln!(
         "real KVM proxy status: {:.2} ms cumulative",
@@ -557,10 +592,7 @@ async fn forward(
     parts.authority = Some(axum::http::uri::Authority::from_static("nanoagent"));
     *request.uri_mut() =
         axum::http::Uri::from_parts(parts).map_err(|error| lifecycle_error(error.into()))?;
-    let grpc = request
-        .headers()
-        .get("content-type")
-        .is_some_and(|v| v.as_bytes().starts_with(b"application/grpc"));
+    let grpc = tengri::guest_authorization::rpc_action(request.uri().path()).is_some();
     if grpc {
         let mut sender = supervisor
             .grpc_sender(&claim, &socket, leadership)
@@ -737,7 +769,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
-            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+            runtime_epoch: "22222222-2222-4222-8222-222222222222".into(),
         };
         let (state, _) = watch::channel(SlotState::Awake {
             claim: claim.clone(),
@@ -757,6 +789,7 @@ mod tests {
             leadership: watch::channel(Some(leadership)).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         for _ in 0..4 {
             let mut sender = supervisor
@@ -867,6 +900,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(true)),
             runner_socket: PathBuf::from("/not-contacted"),
+            admission: GuestAdmission::fixture(),
         };
         assert!(matches!(
             supervisor.require_leadership(None).await,
@@ -981,6 +1015,7 @@ mod tests {
                 leadership: watch::channel(Some(fence)).0,
                 fencing_failed: Arc::new(AtomicBool::new(false)),
                 runner_socket: socket,
+                admission: GuestAdmission::fixture(),
             };
             let request = match action {
                 "restore" => CommandRequest::Restore {
@@ -1118,6 +1153,7 @@ mod tests {
             leadership: watch::channel(Some(fence)).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: socket,
+            admission: GuestAdmission::fixture(),
         };
         let transition = tokio::spawn({
             let supervisor = supervisor.clone();
@@ -1212,6 +1248,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         let response = forward(State(supervisor), request);
         futures::pin_mut!(response);
@@ -1239,6 +1276,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         for claim in [
             Claim {
@@ -1283,6 +1321,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         for wrong in [
             Claim {

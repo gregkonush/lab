@@ -347,7 +347,7 @@ pub async fn evaluate(
     peer: &str,
     evaluation: Evaluation<'_>,
     allow_fenced_revoke: bool,
-) -> Result<(bool, String, u64, State), Status> {
+) -> Result<(bool, String, u64, State, Option<ObservationScope>), Status> {
     let Evaluation {
         context,
         action,
@@ -382,6 +382,7 @@ pub async fn evaluate(
                 | Action::WorkspaceTransfer
         );
     let mut grant_workspace = None;
+    let mut effective_scope = None;
     let mut checks = match actor.identity.as_ref() {
         Some(Identity::HumanId(_)) => {
             if !matches!(peer, BFF_ID | CONTROLLER_ID) {
@@ -419,6 +420,7 @@ pub async fn evaluate(
                 return Err(Status::permission_denied("access denied"));
             }
             valid_until = valid_until.min(grant.expires_at_ms);
+            effective_scope = Some(grant.scope.clone());
             grant_checks(&grant, action)?
         }
         Some(Identity::WorkloadId(id))
@@ -495,7 +497,7 @@ pub async fn evaluate(
     {
         return Err(Status::deadline_exceeded("authorization decision expired"));
     }
-    Ok((allowed, revision, valid_until, after))
+    Ok((allowed, revision, valid_until, after, effective_scope))
 }
 
 pub async fn check(
@@ -527,7 +529,7 @@ pub async fn check(
         false,
     )
     .await;
-    let (allowed, revision, valid_until, state) = match result {
+    let (allowed, revision, valid_until, state, effective_scope) = match result {
         Ok(result) => result,
         Err(mut error) => {
             if request.stream_receipt_id.is_empty()
@@ -600,6 +602,7 @@ pub async fn check(
         audit_receipt_id,
         valid_until_unix_ms: valid_until,
         recovery_generation: state.recovery_generation,
+        effective_scope: if allowed { effective_scope } else { None },
     })
 }
 

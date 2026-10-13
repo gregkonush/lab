@@ -19,6 +19,8 @@ service AuthorizationService {
   rpc GetPolicyState(GetPolicyStateRequest) returns (GetPolicyStateResponse);
   // Exact controller identity only. Denied runtime state remains visible so it can be fenced.
   rpc GetWorkspaceState(GetWorkspaceStateRequest) returns (GetWorkspaceStateResponse);
+  // Exact controller identity only. This never grants general guest control.
+  rpc AuthorizeGuestMaintenance(AuthorizeGuestMaintenanceRequest) returns (AuthorizeGuestMaintenanceResponse);
   // Exact controller identity only, with the initiating human session checked by Ofz.
   rpc GetWorkspaceReservation(GetWorkspaceReservationRequest) returns (GetWorkspaceReservationResponse);
 }
@@ -127,6 +129,24 @@ message CheckResponse {
   string audit_receipt_id = 3;
   uint64 valid_until_unix_ms = 4;
   uint64 recovery_generation = 5;
+  ObservationScope effective_scope = 6;
+}
+
+enum GuestMaintenancePurpose {
+  GUEST_MAINTENANCE_PURPOSE_UNSPECIFIED = 0;
+  GUEST_MAINTENANCE_PURPOSE_PROBE = 1;
+  GUEST_MAINTENANCE_PURPOSE_TERMINAL_CLEANUP = 2;
+}
+
+message AuthorizeGuestMaintenanceRequest {
+  RequestContext context = 1;
+  string workspace_uid = 2;
+  GuestMaintenancePurpose purpose = 3;
+  string terminal_id = 4;
+}
+
+message AuthorizeGuestMaintenanceResponse {
+  CheckResponse decision = 1;
 }
 
 // Permission-only preflight before resolving external command subjects. The result

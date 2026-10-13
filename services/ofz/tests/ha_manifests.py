@@ -143,6 +143,23 @@ def validate(targets):
             else "tengri-bff-db",
             "/var/run/tengri/database-ca": "ofz-database-ca",
         }
+        if target == "tengri":
+            expected["/var/run/tengri/guest-signing"] = "tengri-guest-signing"
+            require(
+                env.get("TENGRI_GUEST_SIGNING_KEY_FILE")
+                == "/var/run/tengri/guest-signing/key"
+                and env.get("TENGRI_GUEST_RECOVERY_GENERATION_FILE")
+                == "/var/run/tengri/guest-signing/recovery-generation",
+                "tengri: signed guest requests require the private key and recovery generation",
+            )
+        else:
+            require(
+                not any(
+                    volume.get("secret", {}).get("secretName") == "tengri-guest-signing"
+                    for volume in volumes.values()
+                ),
+                "proompteng: guest signing key belongs only to controllers",
+            )
         for path, secret in expected.items():
             mount = mounts.get(path, {})
             require(
@@ -292,6 +309,14 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: container(data, "tengri", "Deployment", "tengri")["env"].append(
+            {"name": "TENGRI_GUEST_SIGNING_KEY_FILE", "value": "/tmp/wrong-key"}
+        ),
+        lambda data: resource(data, "proompteng", "Deployment", "proompteng")["spec"][
+            "template"
+        ]["spec"]["volumes"].append(
+            {"name": "guest-signing", "secret": {"secretName": "tengri-guest-signing"}}
+        ),
         lambda data: resource(data, "ofz", "SpiceDBCluster", "ofz")["spec"][
             "config"
         ].update(dispatchCacheEnabled="true"),
