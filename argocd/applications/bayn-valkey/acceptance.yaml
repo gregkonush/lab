@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-valkey-acceptance-v1
+  name: bayn-valkey-acceptance-v2
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
