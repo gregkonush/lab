@@ -174,6 +174,341 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_terminal_controller_signs_exact_suboperations() {
+        use crate::{
+            activity::ActivityTracker,
+            auth::{Authenticator, Principal, signed_fixture_request},
+            authz::WorkspaceAuthorization,
+            control::Database,
+            gateway::PreviewOrigin,
+            grpc::{
+                ControlPlane, ControlPlaneConfig,
+                proto::{
+                    IssueTerminalTicketRequest, TerminateTerminalRequest,
+                    micro_vm_control_plane_server::MicroVmControlPlane,
+                },
+            },
+            ofz::{self, proto::Action},
+            tickets::TicketScope,
+        };
+        use prost::Message;
+        use std::sync::atomic::AtomicU8;
+        use tengri::guest_authorization::{
+            CONTEXT_HEADER, GuestAction, GuestProof, GuestSigner, GuestVerifier, SIGNATURE_HEADER,
+            body_sha256,
+        };
+
+        fn verify<T: Message>(
+            request: &tonic::Request<T>,
+            verifier: &GuestVerifier,
+            action: GuestAction,
+            method: &str,
+            target: &str,
+        ) {
+            let proof = GuestProof {
+                context: request
+                    .metadata()
+                    .get(CONTEXT_HEADER)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .into(),
+                signature: request
+                    .metadata()
+                    .get(SIGNATURE_HEADER)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .into(),
+            };
+            let context = verifier.verify(&proof, ofz::now_ms().unwrap()).unwrap();
+            assert_eq!(context.action, action);
+            assert_eq!(context.method, method);
+            assert_eq!(context.target, target);
+            assert_eq!(
+                context.body_sha256,
+                body_sha256(&request.get_ref().encode_to_vec())
+            );
+        }
+
+        let database = Arc::new(
+            Database::from_environment("tengri_controller")
+                .await
+                .unwrap(),
+        );
+        database.verify_schema().await.unwrap();
+        let signer = GuestSigner::from_seed(&std::array::from_fn::<_, 32, _>(|i| i as u8)).unwrap();
+        let verifier = GuestVerifier::from_bytes(signer.public_key()).unwrap();
+        let terminate_verifier = verifier.clone();
+        let codex_verifier = verifier.clone();
+        let directory_verifier = verifier.clone();
+        let write_verifier = verifier.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let lists = calls.clone();
+        let terminations = calls.clone();
+        let server = TestServer::start(TestService {
+            get_info: Some(Arc::new(|_| {
+                Ok(proto::GuestInfo {
+                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                })
+            })),
+            list_terminals: Some(Arc::new(move |request| {
+                verify(
+                    &request,
+                    &verifier,
+                    GuestAction::TerminalObserve,
+                    "/proompteng.runtime.guest.v1.NanoagentService/ListTerminals",
+                    "",
+                );
+                lists.fetch_add(1, Ordering::SeqCst);
+                Ok(proto::TerminalList {
+                    sessions: vec![proto::TerminalSession {
+                        id: "terminal-current".into(),
+                        ..Default::default()
+                    }],
+                })
+            })),
+            terminate_terminal: Some(Arc::new(move |request| {
+                verify(
+                    &request,
+                    &terminate_verifier,
+                    GuestAction::TerminalControl,
+                    "/proompteng.runtime.guest.v1.NanoagentService/TerminateTerminal",
+                    "terminal-current",
+                );
+                assert_eq!(request.get_ref().id, "terminal-current");
+                terminations.fetch_add(1, Ordering::SeqCst);
+                Ok(proto::Empty {})
+            })),
+            codex_call: Some(Arc::new(move |request| {
+                verify(
+                    &request,
+                    &codex_verifier,
+                    GuestAction::CodexControl,
+                    "/proompteng.runtime.guest.v1.NanoagentService/CodexCall",
+                    "",
+                );
+                assert_eq!(request.get_ref().method, "thread/resume");
+                Ok(proto::CodexResult {
+                    result_json: b"{}".to_vec(),
+                    event_sequence: 1,
+                })
+            })),
+            create_directory: Some(Arc::new(move |request| {
+                verify(
+                    &request,
+                    &directory_verifier,
+                    GuestAction::FilesWrite,
+                    "/proompteng.runtime.guest.v1.NanoagentService/CreateDirectory",
+                    "/workspace/.tengri-attachments",
+                );
+                Ok(proto::FileEntry {
+                    path: request.get_ref().path.clone(),
+                    directory: true,
+                    ..Default::default()
+                })
+            })),
+            write_file: Some(Arc::new(move |request| {
+                verify(
+                    &request,
+                    &write_verifier,
+                    GuestAction::FilesWrite,
+                    "/proompteng.runtime.guest.v1.NanoagentService/WriteFile",
+                    &request.get_ref().path,
+                );
+                assert!(
+                    request
+                        .get_ref()
+                        .path
+                        .starts_with("/workspace/.tengri-attachments/")
+                );
+                assert_eq!(request.get_ref().expected_revision, "missing");
+                Ok(proto::FileWriteResult {
+                    path: request.get_ref().path.clone(),
+                    size: request.get_ref().content.len() as i64,
+                    revision: super::super::revision_for_content(&request.get_ref().content),
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let agent = agent();
+        let response_agent = agent.clone();
+        let service = tower::service_fn(move |request: http::Request<KubeBody>| {
+            let body = if request.uri().path().contains("/secrets/") {
+                json!({"apiVersion":"v1","kind":"Secret","immutable":true,
+                    "data":{"token":"Zml4dHVyZS10b2tlbg=="}})
+            } else {
+                serde_json::to_value(&response_agent).unwrap()
+            };
+            async move {
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(body.to_string().into_bytes()))
+                        .unwrap(),
+                )
+            }
+        });
+        let client = Client::new(service, "tengri");
+        let mode = Arc::new(AtomicU8::new(0));
+        let authorization = WorkspaceAuthorization::ControlledFixture(mode.clone());
+        let codex_pool = GuestPool::new(
+            client.clone(),
+            "tengri",
+            WorkloadIdentity::Fixture(
+                server
+                    .guest
+                    .base_url()
+                    .strip_prefix("http://")
+                    .unwrap()
+                    .parse::<SocketAddr>()
+                    .unwrap()
+                    .port(),
+            ),
+        );
+        let codex_authority =
+            super::super::authorization::GuestAuthority::fixture_with_authorization(
+                authorization.clone(),
+            );
+        let control = ControlPlane::new(
+            client.clone(),
+            ControlPlaneConfig {
+                identity: WorkloadIdentity::Fixture(
+                    server
+                        .guest
+                        .base_url()
+                        .strip_prefix("http://")
+                        .unwrap()
+                        .parse::<SocketAddr>()
+                        .unwrap()
+                        .port(),
+                ),
+                authorization: authorization.clone(),
+                guest_authority:
+                    super::super::authorization::GuestAuthority::fixture_with_authorization(
+                        authorization.clone(),
+                    ),
+                namespace: "tengri".into(),
+                default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
+                architecture: crate::crd::MicroVMArchitecture::Amd64,
+                database: database.clone(),
+                auth: Authenticator::fixture(database, "https://proompteng.ai".into()),
+                public_url: "https://tengri.example.test".into(),
+                preview_origin: PreviewOrigin::parse(
+                    "https://tengri-{session}.example.test".into(),
+                    "https://tengri.example.test".into(),
+                )
+                .unwrap(),
+            },
+            ActivityTracker::new(client, "tengri".into()),
+        )
+        .unwrap();
+        let mut principal = Principal::fixture(
+            &"a".repeat(64),
+            &agent.uid().unwrap(),
+            Action::TerminalControl,
+        );
+        principal.context.runtime_epoch = agent.spec.runtime_epoch.clone();
+        let terminate = || {
+            signed_fixture_request(
+                TerminateTerminalRequest {
+                    agent_id: agent.name_any(),
+                    terminal_id: "terminal-current".into(),
+                },
+                &principal,
+                "/proompteng.runtime.v1.MicroVMControlPlane/TerminateTerminal",
+            )
+        };
+        let ticket = || {
+            signed_fixture_request(
+                IssueTerminalTicketRequest {
+                    agent_id: agent.name_any(),
+                    terminal_id: "terminal-current".into(),
+                },
+                &principal,
+                "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket",
+            )
+        };
+        let terminated = control.terminate_terminal(terminate()).await;
+        let issued = control.issue_terminal_ticket(ticket()).await;
+        assert!(
+            terminated.is_ok() && issued.is_ok(),
+            "signed terminal termination and ticket issuance must reach the guest: {terminated:?}; {issued:?}"
+        );
+        let ticket = issued.unwrap().into_inner();
+        let record = control.tickets().consume(&ticket.ticket).await.unwrap();
+        assert_eq!(record.principal.action, Action::TerminalControl);
+        assert!(
+            matches!(record.scope, TicketScope::Terminal { terminal_id } if terminal_id == "terminal-current")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let codex_principal = Principal {
+            action: Action::CodexControl,
+            ..principal.clone()
+        };
+        let codex_access = authorization
+            .agent_access(&codex_principal, &agent, "thread-current")
+            .unwrap();
+        let codex = codex_pool
+            .for_microvm(&agent, codex_authority.user(codex_access))
+            .await
+            .unwrap();
+        codex
+            .codex_call("thread/resume", json!({"threadId":"thread-current"}))
+            .await
+            .unwrap();
+        let input = crate::grpc::codex_turn_input(
+            &codex,
+            "inspect",
+            &[crate::grpc::proto::CodexImage {
+                media_type: "image/png".into(),
+                content: b"\x89PNG\r\n\x1a\n".to_vec(),
+            }],
+        )
+        .await
+        .unwrap();
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[1]["type"], "localImage");
+        for (state, code) in [
+            (1, tonic::Code::PermissionDenied),
+            (4, tonic::Code::Unavailable),
+        ] {
+            mode.store(state, Ordering::SeqCst);
+            assert_eq!(
+                control
+                    .terminate_terminal(terminate())
+                    .await
+                    .unwrap_err()
+                    .code(),
+                code
+            );
+            assert_eq!(
+                control
+                    .issue_terminal_ticket(signed_fixture_request(
+                        IssueTerminalTicketRequest {
+                            agent_id: agent.name_any(),
+                            terminal_id: "terminal-current".into(),
+                        },
+                        &principal,
+                        "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket"
+                    ))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                code
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "denial and outage cannot reach terminal handlers"
+        );
+    }
+
+    #[tokio::test]
     async fn concurrent_requests_reuse_verified_connection_but_failures_and_new_claims_do_not() {
         let verifications = Arc::new(AtomicUsize::new(0));
         let calls = verifications.clone();

@@ -299,6 +299,10 @@ async fn runtime_shared_state_preview_rotation_revocation_and_identity_isolation
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_capacity_expiry_and_workspace_cleanup_are_global() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init();
     let (database, a, b) = fixture().await;
     let owners = (0..8)
         .map(|_| principal(Action::PreviewAccess))

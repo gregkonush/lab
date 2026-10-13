@@ -387,6 +387,48 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
     let authorization = WorkspaceAuthorization::new(controller.clone());
     let access = authorization.access(&principal, &uid, &epoch, "").unwrap();
     access.require().await.unwrap();
+    for (parent_action, parent_target, action, target) in [
+        (Action::TerminalControl, "", Action::TerminalObserve, ""),
+        (
+            Action::TerminalControl,
+            "",
+            Action::TerminalControl,
+            "terminal-wire",
+        ),
+        (
+            Action::CodexControl,
+            "thread-wire",
+            Action::CodexControl,
+            "",
+        ),
+        (
+            Action::CodexControl,
+            "thread-wire",
+            Action::FilesWrite,
+            "/workspace/.tengri-attachments/image.png",
+        ),
+    ] {
+        let mut parent = principal.clone();
+        parent.action = parent_action;
+        parent.context.deadline_unix_ms = now_ms().unwrap() + 5000;
+        let access = authorization
+            .access(&parent, &uid, &epoch, parent_target)
+            .unwrap();
+        let (context, first) = access
+            .guest_decision(action, target, &uid, &epoch)
+            .await
+            .unwrap();
+        let (_, second) = access
+            .guest_decision(action, target, &uid, &epoch)
+            .await
+            .unwrap();
+        assert_eq!(context.actor, parent.context.actor);
+        assert!(first.valid_until_unix_ms <= context.deadline_unix_ms);
+        assert_ne!(
+            first.audit_receipt_id, second.audit_receipt_id,
+            "sub-operations require their own exact-action/target audit receipts"
+        );
+    }
     let database = std::sync::Arc::new(crate::control::Database::shared_fixture().await);
     let tickets =
         crate::tickets::TicketStore::new("https://tengri.proompteng.ai".into(), database.clone())
@@ -449,6 +491,10 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
             .is_err(),
         "preview rechecks must survive the captured principal's two-second deadline"
     );
+    tokio::select! {
+        result = preview_access.guest_decision(Action::PreviewAccess, "/v1/preview/3000/", &uid, &epoch) => result.unwrap(),
+        _ = &mut watching => panic!("a live preview must retain its authority"),
+    };
     tickets.remove_agent(&uid).await.unwrap();
     tokio::time::timeout(Duration::from_secs(3), &mut watching)
         .await

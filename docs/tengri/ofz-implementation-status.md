@@ -238,3 +238,18 @@ original five-second nonce stays consumed, and all 18 Ofz control-table hashes m
 initially hit the local Docker disk limit; removing only this task's compiler image and its identified cache record
 freed 2.15 GB, and the cache-only recheck passes.
 Bounded observers, independent execution fencing, brokers, independent recovery and the deployed cutover remain open.
+
+The signed guest review reproduced terminal ticket issuance and termination denied before reaching Nanoagent.
+The same parent-operation assumption also affected Codex thread operations and image staging. Guest admission now
+requires the original controller operation and a fresh exact guest action/target decision when they differ. The
+sub-operation has its own audit receipt and cannot outlive the parent decision; actor, runtime and recovery bindings
+remain unchanged. Permission for only the parent or only the sub-operation is insufficient. No compatibility path was added.
+The corrected controller paths and signed guest proofs pass all 26 local shared-database tests. The real Ofz/SPIFFE
+browser fixture passes 60 assertions in 66.97 seconds, including renewal after the original preview deadline.
+The added wire check keeps its existing revocation watcher polled while checking renewed authority, avoiding a
+fixture-only mutex stall. Rust now passes 142 runtime tests, three CRD tests, eleven signed contracts and Clippy;
+real Rust/Go interoperability passes. Current native builds and deployed acceptance remain separate requirements.
+The complete NUC runtime rerun passes all 26 tests in 81.81 seconds, with unchanged deadlines and capacity assertions.
+Two earlier remote runs returned unavailable in the capacity test; the isolated probe and final complete run pass, but
+the earlier connection failure was not diagnosed. Database pool failures now retain their internal error in server logs
+while returning the same bounded unavailable response.

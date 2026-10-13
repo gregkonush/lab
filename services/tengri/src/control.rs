@@ -137,10 +137,10 @@ impl Database {
     }
 
     pub async fn connection(&self) -> Result<deadpool_postgres::Object, Status> {
-        self.pool
-            .get()
-            .await
-            .map_err(|_| Status::unavailable("shared runtime state unavailable"))
+        self.pool.get().await.map_err(|error| {
+            tracing::warn!(error = %error, "shared runtime database connection unavailable");
+            Status::unavailable("shared runtime state unavailable")
+        })
     }
 
     pub async fn verify_schema(&self) -> Result<(), Status> {
