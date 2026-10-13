@@ -23,8 +23,8 @@ resources:
 images:
   - name: registry.ide-newton.ts.net/lab/signal-publisher
     newName: registry.ide-newton.ts.net/lab/signal-publisher
-    newTag: kargo-sha-aea5ce120d9de1101e3812b35799a0d545f74ea2
-    digest: sha256:589bc2e01fd24eedb09c907fdf6cd59fcf522d6a16e91e71a7c154d653e8d05d
+    newTag: kargo-sha-844d149ff29dc884290e19241645926d8cee3bda
+    digest: sha256:765c8a94f6ed610e385d901ac0177e435797fc9fe3d292fefea0e3a3fcc268ba
 replacements:
   - source:
       kind: CronJob

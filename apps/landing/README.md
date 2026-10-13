@@ -48,8 +48,11 @@ A successful creation keeps its operation ID until that exact workspace is confi
 recovers the same workspace instead of allocating another retained home. Uncertain outcomes retain the original
 payload and ID; an explicit superseded response retires that operation. Browsers without Web Locks cannot submit
 lifecycle changes.
+Choosing a different creation name first replays the recorded request. An active workspace is recovered; a confirmed
+terminal creation permits one fresh attempt with the new name. Denied or unavailable recovery preserves the original ID.
 Deletion waits for Ofz's confirmed retained-home cleanup on both fresh requests and recovered operation IDs.
 Pending cleanup or an unavailable authority returns an error and preserves those IDs for retry.
+Deletion ignores failed status from an older policy version while waiting for its committed stop to reconcile.
 The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
 Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
 The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a

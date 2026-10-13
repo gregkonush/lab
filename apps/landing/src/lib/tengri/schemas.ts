@@ -106,12 +106,14 @@ const previewFragment = z
     'Invalid preview fragment',
   )
 
+export const tengriCreateAgentSchema = z.strictObject({
+  action: z.literal('create-agent'),
+  operationId: z.uuid(),
+  displayName: z.string().trim().min(1).max(64),
+})
+
 export const tengriActionSchema = z.discriminatedUnion('action', [
-  z.strictObject({
-    action: z.literal('create-agent'),
-    operationId: z.uuid(),
-    displayName: z.string().trim().min(1).max(64),
-  }),
+  tengriCreateAgentSchema,
   z.strictObject({ action: z.literal('delete-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
