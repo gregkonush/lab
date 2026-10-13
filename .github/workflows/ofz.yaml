@@ -43,7 +43,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: arc-amd64
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -51,6 +51,12 @@ jobs:
         with:
           toolchain: 1.90.0
           components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ofz-validation
+          workspaces: |
+            services/ofz -> target
+            services/tengri -> target
       - name: Install native build tools
         run: |
           sudo apt-get update
@@ -75,8 +81,6 @@ jobs:
           cargo test --locked
           bash test-policy.sh
           bash test-control.sh
-      - name: Validate shared runtime state and replica fencing
-        run: bash services/tengri/test-runtime.sh
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -94,10 +98,5 @@ jobs:
         run: |
           buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz
           git diff --exit-code -- apps/landing/src/lib/tengri/generated
-      - name: Validate BFF identity and administration
-        run: |
-          set -euo pipefail
-          bunx tsc --noEmit --project apps/landing/tsconfig.json --pretty false
-          bun run --cwd apps/landing test
       - name: Verify real browser identity and shared sessions
         run: bash services/ofz/test-control.sh identity

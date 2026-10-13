@@ -165,7 +165,7 @@ const text = (value: unknown): string => {
   return value
 }
 
-test('Tengri runtime repairs publish the desktop from the same source', () => {
+test('runtime-only PRs skip desktop builds while main publishes coordinated images', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
@@ -189,7 +189,7 @@ test('Tengri runtime repairs publish the desktop from the same source', () => {
     for (const event of ['pull_request', 'push']) {
       const paths = property(property(property(workflow, 'on'), event), 'paths')
       if (!Array.isArray(paths)) throw new Error('Missing image trigger paths')
-      expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+      expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(event === 'push')
     }
     expect(selectAffectedInputs([source], configured, lock, lock)).toEqual({
       proompteng: true,
