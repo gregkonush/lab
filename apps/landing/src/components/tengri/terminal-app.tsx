@@ -603,61 +603,65 @@ export function TerminalApp({
       terminal.unicode.activeVersion = '11'
       terminal.open(hostRef.current)
 
-      const [webglModule, clipboardModule, imageModule, webLinksModule] = await Promise.allSettled([
-        import('@xterm/addon-webgl'),
-        import('@xterm/addon-clipboard'),
-        import('@xterm/addon-image'),
-        import('@xterm/addon-web-links'),
-      ])
-      if (disposed) return
-      if (webglModule.status === 'fulfilled') {
-        try {
-          const webgl = new webglModule.value.WebglAddon()
-          disposables.push(
-            webgl.onContextLoss(() => {
-              webgl.dispose()
-              setRenderer('dom')
-            }),
-          )
-          loadAddon(webgl)
-          setRenderer('webgl')
-        } catch (cause) {
-          console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', cause)
+      void (async () => {
+        const [webglModule, clipboardModule, imageModule, webLinksModule] = await Promise.allSettled([
+          import('@xterm/addon-webgl'),
+          import('@xterm/addon-clipboard'),
+          import('@xterm/addon-image'),
+          import('@xterm/addon-web-links'),
+        ])
+        if (disposed) return
+        if (webglModule.status === 'fulfilled') {
+          try {
+            const webgl = new webglModule.value.WebglAddon()
+            disposables.push(
+              webgl.onContextLoss(() => {
+                webgl.dispose()
+                setRenderer('dom')
+              }),
+            )
+            loadAddon(webgl)
+            setRenderer('webgl')
+          } catch (cause) {
+            console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', cause)
+            setRenderer('dom')
+          }
+        } else {
+          console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', webglModule.reason)
           setRenderer('dom')
         }
-      } else {
-        console.warn('[tengri-terminal] WebGL renderer unavailable; using DOM fallback', webglModule.reason)
-        setRenderer('dom')
-      }
-      if (clipboardModule.status === 'fulfilled') {
-        try {
-          loadAddon(new clipboardModule.value.ClipboardAddon())
-        } catch (cause) {
-          console.warn('[tengri-terminal] clipboard addon unavailable', cause)
+        if (clipboardModule.status === 'fulfilled') {
+          try {
+            loadAddon(new clipboardModule.value.ClipboardAddon())
+          } catch (cause) {
+            console.warn('[tengri-terminal] clipboard addon unavailable', cause)
+          }
+        } else {
+          console.warn('[tengri-terminal] clipboard addon unavailable', clipboardModule.reason)
         }
-      } else {
-        console.warn('[tengri-terminal] clipboard addon unavailable', clipboardModule.reason)
-      }
-      if (imageModule.status === 'fulfilled') {
-        try {
-          loadAddon(new imageModule.value.ImageAddon())
-        } catch (cause) {
-          console.warn('[tengri-terminal] image addon unavailable', cause)
+        if (imageModule.status === 'fulfilled') {
+          try {
+            loadAddon(new imageModule.value.ImageAddon())
+          } catch (cause) {
+            console.warn('[tengri-terminal] image addon unavailable', cause)
+          }
+        } else {
+          console.warn('[tengri-terminal] image addon unavailable', imageModule.reason)
         }
-      } else {
-        console.warn('[tengri-terminal] image addon unavailable', imageModule.reason)
-      }
-      if (webLinksModule.status === 'fulfilled') {
-        try {
-          loadAddon(
-            new webLinksModule.value.WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')),
-          )
-        } catch (cause) {
-          console.warn('[tengri-terminal] web links addon unavailable', cause)
+        if (webLinksModule.status === 'fulfilled') {
+          try {
+            loadAddon(
+              new webLinksModule.value.WebLinksAddon((_event, uri) =>
+                window.open(uri, '_blank', 'noopener,noreferrer'),
+              ),
+            )
+          } catch (cause) {
+            console.warn('[tengri-terminal] web links addon unavailable', cause)
+          }
+        } else {
+          console.warn('[tengri-terminal] web links addon unavailable', webLinksModule.reason)
         }
-      } else {
-        console.warn('[tengri-terminal] web links addon unavailable', webLinksModule.reason)
-      }
+      })()
 
       const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
       terminal.attachCustomKeyEventHandler((event) => {

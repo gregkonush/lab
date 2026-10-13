@@ -5,6 +5,7 @@ import { isSqlError } from 'effect/sql/SqlError'
 import type { RuntimeConfig } from '../config'
 import { classifyDatabaseError, databaseError, DatabaseError } from './database-error'
 import { migrationLoader } from './migrations'
+import { PostgresClientLive } from './postgres-client'
 
 const PositiveInteger = Schema.Int.check(Schema.isGreaterThan(0))
 const MigrationBoundaryRow = Schema.Struct({
@@ -77,5 +78,20 @@ export const withMigrationDeadline = <R>(
     }),
   )
 
-export const PostgresMigrationsLive = (config: Pick<RuntimeConfig, 'operationTimeoutMs'>) =>
-  Layer.effectDiscard(withMigrationDeadline(postgresMigrations, config.operationTimeoutMs))
+const migrationTimeoutMs = 300_000
+
+export const PostgresMigrationsLive = (config: Pick<RuntimeConfig, 'postgres'>) =>
+  Layer.effectDiscard(
+    withMigrationDeadline(
+      Effect.gen(function* () {
+        const context = yield* Layer.build(
+          PostgresClientLive(
+            { postgres: config.postgres, operationTimeoutMs: migrationTimeoutMs },
+            { maxConnections: 1, applicationName: 'bayn-migrations' },
+          ),
+        )
+        yield* postgresMigrations.pipe(Effect.provideContext(context))
+      }).pipe(Effect.scoped),
+      migrationTimeoutMs,
+    ),
+  )

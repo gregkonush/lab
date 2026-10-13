@@ -42,6 +42,16 @@ const failure = (reason: IntradaySnapshotFailure['reason'], message: string, cau
 const observedWithin = <A>(entry: ObservedMarketValue<A>, observedAtMs: number) => entry.availableAtMs <= observedAtMs
 const rollingFeatureDefinitionHash = sha256(JSON.stringify(rollingFeatureDefinitionMaterial))
 
+export const missingMinuteBars = (bars: readonly IntradayBar[], startAt: string, endAt: string) => {
+  const start = intradayInstantNanos(startAt)
+  const end = intradayInstantNanos(endAt)
+  const present = new Set(bars.map((bar) => intradayInstantNanos(bar.eventAt)))
+  const missing: string[] = []
+  for (let at = start; at < end; at += 60_000_000_000n)
+    if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
+  return missing
+}
+
 /** Shared input policy only. This does not issue live snapshot or broker authority. */
 export const selectStreamingInputs = (
   state: StreamingProjection,
@@ -165,9 +175,11 @@ export const selectStreamingInputs = (
         let message = 'matching complete rolling feature is unavailable'
         if (request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade) {
           const present = new Set(bars.map((bar) => intradayInstantNanos(bar.value.eventAt)))
-          const missing: string[] = []
-          for (let at = start; at < end; at += 60_000_000_000n)
-            if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
+          const missing = missingMinuteBars(
+            bars.map((bar) => bar.value),
+            request.rangeStartAt,
+            request.rangeEndAt,
+          )
           if (!present.has(end - 60_000_000_000n)) missingRangeCompletionBars.add(symbol)
           message =
             missing.length > 0
@@ -240,10 +252,6 @@ export const selectStreamingInputs = (
         exclusions.set(exclusion.symbol, exclusion)
     }
     const excluded = new Set(exclusions.keys())
-    if (request.purpose === undefined && candidates.size > 0 && [...candidates].every((symbol) => excluded.has(symbol)))
-      return yield* Result.fail(
-        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
-      )
     const technicalFeatures =
       request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade
         ? technicalReceipts
@@ -272,4 +280,51 @@ export const selectStreamingInputs = (
       exclusions,
       excluded,
     }
+  })
+
+export const diagnoseStreamingInputs = (state: StreamingProjection, query: IntradaySnapshotQuery) =>
+  Result.map(selectStreamingInputs(state, query), (selected) => {
+    const observedAtMs = Date.parse(query.observedAt)
+    const candidates = (query.candidateSymbols ?? []).map((symbol) => {
+      const bars = observedBarsAt(
+        state,
+        symbol,
+        intradayInstantNanos(query.rangeStartAt),
+        intradayInstantNanos(query.rangeEndAt),
+        observedAtMs,
+      )
+      const quote = state.quoteHistory.get(symbol)?.findLast((entry) => observedWithin(entry, observedAtMs))
+      const exclusion = selected.exclusions.get(symbol)
+      return {
+        symbol,
+        eligibility:
+          exclusion === undefined
+            ? { status: 'ELIGIBLE' as const }
+            : { status: 'EXCLUDED' as const, reason: exclusion.reason, message: exclusion.message },
+        window: {
+          startAt: query.rangeStartAt,
+          endAt: query.rangeEndAt,
+          requiredBarCount: (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
+          observedBarCount: bars.length,
+          missingBarAt: missingMinuteBars(
+            bars.map((entry) => entry.value),
+            query.rangeStartAt,
+            query.rangeEndAt,
+          ),
+        },
+        matchingFeature: selected.featureReceipts.find((entry) => entry.value.material.symbol === symbol) ?? null,
+        quote:
+          quote === undefined
+            ? null
+            : {
+                eventAt: quote.value.eventAt,
+                ageMs: observedAtMs - Date.parse(quote.value.eventAt),
+                availableAtMs: quote.availableAtMs,
+                sourceTopic: quote.value.sourceTopic,
+                sourcePartition: quote.value.sourcePartition,
+                sourceOffset: quote.value.sourceOffset,
+              },
+      }
+    })
+    return { observedAt: query.observedAt, candidates }
   })

@@ -8,6 +8,9 @@ resources:
   - registry-configmap.yaml
   - tailscale-ingress.yaml
   - ingressroute-registry-k8s-private.yaml
+  - cleanup-cronjob.yaml
+  - cleanup-rbac.yaml
+  - ../../../packages/scripts/src/registry
 configMapGenerator:
   - name: registry-proxy
     files:

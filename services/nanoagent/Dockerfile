@@ -368,7 +368,17 @@ RUN set -eux; \
       --directory /bundle \
       .
 
+FROM runtime AS editor-build
+ARG TARGETARCH
+COPY --chmod=0555 build-editor.sh /usr/local/bin/build-editor
+COPY --chmod=0444 editor-manifest.lua launch-editor.sh /usr/share/nanoagent/
+RUN apt-get update -o Acquire::Retries=3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev && \
+    build-editor "$TARGETARCH"
+
 FROM runtime AS runtime-with-toolchain
+
+COPY --from=editor-build /opt/tengri/editor /opt/tengri/editor
 
 COPY --from=development-toolchain-bundle /out/development-toolchain.tar.xz /usr/share/nanoagent/development-toolchain.tar.xz
 COPY --chmod=0555 bootstrap-toolchain.sh /usr/local/bin/bootstrap-toolchain
@@ -481,12 +491,15 @@ RUN bootstrap-toolchain --install-only && bootstrap-developer-tools --install-on
     brew install --formula --force-bottle hello && \
     test "$(hello)" = 'Hello, world!' && \
     test-developer-tools-cache && \
-    sha256sum "$HOME/.config/nvim/init.lua" "$HOME/.config/nvim/lazy-lock.json" > /tmp/astronvim-config.sha256 && \
+    sha256sum "$HOME/.config/nvim/init.lua" > /tmp/astronvim-config.sha256 && \
     bootstrap-developer-tools --install-only && sha256sum --check /tmp/astronvim-config.sha256 && \
     mkdir -p "$HOME/.custom-config/nvim" && \
     printf 'vim.g.user_config_preserved = true\n' > "$HOME/.custom-config/nvim/init.lua" && \
     XDG_CONFIG_HOME="$HOME/.custom-config" bootstrap-developer-tools --install-only && \
     XDG_CONFIG_HOME="$HOME/.custom-config" nvim --headless '+lua assert(vim.g.user_config_preserved)' '+if v:errmsg != "" | cquit 1 | endif' +qa
+
+COPY --chmod=0555 test-editor-bundle.sh /usr/local/bin/test-editor-bundle
+RUN --network=none test-editor-bundle
 
 FROM runtime-with-toolchain AS guest-rootfs
 

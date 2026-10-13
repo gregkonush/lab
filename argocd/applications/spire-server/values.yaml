@@ -28,12 +28,14 @@ spire-server:
     minAvailable: 2
   affinity:
     podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: server
-              app.kubernetes.io/instance: spire
-          topologyKey: kubernetes.io/hostname
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: server
+                app.kubernetes.io/instance: spire
+            topologyKey: kubernetes.io/hostname
   terminationGracePeriodSeconds: 60
   dataStore:
     sql:
@@ -113,20 +115,6 @@ spire-server:
           enabled: false
         test-keys:
           enabled: false
-        identity-canary:
-          enabled: true
-          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}
-          namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: spire-test
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: spire-identity-canary
-          workloadSelectorTemplates:
-            - k8s:sa:identity-canary
-          ttl: 2m
-          fallback: false
-
         proompteng:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/proompteng/sa/proompteng
