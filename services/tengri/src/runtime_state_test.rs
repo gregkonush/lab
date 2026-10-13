@@ -227,7 +227,17 @@ async fn runtime_shared_state_preview_rotation_revocation_and_identity_isolation
         Code::Unauthenticated
     );
     let pending = a.issue_editor(&owner, "agent", "window-2").await.unwrap();
-    b.revoke_desktop_previews(&owner).await.unwrap();
+    let mut other_session = owner.clone();
+    other_session.context.session_id = Uuid::new_v4().to_string();
+    let other_pending = a
+        .issue_editor(&other_session, "agent", "window-2")
+        .await
+        .unwrap();
+    let mut signout = owner.clone();
+    signout.context.workspace_uid.clear();
+    signout.context.runtime_epoch.clear();
+    b.revoke_desktop_previews(&signout).await.unwrap();
+    assert!(a.consume_preview(&other_pending.token).await.is_ok());
     assert_eq!(
         a.consume_preview(&pending.token).await.unwrap_err().code(),
         Code::Unauthenticated
