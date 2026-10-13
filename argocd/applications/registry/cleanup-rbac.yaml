@@ -78,6 +78,7 @@ rules:
       - plugin.kubevirt.io
       - pool.kubevirt.io
       - postgresql.cnpg.io
+      - rds.valkey.buf.red
       - redis.redis.opstreelabs.in
       - resource.nvidia.com
       - restate.dev
@@ -99,6 +100,7 @@ rules:
       - tigerbeetle.proompteng.ai
       - tools.proompteng.ai
       - traefik.io
+      - valkey.buf.red
       - whereabouts.cni.cncf.io
       - workspaces.proompteng.ai
     resources: ["*"]
