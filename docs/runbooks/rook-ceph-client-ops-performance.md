@@ -320,12 +320,12 @@ objectstore.rgw.buckets.data pg_num=128 pgp_num=128
 For per-OSD and host telemetry, effective-config verification, and removal of persistent live recovery overrides,
 follow [Ceph performance telemetry](ceph-performance-telemetry.md). Removing a key from Git alone is not live proof.
 
-The current shared-cluster posture prioritizes scrub catch-up after recovery/backfill is clean.
-Use the complete custom profile in [Scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture),
-including all nine scheduler settings; setting only the profile name is insufficient. Scrubs can start all day:
+The current shared-cluster posture uses the built-in client-priority profile while retaining scrub catch-up.
+Follow [Scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture) for effective-config checks and removal
+of prior custom scheduler overrides. Scrubs can start all day:
 
 ```yaml
-osd_mclock_profile: 'custom'
+osd_mclock_profile: 'high_client_ops'
 osd_scrub_begin_hour: '0'
 osd_scrub_end_hour: '0'
 osd_mclock_max_capacity_iops_hdd: '275'
@@ -501,8 +501,8 @@ complete [scrub catch-up profile](rook-ceph-on-talos.md#scrub-catch-up-posture) 
 
 ```yaml
 osd:
-  # Include all nine scheduler settings from the owning scrub catch-up section.
-  osd_mclock_profile: 'custom'
+  # Remove prior custom scheduler overrides using the owning profile-migration procedure.
+  osd_mclock_profile: 'high_client_ops'
   osd_scrub_begin_hour: '0'
   osd_scrub_end_hour: '0'
   osd_mclock_max_capacity_iops_hdd: '275'

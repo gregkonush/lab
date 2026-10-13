@@ -306,7 +306,7 @@ test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub 
     'osd_scrub_sleep',
   ])
     expect(config.osd[key]).toBeUndefined()
-  expect(config.osd.osd_mclock_profile).toBe('custom')
+  expect(config.osd.osd_mclock_profile).toBe('high_client_ops')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
   expect(config.osd.osd_max_scrubs).toBe('3')
