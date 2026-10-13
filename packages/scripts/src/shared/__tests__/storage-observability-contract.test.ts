@@ -229,17 +229,17 @@ test('critical Ceph alerts opt into the configured email route', () => {
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
 })
 
-test('the publisher deadline warning uses the existing email receiver without paging unrelated warnings', () => {
+test('warnings require explicit email opt-in and use the existing receiver with a four-hour repeat', () => {
   const externalSecret = YAML.parse(
     readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
   )
   const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
   const route = alertmanager.route.routes.find((entry: { matchers: string[] }) =>
-    entry.matchers.includes('alertname = "SignalAdjustedDailyPublicationMissed"'),
+    entry.matchers.includes('severity = "warning"'),
   )
   expect(route).toEqual({
     receiver: 'critical-email',
-    matchers: ['alertname = "SignalAdjustedDailyPublicationMissed"', 'severity = "warning"', 'notify = "email"'],
+    matchers: ['severity = "warning"', 'notify = "email"'],
     group_wait: '10s',
     group_interval: '2m',
     repeat_interval: '4h',

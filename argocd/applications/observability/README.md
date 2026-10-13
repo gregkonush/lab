@@ -132,8 +132,9 @@ The adjusted-daily publisher has a separate warning email when its latest schedu
 successful completion beyond the two-hour start and execution budget, followed by a five-minute hold. An owned
 recovery completion resolves the incident; a successful Friday publication does not page over the weekend. The
 collector retains both CronJob timestamps without enabling the Job collector or changing Kubernetes permissions.
-An explicit Alertmanager route sends this named warning to the existing email receiver, with a four-hour repeat
-interval. Other warnings retain their existing routing. Apply a fallback configuration update before a separately
+Alertmanager sends warnings carrying `notify="email"` to the existing email receiver, with a four-hour repeat
+interval. This includes the existing Bayn input, execution and replica warnings and Restate metadata lag. Warnings
+without that opt-in remain quiet. Apply a fallback configuration update before a separately
 reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
