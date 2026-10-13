@@ -43,7 +43,7 @@ const fileRootSchema = z.string().refine(
   (root) =>
     root.startsWith('/workspace/') &&
     utf8.encode(root).byteLength <= 4096 &&
-    !/[\\\p{Cc}]/u.test(root) &&
+    !/[\\\p{Cc}\p{Cs}]/u.test(root) &&
     root
       .split('/')
       .slice(1)
@@ -62,7 +62,7 @@ const observationIdSchema = z
   .string()
   .min(1)
   .refine(
-    (id) => utf8.encode(id).byteLength <= 128 && !/[/\\\p{Cc}]/u.test(id),
+    (id) => utf8.encode(id).byteLength <= 128 && !/[/\\\p{Cc}\p{Cs}]/u.test(id),
     'Use a thread or terminal ID with no path separators or control characters, within 128 bytes',
   )
 export const observationScopeSchema = z

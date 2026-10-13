@@ -449,14 +449,25 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                       {entry.actions.map((permission) => Action[permission]).join(', ')}
                       {entry.scope ? (
                         <div className="text-zinc-400">
-                          <p className="whitespace-pre-wrap">
-                            {[...entry.scope.fileRoots, ...entry.scope.threadIds, ...entry.scope.terminalIds].join(
-                              '\n',
-                            )}
-                          </p>
+                          <dl className="space-y-1">
+                            {[
+                              { label: 'File roots', targets: entry.scope.fileRoots },
+                              { label: 'Codex thread IDs', targets: entry.scope.threadIds },
+                              { label: 'Terminal IDs', targets: entry.scope.terminalIds },
+                            ].map(({ label, targets }) => (
+                              <div key={label}>
+                                <dt>{label}</dt>
+                                <dd className="break-all whitespace-pre-wrap font-mono">
+                                  {targets.length ? targets.map((target) => JSON.stringify(target)).join('\n') : 'None'}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
                           <p>
-                            Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · up to{' '}
-                            {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
+                            {entry.role === 'viewer' || entry.actions.includes(Action.BROWSER_OBSERVE) ? (
+                              <>Browser status{entry.scope.browserScreenshot ? ' and screenshots' : ''} · </>
+                            ) : null}
+                            up to {entry.scope.maxBytes} bytes / {entry.scope.maxItems} items
                           </p>
                         </div>
                       ) : entry.role === 'viewer' ? (

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { create, fromBinary, toBinary } from '@bufbuild/protobuf'
 import { accessCommandSchema, type AccessCommand } from './access-schemas'
+import { ObservationScopeSchema } from './generated/proompteng/authz/v1/authz_pb'
 
 const collaborator = {
   action: 'collaborator',
@@ -134,6 +136,29 @@ describe('workspace collaborator command boundary', () => {
         false,
       )
     }
+  })
+
+  test('rejects Unicode that the protobuf encoder would replace instead of preserving the target', () => {
+    for (const field of ['fileRoots', 'threadIds', 'terminalIds'] as const) {
+      for (const code of [0xd800, 0xdbff, 0xdc00, 0xdfff]) {
+        const target = (field === 'fileRoots' ? '/workspace/' : '') + String.fromCharCode(code)
+        expect(accessCommandSchema.safeParse({ ...collaborator, scope: { ...scope, [field]: [target] } }).success).toBe(
+          false,
+        )
+      }
+    }
+    const unicodeScope = {
+      ...scope,
+      fileRoots: ['/workspace/界😀 '],
+      threadIds: [' 会話😀 '],
+      terminalIds: [' 端末😀 '],
+    }
+    accessCommandSchema.parse({ ...collaborator, scope: unicodeScope })
+    const decoded = fromBinary(
+      ObservationScopeSchema,
+      toBinary(ObservationScopeSchema, create(ObservationScopeSchema, unicodeScope)),
+    )
+    expect(decoded).toMatchObject(unicodeScope)
   })
 
   test('aggregate scope must fit the 64 KiB request budget including JSON overhead', () => {

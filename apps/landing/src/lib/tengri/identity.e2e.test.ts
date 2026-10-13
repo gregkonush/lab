@@ -996,17 +996,24 @@ identityTest(
     )
     expect(await storedViewer()).toEqual({ role: 3, scope: null })
     await roots.fill('/workspace/src ')
-    await page.getByLabel('Codex thread IDs', { exact: true }).fill(' thread-approved ')
-    await page.getByLabel('Terminal IDs', { exact: true }).fill('terminal-approved ')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill(' shared-id ')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill(' shared-id ')
     await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
     await page.getByLabel('Maximum items', { exact: true }).fill('20')
     await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
     await applyChange(200)
-    await browserExpect(viewerRow.getByText('/workspace/src')).toBeVisible()
+    for (const [label, target] of [
+      ['File roots', '/workspace/src '],
+      ['Codex thread IDs', ' shared-id '],
+      ['Terminal IDs', ' shared-id '],
+    ]) {
+      const group = viewerRow.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) })
+      await browserExpect(group.getByText(JSON.stringify(target), { exact: true })).toBeVisible()
+    }
     const approvedScope = {
       file_roots: ['/workspace/src '],
-      thread_ids: [' thread-approved '],
-      terminal_ids: ['terminal-approved '],
+      thread_ids: [' shared-id '],
+      terminal_ids: [' shared-id '],
       browser_screenshot: false,
       max_bytes: 4096,
       max_items: 20,
@@ -1024,7 +1031,7 @@ identityTest(
     await page.getByLabel('Terminal IDs', { exact: true }).fill('')
     await page.getByLabel('Allow browser screenshots', { exact: true }).check()
     await applyChange(200)
-    await browserExpect(viewerRow.getByText('/workspace/narrow', { exact: true })).toBeVisible()
+    await browserExpect(viewerRow.getByText(JSON.stringify('/workspace/narrow'), { exact: true })).toBeVisible()
     await browserExpect(viewerRow.getByText(/Browser status and screenshots/)).toBeVisible()
     expect(await storedViewer()).toEqual({
       role: 3,
@@ -1081,6 +1088,51 @@ identityTest(
       ).status,
     ).toBe(200)
     expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    const metadataGrant = randomUUID()
+    expect(
+      (
+        await postAccess({
+          action: 'grant',
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          reason: 'Verify metadata-only diagnostic scope display',
+          workspaceUid: scopedWorkspace,
+          grantId: metadataGrant,
+          agentId: randomUUID(),
+          resource: { kind: 'workspace', id: scopedWorkspace },
+          permissions: ['metadata'],
+          scope: {
+            fileRoots: [],
+            threadIds: [],
+            terminalIds: [],
+            browserScreenshot: false,
+            maxBytes: 1024,
+            maxItems: 20,
+          },
+          expiresAt: new Date(Date.now() + 300000).toISOString(),
+          proofKeyThumbprint: Buffer.alloc(32, 1).toString('base64url'),
+        })
+      ).status,
+    ).toBe(200)
+    await page.reload()
+    const diagnosticRow = page
+      .getByRole('row')
+      .filter({ has: page.getByText(`Grant ${metadataGrant}`, { exact: true }) })
+    await browserExpect(diagnosticRow).toBeVisible()
+    await browserExpect(diagnosticRow).not.toContainText('Browser status')
+    await browserExpect(diagnosticRow.getByText('up to 1024 bytes / 20 items', { exact: true })).toBeVisible()
+    expect(
+      (
+        await postAccess({
+          action: 'revoke',
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          reason: 'Remove isolated metadata diagnostic',
+          workspaceUid: scopedWorkspace,
+          grantId: metadataGrant,
+        })
+      ).status,
+    ).toBe(200)
     expect(
       (await control.query('SELECT home_uid,state,running FROM ofz.workspaces WHERE uid=$1', [scopedWorkspace]))
         .rows[0],
