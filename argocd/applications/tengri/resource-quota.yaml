@@ -5,11 +5,13 @@ metadata:
 spec:
   hard:
     count/microvms.runtime.proompteng.ai: "6"
-    count/leases.coordination.k8s.io: "6"
+    # Six slot Leases plus the shared controller election Lease.
+    count/leases.coordination.k8s.io: "7"
     persistentvolumeclaims: "6"
     requests.storage: 192Gi
     pods: "8"
-    secrets: "8"
+    # Six slot bootstraps, four Ofz credentials, and two retained pre-cutover keys.
+    secrets: "12"
     # Six runners, six host supervisors, and the controller with its mesh proxy.
     requests.cpu: "26"
     limits.cpu: "27"

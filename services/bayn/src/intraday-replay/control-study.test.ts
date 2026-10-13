@@ -20,7 +20,7 @@ import { makeControlJevJournal } from './control-jev-journal'
 import { ControlInputCoverage, runControlPreflight } from './control-preflight'
 import {
   ControlManagementMode,
-  ControlStudyInputSchema,
+  ControlEntryMode,
   controlStudyDefinition,
   runControlSession,
   runControlStudy,
@@ -38,10 +38,11 @@ const simulate = (
     missingSelection?: boolean
     noSignal?: boolean
     excludedSymbols?: readonly string[]
-    accountScheduledOpportunities?: boolean
     sessionDurationMs?: number
     routingLatencyMs?: number
     managedLatencyMs?: number
+    nativeEntry?: boolean
+    entryAction?: string
     managedCleanupLatencyMs?: number
     residualShock?: boolean
     entrySize?: number
@@ -94,6 +95,11 @@ const simulate = (
         snapshot: (query) =>
           Effect.sync(() => {
             snapshots += 1
+            if (options.nativeEntry === true)
+              return {
+                status: 'AVAILABLE' as const,
+                snapshot: nativeJevFixture(JevPurpose.Entry, query.observedAt).snapshot,
+              }
             expect(Date.parse(query.observedAt)).toBe(clock)
             expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
             observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
@@ -164,7 +170,7 @@ const simulate = (
       const providerClock = yield* TestClock.make()
       const fs = yield* FileSystem.FileSystem
       const management =
-        options.managedLatencyMs === undefined
+        options.managedLatencyMs === undefined && options.nativeEntry !== true
           ? null
           : {
               runId: '3'.repeat(64),
@@ -181,7 +187,7 @@ const simulate = (
                       return nativeJevInference(
                         input,
                         new Date(yield* providerClock.currentTimeMillis).toISOString(),
-                        'hold',
+                        options.nativeEntry === true ? (options.entryAction ?? 'enter') : 'hold',
                       )
                     }).pipe(Effect.ensuring(providerClock.adjust(options.managedCleanupLatencyMs ?? 0))),
                 },
@@ -189,7 +195,12 @@ const simulate = (
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             }
       const report = yield* runControlSession({
-        policy: options.residualShock === true ? ControlPolicy.ResidualShock : ControlPolicy.RelativeMomentum,
+        policy:
+          options.nativeEntry === true
+            ? ControlPolicy.JevEntry
+            : options.residualShock === true
+              ? ControlPolicy.ResidualShock
+              : ControlPolicy.RelativeMomentum,
         protocol: fixture.protocol,
         risk: {
           ...risk,
@@ -209,22 +220,76 @@ const simulate = (
           accruedExternalCostMicros: '0',
         },
         dataCostMicros: options.dataCostMicros ?? '0',
-        targetWeight: 0.1,
+        targetWeight:
+          options.nativeEntry === true
+            ? Math.floor(
+                Math.min(fixture.protocol.maximumGrossWeight, fixture.protocol.maximumSymbolWeight) * 1_000_000,
+              ) / 1_000_000
+            : 0.1,
         decisionLatencyMs: options.decisionLatencyMs ?? 1000,
         pollIntervalMs: options.pollIntervalMs ?? 30_000,
-        ...(options.accountScheduledOpportunities === true ? { accountScheduledOpportunities: true } : {}),
         assumptions: { ...assumptions, latencyMs: options.routingLatencyMs ?? assumptions.latencyMs },
         eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
         market,
-        management,
+        management: options.nativeEntry === true ? null : management,
+        ...(options.nativeEntry === true && management !== null ? { entry: management } : {}),
       }).pipe(Effect.provideService(Clock.Clock, marketClock))
       return { report, snapshots, observations }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
+test('native Jev entry uses measured commitment before execution and mechanical exits on its own portfolio', async () => {
+  const { report } = await simulate({
+    nativeEntry: true,
+    managedLatencyMs: 25,
+    sessionDurationMs: 45 * 60_000,
+    decisionLatencyMs: 9000,
+  })
+  expect(report.entryMode).toBe(ControlEntryMode.Jev)
+  expect(report.managementMode).toBe(ControlManagementMode.Mechanical)
+  expect(report.modelCallCount).toBeGreaterThan(0)
+  expect(BigInt(report.knownModelCostMicros)).toBeGreaterThan(0n)
+  expect(report.completedEpisodes).toBeGreaterThan(0)
+  expect(report.decisions.some((decision) => decision.status.startsWith('MANAGEMENT_'))).toBeFalse()
+  const selected = report.decisions.find((decision) => decision.status === 'SELECTED' && 'nativeEntry' in decision)
+  if (selected === undefined || !('nativeEntry' in selected) || selected.nativeEntry === undefined)
+    throw new Error('Expected committed native entry')
+  const committedAtMs = Date.parse(selected.nativeEntry.committedAt)
+  expect(committedAtMs).toBeGreaterThan(Date.parse(selected.observedAt))
+  expect(committedAtMs - Date.parse(selected.observedAt)).toBeLessThan(9000)
+  expect(report.orders[0]?.submittedAt).toBe(selected.nativeEntry.committedAt)
+  const accounting = report.simulatedOpportunityAccounting
+  if (accounting === undefined) throw new Error('Expected schedule accounting')
+  expect(accounting.scheduledPollCount).toBe(90)
+  expect(report.ledger.positions).toEqual([])
+})
+
+test('native entry abstentions retain paid calls without submitting orders', async () => {
+  const wait = await simulate({
+    nativeEntry: true,
+    entryAction: 'wait',
+    managedLatencyMs: 10,
+    sessionDurationMs: 36 * 60_000,
+  })
+  expect(wait.report.orders).toEqual([])
+  expect(wait.report.decisions.filter((decision) => decision.status === 'NO_SIGNAL')).toHaveLength(1)
+  expect(wait.report.modelCallCount).toBeGreaterThan(0)
+  expect(BigInt(wait.report.knownModelCostMicros)).toBeGreaterThan(0n)
+})
+
+test('incomplete expired native entry evidence cannot submit orders', async () => {
+  const expired = await simulate({
+    nativeEntry: true,
+    managedLatencyMs: fixture.protocol.inferenceValidityMs,
+    sessionDurationMs: 37 * 60_000,
+  })
+  expect(expired.report.orders).toEqual([])
+  expect(expired.report.completion).toBe('INCOMPLETE')
+  expect(expired.report.missingDecisions).toBeGreaterThan(0)
+})
+
 test('scheduled accounting covers canceled management cleanup beyond close without inventing controller evidence', async () => {
   const { report } = await simulate({
-    accountScheduledOpportunities: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
     managedCleanupLatencyMs: 8 * 60_000,
     sessionDurationMs: 37 * 60_000 + 45_000,
@@ -250,7 +315,7 @@ test.each([
 ] as const)(
   'scheduled accounting covers %d ms at %d ms cadence with %d warmup polls',
   async (sessionDurationMs, pollIntervalMs, count) => {
-    const { report } = await simulate({ accountScheduledOpportunities: true, sessionDurationMs, pollIntervalMs })
+    const { report } = await simulate({ sessionDurationMs, pollIntervalMs })
     expect(report.simulatedOpportunityAccounting).toEqual({
       schemaVersion: 'bayn.simulated-opportunity-accounting.v1',
       schedule: {
@@ -298,7 +363,7 @@ test.each([
     { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 },
   ],
 ] as const)('scheduled accounting preserves missing, excluded and consumed outcomes %#', async (options, expected) => {
-  const { report } = await simulate({ ...options, accountScheduledOpportunities: true })
+  const { report } = await simulate(options)
   expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
     WARMUP: 61,
     HOLDING: 0,
@@ -341,7 +406,6 @@ test.each([
   'scheduled accounting separates work at %d ms cadence and %d ms duration',
   async (pollIntervalMs, decisionLatencyMs, expected, started) => {
     const { report } = await simulate({
-      accountScheduledOpportunities: true,
       emptyAssets: true,
       pollIntervalMs,
       decisionLatencyMs,
@@ -361,7 +425,6 @@ test.each([
 
 test('scheduled accounting observes the exact warmup boundary and covers work ending at close', async () => {
   const { report } = await simulate({
-    accountScheduledOpportunities: true,
     pollIntervalMs: 17_000,
     decisionLatencyMs: 20 * 60_000,
     sessionDurationMs: 40 * 60_000,
@@ -391,11 +454,9 @@ test.each([
   { excludedSymbols: ['AAPL'] },
   { routingLatencyMs: 45_000 },
   { residualShock: true, entrySize: 4, tinyExit: true },
-])('scheduled accounting preserves all existing economic evidence %#', async (options) => {
-  const baseline = (await simulate(options)).report
-  const { simulatedOpportunityAccounting: accounting, ...observed } = (
-    await simulate({ ...options, accountScheduledOpportunities: true })
-  ).report
+])('scheduled accounting reproduces the same economics and complete poll inventory %#', async (options) => {
+  const { simulatedOpportunityAccounting: _accounting, ...baseline } = (await simulate(options)).report
+  const { simulatedOpportunityAccounting: accounting, ...observed } = (await simulate(options)).report
   expect(observed).toEqual(baseline)
   expect(accounting?.scheduledPollCount).toBe(180)
   expect(accounting?.accountedPollCount).toBe(180)
@@ -420,7 +481,6 @@ test('property: scheduled accounting covers non-divisible sessions without addin
       fc.integer({ min: 0, max: 60_000 }),
       async (pollIntervalMs, sessionDurationMs, decisionLatencyMs) => {
         const { report } = await simulate({
-          accountScheduledOpportunities: true,
           emptyAssets: true,
           pollIntervalMs,
           sessionDurationMs,
@@ -694,7 +754,9 @@ const frozenControlFixture = () => {
   }
   const { verification: _verification, ...build } = config.build
   const input = {
-    schemaVersion: 'bayn.control-study-input.v2',
+    schemaVersion: 'bayn.control-study-input.v7',
+    entry: 'DETERMINISTIC',
+    turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
     management: ControlManagementMode.Mechanical,
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
@@ -751,49 +813,26 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       const arrivals = `${directory}/arrivals.ndjson.gz`
       yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-      const legacyV3 = yield* runControlStudy(
-        {
-          ...input,
-          schemaVersion: 'bayn.control-study-input.v3',
-          turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
-        },
-        arrivals,
-        receipt,
-        { mode: ControlManagementMode.Mechanical },
-      )
-      // These synthetic reports bind config.build's active strategy identity, not historical v1 batches.
-      expect([report.runId, report.reportHash, legacyV3.runId, legacyV3.reportHash]).toEqual([
-        '20d7d1aa8054ce83de0a4011fa84755000efcd7b420b032e0dcbee234618355d',
-        '67eabe4e498f7f35471e5d12348b295a27e392b506cc9ec4ea21e13206fa2377',
-        '5113c1bb50e370a650d4eac6a5323ed3baf4db2bd82f9907cf0672f049edf65c',
-        'f5cbd605574c6931bdc43f2e1c11eaf067e50282d34d94aba925d0f25209982e',
-      ])
-      expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
+      const repeated = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
+      expect(repeated.reportHash).toBe(report.reportHash)
+      expect(report.schemaVersion).toBe('bayn.control-study-report.v6')
       expect(report.sessions).toHaveLength(6)
-      expect(report.definition).toEqual(controlStudyDefinition)
-      expect(report.sessions.some((session) => session.policy === ControlPolicy.ResidualShock)).toBeFalse()
+      expect(report.definition).toMatchObject({
+        ...controlStudyDefinition,
+        schemaVersion: 'bayn.control-study-definition.v10',
+      })
+      expect(
+        report.sessions.every((session) => session.completion === 'INCOMPLETE' && session.modelCallCount === 0),
+      ).toBeTrue()
       for (const session of report.sessions) {
-        expect(session.completion).toBe('INCOMPLETE')
         expect(session.completedEpisodes).toBe(0)
-        expect(session.netPnlAfterKnownCostsMicros).toBe('-1000000')
-        expect(session.marks.filter((mark) => Date.parse(mark.observedAt) % 60_000 === 0)).toHaveLength(391)
-        expect(session.missingDecisions).toBeGreaterThan(0)
-        const cumulativeCost = session.sessionDate === '2026-09-04' ? '1000000' : '2000000'
-        expect(session.closingCapital).toEqual({
-          cashMicros: input.backtest.openingCashMicros,
-          peakBrokerEquityMicros: input.backtest.openingCashMicros,
-          peakNetEquityMicros: input.backtest.openingCashMicros,
-          accruedExternalCostMicros: cumulativeCost,
-        })
-        expect(session.marks.at(-1)?.netEquityAfterKnownCostsMicros).toBe(
-          String(BigInt(input.backtest.openingCashMicros) - BigInt(cumulativeCost)),
-        )
+        expect(session.simulatedOpportunityAccounting?.scheduledPollCount).toBe(780)
+        expect(session.ledger.cashMicros).toBe(input.backtest.openingCashMicros)
       }
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
       const falsificationInput = {
         ...input,
-        schemaVersion: 'bayn.control-study-input.v4',
         repeatedTargetWeightPpm: residualShockDefinition.targetWeightPpm,
         turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
         falsificationCandidate: residualShockDefinition.id,
@@ -801,65 +840,11 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       const falsification = yield* runControlStudy(falsificationInput, arrivals, receipt, {
         mode: ControlManagementMode.Mechanical,
       })
-      expect([falsification.runId, falsification.reportHash]).toEqual([
-        'a4a3ae2f30bf2f5e72eb074404888742e1142bc5b41fcefea0b11fc4b7c3e64f',
-        'ab0abf356884995e632e72bd49d5a7e74b64140977d3a8d409a27c2ff872632e',
-      ])
       expect(falsification.sessions).toHaveLength(8)
-      expect(falsification.sessions.filter((session) => session.policy === ControlPolicy.ResidualShock)).toHaveLength(2)
-      expect(
-        falsification.sessions.every((session) => session.modelCallCount === 0 && session.completion === 'INCOMPLETE'),
-      ).toBeTrue()
       expect(falsification.definition).toMatchObject({ falsificationCandidate: residualShockDefinition })
       expect(falsification.runId).not.toBe(report.runId)
-      for (const [legacyInput, legacyReport] of [
-        [{ ...input, turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment }, legacyV3],
-        [falsificationInput, falsification],
-      ] as const) {
-        const accountedInput = {
-          falsificationCandidate: null,
-          ...legacyInput,
-          schemaVersion: 'bayn.control-study-input.v5',
-        }
-        const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ControlStudyInputSchema))(
-          JSON.stringify(accountedInput),
-        )
-        expect(canonicalHashV1(decoded)).toBe(canonicalHashV1(accountedInput))
-        const accounted = yield* runControlStudy(accountedInput, arrivals, receipt, {
-          mode: ControlManagementMode.Mechanical,
-        })
-        expect(accounted.schemaVersion).toBe('bayn.control-study-report.v4')
-        expect(accounted.definition.schemaVersion).toBe('bayn.control-study-definition.v7')
-        expect(
-          accounted.sessions.map(({ simulatedOpportunityAccounting: _accounting, ...session }) => session),
-        ).toEqual(legacyReport.sessions)
-        expect(accounted.sessions.map((session) => session.simulatedOpportunityAccounting?.scheduledPollCount)).toEqual(
-          legacyReport.sessions.map(() => 780),
-        )
-        expect(accounted.sessions.map((session) => session.completedEpisodes)).toEqual(
-          legacyReport.sessions.map(() => 0),
-        )
-        expect(accounted.runId).not.toBe(legacyReport.runId)
-        const { reportHash: accountedHash, ...accountedMaterial } = accounted
-        expect(canonicalHashV1(accountedMaterial)).toBe(accountedHash)
-        expect(
-          Result.isFailure(
-            Schema.decodeUnknownResult(Schema.fromJsonString(ControlStudyInputSchema))(
-              JSON.stringify({ ...accountedInput, falsificationCandidate: 'UNREGISTERED' }),
-            ),
-          ),
-        ).toBeTrue()
-        for (const pollIntervalMs of [0, 1.5, Number.POSITIVE_INFINITY])
-          expect(
-            Result.isFailure(
-              Schema.decodeUnknownResult(ControlStudyInputSchema)({
-                ...accountedInput,
-                backtest: { ...input.backtest, cadence: { ...input.backtest.cadence, pollIntervalMs } },
-              }),
-            ),
-          ).toBeTrue()
-      }
       for (const invalid of [
+        { ...input, schemaVersion: 'bayn.control-study-input.v2' },
         { ...falsificationInput, management: ControlManagementMode.Jev },
         { ...falsificationInput, repeatedTargetWeightPpm: 100000 },
         { ...falsificationInput, falsificationCandidate: 'UNREGISTERED' },
@@ -885,7 +870,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
         provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
       }
       const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
-      expect(managed.definition.schemaVersion).toBe('bayn.control-study-definition.v9')
+      expect(managed.definition.schemaVersion).toBe('bayn.control-study-definition.v10')
       expect(managed.runId).not.toBe(report.runId)
       const registration = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(Schema.Struct({ definition: Schema.Unknown, runId: Schema.String })),

@@ -30,15 +30,7 @@ import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
-import {
-  KafkaMarketProjection,
-  KafkaMarketProjectionLive,
-  makeKafkaMarketProjection,
-} from '../market-data/streaming/kafka'
-import { makeResearchCapturePostgresStore } from '../db/research-capture-postgres'
-import type { ResearchCaptureSession } from '../research-capture/session'
-import { researchCaptureS3Config } from '../research-capture/session-config'
-import { makeS3ResearchCaptureObjectStore } from '../research-capture/s3'
+import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { sqlResource } from '../operations'
 import { operationalError } from '../errors'
@@ -97,7 +89,6 @@ const workerStreamingUniverse = (plan: ApplicationIdentity) => {
   }
 }
 
-/** Read-only Kafka consumption; no persistence, capture, broker, model or trading-driver acquisition. */
 export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
   plan.config.kafka === undefined
     ? Layer.effect(
@@ -115,7 +106,6 @@ export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
 const WorkerMarketDataLive = (
   plan: ApplicationIdentity,
   postgres: ReturnType<typeof PostgresLive>,
-  capture?: ResearchCaptureSession,
   prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   if (plan.config.kafka === undefined)
@@ -129,37 +119,13 @@ const WorkerMarketDataLive = (
         }),
       ),
     )
-  const universe = workerStreamingUniverse(plan)
-  const config = plan.config.kafka
-  const kafka =
-    capture === undefined
-      ? (prewarmedProjection ?? KafkaMarketProjectionLive(config, universe))
-      : Layer.effect(
-          KafkaMarketProjection,
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            yield* capture.start(
-              makeResearchCapturePostgresStore(sql),
-              researchCaptureS3Config.pipe(Effect.flatMap(makeS3ResearchCaptureObjectStore)),
-              universe,
-            )
-            const market = yield* makeKafkaMarketProjection(
-              config,
-              universe,
-              undefined,
-              undefined,
-              capture.workerObserver,
-            )
-            capture.bind(market)
-            return market
-          }),
-        ).pipe(Layer.provide(postgres))
+  const kafka = prewarmedProjection ?? WorkerMarketProjectionLive(plan)
   return StreamingIntradayMarketDataLive.pipe(Layer.provide(kafka), Layer.provide(postgres))
 }
 
 const PostgresLive = (config: PostgresResourceConfig) => {
   const client = sqlResource(PostgresClientResourceLive(config))
-  const migrations = PostgresMigrationsLive(config).pipe(Layer.provide(client))
+  const migrations = PostgresMigrationsLive(config)
   return Layer.merge(client, migrations)
 }
 
@@ -193,13 +159,12 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
 
 export const AutonomousWorkerApplicationResourcesLive = (
   plan: ApplicationPlanFor<'AutonomousService'>,
-  capture?: ResearchCaptureSession,
   prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    WorkerMarketDataLive(plan, postgres, capture, prewarmedProjection),
+    WorkerMarketDataLive(plan, postgres, prewarmedProjection),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),

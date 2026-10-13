@@ -173,6 +173,15 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       exclusions,
       excluded,
     } = yield* selectStreamingInputs(state, request, publicationPolicy)
+    if (
+      request.purpose === undefined &&
+      request.candidateSymbols !== undefined &&
+      request.candidateSymbols.length > 0 &&
+      request.candidateSymbols.every((symbol) => excluded.has(symbol))
+    )
+      return yield* Result.fail(
+        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
+      )
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
     )

@@ -368,7 +368,7 @@ describe('native control management requests', () => {
     const i = input()
     const a = prepared(i)
     expect(prepared(i)).toEqual(a)
-    expect(a.observation.portfolio.brokerState.account.accountId).toStartWith('research-control-management-')
+    expect(a.observation.portfolio.brokerState.account.accountId).toStartWith('research-control-')
     expect(prepared({ ...i, runId: '5'.repeat(64) }).batch.batchId).not.toBe(a.batch.batchId)
     expect(prepared({ ...i, entryDecisionHash: '6'.repeat(64) }).batch.batchId).not.toBe(a.batch.batchId)
     expect(Result.isFailure(makeControlManagementBatch({ ...i, runId: 'invalid' }))).toBe(true)

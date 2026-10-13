@@ -203,7 +203,6 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
               dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
               targetWeight: 1,
               management: null,
-              accountScheduledOpportunities: true,
               decisionLatencyMs: input.decisionLatencyMs,
               pollIntervalMs: prepared.input.cadence.pollIntervalMs,
               turnoverPolicy: input.turnoverPolicy,

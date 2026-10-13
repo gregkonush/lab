@@ -7,7 +7,7 @@ import { SqlClient } from 'effect/sql'
 import migration from '../../migrations/0093_research_inference'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
-import { researchFixture, streamFixture } from './test-support'
+import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
 import { makeResearchStore, projectResearchExpenses, researchExpensePlan, verifyResearchReceipt } from './store'
 import { makeResearchRunner } from './runner'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
@@ -69,7 +69,7 @@ integration('research attempt durability with real PostgreSQL', () => {
       port: 0,
       fetch: () => {
         calls++
-        return new Response(streamFixture(), {
+        return new Response(fullTokenBudgetStreamFixture(), {
           headers: {
             'content-type': 'text/event-stream',
             'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(researchFixture().policy)),
@@ -93,6 +93,7 @@ integration('research attempt durability with real PostgreSQL', () => {
           }
           const first = yield* runner.run(run)
           expect(first.outcome).toBe(ResearchOutcome.Complete)
+          expect(first.usage?.completion_tokens).toBe(4096)
           expect(Result.isSuccess(verifyResearchReceipt(run, first))).toBe(true)
           expect(yield* runner.run(run)).toEqual(first)
           expect(calls).toBe(1)

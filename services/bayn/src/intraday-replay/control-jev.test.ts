@@ -10,7 +10,7 @@ import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support
 import { JevPurpose } from '../jev/portfolio'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { makeControlJevJournal } from './control-jev-journal'
-import { makeControlJevManagement } from './control-jev'
+import { makeControlJev } from './control-jev'
 import { controlJevFixture } from './control-jev.test-support'
 import { JevClaim } from '../jev/evaluation'
 import { JevCandidatePlanStatus } from '../jev/batch'
@@ -182,7 +182,7 @@ test('failed source catch-up rejects management while retaining its paid respons
       const marketClock = yield* TestClock.make()
       yield* providerClock.setTime(Date.parse('2026-09-24T21:00:00Z'))
       yield* marketClock.setTime(fixture.atMs)
-      const manager = yield* makeControlJevManagement(
+      const manager = yield* makeControlJev(
         {
           journal,
           providerClock,
@@ -222,7 +222,7 @@ test('interruption cancels the provider once, retains its unknown cost, and forb
       yield* marketClock.setTime(fixture.atMs)
       const started = yield* Deferred.make<void>()
       let finalized = 0
-      const manager = yield* makeControlJevManagement(
+      const manager = yield* makeControlJev(
         {
           journal,
           providerClock,
@@ -270,7 +270,7 @@ test('a provider defect remains a defect after the journal retains its unresolve
       const marketClock = yield* TestClock.make()
       yield* providerClock.setTime(Date.parse('2026-09-24T21:00:00Z'))
       yield* marketClock.setTime(fixture.atMs)
-      const manager = yield* makeControlJevManagement(
+      const manager = yield* makeControlJev(
         { journal, providerClock, provider: { evaluate: () => Effect.die('Fixture provider defect') } },
         (atMs) => marketClock.setTime(atMs),
       ).pipe(Effect.provideService(Clock.Clock, marketClock))
@@ -354,7 +354,7 @@ test.each([
         )
         const sourceAdvances: number[] = []
         let providerCalls = 0
-        const manager = yield* makeControlJevManagement(
+        const manager = yield* makeControlJev(
           {
             journal,
             providerClock,
