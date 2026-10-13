@@ -92,11 +92,11 @@ spec:
                 - name: TRADING_ACCOUNT_LABEL
                   value: PA3SX7FYNUTF
                 - name: TORGHUT_VERSION
-                  value: kargo-sha-864e832055368f64e1cbacfef257c11e62717311
+                  value: kargo-sha-d352f821e1f936403745327a21c38f213356c6ad
                 - name: TORGHUT_COMMIT
-                  value: 864e832055368f64e1cbacfef257c11e62717311
+                  value: d352f821e1f936403745327a21c38f213356c6ad
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:b72acb41170450864e433111858fd75b7f09920550c47865a4ef554432b18688
+                  value: sha256:e3b5310289ab51968b45b43a95affe86d4448c5cf590dba5d07a1fd3d306a466
                 - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
                   value: linux/amd64,linux/arm64
                 - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
