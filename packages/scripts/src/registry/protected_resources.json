@@ -1,0 +1,13 @@
+{
+  "": ["pods"],
+  "apps": ["deployments", "statefulsets", "daemonsets"],
+  "batch": ["cronjobs", "jobs"],
+  "actions.github.com": ["autoscalingrunnersets"],
+  "agents.proompteng.ai": ["agentproviders"],
+  "argoproj.io": ["workflows", "workflowtemplates", "clusterworkflowtemplates", "cronworkflows"],
+  "flink.apache.org": ["flinkdeployments"],
+  "kargo.akuity.io": ["freights", "stages", "promotions"],
+  "postgresql.cnpg.io": ["clusters", "imagecatalogs", "clusterimagecatalogs"],
+  "restate.dev": ["restatedeployments"],
+  "serving.knative.dev": ["services", "configurations", "revisions"]
+}

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -53,36 +54,42 @@ class ProtectedReferencesTest(unittest.TestCase):
                     ],
                 }
             ],
+            "stages.kargo.akuity.io": [
+                {
+                    "status": {
+                        "freightHistory": [
+                            {
+                                "images": [
+                                    {
+                                        "repoURL": self.registry + "stage",
+                                        "tag": "retained",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ],
+            "promotions.kargo.akuity.io": [
+                {"status": {"image": self.registry + "promotion@sha256:" + "c" * 64}}
+            ],
         }
 
     def read(self, args, **kwargs):
         self.calls.append(args)
         self.assertEqual(args[:3], ["kubectl", "--context", "fixture"])
         resources = args[args.index("get") + 1]
-        if resources == "freight,stages,promotions":
-            return b'{"items":[]}'
-        if resources == "customresourcedefinitions":
-            rows = [
-                {"metadata": {"name": name}, "spec": {"versions": [{"served": True}]}}
-                for name in self.objects
-            ]
-            rows.append(
-                {
-                    "metadata": {"name": "unserved.example.com"},
-                    "spec": {"versions": [{"served": False}]},
-                }
-            )
-            return json.dumps({"items": rows}).encode()
         self.assertIn("--all-namespaces", args)
-        if resources.startswith("pods,"):
-            return b'{"items":[{"spec":{"containers":[{"image":"registry.ide-newton.ts.net/lab/running:latest"}]}}]}'
         if self.fail_resource and self.fail_resource in resources.split(","):
             raise subprocess.CalledProcessError(1, args)
-        self.assertNotIn("unserved.example.com", resources)
+        if resources == "pods":
+            return b'{"items":[{"spec":{"containers":[{"image":"registry.ide-newton.ts.net/lab/running:latest"}]}}]}'
         return json.dumps(
             {
                 "items": [
-                    row for name in resources.split(",") for row in self.objects[name]
+                    row
+                    for name in resources.split(",")
+                    for row in self.objects.get(name, [])
                 ]
             }
         ).encode()
@@ -104,24 +111,54 @@ class ProtectedReferencesTest(unittest.TestCase):
             "postgres:retained",
             "release:retained",
             "release@sha256:" + "b" * 64,
+            "stage:retained",
+            "promotion@sha256:" + "c" * 64,
         ):
             self.assertIn(self.registry + image, result)
         self.assertEqual(result, sorted(set(result)))
 
-    def test_failed_custom_resource_list_aborts_the_entire_snapshot(self):
-        self.fail_resource = "agentproviders.agents.proompteng.ai"
-        with patch.object(protection.subprocess, "check_output", side_effect=self.read):
-            with self.assertRaises(subprocess.CalledProcessError):
-                protection.references("fixture")
+    def test_each_required_source_failure_aborts_the_entire_snapshot(self):
+        for group, resources in protection.RESOURCES.items():
+            for resource in resources:
+                self.fail_resource = resource + ("." + group if group else "")
+                with self.subTest(resource=self.fail_resource):
+                    with patch.object(
+                        protection.subprocess, "check_output", side_effect=self.read
+                    ):
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            protection.references("fixture")
 
-    def test_failed_crd_discovery_aborts_the_entire_snapshot(self):
+    def test_cleanup_does_not_discover_or_read_unrelated_custom_resources(self):
         def denied(args, **kwargs):
-            if "customresourcedefinitions" in args:
+            if "customresourcedefinitions" in args or "valkey.buf.red" in " ".join(
+                args
+            ):
                 raise subprocess.CalledProcessError(1, args)
             return self.read(args, **kwargs)
 
         with patch.object(protection.subprocess, "check_output", side_effect=denied):
-            with self.assertRaises(subprocess.CalledProcessError):
+            result = protection.references("fixture")
+        self.assertIn(self.idle, result)
+        sources = json.loads(
+            Path(__file__).with_name("protected_resources.json").read_text()
+        )
+        expected = {
+            resource + ("." + group if group else "")
+            for group, resources in sources.items()
+            for resource in resources
+        }
+        queried = {
+            resource
+            for args in self.calls
+            for resource in args[args.index("get") + 1].split(",")
+        }
+        self.assertEqual(queried, expected)
+
+    def test_empty_snapshot_aborts_cleanup(self):
+        with patch.object(
+            protection.subprocess, "check_output", return_value=b'{"items":[]}'
+        ):
+            with self.assertRaisesRegex(RuntimeError, "No protected references"):
                 protection.references("fixture")
 
 
