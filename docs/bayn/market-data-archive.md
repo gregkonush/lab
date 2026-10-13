@@ -10,8 +10,8 @@ replacement. Kafka retention remains a limit on how long an offset range can be 
 
 Longer-lived archives should use a separate Apache Kafka Connect worker and a maintained S3 sink plugin.
 Kafka Connect is Apache-licensed. Confluent's S3 sink uses the separate Confluent Community License; its source
-availability does not make it an Apache-licensed connector. Plugin selection must include license and exact-byte
-format verification. Restate should coordinate the
+availability does not make it an Apache-licensed connector. Aiven's S3 connector is an Apache 2.0 alternative.
+Plugin selection must include exact-byte format verification and restart recovery against Ceph. Restate should coordinate the
 registered session, frozen offset range and completion checks. Bayn should not implement the bulk copy.
 No Kafka Connect worker or S3 connector was deployed at the time of that readback. This cleanup does not claim one
 has been deployed or a complete research dataset has been captured.
@@ -26,3 +26,5 @@ References:
 - [Kafka Connect REST API and offset management](https://kafka.apache.org/41/kafka-connect/user-guide/)
 - [Confluent S3 Sink connector](https://docs.confluent.io/kafka-connectors/s3-sink/current/overview.html)
 - [S3 formats, tombstones and metadata options](https://docs.confluent.io/kafka-connectors/s3-sink/current/configuration_options.html)
+- [Aiven connector license](https://github.com/Aiven-Open/cloud-storage-connectors-for-apache-kafka/blob/v3.4.3/LICENSE)
+- [Aiven S3 sink format and configuration](https://github.com/Aiven-Open/cloud-storage-connectors-for-apache-kafka/blob/v3.4.3/s3-sink-connector/README.md)
