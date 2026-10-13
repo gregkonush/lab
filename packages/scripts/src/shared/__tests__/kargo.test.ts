@@ -925,7 +925,8 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('aligns each product Warehouse source paths with its exact image build filter', () => {
     expect(productNixWorkflow.concurrency).toEqual({
-      group: 'product-nix-images-${{ github.event.pull_request.number || github.run_id }}',
+      group:
+        "product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}",
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
 
