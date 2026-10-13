@@ -80,6 +80,17 @@ Manual selection retains each workflow's existing controls. Native Tengri images
 and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
 use the root Bun lockfile.
 
+PR image builds run for non-draft PRs targeting `main`; later native-stack layers keep source validation and build
+their images when retargeted to `main`. Controller-only PR changes do not rebuild the desktop. Pushes to `main`
+retain coordinated controller, guest, and desktop publication. Ofz, Tengri, and Nanoagent source validation uses
+GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
+
+Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every
+service build. Real service, image-input, and dependency changes in the same PR still select their consumers.
+
+The root-scripts job uses the same impact router with `.github/ci/root-script-map.yml` to select owned suites.
+Changes to the router or its configuration run all six suites; a Tengri NetworkPolicy change runs kube-router only.
+
 Run the planner regressions with `bun test packages/scripts/src/ci/__tests__/affected-inputs.test.ts`.
 
 ## Testing & linting

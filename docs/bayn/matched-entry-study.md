@@ -49,13 +49,13 @@ Quote size units, source timing and executable capacity need separate evidence; 
 
 `MatchedStudyInputSchema` defines `bayn.matched-entry-input.v2`:
 
-| Field       | Evidence                                                                                                                                                                                                                      |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `study`     | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches.                                                            |
-| `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too.                                                                                     |
+| Field       | Evidence                                                                                                                                                                                                                                                                                                         |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `study`     | Existing `SignalStudyInputSchema`: run ID, complete source manifest, execution assumptions, every original batch including missing results and management batches.                                                                                                                                               |
+| `inventory` | One read-only database inventory per session: `sessionDate`, all `entryBatchIds`, `evidenceHash`. Zero-batch sessions need witnesses too.                                                                                                                                                                        |
 | `timings`   | Per entry `batchId`, a native timing witness or explicit `null`. The witness contains input readiness, deterministic completion, batch completion, decision commitment, selected momentum symbol, the timing file SHA-256 `evidenceHash`, and the native execution-decision file SHA-256 `decisionEvidenceHash`. |
-| `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                                                                                    |
-| `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                                                                             |
+| `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                                                                                                                                                                       |
+| `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                                                                                                                                                                |
 
 Use the native inference-cost report with request/receipt/resolution coverage and effective-dated tariffs.
 Allocate every entry call, including abstentions, failures and unselected symbols. Missing/unpriced calls remain
@@ -86,8 +86,12 @@ Definition and report are `bayn.matched-entry-definition.v3` and `bayn.matched-e
 registration remains v1 with the new definition hash. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
-Each timing witness points to a private `bayn.jev-entry-timing.v1` file produced from verified native capture by
-`replayResearchCaptureInterval`. The command reads and hashes that file, checks source revision, batch, observation
+The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that
+path is unavailable. The [market-data archive boundary](market-data-archive.md) keeps its replacement outside trading;
+an independent Kafka archive cannot reconstruct the trading worker's original arrival or decision-commit clocks.
+
+Each timing witness must point to a retained, independently verified private `bayn.jev-entry-timing.v1` file.
+The study command reads and hashes that file, checks source revision, batch, observation
 and snapshot identities, clock order, retained batch completion and frozen momentum selection. The required
 `decisionEvidenceHash` references the complete committed native execution-decision document exported read-only from
 the cycle store. The native decoder verifies its semantic and content identity; the study binds the timing receipt's
@@ -101,7 +105,9 @@ The [incremental-value audit](jev-incremental-audit.md) explains why selection a
 
 ## Run
 
-From the reviewed checkout:
+The command remains available for validated retained inputs and development fixtures. A new prospective matched-entry
+comparison is blocked until complete source and timing witnesses are available. Running the command does not establish
+those witnesses or make an invalidated legacy capture eligible. From the reviewed checkout:
 
 ```sh
 bun services/bayn/tools/matched-entry-study.ts \

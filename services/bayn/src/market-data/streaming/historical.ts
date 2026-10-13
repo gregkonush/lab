@@ -2,11 +2,7 @@ import { SimulatedSnapshotSourceSchema } from './evidence-schema'
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import { sha256 } from '../../hash'
-import {
-  CaptureDisposition,
-  OriginalKafkaTransportSchema,
-  restoreKafkaTransportTimestamp,
-} from '../../research-capture/capture'
+import { CaptureDisposition, OriginalKafkaTransportSchema, restoreKafkaTransportTimestamp } from './transport-evidence'
 import { kafkaCaptureDisposition } from './kafka'
 import {
   NonNegativeIntegerSchema,

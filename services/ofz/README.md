@@ -54,6 +54,8 @@ changes cannot expose an uncleansed guest. Retained homes still count against qu
 Offboarding preserves an already approved `removing` state, including when the affected human is the owner,
 a Developer or an emergency user. Only exact controller confirmation of home removal releases its quota;
 offboarding cannot prevent that confirmation or release storage capacity early.
+`GetCommand.workspace_removed` reports completion only for the authenticated caller's original removal command,
+after that controller confirmation. The BFF waits for it before acknowledging deletion and retiring browser retry IDs.
 
 Unbound creation reservations expire after five minutes on the database clock. Expired reservations no longer
 consume quota and cannot be enrolled or reused. Their IDs remain recorded so an old retry cannot allocate new capacity.

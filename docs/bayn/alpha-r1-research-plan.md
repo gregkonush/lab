@@ -94,8 +94,10 @@ The existing Mimir rule source contains warning alerts for missing telemetry, re
 The live inventory at 2026-10-12 04:29 UTC found 224 chunks across 15 capture IDs and seven seals. One seal had
 `INVALID_EVENT`; six had `PERSISTENCE_FAILED_OR_UNKNOWN`. Zero seals had an empty invalidation list. Unsealed chunks
 cannot establish complete coverage. No eligible original session was available for the requested economic comparison.
-The [capture contract](../../services/bayn/src/research-capture/README.md) remains authoritative. Existing capture
-credentials and bucket availability do not prove full original arrival, source frontier and controller coverage.
+The in-process recorder has been removed. The [market-data archive boundary](market-data-archive.md) governs its
+replacement. Existing objects, credentials and bucket availability do not prove full original arrival, source
+frontier or controller coverage. An independent Kafka archive cannot reconstruct when the trading worker received
+a record or ran a controller pass.
 
 Deliver the reviewed worker through main, immutable
 publication, eligible Freight, the existing Kargo Stage, generated Kargo revision and Argo reconciliation. Verify an

@@ -2,7 +2,7 @@ import { Effect, FileSystem, Result, Schema } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca/model'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
-import { EntryTimingReceiptSchema } from '../research-capture/entry-timing'
+import { EntryTimingReceiptSchema } from './entry-timing'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { JevPurpose } from '../jev/portfolio'
 import { intradayInstantNanos } from '../market-data/intraday/time'

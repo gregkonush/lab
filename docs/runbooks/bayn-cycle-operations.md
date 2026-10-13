@@ -128,8 +128,13 @@ cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O 
 and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
 age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
 
-When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
-exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
+The in-process research recorder has been removed. It emits no capture spans in the current worker. The following
+queries apply only to retained traces from older revisions, within their actual retention window. Current research
+archive collection and completion checks are unavailable until the independent
+[market-data archive](../bayn/market-data-archive.md) is implemented and verified.
+
+In historical capture traces, `bayn.capture.object.put_verified` describes conditional PUT and exact GET/readback
+verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
 `VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
 therefore remain distinguishable after cancellation. The span also records the validated
 `bayn.capture.object.sha256`. In the same bounded session window, join that hash to sanitized gateway receipts in Loki:
@@ -146,7 +151,7 @@ acknowledgement event, even if the gateway later logs HTTP 200. HTTP 412 records
 exact readback. Retain missing terminal events as incomplete evidence. Hashes are trace attributes, never metric labels;
 credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove that its chunk
 committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
-These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
+These historical events do not establish current runtime behavior or a complete original session.
 
 ## Alert actions
 
