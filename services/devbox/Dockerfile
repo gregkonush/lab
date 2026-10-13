@@ -48,6 +48,7 @@ RUN devbox-install-deps && \
     rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
 COPY --chmod=0755 services/devbox/boot.sh /usr/local/bin/devbox-boot
 COPY --chmod=0755 services/devbox/seed-home.sh /usr/local/bin/devbox-seed-home
+COPY --chmod=0755 services/devbox/seed-nix.sh /usr/local/bin/devbox-seed-nix
 COPY services/devbox/prepare.sh /usr/local/sbin/devbox-prepare
 COPY services/devbox/verify.sh /usr/local/bin/devbox-verify
 COPY services/devbox/profile.sh /etc/profile.d/devbox.sh
