@@ -4,7 +4,7 @@ metadata:
   name: replica-acl-bayn-valkey-default
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    argocd.argoproj.io/sync-options: Prune=true,Delete=false
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   accountType: custom
   arch: replica
