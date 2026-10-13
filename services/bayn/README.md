@@ -59,6 +59,10 @@ the native Restate attempt's trace, allowing scheduling, capture and publication
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
 
+The execution controller and broker observation owner preload their small durable state with each invocation.
+State reads therefore avoid lazy-fetch round trips before execution or capture. State mutations, capture claims,
+quota reservations and replay protection retain their existing durable semantics.
+
 Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
 hashes survive caching. Reconciliation reads one complete cut. Routine account, position and health reads use the same
@@ -725,6 +729,10 @@ request graph, the full scoped TigerBeetle account and transfer sets, and posted
 quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
 The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
 and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
+The private ledger command's `coverage.requestsWithCoverageIssues` identifies each missing quote, unverified ledger acknowledgement, unknown
+usage or unpriced model with its request ID, purpose and immutable evidence hashes. It excludes account identity
+and model payloads. An abandoned request without a receipt remains an unknown charge; absence of a response cannot
+establish that the provider performed no billable work. The forward-performance summary retains aggregate counts.
 `invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
 expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
 
