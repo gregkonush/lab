@@ -15,15 +15,6 @@ import {
 } from './cycle-completion.test-support'
 
 const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
-const decisionReads = (value: unknown): number => {
-  if (Array.isArray(value)) return value.reduce<number>((sum, item) => sum + decisionReads(item), 0)
-  if (value === null || typeof value !== 'object') return 0
-  return (
-    ('Relation Name' in value && value['Relation Name'] === 'autonomous_cycle_shadow_decisions' ? 1 : 0) +
-    Object.values(value).reduce<number>((sum, item) => sum + decisionReads(item), 0)
-  )
-}
-
 const CompletionRows = Schema.Tuple([Schema.Struct({ baseline: Schema.Boolean, candidate: Schema.Boolean })])
 
 postgresTest('bound completion evidence preserves completion results across adversarial fixtures', async () => {
@@ -44,19 +35,8 @@ postgresTest('bound completion evidence preserves completion results across adve
           yield* sql`SET LOCAL search_path TO completion_binding_test, public`
           for (const statement of completionSchemaSql.split(';').filter((part) => part.trim().length > 0))
             yield* sql.unsafe(statement)
-          // This helper is a production dependency created by the existing migration.
-          // Clone its already-migrated definition into the isolated fixture schema.
-          const [dependency] = yield* sql`SELECT pg_get_functiondef(
-            'public.paper_account_has_unresolved_mutation(text,timestamptz)'::regprocedure
-          ) AS definition`.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ definition: Schema.String })]))),
-          )
-          yield* sql.unsafe(
-            dependency.definition.replace(
-              'public.paper_account_has_unresolved_mutation',
-              'completion_binding_test.paper_account_has_unresolved_mutation',
-            ),
-          )
+          // The migrated public helper resolves its unqualified tables against this
+          // transaction's isolated search_path, just like the completion functions.
           yield* originalCompletion
           yield* sql`ALTER FUNCTION paper_cycle_completion_evidence_matches(text,text,timestamptz)
             RENAME TO baseline_completion`
@@ -81,22 +61,29 @@ postgresTest('bound completion evidence preserves completion results across adve
           yield* sql.unsafe(malformedCompletionSql)
           for (const statement of resetCompletionSql.split(';').filter((part) => part.trim().length > 0))
             yield* sql.unsafe(statement)
-          // Inspect the actual installed SQL bodies. The old body reads the decision twice;
-          // the candidate must bind it once even when the planner already prefers indexes.
-          for (const name of ['baseline_completion', 'paper_cycle_completion_evidence_matches']) {
-            const [row] = yield* sql`SELECT pg_get_functiondef(
-              (${`completion_binding_test.${name}(text,text,timestamptz)`})::regprocedure
-            ) AS definition`.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ definition: Schema.String })]))),
+          // Transaction-local counters measure the installed functions directly, including
+          // their nested queries, without depending on argument names or source formatting.
+          const scans = sql`SELECT (seq_scan + idx_scan)::integer AS scans
+            FROM pg_stat_xact_user_tables
+            WHERE relid = 'completion_binding_test.autonomous_cycle_shadow_decisions'::regclass
+          `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ scans: Schema.Number })]))))
+          for (const probe of [
+            {
+              query: sql`SELECT baseline_completion('cycle','decision','2026-01-01T00:00:10Z') AS complete`,
+              expected: 2,
+            },
+            {
+              query: sql`SELECT paper_cycle_completion_evidence_matches('cycle','decision','2026-01-01T00:00:10Z') AS complete`,
+              expected: 1,
+            },
+          ]) {
+            const [before] = yield* scans
+            const [result] = yield* probe.query.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ complete: Schema.Boolean })]))),
             )
-            const body = row.definition.split('AS $function$')[1]?.split('$function$')[0]
-            if (body === undefined) throw new Error('Missing installed completion SQL body')
-            const probe = body
-              .replaceAll('bound_cycle_id', "'cycle'")
-              .replaceAll('bound_decision_hash', "'decision'")
-              .replaceAll('completion_observed_at', "'2026-01-01T00:00:10Z'::timestamptz")
-            const plan = yield* sql.unsafe(`EXPLAIN (FORMAT JSON) ${probe}`)
-            expect(decisionReads(plan)).toBe(name === 'baseline_completion' ? 2 : 1)
+            const [after] = yield* scans
+            expect(result.complete).toBe(true)
+            expect(after.scans - before.scans).toBe(probe.expected)
           }
           yield* sql`DROP SCHEMA completion_binding_test CASCADE`
         }),
