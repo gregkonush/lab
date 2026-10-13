@@ -130,6 +130,7 @@ describe('Tengri image workflow', () => {
     'requires a retained lifecycle receipt when the fixture exits successfully: %s',
     (receipt) => {
       const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
+      const guestDns = resolve(fixture, 'guest-resolv.conf')
       try {
         writeFileSync(resolve(fixture, 'ca.crt'), 'disposable-ca')
         writeFileSync(resolve(fixture, 'runtime.password'), 'disposable-password')
@@ -138,6 +139,11 @@ describe('Tengri image workflow', () => {
         writeFileSync(
           resolve(fixture, 'docker'),
           `#!/bin/sh
+if [ "$1" = run ]; then
+  for argument do
+    if [ "$argument" = /artifacts/resolv.conf ]; then /bin/cat > "$GUEST_DNS"; fi
+  done
+fi
 if [ "$1" = cp ]; then
   case "$2" in *:/work/result.json)
   case "$RECEIPT" in
@@ -155,6 +161,7 @@ exit 0
             ...process.env,
             PATH: `${fixture}:${process.env.PATH}`,
             RECEIPT: receipt,
+            GUEST_DNS: guestDns,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
             TENGRI_KVM_NETWORK: 'disposable-fixture-network',
@@ -167,6 +174,7 @@ exit 0
           },
         })
         expect(result.exitCode === 0).toBe(receipt === 'present')
+        expect(readFileSync(guestDns, 'utf8')).toBe('nameserver 1.1.1.1\nnameserver 8.8.8.8\n')
       } finally {
         rmSync(fixture, { recursive: true, force: true })
       }
@@ -260,9 +268,7 @@ exit 0
     expect(controllerValidation).toContain('cargo fmt --check')
     expect(controllerValidation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(controllerValidation).toContain('cargo test --locked --all-targets')
-    expect(controllerValidation).toContain(
-      'diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml',
-    )
+    expect(controllerValidation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
     expect(guestValidation).toContain('GOWORK=off go test -race ./...')
     expect(guestValidation).toContain('GOWORK=off go vet ./...')
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
@@ -406,7 +412,6 @@ exit 0
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
-    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml')
   })
 
   it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {

@@ -938,6 +938,43 @@ describe('Tengri gRPC BFF transport', () => {
     expect(runtimeDisplayName).toBe('Original name')
   })
 
+  test('deletes a failed workspace after observing its committed stop', async () => {
+    const { createAgent, deleteAgent } = await import('./grpc')
+    await createAgent(identity, 'Failed deletion fixture', randomUUID())
+    runtimePhase = 'AGENT_PHASE_FAILED'
+    delayedRuntimeReads = 2
+    const reads = agentReads
+    try {
+      await deleteAgent(identity, 'agent-test', workspaceUid, randomUUID())
+      expect(agentReads - reads).toBe(4)
+      expect(removedAgent).toBe(true)
+    } finally {
+      delayedRuntimeReads = 0
+      staleAgents.length = 0
+      runtimePhase = 'AGENT_PHASE_READY'
+      removedAgent = false
+    }
+  })
+
+  test('rejects a failed stop after the controller observes its committed version', async () => {
+    const { createAgent, deleteAgent } = await import('./grpc')
+    await createAgent(identity, 'Failed stop fixture', randomUUID())
+    staleAgents.push(runtimeAgent('agent-test'), {
+      ...runtimeAgent('agent-test'),
+      phase: 'AGENT_PHASE_FAILED',
+      policyVersion: String(lifecycleVersion + 1),
+    })
+    try {
+      expect(await rejection(deleteAgent(identity, 'agent-test', workspaceUid, randomUUID()))).toMatchObject({
+        status: 503,
+      })
+      expect(removedAgent).toBe(false)
+    } finally {
+      staleAgents.length = 0
+      runtimePhase = 'AGENT_PHASE_READY'
+    }
+  })
+
   test('recovers deletion after the controller has removed the workspace without requiring its metadata', async () => {
     const { createAgent, deleteAgent } = await import('./grpc')
     await createAgent(identity, 'Delete fixture', randomUUID())

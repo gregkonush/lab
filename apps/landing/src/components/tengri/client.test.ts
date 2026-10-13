@@ -202,9 +202,10 @@ test('reuses an uncertain runtime operation and allocates a new ID only after su
 })
 
 test('retains the exact creation request until its uncertain outcome is resolved', async () => {
-  let calls = 0
-  globalThis.fetch = (async () => {
-    calls += 1
+  const requests: Array<{ displayName: string; operationId: string }> = []
+  globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
+    requests.push(JSON.parse(init.body))
     throw new TypeError('connection lost')
   }) as unknown as typeof fetch
   const options = { principalId: 'fixture-human' }
@@ -212,9 +213,64 @@ test('retains the exact creation request until its uncertain outcome is resolved
     'connection lost',
   )
   await expect(runTengriAction({ action: 'create-agent', displayName: 'Changed' }, options)).rejects.toThrow(
-    'already recorded',
+    'connection lost',
   )
-  expect(calls).toBe(1)
+  expect(requests).toHaveLength(2)
+  expect(requests[1]).toEqual(requests[0])
+})
+
+test('reconciles an externally removed creation before submitting a different name', async () => {
+  const requests: Array<{ displayName: string; operationId: string }> = []
+  globalThis.fetch = (async (_input, init) => {
+    if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
+    requests.push(JSON.parse(init.body))
+    return requests.length === 2
+      ? Response.json({ error: 'Workspace removed', code: 'lifecycle_superseded' }, { status: 409 })
+      : Response.json({ result: { displayName: requests.at(-1)?.displayName } })
+  }) as typeof fetch
+  const options = { principalId: 'fixture-human' }
+  await runTengriAction({ action: 'create-agent', displayName: 'Original workspace' }, options)
+  expect(
+    await runTengriAction<{ displayName: string }>(
+      { action: 'create-agent', displayName: 'Replacement workspace' },
+      options,
+    ),
+  ).toEqual({
+    displayName: 'Replacement workspace',
+  })
+  expect(requests.map((request) => request.displayName)).toEqual([
+    'Original workspace',
+    'Original workspace',
+    'Replacement workspace',
+  ])
+  expect(requests[1].operationId).toBe(requests[0].operationId)
+  expect(requests[2].operationId).not.toBe(requests[0].operationId)
+})
+
+test.each([403, 503])('preserves the original creation when reconciliation returns %s', async (status) => {
+  const requests: Array<{ displayName: string; operationId: string }> = []
+  let unavailable = true
+  globalThis.fetch = (async (_input, init) => {
+    if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body')
+    requests.push(JSON.parse(init.body))
+    if (requests.length > 1 && requests.at(-1)?.operationId === requests[0].operationId) {
+      return unavailable
+        ? Response.json({ error: 'Recovery denied or unavailable' }, { status })
+        : Response.json({ error: 'Workspace removed', code: 'lifecycle_superseded' }, { status: 409 })
+    }
+    return Response.json({ result: {} })
+  }) as typeof fetch
+  const options = { principalId: 'fixture-human' }
+  await runTengriAction({ action: 'create-agent', displayName: 'Original workspace' }, options)
+  const replacement = { action: 'create-agent' as const, displayName: 'Replacement workspace' }
+  expect(await runTengriAction(replacement, options).catch((error: unknown) => error)).toMatchObject({ status })
+  expect(requests[1]).toEqual(requests[0])
+  expect(storage.getItem('tengri.pending-lifecycle.v2/fixture-human')).toContain(requests[0].operationId)
+  unavailable = false
+  await runTengriAction(replacement, options)
+  expect(requests[2]).toEqual(requests[0])
+  expect(requests[3].displayName).toBe('Replacement workspace')
+  expect(requests[3].operationId).not.toBe(requests[0].operationId)
 })
 
 test('retains a committed creation for stale tabs until its exact workspace is deleted', async () => {
@@ -230,22 +286,21 @@ test('retains a committed creation for stale tabs until its exact workspace is d
   const creationId = requests[0].operationId
   expect(requests[1].operationId).toBe(creationId)
   expect(storage.getItem('tengri.pending-lifecycle.v2/424242')).toContain(creationId)
-  await expect(runTengriAction({ ...original, displayName: 'Another workspace' }, options)).rejects.toThrow(
-    'already recorded',
-  )
-  expect(requests).toHaveLength(2)
+  await runTengriAction({ ...original, displayName: 'Another workspace' }, options)
+  expect(requests).toHaveLength(3)
+  expect(requests[2].operationId).toBe(creationId)
   const owner = createHash('sha256').update('github:424242').digest('hex')
   const agentId = `agent-${createHash('sha256').update(`ofz.workspace.v1\n${owner}\n${creationId}`).digest('hex').slice(0, 32)}`
   await runTengriAction({ action: 'delete-agent', agentId, workspaceUid: crypto.randomUUID() }, options)
   expect(storage.getItem('tengri.pending-lifecycle.v2/424242')).toBe('[]')
   await runTengriAction({ ...original, displayName: 'Replacement workspace' }, options)
-  expect(requests[3].operationId).not.toBe(creationId)
+  expect(requests[4].operationId).not.toBe(creationId)
 })
 
 test.each(['same', 'different'])(
   'serializes concurrent %s creation intents before either request is sent',
   async (name) => {
-    const requests: Array<{ operationId: string }> = []
+    const requests: Array<{ displayName: string; operationId: string }> = []
     globalThis.fetch = (async (_input, init) => {
       requests.push(JSON.parse(String(init?.body)))
       return Response.json({ result: {} })
@@ -259,17 +314,10 @@ test.each(['same', 'different'])(
       ),
     ])
     expect(outcomes[0].status).toBe('fulfilled')
-    if (name === 'same') {
-      expect(outcomes[1].status).toBe('fulfilled')
-      expect(requests).toHaveLength(2)
-      expect(requests[1].operationId).toBe(requests[0].operationId)
-    } else {
-      expect(outcomes[1]).toMatchObject({
-        status: 'rejected',
-        reason: { message: expect.stringContaining('already recorded') },
-      })
-      expect(requests).toHaveLength(1)
-    }
+    expect(outcomes[1].status).toBe('fulfilled')
+    expect(requests).toHaveLength(2)
+    expect(requests[1].operationId).toBe(requests[0].operationId)
+    expect(requests[1].displayName).toBe('Shared workspace')
   },
 )
 
@@ -390,9 +438,10 @@ test.each(['matching', 'known-operation', 'unrelated', 'failed', 'another-princi
       await runTengriAction(changed, { principalId })
       expect(requests[2].operationId).not.toBe(creationId)
     } else {
-      await expect(runTengriAction(changed, { principalId })).rejects.toThrow('already recorded')
+      await runTengriAction(changed, { principalId })
       await runTengriAction(original, { principalId })
       expect(requests[2].operationId).toBe(creationId)
+      expect(requests[3].operationId).toBe(creationId)
     }
   },
 )
