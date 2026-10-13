@@ -5,7 +5,13 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
       - 'services/tengri/**'
-      - 'services/ofz/**'
+      - 'services/ofz/src/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
       - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
@@ -20,7 +26,13 @@ on:
     paths:
       - 'apps/landing/**'
       - 'services/tengri/**'
-      - 'services/ofz/**'
+      - 'services/ofz/src/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
       - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
@@ -107,7 +119,6 @@ jobs:
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
-          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml
 
   validate-nanoagent:
     if: github.event.action != 'edited' || github.event.changes.base

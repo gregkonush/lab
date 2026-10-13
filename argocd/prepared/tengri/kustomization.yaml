@@ -5,6 +5,8 @@ resources:
   - ../../applications/tengri
 patches:
   - path: deployment.patch.yaml
+  - path: resource-quota.patch.yaml
+  - path: rbac.patch.yaml
   - target:
       kind: NetworkPolicy
       name: tengri-control-plane

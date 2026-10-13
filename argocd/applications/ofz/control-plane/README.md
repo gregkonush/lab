@@ -10,8 +10,10 @@ The Ofz client connects to that reviewed internal ingress address while verifyin
 
 Use a separate `ofz_migrator` owner for `ofz_control`. The API logs in as `ofz_api` and the independent exporter as
 `ofz_archiver`. `tengri_control` belongs to `tengri_migrator`, with separate BFF/controller application roles.
-The API's twelve pooled plus two command connections per replica need a role limit of at least 28 across two replicas.
+The API's twelve pooled plus two command connections per replica need a role limit of at least 42 including its rolling surge.
 Keep the combined SpiceDB, Ofz, BFF, controller, exporter and migration budget below PostgreSQL's 200 connections.
+The complete [prepared HA target](../../../prepared/ofz/README.md) fixes native read/write pool limits and reserves
+thirty connections beyond simultaneous application surges. Render that target for coordinated cutover validation.
 
 Run the initial migration as its short-lived owner with `ofz migrate`. Rerunning the same migration is idempotent;
 a checksum mismatch fails. The API verifies the schema checksum at startup and begins with the platform fenced.
