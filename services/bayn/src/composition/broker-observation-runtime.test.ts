@@ -31,6 +31,7 @@ test('only a matching unused expired capture releases speculative debt after inv
     })
   }
   expect(result.attempts).toBe(0)
+  expect(result.claims).toBe(4)
   expect(result.invalidations).toBeGreaterThanOrEqual(4)
   const expiryLog = result.logs.find((log: { message: string[] }) =>
     log.message.includes('Broker observation capture expired before starting'),

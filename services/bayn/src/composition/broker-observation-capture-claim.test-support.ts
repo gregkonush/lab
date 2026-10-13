@@ -17,9 +17,9 @@ const logger = Logger.make(({ message, fiber }) => {
 const claims = new Set<unknown>()
 const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
   Effect.suspend(() => {
-    if (strings.join('').includes('RETURNING generation')) {
-      if (claims.has(values[0])) return Effect.succeed([])
-      claims.add(values[0])
+    if (strings.join('').includes('RETURNING broker_observations.generation')) {
+      if (claims.has(values[2])) return Effect.succeed([])
+      claims.add(values[2])
       return Clock.currentTimeMillis.pipe(
         Effect.map((now) => [{ generation: 1, startedAt: new Date(now).toISOString() }]),
       )
@@ -89,7 +89,7 @@ const result = await Effect.runPromise(
         const retry = yield* Effect.promise(() => runtime.poll(signal, { ...reservation, captureId }))
         failures.push({ outcome, completion: completion._tag, retry })
       }
-      return { expired, duplicate, replaced, failures, reservation, attempts, invalidations }
+      return { expired, duplicate, replaced, failures, reservation, attempts, invalidations, claims: claims.size }
     }),
   ).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
 )

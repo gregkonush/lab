@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Effect, Exit, Option, Schedule, Schema, Scope } from 'effect'
+import { Clock, Config, Effect, Exit, Option, Schedule, Schema, Scope } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
@@ -177,4 +177,65 @@ describeRestate('Real Restate broker observation journal', () => {
       ),
     )
   }, 30_000)
+  test('replay after a journaled delayed send tolerates a changed live transport clock', async () => {
+    if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
+    let attempts = 0
+    let captures = 0
+    let clockOffsetMs = 0
+    const clock = Clock.Clock.defaultValue()
+    const replayKey = randomUUID().replaceAll('-', '').repeat(2)
+    const observations = makeBaynBrokerObservations(
+      { ...config, controllerKey: replayKey, pollIntervalMs: 60_000 },
+      {
+        activate: async () => undefined,
+        poll: async () => {
+          captures += 1
+          return { _tag: 'Published', snapshotHash: '4'.repeat(64), nextPollNotBeforeMs: 0 }
+        },
+      },
+      [
+        ({ request }) => ({
+          interceptor: {
+            handler: async (next) => {
+              await next()
+              if (request.target.handler === 'activate' && ++attempts === 1) {
+                clockOffsetMs = 60_000
+                throw new Error('Injected lost completion after journaled delayed send')
+              }
+            },
+          },
+        }),
+      ],
+      { currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() + clockOffsetMs },
+    )
+    const bridge = restate.service({
+      name: 'ObservationReplayBridge',
+      handlers: {
+        start: async (ctx: restate.Context) =>
+          ctx.genericCall({
+            service: 'BaynBrokerObservations',
+            method: 'activate',
+            key: replayKey,
+            parameter: { sourceRevision: config.sourceRevision },
+            inputSerde: brokerObservationJsonSerde,
+            outputSerde: brokerObservationJsonSerde,
+          }),
+      },
+    })
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = createServer(restate.createEndpointHandler({ services: [observations, bridge] }))
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Missing local endpoint address')
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+          const result = yield* json(`${ingress}/ObservationReplayBridge/start`, {})
+          expect(result).toMatchObject({ lastSnapshotHash: '4'.repeat(64) })
+          expect(attempts).toBe(2)
+          expect(captures).toBe(1)
+        }),
+      ),
+    )
+  }, 15_000)
 })

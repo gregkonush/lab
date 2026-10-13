@@ -33,7 +33,7 @@ const releaseAcquisition = Promise.withResolvers<void>()
 const acquisitionFinished = Promise.withResolvers<void>()
 const sql = (strings: TemplateStringsArray) => {
   const query = strings.join('')
-  if (query.includes('RETURNING generation'))
+  if (query.includes('RETURNING broker_observations.generation'))
     return Clock.currentTimeMillis.pipe(
       Effect.map((now) => [{ generation: 1, startedAt: new Date(now).toISOString() }]),
     )

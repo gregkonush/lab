@@ -168,6 +168,45 @@ describePostgres('Durable per-account broker observations', () => {
         }),
       ),
   )
+
+  test('replaying an unfinished capture invalidates the old cut and fences its late publication', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const previous = yield* claim(store)
+        yield* advanceToTicket(previous)
+        expect(yield* store.publish(previous, snapshot(previous))).toBe(true)
+        const captureId = randomUUID()
+        const unfinished = yield* store.begin(captureId)
+        if (unfinished === undefined) throw new Error('Missing unfinished capture')
+        yield* advanceToTicket(unfinished)
+        expect(Result.isSuccess(yield* store.read.pipe(Effect.result))).toBe(true)
+        expect(yield* store.begin(captureId)).toBeUndefined()
+        expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
+        expect(yield* store.publish(unfinished, snapshot(unfinished))).toBe(false)
+      }),
+    ))
+
+  test('replay preserves a published lost result and cannot invalidate a newer cut', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const captureId = randomUUID()
+        const published = yield* store.begin(captureId)
+        if (published === undefined) throw new Error('Missing capture')
+        yield* advanceToTicket(published)
+        expect(yield* store.publish(published, snapshot(published))).toBe(true)
+        expect(yield* store.begin(captureId)).toBeUndefined()
+        expect(yield* store.read).toEqual(snapshot(published))
+        const oldPending = randomUUID()
+        yield* store.begin(oldPending)
+        const current = yield* claim(store)
+        yield* advanceToTicket(current)
+        expect(yield* store.publish(current, snapshot(current))).toBe(true)
+        expect(yield* store.begin(oldPending)).toBeUndefined()
+        expect(yield* store.read).toEqual(snapshot(current))
+      }),
+    ))
   test('latest poll failure closes a previously fresh projection and cannot overwrite a newer poll', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {

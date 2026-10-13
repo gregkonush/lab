@@ -66,6 +66,7 @@ export const makeBaynBrokerObservations = (
   const verifyKey = (ctx: restate.ObjectContext) => {
     if (ctx.key !== config.controllerKey) throw new restate.TerminalError('broker observation account binding mismatch')
   }
+  // SDK 1.16.5 encodes delay as invoke_time; core 7.0.2 excludes it from send replay equality.
   const schedule = (ctx: restate.ObjectContext, state: State, delayMs: number) =>
     ctx.genericSend({
       service: 'BaynBrokerObservations',

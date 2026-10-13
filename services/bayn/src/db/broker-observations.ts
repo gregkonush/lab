@@ -48,20 +48,40 @@ export const makeBrokerObservationStore = (
     WHERE account_id = ${accountId}
   `.pipe(Effect.asVoid),
   )
+  const recoverUnfinished = (captureId: string) =>
+    run(
+      sql`
+    WITH owner AS (
+      SELECT account_id, generation FROM broker_observations
+      WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+      FOR UPDATE
+    ), unfinished AS (
+      SELECT capture.generation FROM broker_observation_captures AS capture
+      JOIN owner ON owner.account_id = capture.account_id AND owner.generation = capture.generation
+      WHERE capture.capture_id = ${captureId} AND NOT capture.settled
+      FOR UPDATE OF capture
+    )
+    UPDATE broker_observations SET generation = generation + 1, available = false
+    WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+      AND generation IN (SELECT generation FROM unfinished)
+  `.pipe(Effect.asVoid),
+    )
   const begin = (captureId: string) =>
     run(
       sql`
-    WITH claimed AS (
-      INSERT INTO broker_observation_captures (account_id, capture_id)
-      SELECT account_id, ${captureId} FROM broker_observations
+    WITH owner AS (
+      SELECT account_id, generation FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+      FOR UPDATE
+    ), claimed AS (
+      INSERT INTO broker_observation_captures (account_id, capture_id, generation)
+      SELECT account_id, ${captureId}, generation + 1 FROM owner
       ON CONFLICT DO NOTHING
-      RETURNING account_id
+      RETURNING account_id, generation
     )
-    UPDATE broker_observations SET generation = generation + 1
-    WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
-      AND EXISTS (SELECT 1 FROM claimed)
-    RETURNING generation,
+    UPDATE broker_observations SET generation = claimed.generation
+    FROM claimed WHERE broker_observations.account_id = claimed.account_id
+    RETURNING broker_observations.generation,
       to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "startedAt"
   `.pipe(
         Effect.flatMap(
@@ -75,7 +95,9 @@ export const makeBrokerObservationStore = (
             strictParseOptions,
           ),
         ),
-        Effect.map((rows) => rows[0]),
+        Effect.flatMap((rows) =>
+          rows[0] === undefined ? Effect.as(recoverUnfinished(captureId), undefined) : Effect.succeed(rows[0]),
+        ),
       ),
     )
   const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot) =>
@@ -91,6 +113,7 @@ export const makeBrokerObservationStore = (
         if (value.startedAt !== ticket.startedAt)
           return yield* observationUnavailable('Broker poll start does not match its durable ticket')
         const rows = yield* sql`
+      WITH published AS (
       UPDATE broker_observations SET available = true, poll_started_at = ${value.startedAt}::timestamptz,
         observed_at = ${value.observedAt}::timestamptz, completed_at = ${value.completedAt}::timestamptz,
         snapshot_hash = ${observedBrokerSnapshotHash(value)}, payload = ${sql.json(value)}
@@ -104,6 +127,11 @@ export const makeBrokerObservationStore = (
         AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
           AND observed_at > ${ticket.startedAt}::timestamptz)
       RETURNING account_id
+      )
+      UPDATE broker_observation_captures SET settled = true
+      WHERE account_id = ${accountId} AND generation = ${ticket.generation}
+        AND EXISTS (SELECT 1 FROM published)
+      RETURNING account_id
     `
         return rows.length === 1
       }),
@@ -111,10 +139,15 @@ export const makeBrokerObservationStore = (
   const failed = (ticket: BrokerObservationTicket) =>
     run(
       sql`
+    WITH failed AS (
     UPDATE broker_observations SET available = false, poll_started_at = ${ticket.startedAt}::timestamptz,
       completed_at = NULL
     WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND generation = ${ticket.generation}
       AND (poll_started_at IS NULL OR poll_started_at <= ${ticket.startedAt}::timestamptz)
+    RETURNING account_id
+    )
+    UPDATE broker_observation_captures SET settled = true
+    WHERE account_id = ${accountId} AND generation = ${ticket.generation}
   `.pipe(Effect.asVoid),
     )
   const readProjection = (intentId: string | null) =>

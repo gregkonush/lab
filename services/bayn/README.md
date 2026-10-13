@@ -46,7 +46,9 @@ inactive while the observation object's delayed loop continues to retry.
 
 A polling invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
 `broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later polls and
-source rotation, so a repeated or late invocation cannot repeat its capture. A reserved quota window schedules a
+source rotation, so a repeated or late invocation cannot repeat its capture. Publication and failure settle the claim
+atomically with their existing database update. Replaying an unfinished claim invalidates and fences its generation;
+a published lost result and a newer cut remain usable. A reserved quota window schedules a
 successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
 before capturing the fresh snapshot required to start execution. Only a returned journaled result releases the conservative
 unknown-work quota reservation. The database generation continues to fence publication after mutations and rotation.
