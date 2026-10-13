@@ -4,11 +4,8 @@ namespace: bayn
 resources:
   - tls.yaml
   - auth-sealedsecret.yaml
-  - valkey.yaml
-  - user.yaml
   - connection.yaml
   - networkpolicy.yaml
-  - acceptance.yaml
 configMapGenerator:
   - name: bayn-valkey-acceptance
     files:
