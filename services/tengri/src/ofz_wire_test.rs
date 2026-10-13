@@ -112,11 +112,14 @@ async fn controller_metadata_roundtrip(
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/ListAgents",
     );
-    let listing = tokio::spawn({
+    let mut listing = tokio::spawn({
         let control = control.clone();
         async move { control.list_agents(request).await }
     });
-    let (request, response) = kube.next_request().await.unwrap();
+    let (request, response) = tokio::select! {
+        result = &mut listing => panic!("listing finished before its Kubernetes request: {result:?}"),
+        request = kube.next_request() => request.unwrap(),
+    };
     assert_eq!(request.method(), http::Method::GET);
     response.send_response(
         http::Response::builder()
@@ -144,11 +147,14 @@ async fn controller_metadata_roundtrip(
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/CreateAgent",
     );
-    let creation = tokio::spawn({
+    let mut creation = tokio::spawn({
         let control = control.clone();
         async move { control.create_agent(request).await }
     });
-    let (request, response) = kube.next_request().await.unwrap();
+    let (request, response) = tokio::select! {
+        result = &mut creation => panic!("creation finished before its Kubernetes read: {result:?}"),
+        request = kube.next_request() => request.unwrap(),
+    };
     assert!(request.uri().path().ends_with(&id));
     tokio::time::sleep(Duration::from_millis(5100)).await;
     assert!(submission.context.deadline_unix_ms < now_ms().unwrap());
@@ -159,7 +165,10 @@ async fn controller_metadata_roundtrip(
             .unwrap()
     };
     response.send_response(agent_response());
-    let (_, response) = kube.next_request().await.unwrap();
+    let (_, response) = tokio::select! {
+        result = &mut creation => panic!("creation finished before its Kubernetes confirmation: {result:?}"),
+        request = kube.next_request() => request.unwrap(),
+    };
     response.send_response(agent_response());
     assert_eq!(creation.await.unwrap().unwrap().into_inner().id, id);
     let expired = signed_fixture_request(
@@ -179,16 +188,22 @@ async fn controller_metadata_roundtrip(
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/WatchAgent",
     );
-    let watching = tokio::spawn({
+    let mut watching = tokio::spawn({
         let control = control.clone();
         async move { control.watch_agent(request).await }
     });
-    let (_, response) = kube.next_request().await.unwrap();
+    let (_, response) = tokio::select! {
+        result = &mut watching => panic!("watch finished before its Kubernetes read: {:?}", result.unwrap().err()),
+        request = kube.next_request() => request.unwrap(),
+    };
     response.send_response(agent_response());
     let mut stream = watching.await.unwrap().unwrap().into_inner();
     for sequence in 0..7 {
-        let next = tokio::spawn(async move { (stream.next().await, stream) });
-        let (_, response) = kube.next_request().await.unwrap();
+        let mut next = tokio::spawn(async move { (stream.next().await, stream) });
+        let (_, response) = tokio::select! {
+            result = &mut next => panic!("watch finished before its Kubernetes poll: {:?}", result.unwrap().0),
+            request = kube.next_request() => request.unwrap(),
+        };
         let mut changed = agent.clone();
         changed.metadata.resource_version = Some(sequence.to_string());
         response.send_response(
