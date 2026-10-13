@@ -11,6 +11,7 @@ import { create, toBinary } from '@bufbuild/protobuf'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
+import { accessCommandSchema, MAX_ACCESS_COMMAND_BYTES } from './access-schemas'
 import { createSpiffeFixture } from './spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -890,6 +891,15 @@ identityTest(
       await page.getByRole('button', { name: 'Apply change', exact: true }).click()
       expect((await result).status()).toBe(status)
     }
+    const postAccess = (command: Record<string, unknown>) =>
+      page.evaluate(async (input) => {
+        const response = await fetch('/api/tengri/access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        })
+        return { status: response.status, body: await response.json() }
+      }, command)
     await page.getByLabel('Change', { exact: true }).selectOption('quota')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
     await page.getByLabel('total', { exact: true }).fill('3')
@@ -1029,6 +1039,47 @@ identityTest(
     await contentOptIn.uncheck()
     await applyChange(200)
     await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    const boundaryRoots = Array.from({ length: 15 }, (_, index) => {
+      const prefix = `/workspace/maximum-${index}/`
+      return prefix + 'x'.repeat(4096 - prefix.length)
+    })
+    const finalPrefix = '/workspace/maximum-final/'
+    boundaryRoots.push(finalPrefix)
+    const boundaryCommand = {
+      action: 'collaborator',
+      operationId: randomUUID(),
+      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      reason: 'Maximum accepted Viewer command',
+      workspaceUid: scopedWorkspace,
+      login: 'fixture-3',
+      role: 'viewer',
+      enabled: true,
+      scope: {
+        fileRoots: boundaryRoots,
+        threadIds: [],
+        terminalIds: [],
+        browserScreenshot: false,
+        maxBytes: 1024,
+        maxItems: 20,
+      },
+    }
+    boundaryRoots[15] =
+      finalPrefix + 'x'.repeat(MAX_ACCESS_COMMAND_BYTES - Buffer.byteLength(JSON.stringify(boundaryCommand)))
+    accessCommandSchema.parse(boundaryCommand)
+    expect(Buffer.byteLength(JSON.stringify(boundaryCommand))).toBe(MAX_ACCESS_COMMAND_BYTES)
+    expect((await postAccess(boundaryCommand)).status).toBe(200)
+    expect((await storedViewer()).scope.file_roots).toEqual(boundaryRoots)
+    expect(
+      (
+        await postAccess({
+          ...boundaryCommand,
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          scope: undefined,
+        })
+      ).status,
+    ).toBe(200)
     expect(await storedViewer()).toEqual({ role: 3, scope: null })
     expect(
       (await control.query('SELECT home_uid,state,running FROM ofz.workspaces WHERE uid=$1', [scopedWorkspace]))
@@ -1226,15 +1277,6 @@ identityTest(
     await page.goto(base)
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
 
-    const postAccess = (command: Record<string, unknown>) =>
-      page.evaluate(async (input) => {
-        const response = await fetch('/api/tengri/access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input),
-        })
-        return { status: response.status, body: await response.json() }
-      }, command)
     const promote = await postAccess({
       action: 'membership',
       operationId: randomUUID(),

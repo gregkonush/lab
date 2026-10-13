@@ -64,11 +64,13 @@ That receipt proves publication of the factory revision, not deployment or compl
   These checks use synthetic GitHub identities and virtual passkeys.
 - The Viewer policy continuation, rebased onto the maintenance correction, passes nine Ofz unit tests, Clippy and
   55 real control commands with 174 immutable receipts. Both pending-scope and in-flight narrowing regressions pass.
-- The current Viewer UI passes 341 BFF/component tests, TypeScript, lint and 74 real browser assertions.
+- The current Viewer UI passes 341 BFF/component tests, TypeScript, lint and 79 real browser assertions.
   It verifies metadata-only defaults, inline rejection before identity lookup, exact scopes, new-subject consent,
   narrowing, screenshot consent and content removal without starting the workspace. Encoded commands must fit the
   existing 64 KiB request budget, including escaping and metadata. Three regressions reproduce the prior size mismatch;
   the browser now rejects an oversized scope inline without an identity lookup or policy change.
+  An accepted 64 KiB command also reproduced a late 429 from the private gRPC envelope caps. Both sender and decoder
+  now allow 128 KiB envelopes; the real BFF-to-Ofz boundary command commits and its scope can be removed afterward.
 - The prepared protocol-4 continuation passes Rust units/contracts, Go race/vet on macOS and native Linux, real RPC/SPIFFE
   interoperability, deterministic vector parity and 26 shared SQL tests. Ofz retains the full scope; signed guest proofs
   carry one exact authorized target and output budget. Retired protocol-3 proofs remain rejected.

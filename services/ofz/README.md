@@ -115,6 +115,10 @@ editor or application-preview access. The roster returns the exact stored scope.
 control characters, traversal and known credential paths where applicable. Scoped guest content stays denied until
 the separate bounded observer handlers are implemented and qualified.
 
+The BFF limits complete encoded commands to 64 KiB, including JSON escaping and metadata. Its gRPC sender and the API
+accept protobuf envelopes up to 128 KiB so an accepted command still fits after the BFF adds its authenticated context,
+resolved identity and request hash. The public-body and private-envelope limits remain enforced independently.
+
 A native Viewer relationship cannot authorize content without its committed SQL role and scope. Changing a Viewer
 scope clears content access in the durable intent transaction, before native finalization advances the policy version.
 The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
