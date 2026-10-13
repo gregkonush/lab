@@ -83,7 +83,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let slot_identity = WorkloadIdentity::from_endpoint_with_id(
         endpoint,
         "proompteng.ai".parse()?,
-        "spiffe://proompteng.ai/ns/tengri/slot/pod/interop-agent".parse()?,
+        "spiffe://proompteng.ai/ns/tengri/slot/pod/33333333-3333-4333-8333-333333333333".parse()?,
     )
     .await?;
     let directory = PathBuf::from("/work/slot");
@@ -96,7 +96,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     fs::write(
         &configuration,
         serde_json::to_vec(
-            &json!({"podUid":"interop-agent", "token":token, "initializeHome":true}),
+            &json!({"podUid":"33333333-3333-4333-8333-333333333333", "token":token, "initializeHome":true, "verificationKey":base64::Engine::encode(&base64::engine::general_purpose::STANDARD, tengri::guest_authorization::GuestSigner::from_seed(&std::array::from_fn::<_, 32, _>(|i| i as u8))?.public_key()), "recoveryGeneration":1}),
         )?,
     )
     .await?;
@@ -134,7 +134,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let kernel = PathBuf::from("/guest/vmlinux");
     let config = SlotConfig {
         identity: SlotIdentity {
-            pod_uid: "interop-agent".into(),
+            pod_uid: "33333333-3333-4333-8333-333333333333".into(),
             pvc_uid: "private-fixture-home".into(),
             image: std::env::var("TENGRI_GUEST_IMAGE")?,
             kernel_sha256: format!("{:x}", Sha256::digest(fs::read(&kernel).await?)),
@@ -183,9 +183,10 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         TcpListener::bind("127.0.0.1:8443").await?,
         tls,
         supervisor_database,
+        super::admission::GuestAdmission::fixture(),
     ));
     let pod: Pod = serde_json::from_value(
-        json!({"metadata":{"uid":"interop-agent"},"status":{"podIP":"127.0.0.1"}}),
+        json!({"metadata":{"uid":"33333333-3333-4333-8333-333333333333"},"status":{"podIP":"127.0.0.1"}}),
     )?;
     let client = SlotClient::new(
         &identity,
@@ -213,8 +214,9 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     }
     let claim = Claim {
         microvm_id: "fixture-agent".into(),
-        microvm_uid: "fixture-owner-uid".into(),
+        microvm_uid: "11111111-1111-4111-8111-111111111111".into(),
         epoch: 1,
+        runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
     };
     eprintln!(
         "real KVM create CPU before:\n{}",
@@ -229,8 +231,9 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     };
     client.fixture_restore(&claim, fence).await?;
     stage("restore");
-    let rpc = guest(&identity, &claim, &token)?;
-    rpc.verify_identity("interop-agent").await?;
+    let rpc = guest(&identity, &claim, &token, database.clone())?;
+    rpc.verify_identity("33333333-3333-4333-8333-333333333333")
+        .await?;
     rpc.write_file("/continuity.txt", b"private-home-continuity", "missing")
         .await?;
     stage("files");
@@ -249,7 +252,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
     );
     let (_, file, _) = tokio::try_join!(
-        rpc.verify_identity("interop-agent"),
+        rpc.verify_identity("33333333-3333-4333-8333-333333333333"),
         rpc.read_file("/continuity.txt"),
         rpc.codex_call("model/list", json!({})),
     )?;
@@ -259,10 +262,10 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     eprintln!("real KVM concurrent guest requests passed");
     let mut foreign = claim.clone();
-    foreign.microvm_uid = "another-owner-uid".into();
+    foreign.microvm_uid = "66666666-6666-4666-8666-666666666666".into();
     ensure!(
-        guest(&identity, &foreign, &token)?
-            .verify_identity("interop-agent")
+        guest(&identity, &foreign, &token, database.clone())?
+            .verify_identity("33333333-3333-4333-8333-333333333333")
             .await
             .is_err(),
         "foreign owner accessed the guest"
@@ -337,8 +340,9 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         };
         client.fixture_restore(&claim, fence).await?;
         stage("restore");
-        let rpc = guest(&identity, &claim, &token)?;
-        rpc.verify_identity("interop-agent").await?;
+        let rpc = guest(&identity, &claim, &token, database.clone())?;
+        rpc.verify_identity("33333333-3333-4333-8333-333333333333")
+            .await?;
         ensure!(
             rpc.read_file("/continuity.txt").await?.content == b"private-home-continuity",
             "retained file changed"
@@ -360,7 +364,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
     }
-    let rpc = guest(&identity, &claim, &token)?;
+    let rpc = guest(&identity, &claim, &token, database.clone())?;
     rpc.open_browser().await?;
     let browser_mcp = rpc
         .codex_call("mcpServerStatus/list", json!({"limit":50}))
@@ -465,12 +469,23 @@ async fn guest_administration(rpc: &RpcClient, id: &str, token: &str) -> anyhow:
     Ok(ready.token)
 }
 
-fn guest(identity: &WorkloadIdentity, claim: &Claim, token: &str) -> anyhow::Result<RpcClient> {
-    let tls = identity.guest_tls(identity.guest_id("tengri", "interop-agent")?)?;
+fn guest(
+    identity: &WorkloadIdentity,
+    claim: &Claim,
+    token: &str,
+    database: std::sync::Arc<crate::control::Database>,
+) -> anyhow::Result<RpcClient> {
+    let tls =
+        identity.guest_tls(identity.guest_id("tengri", "33333333-3333-4333-8333-333333333333")?)?;
     let channel = identity.guest_channel("127.0.0.1:8443".parse()?, tls)?;
-    let mut rpc = RpcClient::new(channel, token)?;
-    rpc.bind_claim(claim.clone());
-    Ok(rpc)
+    RpcClient::fixture_for_runtime(
+        channel,
+        token,
+        claim.clone(),
+        "33333333-3333-4333-8333-333333333333".into(),
+        database,
+    )
+    .map_err(Into::into)
 }
 
 async fn terminal_round_trip(

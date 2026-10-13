@@ -304,7 +304,7 @@ pub(crate) async fn prepare(
             return Err(Status::permission_denied("policy caller denied"));
         }
         decision::human(context)?;
-        let (allowed, _, _, _) = decision::evaluate(
+        let (allowed, _, _, _, _) = decision::evaluate(
             database,
             native,
             peer,
@@ -381,6 +381,14 @@ pub(crate) async fn prepare(
         Command::SetWorkspaceRole(c) => {
             let current = owner(client, &c.workspace_uid).await?;
             valid_human(&c.human_id)?;
+            if c.scope.is_some() && (!c.enabled || c.role != WorkspaceRole::Viewer as i32) {
+                return Err(Status::invalid_argument(
+                    "only enabled Viewers may carry an observation scope",
+                ));
+            }
+            if let Some(scope) = &c.scope {
+                decision::validate_scope(&[], scope)?;
+            }
             if c.human_id == current {
                 return Err(Status::failed_precondition(
                     "owner cannot be a collaborator",
@@ -392,23 +400,27 @@ pub(crate) async fn prepare(
             }
             if let Some(row) = client
                 .query_opt(
-                    "SELECT role FROM ofz.collaborators WHERE workspace_uid=$1 AND human_id=$2",
+                    "SELECT role,scope FROM ofz.collaborators WHERE workspace_uid=$1 AND human_id=$2",
                     &[&parse_uuid(&c.workspace_uid)?, &c.human_id],
                 )
                 .await
                 .map_err(sql_error)?
             {
                 let previous: i32 = row.get(0);
-                if c.enabled && previous == c.role {
+                let previous_scope: Option<serde_json::Value> = row.get(1);
+                let scope = c.scope.as_ref().map(store::encode).transpose()?;
+                if c.enabled && previous == c.role && previous_scope == scope {
                     return Ok((prepared, None));
                 }
-                prepared.changes.push(relation(
-                    "workspace",
-                    &c.workspace_uid,
-                    collaborator_role(previous)?,
-                    &c.human_id,
-                    false,
-                ));
+                if !c.enabled || previous != c.role {
+                    prepared.changes.push(relation(
+                        "workspace",
+                        &c.workspace_uid,
+                        collaborator_role(previous)?,
+                        &c.human_id,
+                        false,
+                    ));
+                }
                 // A Developer losing privilege requires quarantine even if converted to Viewer.
                 if previous == WorkspaceRole::Developer as i32 && (!c.enabled || c.role != previous)
                 {
@@ -1002,8 +1014,17 @@ pub(crate) async fn persist(
         Some(Command::RemoveWorkspace(c)) => {
             restrict_workspace(&tx, &c.workspace_uid).await?;
         }
-        Some(Command::SetWorkspaceRole(c)) if prepared.previous_owner.is_some() => {
-            restrict_workspace(&tx, &c.workspace_uid).await?;
+        Some(Command::SetWorkspaceRole(c)) => {
+            if prepared.previous_owner.is_some() {
+                restrict_workspace(&tx, &c.workspace_uid).await?;
+            }
+            if !prepared.changes.is_empty() {
+                // A pending Viewer update is metadata-only until its exact scope commits.
+                tx.execute(
+                    "UPDATE ofz.collaborators SET scope=NULL WHERE workspace_uid=$1 AND human_id=$2 AND role=3",
+                    &[&parse_uuid(&c.workspace_uid)?, &c.human_id],
+                ).await.map_err(sql_error)?;
+            }
         }
         Some(Command::SetMembership(c)) if !c.enabled && c.role == PlatformRole::Member as i32 => {
             tx.execute(
@@ -1172,9 +1193,10 @@ pub(crate) async fn finalize(
             .await
             .map_err(sql_error)?;
             if c.enabled {
+                let scope = c.scope.as_ref().map(store::encode).transpose()?;
                 tx.execute(
-                    "INSERT INTO ofz.collaborators(workspace_uid,human_id,role) VALUES($1,$2,$3)",
-                    &[&uid, &c.human_id, &c.role],
+                    "INSERT INTO ofz.collaborators(workspace_uid,human_id,role,scope) VALUES($1,$2,$3,$4)",
+                    &[&uid, &c.human_id, &c.role, &scope],
                 )
                 .await
                 .map_err(sql_error)?;

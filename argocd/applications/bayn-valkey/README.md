@@ -1,66 +1,85 @@
-# Bayn Valkey cluster
+# Bayn Valkey
 
-Dedicated native Valkey Cluster, managed by chideat/valkey-operator v2.1.0.
-The `bayn-valkey` product Application tracks reviewed `main` independently of the
-Kargo-owned Bayn execution release. Its resources live in the existing `bayn`
-namespace; it does not own namespace metadata, restart Bayn, change trading
-authority, or replace PostgreSQL, TigerBeetle or Kafka.
+Dedicated Valkey 9.1 primary and replica, managed by chideat/valkey-operator v2.1.0.
+The `bayn-valkey` Application tracks reviewed `main` independently of Bayn's Kargo
+release. Valkey is a disposable cache; PostgreSQL, TigerBeetle and Kafka retain
+their existing authority.
 
-## Topology and capacity
+## Topology and availability
 
-- Valkey 9.1 release family through the operator's supported `Valkey` API.
-  The operator resolves data/helper images; record their actual digests during
-  rollout. The isolated acceptance client is pinned to Valkey 9.1.2 by digest.
-- Three shards, each with one primary and one replica: six data pods.
-- Per pod: 1Gi memory request/limit, 512Mi maximum dataset, 10Gi RBD PVC.
-- AOF persistence with `appendfsync everysec`; memory pressure rejects writes
-  rather than evicting data. Replication and AOF are not zero-loss guarantees.
-- Each shard is spread across Bayn's two 100G hosts. This is not three independent
-  failure domains: losing the host containing a majority of primaries can stop
-  the cluster. No placement or taint is changed on the reserved compute host.
+`valkey.yaml` selects `arch: replica`, one shard and two data pods. Required
+anti-affinity places one pod on each eligible 100G host. Each requests 1Gi of
+memory, caps the dataset at 512Mi and owns a 10Gi Ceph RBD volume. AOF uses
+`appendfsync everysec`; `noeviction` rejects writes at capacity.
 
-The Cluster is protected from Argo pruning/deletion. On v2.1.0,
-`retainAfterDeleted: true` adds a Cluster owner reference to PVC templates, so it
-is deliberately false here. Verify that the resulting PVCs have no Cluster owner
-references. Do not delete the PVCs: the underlying StorageClass uses `Delete`.
-This deployment does not add a backup schedule.
+There is no Sentinel or automatic promotion. A failed primary makes the cache
+unavailable until recovery or an operator-managed manual promotion. Cache users
+must bound requests and use their authoritative source on cache transport
+failure. A replica alone does not guarantee automatic HA across two hosts.
+Automatic failover requires independent voters; this deployment does not place
+workloads on the reserved compute host or change its taints.
 
-## Connection
+## Connection and access
 
-Seed endpoint: `bayn-valkey.bayn.svc.cluster.local:6379`, TLS, cluster-aware client.
-Username: `default`. Password: Secret `bayn-valkey-auth`, key `password`.
-Client certificate/key and CA: Secret `bayn-valkey-client-tls`, keys `tls.crt`,
-`tls.key`, `ca.crt`. Connection metadata is in `bayn-valkey-connection`.
-Use Secret references, never inline credentials or log their contents.
+- Primary: `rfr-bayn-valkey-readwrite.bayn.svc.cluster.local:6379`.
+- Replica: `rfr-bayn-valkey-readonly.bayn.svc.cluster.local:6379`.
+- TLS trust and client identity: Secret `bayn-valkey-client-tls`.
+- Username: `default`; password: Secret `bayn-valkey-auth`, key `password`.
+- Connection metadata: ConfigMap `bayn-valkey-connection`.
 
-The application ACL permits normal data operations only under `bayn:*`, with
-cluster discovery and no destructive administration. The controller's separate
-operator credential is not an application credential. NetworkPolicy permits
-Bayn clients and the operator on 6379, cluster peers on 6379/16379, and the
-existing metrics collector on 9121. Helpers may reach only DNS and the configured
-Kubernetes API endpoints outside their peers.
+The application ACL permits data commands under `bayn:*` and bounded replication
+acknowledgement with `WAIT`. It grants no cluster discovery or destructive
+administration. The operator account remains separate. Passwords must contain
+letters, digits and special characters and fit the operator's 32-character
+limit. Generate replacements in memory and update only the encrypted value in
+`auth-sealedsecret.yaml`, preserving Secret identity and strict sealing scope.
+A synced SealedSecret does not prove User admission.
 
-No Bayn process currently consumes Valkey. Connecting a specific application
-feature requires a subsequent reviewed code/configuration change through Bayn's
-normal Kargo path. This cluster's mere presence changes no application behavior.
+## Acceptance
 
-## Acceptance and recovery
-
-`bayn-valkey-acceptance-v1` is a bounded, tokenless Job using only the new client
-credential. It verifies TLS, cluster readiness, writes/reads across hash tags,
-key-prefix rejection and unauthenticated rejection. Synthetic keys expire after
-ten minutes and successful checks delete them immediately. Retain the completed
-Job for its result; it consumes no running compute after completion.
+The bounded, tokenless `bayn-valkey-acceptance-v2` Job uses only the application
+credential. It writes to the primary, waits for one replica acknowledgement on
+the same connection, reads the replicated value and removes the synthetic key.
+It also checks key-prefix rejection and rejection without a password. Keys
+expire after ten minutes if the Job is interrupted.
 
 ```sh
 kustomize build argocd/applications/bayn-valkey > /tmp/bayn-valkey.yaml
 bash scripts/kubeconform.sh /tmp/bayn-valkey.yaml
-kubectl -n bayn get clusters.valkey.buf.red bayn-valkey
+kubectl -n bayn get valkeys.rds.valkey.buf.red,failovers.valkey.buf.red
 kubectl -n bayn get pods,pvc -l buf.red/name=bayn-valkey
-kubectl -n bayn logs job/bayn-valkey-acceptance-v1
+kubectl -n bayn logs job/bayn-valkey-acceptance-v2
 ```
 
-For upgrades, keep the Valkey release family and operator compatible, inspect the rendered
-diff and follow reviewed GitOps. Never roll back by deleting the Cluster or its
-PVCs. A failed acceptance Job is not a passed rollout. Do not broaden its network
-permissions or use an operator/broker credential to make acceptance pass.
+## Migration from the unused sharded cluster
+
+The three original primaries were checked with the existing TLS application
+credential and each reported `DBSIZE=0`. No Bayn process consumed that cluster.
+Changing `arch` in place does not retire the operator's old Cluster child.
+Argo's server disables replace syncs. Use three reviewed GitOps steps rather
+than changing that server policy:
+
+1. Temporarily set `Prune=true,Delete=false` on the Valkey and desired User.
+   Verify Argo applied those annotations at the reviewed `main` revision.
+2. Remove `valkey.yaml`, `user.yaml` and the acceptance Job from the
+   Kustomization. Normal cascading pruning deletes the Valkey owner and its
+   old Cluster and new Failover children. Verify both children and their pods
+   are absent before continuing.
+3. Restore the primary/replica resources with `Prune=false,Delete=false` and a
+   new acceptance Job name. Verify the new Valkey UID, two Ready pods on
+   separate hosts, a Ready User and passing authenticated acceptance.
+
+Before pruning, verify the Valkey has no `delete-pvc` finalizer and all old
+PVCs have no owner references. The old protected User has owner references to
+the old Cluster and Valkey UIDs; cascading owner deletion garbage-collects
+that User independently of Argo pruning. Retain the six old
+`valkey-data-drc-bayn-valkey-*` volumes and the two replica volumes throughout
+this rollout. Verify the old Cluster and old User are absent and Argo is
+Synced/Healthy at each reviewed revision. Do not persist force/replace options
+or change Application automation.
+
+Recovery uses a reviewed source reversion. If changing architecture again,
+repeat the reviewed owner removal and recreation; changing `arch` in place
+leaves stale children. Retained volumes remain available. Never prune volumes,
+relax ACLs or use an operator credential to make an acceptance test pass.
+Cache availability does not grant broker, strategy or capital authority.

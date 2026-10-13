@@ -3026,6 +3026,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "aws-lc-rs",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -3067,6 +3068,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

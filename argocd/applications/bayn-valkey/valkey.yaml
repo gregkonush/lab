@@ -5,14 +5,14 @@ metadata:
   labels:
     app.kubernetes.io/part-of: bayn
   annotations:
-    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-options: Prune=true,Delete=false
 spec:
   version: "9.1"
-  arch: cluster
+  arch: replica
   replicas:
-    shards: 3
+    shards: 1
     replicasOfShard: 2
-  affinityPolicy: AntiAffinityInShard
+  affinityPolicy: AntiAffinity
   nodeSelector:
     network.proompteng.ai/100g: "true"
   securityContext:

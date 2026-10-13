@@ -604,6 +604,13 @@
   },
   {
     "surface": "ofz",
+    "operation": "AuthorizeGuestMaintenance",
+    "action": "ACTION_WORKSPACE_ENROLL",
+    "internal_only": true,
+    "dispatch": "guest maintenance purpose"
+  },
+  {
+    "surface": "ofz",
     "operation": "GetWorkspaceReservation",
     "action": "ACTION_WORKSPACE_CREATE",
     "internal_only": true

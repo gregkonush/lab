@@ -1,5 +1,31 @@
 # Tengri control plane
 
+The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
+`internal/guestauth` package. Protocol 3 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
+controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
+signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
+cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
+`node services/tengri/fixtures/generate-ofz-guest-request-v3.mjs` from the repository root.
+
+Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
+at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
+verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
+then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
+message's storage, so ongoing terminal input does not reserve capacity for later requests.
+
+Nanoagent verifies the proof again against its root-owned runtime claim and recovery generation and consumes a local
+nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
+openings bind the actual verb, escaped path/query and body; preview proof and claim headers are removed before reaching
+the application. Scoped content remains denied until bounded observer handlers exist.
+
+The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
+supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
+bundle contains only the public key and generation. Guest init stages both, clears the old claim before freeze/resume,
+and atomically publishes the resumed claim. A restored authority requires key rotation and trusted slot preparation
+under the new recovery generation before admission resumes. The migration gate remains closed until native KVM,
+independent execution fencing, observers, recovery and the remaining plan gates pass.
+
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
 4 vCPU, 8 GiB RAM, a private 1.5 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
@@ -24,11 +50,25 @@ and epoch. The controller binds the MicroVM with resourceVersion compare-and-swa
 claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
 consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
+The Lease allocation identifies retained storage custody by MicroVM name, UID and slot epoch. An executing runtime
+claim additionally requires the canonical Ofz runtime epoch. Guest RPC, preview HTTP and WebSocket admission require
+one exact UID, slot-epoch and runtime-epoch header each. Existing connections close when that full claim changes.
+A newer runtime cannot reuse an earlier awake claim: reconciliation first saves the old runtime, then checks fresh
+Ofz authority before restoring the new epoch from the same allocation's committed snapshot. Guest init accepts a
+changed runtime only while frozen for that exact allocation. A never-started workspace retains its prepared home
+without creating a runtime claim. Termination observes the current claim under the installed leader fence; an unused
+slot receives a deterministic retirement identity solely for stop acknowledgement.
+
+Runtime epochs are mandatory in private lifecycle claims and owned journals. Paired controller/guest artifacts and
+new root disks are required at the coordinated hard cutover; retain the existing home PVCs. Scoped observers and the
+independent host execution deadline remain separate authorization work.
+
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.2`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
+`1.16.1+tengri-async-io.3`; journals from another VMM revision require fenced recovery. Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
+guest RAM. Full snapshot capture resets normal readahead before reading every page. Snapshot restore consumes the
 generation before vCPUs run, then thaws root/home,
 sets the guest clock, binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
@@ -101,7 +141,9 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 ## Transport and workload identity
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
-SPIRE mTLS authenticates both host hops. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
+SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
+replay database permits at most one second of clock lead in its future bound and retains the exact signed expiry;
+expired requests and used nonces remain rejected. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
 accepts only `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. Every slot supervisor has
 `spiffe://proompteng.ai/ns/tengri/slot/pod/<Pod UID>` and accepts only Tengri. Certificates rotate outside guest memory.
 
@@ -276,6 +318,9 @@ CI builds these artifacts without executing the KVM fixture. It requires no SSH 
 requires the scoped approval below.
 Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
 as the native images, including the KVM harness cache, to reuse the release compilation.
+Native image builds for same-repository PRs also import and export `cache-pr-<number>-<architecture>` per service.
+Later edits reuse that PR's compiled layers. Main builds import and export only their existing main cache; fork PRs
+export no registry cache. These cache tags remain outside Kargo image discovery.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The retained Tengri fixture includes the native `runner-seccomp.json` profile.
