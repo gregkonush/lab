@@ -82,6 +82,24 @@ test('Ofz API changes qualify independently of native guest images', () => {
   }
 })
 
+test('Ofz image qualification follows its shared publication helpers', () => {
+  const workflow = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing Ofz image trigger paths')
+    for (const file of [
+      'packages/scripts/src/shared/oci.ts',
+      'nix/oci-push.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-release-contract.sh',
+      'nix/ci-run-timed.sh',
+      '.github/actions/setup-nix-toolchain/action.yml',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
 test('a changed transitive dependency still runs its consumers', () => {
   const upgraded = { ...before, packages: { ...before.packages, dayjs: after.packages.dayjs } }
   expect(selectAffectedInputs(['bun.lock'], targets, before, upgraded)).toEqual({ bayn: true, landing: false })
