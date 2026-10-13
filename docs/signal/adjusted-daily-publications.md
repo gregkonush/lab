@@ -63,15 +63,23 @@ removed Bayn backfill path or grant Bayn write access.
 ## Rollout, evidence, and rollback
 
 GitOps creates the sealed writer credential, applies the least-privilege ClickHouse user, runs the additive schema hook,
-and renders only the scheduled CronJob. A suspended CronJob is not retained because Argo marks it `Suspended` and waits
+and normally renders only the scheduled CronJob. A suspended CronJob is not retained because Argo marks it `Suspended` and waits
 indefinitely for `Healthy`. The ClickHouse operator may restart replicas sequentially when its user configuration
 changes; verify both replicas before promotion. Image promotion pins the source SHA and multi-platform digest without
 changing scheduled-writer activation.
 
 When a historical publication is required, a separate reviewed GitOps change creates one bounded Job with a unique
-name and leaves the CronJob inactive for that interval. Never resume or reapply a completed Job under the same name;
-Kubernetes Job templates are immutable. Remove the one-off resource after retaining its evidence, then reactivate the
-CronJob in a reviewed change. The base application retains no dormant backfill Job.
+name. Prevent overlap with the scheduled writer: either leave the CronJob inactive for that interval, or enforce an
+absolute start deadline that leaves the Job's full `activeDeadlineSeconds` before the next scheduled run. The Job must
+check that deadline before importing the publisher or making external calls. Keep the completed Job until its
+resource is removed through GitOps; a TTL would let Argo recreate it. Never resume or reapply a completed Job under
+the same name; Kubernetes Job templates are immutable.
+
+The October 12 recovery republishes January 4, 2016 through October 12, 2026. It refuses to start unless its full
+15-minute lifetime fits before October 13 at 13:00 UTC, ahead of the 13:30 UTC market open and 22:30 UTC scheduled
+writer. Kustomize copies the CronJob's Kargo-managed source revision, image repository, and image digest into the
+recovery Job. Remove that Job and its replacements after retaining the snapshot evidence. If the CronJob was
+deactivated, reactivate it in the same reviewed cleanup change. The base application retains no dormant backfill Job.
 
 Completion evidence requires the bounded backfill plus two distinct scheduled publication observations. For each one,
 retain the Job name, source revision, image digest, universe ID and symbol hash, snapshot ID, publication as-of date,
