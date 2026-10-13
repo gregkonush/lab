@@ -1,7 +1,7 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1.7
 FROM mirror.gcr.io/ubuntu:24.04
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.162.1
 ARG RUST_VERSION=1.90.0
 ENV DEBIAN_FRONTEND=noninteractive container=kata
 RUN apt-get update && apt-get install --yes --no-install-recommends \
