@@ -167,6 +167,32 @@ impl ControlPlane {
             .map(|(agent, _)| agent)
     }
 
+    async fn authorized_agents(
+        &self,
+        principal: &Principal,
+        microvms: &[MicroVM],
+    ) -> Result<Vec<Agent>, Status> {
+        let checks = microvms.iter().map(|agent| async {
+            match self
+                .authorization
+                .agent_access(principal, agent, "")?
+                .require()
+                .await
+            {
+                Ok(()) => Ok(Some(agent_from_microvm(agent))),
+                Err(error) if error.code() == tonic::Code::PermissionDenied => Ok(None),
+                Err(error) => Err(error),
+            }
+        });
+        let mut agents: Vec<_> = futures::future::try_join_all(checks)
+            .await?
+            .into_iter()
+            .flatten()
+            .collect();
+        agents.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+        Ok(agents)
+    }
+
     async fn guest(
         &self,
         principal: &Principal,
@@ -333,25 +359,12 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<ListAgentsResponse>, Status> {
         let principal = self.authorize(&request, "ListAgents").await?;
         let api: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
-        let mut agents = Vec::new();
-        for agent in api
+        let microvms = api
             .list(&ListParams::default())
             .await
             .map_err(map_kube_error)?
-            .items
-        {
-            match self
-                .authorization
-                .agent_access(&principal, &agent, "")?
-                .require()
-                .await
-            {
-                Ok(()) => agents.push(agent_from_microvm(&agent)),
-                Err(error) if error.code() == tonic::Code::PermissionDenied => {}
-                Err(error) => return Err(error),
-            }
-        }
-        agents.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+            .items;
+        let agents = self.authorized_agents(&principal, &microvms).await?;
         Ok(Response::new(ListAgentsResponse { agents }))
     }
 
@@ -2540,6 +2553,60 @@ mod tests {
             ActivityTracker::new(client, namespace),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn workspace_listing_checks_the_pool_concurrently_and_keeps_fail_closed_behavior() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let mut control = test_control_plane(Client::new(service, "tengri"));
+        let microvms: Vec<_> = (0..6)
+            .map(|index| {
+                let mut agent = provisional_terminal_test_agent(Utc::now());
+                agent.metadata.name = Some(format!("workspace-{index}"));
+                agent.metadata.uid = Some(Uuid::new_v4().to_string());
+                agent.spec.created_at = format!("2026-10-12T00:00:0{index}Z");
+                agent
+            })
+            .collect();
+        let principal = Principal::fixture(
+            &owner_hash("github:43"),
+            "",
+            crate::ofz::proto::Action::WorkspaceMetadataRead,
+        );
+        control.authorization = WorkspaceAuthorization::SynchronizedFixture(Arc::new(
+            tokio::sync::Barrier::new(microvms.len()),
+        ));
+        let agents = tokio::time::timeout(
+            Duration::from_secs(3),
+            control.authorized_agents(&principal, &microvms),
+        )
+        .await
+        .expect("all workspace checks must start before waiting for their decisions")
+        .unwrap();
+        assert_eq!(agents.len(), 6);
+        assert_eq!(agents[0].id, "workspace-5");
+        assert_eq!(agents[5].id, "workspace-0");
+
+        let fixture = crate::authz::tests::OfzFixture::new().await;
+        control.authorization = fixture.authorization;
+        fixture.mode.store(1, Ordering::SeqCst);
+        assert!(
+            control
+                .authorized_agents(&principal, &microvms)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        fixture.mode.store(4, Ordering::SeqCst);
+        assert_eq!(
+            control
+                .authorized_agents(&principal, &microvms)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unavailable,
+        );
     }
 
     #[tokio::test]

@@ -42,6 +42,8 @@ pub(crate) enum WorkspaceAuthorization {
     Fixture,
     #[cfg(test)]
     ControlledFixture(Arc<std::sync::atomic::AtomicU8>),
+    #[cfg(test)]
+    SynchronizedFixture(Arc<tokio::sync::Barrier>),
 }
 
 #[derive(Clone)]
@@ -424,6 +426,10 @@ impl WorkspaceAccess {
                     1 => return Err(Status::permission_denied("workspace action denied")),
                     _ => return Err(Status::unavailable("Ofz authority unavailable")),
                 }
+            }
+            #[cfg(test)]
+            WorkspaceAuthorization::SynchronizedFixture(barrier) => {
+                barrier.wait().await;
             }
             #[cfg(test)]
             WorkspaceAuthorization::Fixture => {}
