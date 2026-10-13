@@ -139,7 +139,8 @@ all-day eligibility, concurrency, intervals and alerts. Do not disable WAL sync 
 
 Compare equal-duration before/after windows of Restate WAL sync and append latency, OSD operation latency, host disk
 queues and application errors. Record PG IDs with their last scrub/deep-scrub timestamps, active scrub states, overdue
-counts and oldest overdue age. Require completed scrub work and non-growing overdue age before accepting the change.
+counts and oldest overdue age. Require advancing scrub counters or completed scrub timestamps before accepting the change; retain overdue age
+for the longer backlog trend.
 For regression, revert the reviewed profile change and restore the exact prior nine custom values from its parent
 commit; verify all six OSDs again without changing the rollout annotation.
 

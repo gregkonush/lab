@@ -472,15 +472,12 @@ single known OSD:
 
 ```bash
 kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
-  ceph config set osd osd_mclock_profile custom
-for mclock_value in \
-  client_res:0.4 client_wgt:1 client_lim:0 \
-  background_recovery_res:0.1 background_recovery_wgt:1 background_recovery_lim:0 \
-  background_best_effort_res:0.5 background_best_effort_wgt:2 background_best_effort_lim:0; do
-  key="${mclock_value%%:*}"
-  value="${mclock_value##*:}"
-  kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
-    ceph config set osd "osd_mclock_scheduler_${key}" "${value}"
+  ceph config set osd osd_mclock_profile high_client_ops
+for service in client background_recovery background_best_effort; do
+  for setting in res wgt lim; do
+    kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- \
+      ceph config rm osd "osd_mclock_scheduler_${service}_${setting}"
+  done
 done
 kubectl --context galactic-tailscale -n rook-ceph exec deploy/rook-ceph-tools -c rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
 for osd_value in 0:210 1:250 2:260 3:200 4:220 5:240; do
