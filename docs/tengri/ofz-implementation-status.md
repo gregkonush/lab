@@ -4,6 +4,72 @@ The goal is the complete migration and deployed acceptance described in
 [the authorization plan](ofz-enterprise-authorization-plan.md). Work proceeds through dependent PRs, without subagents.
 Production keeps its current authority until the coordinated hard cutover. New code has no legacy authorization fallback.
 
+Completion requires the exact deployed release, every service's allow/deny/revocation and failure checks, fresh-workspace
+product acceptance, independent restore and the required soak. On 2026-10-13 the owner explicitly replaced retained-data
+migration with deletion of the old workspaces and homes. Migration rehearsals and legacy-data import are no longer
+requirements. Published source and passing fixtures are intermediate evidence.
+
+The service split is published in the native GitHub stack beginning at [#14908](https://github.com/proompteng/lab/pull/14908).
+
+| Service or contract                      | Reviewable implementation                              | Deployed acceptance                         |
+| ---------------------------------------- | ------------------------------------------------------ | ------------------------------------------- |
+| Ofz lifecycle and control                | [#14908](https://github.com/proompteng/lab/pull/14908) | Pending cutover                             |
+| Tengri controller, runner and supervisor | [#14915](https://github.com/proompteng/lab/pull/14915) | Pending cutover                             |
+| Landing BFF and desktop authority        | [#14915](https://github.com/proompteng/lab/pull/14915) | Pending cutover                             |
+| Ofz, Keycloak and application HA         | [#14909](https://github.com/proompteng/lab/pull/14909) | Pending cutover and fault probes            |
+| Physical database promotion proof        | [#14910](https://github.com/proompteng/lab/pull/14910) | Pending native CNPG and independent restore |
+| Runtime epoch and preview binding        | [#14911](https://github.com/proompteng/lab/pull/14911) | Pending cutover                             |
+| Signed guest enforcement                 | [#14913](https://github.com/proompteng/lab/pull/14913) | Pending native KVM and execution fencing    |
+| Ofz Viewer policy                        | [#14920](https://github.com/proompteng/lab/pull/14920) | Pending bounded observers and cutover       |
+| Landing Viewer administration            | [#14921](https://github.com/proompteng/lab/pull/14921) | Pending bounded observers and cutover       |
+| Exact-target guest proof protocol        | [#14923](https://github.com/proompteng/lab/pull/14923) | Pending cutover                             |
+
+PR #14915 merged at `e4298be7be5afe2ab94300f003d6a2b31ef634a6` with its applicable PR checks passing.
+Its matching BFF and desktop changes include the original application scope of #14916. The rebased #14916 retains
+the signing-key documentation correction, fixes the identity fixture's cold-build timeout, and addresses its remaining
+review findings about stale creation records and deletion of failed workspaces. Both findings reproduced in focused
+regressions; stale creation also reproduced in Chromium with browser storage preserved across reload. The failing main run
+compiled Tengri inside the browser's three-minute deadline; compilation now precedes that clock.
+The new Ofz API and rollout credentials are still absent from the cluster. Publication remains held with
+`TENGRI_PREPARED_SLOT_CUTOVER_READY=false`, and the temporary creation fence remains active.
+
+The main Tengri image run built all four native images, then failed KVM qualification on both architectures during
+guest DNS resolution. Docker's `127.0.0.11` stub was copied into the guest. #14916 gives the guest a separate resolver
+file while preserving Docker DNS for the shared SQL fixture. A real Docker reproduction confirmed the stub, and both
+ARC architectures resolved the bootstrap host through the configured public resolvers. The launcher regression passes;
+both native KVM qualifications must pass on the new main revision before publication or cutover.
+
+PR #14916 merged as `e89e1362f3248173bef4fdc15e860fdb39c6f495` after its checks and automatic review passed.
+Main Ofz identity qualification now passes, and all four native controller/guest images built. Native KVM acceptance
+and the coordinated service cutover remain release gates. ARM64 KVM passed on that revision with a 664 ms maximum
+resume; AMD64 passed its functional checks but failed its first cold resume at 1,429 ms against the 1,000 ms limit.
+The new HA main revision requires its own native qualifications.
+
+PR #14909 merged at `464a773c35cc900fbd99dd63c7d6ab2359cc7cc4` after its applicable CI and automatic review passed.
+The HA layer preserves the merged credentials and post-DNAT ingress paths. Its four prepared targets
+render 65 resources, pass schema validation and Kubernetes server-side dry run, and reject 13 deliberately invalid
+HA/credential/network configurations. The target uses the active generated CRD, removing the unused preparation copy.
+Two consecutive real Keycloak/Ofz/controller browser runs pass 60 assertions in 68 and 66 seconds. They preserve the
+same authenticated subject and credentials after serving-process loss, including an in-flight passkey challenge.
+An earlier fixture stalled in a mocked Kubernetes exchange; the fixture now reports early handler completion instead
+of silently waiting for a request that can no longer arrive. Rust units/Clippy and CI routing/release tests pass.
+These are isolated source checks. Native database failover, deployed node loss, independent recovery and cutover remain
+unqualified. NUC access works through the existing SSH identity; its independent filesystem has about 63 GiB free.
+
+Source delivery continues through required CI and automatic review. Production remains held until the reviewed Ofz,
+BFF, runtime, guest, migration and broker contracts can activate together. Remaining implementation includes bounded
+observers, independent execution fencing, diagnostic proof keys and brokers, offboarding and independent recovery.
+P8 requires real custodian enrollment, coordinated GitOps activation and fresh-workspace acceptance.
+
+The 2026-10-11 delivery checkpoint rebases all ten layers onto current main while preserving the runtime performance
+changes. The assembled runtime passes Rust units/contracts, Clippy, 23 real shared-database tests and Rust-Go RPC
+interoperability. Cached transports carry no user authority; a regression verifies separate users, revocation and Ofz
+loss on one reused connection. The independently checked Ofz root layer passes 50 control commands and 125 immutable
+receipts in 145.04 seconds, 52 real browser assertions in 111.76 seconds, 297 Landing unit tests, TypeScript, lint and
+22 operation-inventory regressions. Its fixture now acknowledges the synthetic outbox and sequence, gives new valid
+roster reads fresh deadlines, and allows bounded cold Keycloak startup and cleanup. Production deadlines are unchanged.
+These are source checks. Remote CI, reviewed merge and deployed acceptance remain separate gates.
+
 - [x] Read repository instructions and Poteto principles; refresh source and runtime baseline.
 - [x] Verify the requested administrator: `gregkonush`, GitHub numeric ID `12027037`.
 - [x] Verify the second administrator/custodian: `tuslagch`, GitHub numeric ID `241203724`.
@@ -15,7 +81,8 @@ Production keeps its current authority until the coordinated hard cutover. New c
 - [ ] P5: enforce every runtime channel and add pure observers.
 - [ ] P6: proof-bound diagnostic grants, Kubernetes and connector brokers.
 - [ ] P7: offboarding, independent archive/backups and isolated restore.
-- [ ] P8: migration rehearsals, reviewed release, hard cutover and full product acceptance.
+- [x] P8 deletion: old MicroVMs, homes, guest Pods, slot Leases and old workspace grants removed; creation fenced.
+- [ ] P8 delivery: reviewed release, hard cutover and fresh-workspace product acceptance.
 
 Both required custodians are named and their numeric identities verified. NUC has approximately 63 GiB free at the
 initial readback, below the 192 GiB uncompressed home-storage ceiling. Database recovery and home recovery must each
@@ -90,3 +157,39 @@ and returned HTTP 429 on the seventh request under the corrected configuration. 
 production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
 The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
 only Ofz's classification changed in the current repository inventory.
+
+## PR 14915 review correction
+
+PR #14908 merged as `b06b8baa3d73af4ba8cd52d0ec3871990797e84c`. The new Ofz API remains excluded from the
+production kustomization. This merge does not establish production authorization or complete the migration.
+
+PR #14915 now includes its matching BFF consumers. Moving signed-context metadata, reservation creation and Ofz
+lifecycle commands out of the later Landing layer makes the breaking runtime contract reviewable together. The
+controller and BFF credentials and required network paths are wired in complete cutover overlays, excluded from active
+applications until the Ofz and credential dependencies exist. The active quota reserves the seventh election Lease.
+Fixture fixes use the real shared TLS database and canonical opaque preview tickets.
+
+CI compares the generated schema with the active CRD as well as its preparation copy. The owner authorized deleting
+both old workspaces and their homes on 2026-10-13. Their controller finalizers stopped the guests and removed the
+MicroVMs, guest Pods, home PVCs and slot Leases. Both reclaim-policy `Delete` PVs are gone. A fully consistent SpiceDB
+read returned zero `tengri_workspace` relationships. No existing workspace needs reservation/epoch enrollment.
+
+The temporary `tengri-ofz-cutover` ValidatingAdmissionPolicy and binding reject MicroVM creation only in `tengri`.
+A server-side dry-run verified the denial. Keep this fence until the new authority and required dependencies are
+running, then remove both objects and prove fresh workspace creation. Four unused prepared homes belong to the pool,
+not to deleted users; pool retirement remains the controller's responsibility during image replacement.
+
+This removes the retained-data migration blocker. The new Ofz API is not yet deployed, and the image publication hold
+remains false. This deletion does not establish deployment or acceptance of the new authorization contract.
+
+The isolated physical-promotion fixture passes against pinned PostgreSQL 18.6 and SpiceDB. A physical base backup
+includes the native datastore, Ofz control tables and shared runtime state. The fixture requires synchronous streaming,
+kills the original primary, and promotes the standby at the same service address. The 2026-10-13 control fixture commits
+50 commands and 125 immutable receipts. Existing clients recover in 2.94 seconds
+and deny a consumed nonce before its original five-second expiry. Atomic pending/spent tickets, live/revoked previews,
+session/workspace/runtime bindings, unique leader acquisition and stale-fence denial all pass. Owner access stays allowed
+and a revoked viewer stays denied; every Ofz control table has the same hash before and after promotion. The initial run
+exposed Docker's requirement for an explicit subnet when reassigning an IP, which the fixture now provisions. The test
+runs once in Ofz CI, replacing the separate control-only run, and requires the exact promotion test to pass. An empty
+test selection fails qualification. Shared runtime validation stays in the Tengri image workflow. This two-node fixture does not prove three-node CNPG or Kubernetes recovery, independent backups, or
+post-failure synchronous write availability. Those deployed/recovery gates remain open.

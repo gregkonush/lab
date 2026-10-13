@@ -18,6 +18,8 @@ export class ResearchError extends Data.TaggedError('ResearchError')<{
 }> {}
 export const alphaModel = 'alpha-r1-82c2aa5fcdda'
 export const alphaCheckpoint = '82c2aa5fcdda6b4ff00caeba68b0903f13d0e1a5'
+export const maximumResearchStreamBytes = 2 * 1024 * 1024
+export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
 const FactorId = Schema.String.check(Schema.isPattern(/^alpha(?:00[1-9]|0[1-9][0-9]|10[01])$/))
 const Unit = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
@@ -223,7 +225,7 @@ export const ResearchReceiptSchema = Schema.Struct({
   responseHash: Schema.NullOr(Sha256Schema),
   responseText: Schema.String.check(Schema.isMaxLength(262144)),
   responseBase64: Schema.String.check(
-    Schema.isMaxLength(349528),
+    Schema.isMaxLength(4 * Math.ceil(maximumResearchStreamBytes / 3)),
     Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
   ),
   factors: Schema.Array(FactorId).check(Schema.isMaxLength(82), Schema.isUnique()),

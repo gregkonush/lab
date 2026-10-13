@@ -11,4 +11,4 @@ resources:
 - resource-quota.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/codex-devbox
-  digest: sha256:46eace9308369c19d2063008bfca204d17149bf3c5860463c1fe482828b1d55d
+  digest: sha256:35a396b3001afe62d0d7d10301e3f95fd7f435e748d0dd25b8eb0e256d39f402

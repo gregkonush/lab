@@ -37,7 +37,10 @@ CREATE TABLE ofz.reservations (
     owner_id text NOT NULL CHECK (owner_id ~ '^[0-9a-f]{64}$'),
     home_bytes bigint NOT NULL CHECK (home_bytes = 34359738368),
     created_at_ms bigint NOT NULL DEFAULT ofz.now_ms(),
-    state text NOT NULL CHECK (state IN ('reserved', 'enrolled', 'released'))
+    workspace_uid uuid UNIQUE,
+    state text NOT NULL CHECK (state IN ('reserved', 'enrolling', 'enrolled', 'released')),
+    CHECK (state <> 'reserved' OR workspace_uid IS NULL),
+    CHECK (state NOT IN ('enrolling', 'enrolled') OR workspace_uid IS NOT NULL)
 );
 CREATE TABLE ofz.workspaces (
     uid uuid PRIMARY KEY,
@@ -47,7 +50,7 @@ CREATE TABLE ofz.workspaces (
     home_bytes bigint NOT NULL CHECK (home_bytes = 34359738368),
     running boolean NOT NULL DEFAULT false,
     runtime_epoch uuid,
-    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined', 'removed'))
+    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'quarantined', 'removing', 'removed'))
 );
 CREATE TABLE ofz.collaborators (
     workspace_uid uuid NOT NULL REFERENCES ofz.workspaces(uid),
@@ -57,7 +60,7 @@ CREATE TABLE ofz.collaborators (
 );
 CREATE VIEW ofz.quota_usage AS
 SELECT owner_id,count(*)::bigint AS used_workspaces,sum(running::integer)::bigint AS used_active,sum(home_bytes)::bigint AS used_bytes
-FROM (SELECT owner_id,false AS running,home_bytes FROM ofz.reservations WHERE state='reserved'
+FROM (SELECT owner_id,false AS running,home_bytes FROM ofz.reservations WHERE state='enrolling' OR (state='reserved' AND created_at_ms+300000>ofz.now_ms())
       UNION ALL SELECT owner_id,running,home_bytes FROM ofz.workspaces WHERE state<>'removed') retained
 GROUP BY owner_id;
 CREATE TABLE ofz.sessions (

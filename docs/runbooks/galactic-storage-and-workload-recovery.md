@@ -191,7 +191,7 @@ lifetime.
 ### Scrub progress during recovery
 
 [`cluster-values.yaml`](../../argocd/applications/rook-ceph/cluster-values.yaml) allows new scrubs during recovery with
-`osd_scrub_during_recovery: "true"`. The custom mClock profile reserves 60% for clients, 10% for recovery, and 30% for
+`osd_scrub_during_recovery: "true"`. The built-in `high_client_ops` profile retains capacity for
 background best effort. Scrub shares the last class with backfill, snap trimming, and PG deletion. `osd_max_scrubs`
 allows three local scrub reservations and three remote reservations per OSD. Scrubs can start throughout the day and week.
 
