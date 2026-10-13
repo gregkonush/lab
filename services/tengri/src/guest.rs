@@ -227,6 +227,10 @@ impl GuestClient {
                 .parse()
                 .map_err(anyhow::Error::from)?,
         );
+        claim_headers.insert(
+            crate::slot::supervisor::RUNTIME_EPOCH_HEADER,
+            claim.runtime_epoch.parse().map_err(anyhow::Error::from)?,
+        );
         let mut http = reqwest::Client::builder()
             .default_headers(claim_headers.clone())
             .redirect(reqwest::redirect::Policy::none())

@@ -35,6 +35,7 @@ use super::{
 
 pub const CLAIM_UID_HEADER: &str = "x-tengri-microvm-uid";
 pub const CLAIM_EPOCH_HEADER: &str = "x-tengri-claim-epoch";
+pub const RUNTIME_EPOCH_HEADER: &str = "x-tengri-runtime-epoch";
 pub const LEADER_OWNER_HEADER: &str = "x-tengri-leader-owner";
 pub const LEADER_GENERATION_HEADER: &str = "x-tengri-leader-generation";
 pub(crate) const READINESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -533,19 +534,7 @@ async fn forward(
         .context("slot is unclaimed")
         .map_err(lifecycle_error)?
         .clone();
-    if !status.state.serves(&claim)
-        || request
-            .headers()
-            .get(CLAIM_UID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            != Some(claim.microvm_uid.as_str())
-        || request
-            .headers()
-            .get(CLAIM_EPOCH_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok())
-            != Some(claim.epoch)
-    {
+    if !status.state.serves(&claim) || !matches_claim(request.headers(), &claim) {
         return Err((
             StatusCode::CONFLICT,
             "slot owner, epoch, or lifecycle changed".into(),
@@ -647,9 +636,58 @@ async fn forward(
     }
 }
 
+fn matches_claim(headers: &HeaderMap, claim: &Claim) -> bool {
+    [CLAIM_UID_HEADER, CLAIM_EPOCH_HEADER, RUNTIME_EPOCH_HEADER]
+        .iter()
+        .all(|name| headers.get_all(*name).iter().count() == 1)
+        && headers
+            .get(CLAIM_UID_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(claim.microvm_uid.as_str())
+        && headers
+            .get(CLAIM_EPOCH_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(claim.epoch.to_string().as_str())
+        && headers
+            .get(RUNTIME_EPOCH_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(claim.runtime_epoch.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guest_headers_require_exact_single_current_runtime_binding() {
+        let claim = Claim {
+            microvm_id: "agent-a".into(),
+            microvm_uid: "owner-a".into(),
+            epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(CLAIM_UID_HEADER, claim.microvm_uid.parse().unwrap());
+        headers.insert(CLAIM_EPOCH_HEADER, "7".parse().unwrap());
+        assert!(!matches_claim(&headers, &claim));
+        headers.insert(RUNTIME_EPOCH_HEADER, claim.runtime_epoch.parse().unwrap());
+        assert!(matches_claim(&headers, &claim));
+        for (name, invalid) in [
+            (CLAIM_UID_HEADER, "owner-b"),
+            (CLAIM_EPOCH_HEADER, "8"),
+            (CLAIM_EPOCH_HEADER, "07"),
+            (RUNTIME_EPOCH_HEADER, "55555555-5555-4555-8555-555555555555"),
+        ] {
+            let mut wrong = headers.clone();
+            wrong.insert(name, invalid.parse().unwrap());
+            assert!(!matches_claim(&wrong, &claim));
+        }
+        for name in [CLAIM_UID_HEADER, CLAIM_EPOCH_HEADER, RUNTIME_EPOCH_HEADER] {
+            let mut duplicate = headers.clone();
+            duplicate.append(name, headers.get(name).unwrap().clone());
+            assert!(!matches_claim(&duplicate, &claim));
+        }
+    }
 
     #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
@@ -699,6 +737,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let (state, _) = watch::channel(SlotState::Awake {
             claim: claim.clone(),
@@ -867,6 +906,7 @@ mod tests {
                 microvm_id: "agent-a".into(),
                 microvm_uid: "owner-a".into(),
                 epoch: 7,
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
             };
             let awake = SlotState::Awake {
                 claim: claim.clone(),
@@ -1010,6 +1050,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let awake = SlotState::Awake {
             claim: claim.clone(),
@@ -1090,6 +1131,7 @@ mod tests {
             .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
             .header(CLAIM_UID_HEADER, &claim.microvm_uid)
             .header(CLAIM_EPOCH_HEADER, "7")
+            .header(RUNTIME_EPOCH_HEADER, "44444444-4444-4444-8444-444444444444")
             .body(Body::empty())
             .unwrap();
         let forwarded = forward(State(supervisor.clone()), request);
@@ -1149,6 +1191,7 @@ mod tests {
                 microvm_id: "agent-a".into(),
                 microvm_uid: "owner-a".into(),
                 epoch: 7,
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
             },
         });
         let gate = Arc::new(Mutex::new(()));
@@ -1157,6 +1200,7 @@ mod tests {
             .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
             .header(CLAIM_UID_HEADER, "owner-a")
             .header(CLAIM_EPOCH_HEADER, "7")
+            .header(RUNTIME_EPOCH_HEADER, "44444444-4444-4444-8444-444444444444")
             .body(Body::empty())
             .unwrap();
         let supervisor = Supervisor {
@@ -1180,6 +1224,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let saving = SlotState::Saving {
             claim: owner.clone(),
@@ -1223,6 +1268,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let awake = SlotState::Awake {
             claim: owner.clone(),

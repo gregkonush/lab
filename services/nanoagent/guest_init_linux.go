@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -28,9 +29,34 @@ type guestSlotConfig struct {
 }
 
 type guestClaim struct {
-	MicroVMID  string `json:"microvmId"`
-	MicroVMUID string `json:"microvmUid"`
-	Epoch      uint64 `json:"epoch"`
+	MicroVMID    string `json:"microvmId"`
+	MicroVMUID   string `json:"microvmUid"`
+	Epoch        uint64 `json:"epoch"`
+	RuntimeEpoch string `json:"runtimeEpoch"`
+}
+
+var runtimeEpochPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func (guest *guestLifecycle) validateResume(claim guestClaim) error {
+	for _, id := range []string{claim.MicroVMID, claim.MicroVMUID} {
+		if len(id) == 0 || len(id) > 63 {
+			return errors.New("invalid slot owner")
+		}
+		for _, c := range id {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+				return errors.New("invalid slot owner")
+			}
+		}
+	}
+	if claim.Epoch == 0 || !runtimeEpochPattern.MatchString(claim.RuntimeEpoch) {
+		return errors.New("resume requires a slot and runtime epoch")
+	}
+	if previous := guest.claim; previous != nil && *previous != claim {
+		if !guest.frozen || previous.MicroVMID != claim.MicroVMID || previous.MicroVMUID != claim.MicroVMUID || previous.Epoch != claim.Epoch {
+			return errors.New("guest is already bound to another owner or active runtime")
+		}
+	}
+	return nil
 }
 
 type guestLifecycleRequest struct {
@@ -268,11 +294,8 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		guest.frozen = true
 		return nil
 	case "resume":
-		if request.Claim.MicroVMID == "" || request.Claim.MicroVMUID == "" || request.Claim.Epoch == 0 {
-			return errors.New("resume requires a slot owner and epoch")
-		}
-		if guest.claim != nil && *guest.claim != request.Claim {
-			return errors.New("guest is already bound to another owner or epoch")
+		if err := guest.validateResume(request.Claim); err != nil {
+			return err
 		}
 		if request.UnixTimeNanos <= 0 {
 			return errors.New("resume requires the host clock")
