@@ -76,8 +76,6 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
           poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
         },
         pollIntervalMs: 30_000,
@@ -195,8 +193,6 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
           poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
         },
         pollIntervalMs: 30_000,

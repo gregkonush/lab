@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -25,6 +26,14 @@ const makeRuntime = () =>
       postgres: { url: Redacted.make(testUrl), tls: false, caPath: '/unused' },
     }).pipe(Layer.provideMerge(NodeServices.layer)),
   )
+const claim = (store: ReturnType<typeof makeBrokerObservationStore>) =>
+  store
+    .begin(randomUUID())
+    .pipe(
+      Effect.flatMap((ticket) =>
+        ticket === undefined ? Effect.die('Expected a new capture claim') : Effect.succeed(ticket),
+      ),
+    )
 const snapshot = (ticket: BrokerObservationTicket) => observedBrokerSnapshotFixture(accountId, ticket.startedAt)
 const advanceToTicket = (ticket: BrokerObservationTicket, delta = 0) =>
   TestClock.setTime(Date.parse(ticket.startedAt) + delta)
@@ -77,12 +86,30 @@ describePostgres('Durable per-account broker observations', () => {
       }).pipe(Effect.provide(TestClock.layer())),
     )
 
+  test('a capture is claimed only once across restarts, later captures and source rotation', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const captureId = randomUUID()
+        expect(yield* store.begin(captureId)).toBeDefined()
+        expect(yield* store.begin(captureId)).toBeUndefined()
+        yield* claim(store)
+        const restarted = makeBrokerObservationStore(sql, accountId, revision, 60_000)
+        expect(yield* restarted.begin(captureId)).toBeUndefined()
+        const rotated = makeBrokerObservationStore(sql, accountId, 'f'.repeat(40), 60_000)
+        yield* rotated.activate
+        expect(yield* restarted.begin(randomUUID())).toBeUndefined()
+        expect(yield* rotated.begin(captureId)).toBeUndefined()
+        expect(yield* rotated.begin(randomUUID())).toBeDefined()
+      }),
+    ))
+
   test('starts unavailable, publishes a complete cut and survives a reader restart', async () =>
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
         expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
-        const ticket = yield* store.begin
+        const ticket = yield* claim(store)
         yield* advanceToTicket(ticket)
         expect(yield* store.publish(ticket, snapshot(ticket))).toBe(true)
         const restarted = makeBrokerObservationStore(sql, accountId, revision, 60_000)
@@ -96,7 +123,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const ticket = yield* store.begin
+        const ticket = yield* claim(store)
         yield* advanceToTicket(ticket)
         const value = observedBrokerSnapshotFixture(accountId, ticket.startedAt, '2026-09-29T17:15:20.123456Z')
         expect(yield* store.publish(ticket, value)).toBe(true)
@@ -112,7 +139,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const ticket = yield* store.begin
+        const ticket = yield* claim(store)
         yield* advanceToTicket(ticket)
         const malformed = observedBrokerSnapshotFixture(accountId, ticket.startedAt, '2026-02-30T17:15:20.123456Z')
         expect(Result.isFailure(yield* store.publish(ticket, malformed).pipe(Effect.result))).toBe(true)
@@ -127,31 +154,70 @@ describePostgres('Durable per-account broker observations', () => {
       run((sql, store) =>
         Effect.gen(function* () {
           yield* store.activate
-          const ticket = yield* store.begin
+          const ticket = yield* claim(store)
           yield* advanceToTicket(ticket)
           if (change === 'invalidate') yield* store.invalidate
           if (change === 'failed') {
-            const next = yield* store.begin
+            const next = yield* claim(store)
             yield* store.failed(next)
           }
-          if (change === 'new-ticket') yield* store.begin
+          if (change === 'new-ticket') yield* claim(store)
           if (change === 'revision') yield* makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000).activate
           expect(yield* store.publish(ticket, snapshot(ticket))).toBe(false)
           expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
         }),
       ),
   )
+
+  test('replaying an unfinished capture invalidates the old cut and fences its late publication', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const previous = yield* claim(store)
+        yield* advanceToTicket(previous)
+        expect(yield* store.publish(previous, snapshot(previous))).toBe(true)
+        const captureId = randomUUID()
+        const unfinished = yield* store.begin(captureId)
+        if (unfinished === undefined) throw new Error('Missing unfinished capture')
+        yield* advanceToTicket(unfinished)
+        expect(Result.isSuccess(yield* store.read.pipe(Effect.result))).toBe(true)
+        expect(yield* store.begin(captureId)).toBeUndefined()
+        expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
+        expect(yield* store.publish(unfinished, snapshot(unfinished))).toBe(false)
+      }),
+    ))
+
+  test('replay preserves a published lost result and cannot invalidate a newer cut', async () =>
+    run((_sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate
+        const captureId = randomUUID()
+        const published = yield* store.begin(captureId)
+        if (published === undefined) throw new Error('Missing capture')
+        yield* advanceToTicket(published)
+        expect(yield* store.publish(published, snapshot(published))).toBe(true)
+        expect(yield* store.begin(captureId)).toBeUndefined()
+        expect(yield* store.read).toEqual(snapshot(published))
+        const oldPending = randomUUID()
+        yield* store.begin(oldPending)
+        const current = yield* claim(store)
+        yield* advanceToTicket(current)
+        expect(yield* store.publish(current, snapshot(current))).toBe(true)
+        expect(yield* store.begin(oldPending)).toBeUndefined()
+        expect(yield* store.read).toEqual(snapshot(current))
+      }),
+    ))
   test('latest poll failure closes a previously fresh projection and cannot overwrite a newer poll', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const first = yield* store.begin
+        const first = yield* claim(store)
         yield* advanceToTicket(first)
         yield* store.publish(first, snapshot(first))
-        const second = yield* store.begin
+        const second = yield* claim(store)
         yield* store.failed(second)
         expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
-        const third = yield* store.begin
+        const third = yield* claim(store)
         yield* advanceToTicket(third)
         yield* store.publish(third, snapshot(third))
         yield* store.failed(second)
@@ -162,7 +228,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const first = yield* store.begin
+        const first = yield* claim(store)
         yield* advanceToTicket(first)
         yield* store.publish(first, snapshot(first))
         yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
@@ -178,7 +244,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const first = yield* store.begin
+        const first = yield* claim(store)
         yield* advanceToTicket(first)
         yield* store.publish(first, snapshot(first))
         yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
@@ -188,7 +254,7 @@ describePostgres('Durable per-account broker observations', () => {
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${'0'.repeat(64)} WHERE account_id = ${accountId}`
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${observedBrokerSnapshotHash(snapshot(first))} WHERE account_id = ${accountId}`
-        const second = yield* store.begin
+        const second = yield* claim(store)
         yield* store.failed(second)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
       }),
@@ -197,7 +263,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const first = yield* store.begin
+        const first = yield* claim(store)
         yield* advanceToTicket(first)
         yield* store.publish(first, snapshot(first))
         yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
@@ -211,12 +277,12 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const first = yield* store.begin
+        const first = yield* claim(store)
         yield* advanceToTicket(first)
         yield* store.publish(first, snapshot(first))
         yield* reserve(sql, '9'.repeat(64), utcInstantFromEpochMillis(Date.parse(first.startedAt) + 1))
         yield* advanceToTicket(first, 1000)
-        const second = { ...(yield* store.begin), startedAt: first.startedAt }
+        const second = { ...(yield* claim(store)), startedAt: first.startedAt }
         yield* store.failed(second)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
       }),
@@ -225,7 +291,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const ticket = yield* store.begin
+        const ticket = yield* claim(store)
         yield* advanceToTicket(ticket)
         yield* store.publish(ticket, snapshot(ticket))
         const at = utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 1)
@@ -244,7 +310,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const ticket = yield* store.begin
+        const ticket = yield* claim(store)
         yield* advanceToTicket(ticket)
         yield* store.publish(ticket, snapshot(ticket))
         yield* sql`UPDATE broker_observations SET payload = jsonb_set(payload, '{snapshot,account,value,cashMicros}', '"0"'::jsonb)`
@@ -259,7 +325,7 @@ describePostgres('Durable per-account broker observations', () => {
       run((sql, store) =>
         Effect.gen(function* () {
           yield* store.activate
-          const ticket = yield* store.begin
+          const ticket = yield* claim(store)
           yield* advanceToTicket(ticket)
           const id = '3'.repeat(64)
           const at = utcInstantFromEpochMillis(Date.parse(ticket.startedAt) - 10_000)
@@ -282,7 +348,7 @@ describePostgres('Durable per-account broker observations', () => {
       run((sql, store) =>
         Effect.gen(function* () {
           yield* store.activate
-          const ticket = yield* store.begin
+          const ticket = yield* claim(store)
           yield* advanceToTicket(ticket)
           const id = '5'.repeat(64)
           const at = utcInstantFromEpochMillis(Date.parse(ticket.startedAt) - ageMs)
@@ -298,7 +364,7 @@ describePostgres('Durable per-account broker observations', () => {
     run((sql, store) =>
       Effect.gen(function* () {
         yield* store.activate
-        const ticket = yield* store.begin
+        const ticket = yield* claim(store)
         yield* advanceToTicket(ticket)
         yield* store.publish(ticket, snapshot(ticket))
         const at = utcInstantFromEpochMillis(Date.parse(ticket.startedAt) + 1)
