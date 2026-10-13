@@ -910,6 +910,7 @@ async fn verify_offboarding_preserves_removal(fixture: &ControlFixture) {
             human_id: humans[1].clone(),
             role: WorkspaceRole::Developer as i32,
             enabled: true,
+            scope: None,
         }),
     )
     .await;
@@ -1620,6 +1621,7 @@ async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFi
             human_id: identities[2].0.clone(),
             role: WorkspaceRole::Viewer as i32,
             enabled: true,
+            scope: None,
         }),
     )
     .await;
@@ -2127,6 +2129,7 @@ async fn verify_emergency_crash_recovery(fixture: &ControlFixture, workspace: &W
         human_id: identities[2].0.clone(),
         role: WorkspaceRole::Viewer as i32,
         enabled: true,
+        scope: None,
     });
     execute(database, native, owner, repeat_role.clone()).await;
     execute(database, native, owner, repeat_role).await;
@@ -2155,6 +2158,7 @@ async fn verify_emergency_crash_recovery(fixture: &ControlFixture, workspace: &W
             human_id: identities[3].0.clone(),
             role: WorkspaceRole::Viewer as i32,
             enabled: boundary % 2 == 0,
+            scope: None,
         });
         let pending = request(database, owner, command).await;
         let operation = pending.operation_id.clone();
@@ -2915,6 +2919,448 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
     acknowledge_fixture_archive(&fixture.admin).await;
 }
 
+async fn viewer_content_check(
+    fixture: &ControlFixture,
+    viewer: &(String, String),
+    uid: &str,
+    epoch: &str,
+    action: Action,
+    target: &str,
+    receipt: &str,
+) -> Result<CheckResponse, tonic::Status> {
+    let mut context = request(
+        &fixture.database,
+        viewer,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = uid.into();
+    context.runtime_epoch = epoch.into();
+    decision::check(
+        &fixture.database,
+        &fixture.native,
+        BFF_ID,
+        CheckRequest {
+            context: Some(context),
+            action: action as i32,
+            resource: Some(policy::workspace(uid)),
+            target: target.into(),
+            stream_receipt_id: receipt.into(),
+        },
+    )
+    .await
+}
+
+async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
+    acknowledge_fixture_archive(&fixture.admin).await;
+    let owner = &fixture.identities[0];
+    let human = policy::github_human_id("6").unwrap();
+    execute(
+        &fixture.database,
+        &fixture.native,
+        owner,
+        Command::SetMembership(SetMembership {
+            human_id: human.clone(),
+            github_id: "6".into(),
+            role: PlatformRole::Member as i32,
+            enabled: true,
+        }),
+    )
+    .await;
+    let session = Uuid::new_v4();
+    let now = fixture.admin.state().await.unwrap().now_ms as i64;
+    let credential = URL_SAFE_NO_PAD.encode(Sha256::digest(session.as_bytes()));
+    fixture.admin.pool.get().await.unwrap().execute(
+        "INSERT INTO ofz.sessions(id,token_hash,human_id,identity_subject,identity_session,operation_id,expires_at_ms,idle_deadline_ms,mfa_at_ms,recovery_generation,github_id,establishment_fingerprint) VALUES($1,$2,$3,$4,$4,$5,$6,$6,$7,1,'6',$2)",
+        &[&session,&Sha256::digest(credential.as_bytes()).to_vec(),&human,&Uuid::new_v4().to_string(),&Uuid::new_v4(),&(now+3_600_000),&now],
+    ).await.unwrap();
+    let viewer = &(human, session.to_string());
+    let assignment = |scope| {
+        Command::SetWorkspaceRole(SetWorkspaceRole {
+            workspace_uid: uid.into(),
+            human_id: viewer.0.clone(),
+            role: WorkspaceRole::Viewer as i32,
+            enabled: true,
+            scope,
+        })
+    };
+    let initial = request(&fixture.database, owner, assignment(None)).await;
+    let mut connection = fixture.database.command_connection().await.unwrap();
+    let (prepared, _) = prepare(
+        &fixture.database,
+        &fixture.native,
+        &connection.client,
+        BFF_ID,
+        initial.clone(),
+        &fixture.database.state().await.unwrap(),
+    )
+    .await
+    .unwrap();
+    persist(
+        &mut connection.client,
+        BFF_ID,
+        &prepared,
+        &fingerprint(&initial, BFF_ID).unwrap(),
+    )
+    .await
+    .unwrap();
+    let revision = fixture
+        .native
+        .apply(
+            &initial.operation_id,
+            initial.expected_version,
+            &prepared.changes,
+        )
+        .await
+        .unwrap();
+    let pending = viewer_content_check(
+        fixture,
+        viewer,
+        uid,
+        epoch,
+        Action::FilesObserve,
+        "/workspace/src/main.rs",
+        "",
+    )
+    .await
+    .unwrap();
+    assert!(
+        !pending.allowed && pending.effective_scope.is_none(),
+        "a native Viewer relation without its committed SQL role cannot grant unscoped content: {pending:?}"
+    );
+    finalize(&mut connection.client, &prepared, &revision, false)
+        .await
+        .unwrap();
+    drop(connection);
+    let metadata = read(
+        &fixture.database,
+        &fixture.native,
+        viewer,
+        uid,
+        Action::WorkspaceMetadataRead,
+    )
+    .await
+    .unwrap();
+    assert!(metadata.allowed && metadata.effective_scope.is_none());
+    assert_eq!(
+        viewer_content_check(
+            fixture,
+            viewer,
+            uid,
+            epoch,
+            Action::FilesObserve,
+            "/workspace/src/main.rs",
+            ""
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied,
+        "a Viewer without an approved scope must remain metadata-only on a running workspace"
+    );
+    let scope = ObservationScope {
+        file_roots: vec!["/workspace/src".into()],
+        thread_ids: vec!["thread-approved".into()],
+        terminal_ids: vec!["terminal-approved".into()],
+        browser_screenshot: false,
+        max_bytes: 1024,
+        max_items: 20,
+    };
+    execute(
+        &fixture.database,
+        &fixture.native,
+        owner,
+        assignment(Some(scope.clone())),
+    )
+    .await;
+    let allowed = viewer_content_check(
+        fixture,
+        viewer,
+        uid,
+        epoch,
+        Action::FilesObserve,
+        "/workspace/src/main.rs",
+        "",
+    )
+    .await
+    .unwrap();
+    assert!(allowed.allowed);
+    assert_eq!(allowed.effective_scope, Some(scope.clone()));
+    for (action, target) in [
+        (Action::FilesObserve, "/workspace/private"),
+        (Action::FilesObserve, "/workspace/src-other/main.rs"),
+        (Action::FilesObserve, "/workspace/src/../private"),
+        (Action::FilesObserve, "/workspace/src/.env"),
+        (Action::FilesObserve, "/workspace/src/.ssh/key"),
+        (Action::CodexObserve, "thread-other"),
+        (Action::TerminalObserve, "terminal-other"),
+        (Action::BrowserObserve, "screenshot"),
+    ] {
+        assert_eq!(
+            viewer_content_check(fixture, viewer, uid, epoch, action, target, "")
+                .await
+                .unwrap_err()
+                .code(),
+            Code::PermissionDenied,
+            "unapproved {action:?} {target}"
+        );
+    }
+    for (action, target) in [
+        (Action::CodexObserve, "thread-approved"),
+        (Action::TerminalObserve, "terminal-approved"),
+        (Action::BrowserObserve, "status"),
+    ] {
+        let decision = viewer_content_check(fixture, viewer, uid, epoch, action, target, "")
+            .await
+            .unwrap();
+        assert!(decision.allowed);
+        assert_eq!(decision.effective_scope, Some(scope.clone()));
+    }
+    for action in [
+        Action::FilesWrite,
+        Action::TerminalControl,
+        Action::CodexControl,
+        Action::BrowserControl,
+        Action::PreviewAccess,
+    ] {
+        assert!(
+            !viewer_content_check(
+                fixture,
+                viewer,
+                uid,
+                epoch,
+                action,
+                "/workspace/src/main.rs",
+                ""
+            )
+            .await
+            .unwrap()
+            .allowed,
+            "Viewer scope granted {action:?}"
+        );
+    }
+    for (role, enabled) in [
+        (WorkspaceRole::Developer, true),
+        (WorkspaceRole::Viewer, false),
+    ] {
+        let invalid = request(
+            &fixture.database,
+            owner,
+            Command::SetWorkspaceRole(SetWorkspaceRole {
+                workspace_uid: uid.into(),
+                human_id: viewer.0.clone(),
+                role: role as i32,
+                enabled,
+                scope: Some(scope.clone()),
+            }),
+        )
+        .await;
+        assert_eq!(
+            commands::execute(&fixture.database, &fixture.native, BFF_ID, invalid)
+                .await
+                .unwrap_err()
+                .code(),
+            Code::InvalidArgument
+        );
+    }
+    let mut narrower = scope.clone();
+    narrower.file_roots = vec!["/workspace/narrow".into()];
+    narrower.thread_ids.clear();
+    narrower.terminal_ids.clear();
+    let narrowing = request(&fixture.database, owner, assignment(Some(narrower.clone()))).await;
+    let mut connection = fixture.database.command_connection().await.unwrap();
+    let (prepared, _) = prepare(
+        &fixture.database,
+        &fixture.native,
+        &connection.client,
+        BFF_ID,
+        narrowing.clone(),
+        &fixture.database.state().await.unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut audit_connection = fixture.admin.pool.get().await.unwrap();
+    let audit_lock = audit_connection.transaction().await.unwrap();
+    audit_lock
+        .batch_execute("LOCK TABLE ofz.audit IN SHARE MODE")
+        .await
+        .unwrap();
+    let mut context = request(
+        &fixture.database,
+        viewer,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = uid.into();
+    context.runtime_epoch = epoch.into();
+    let trace_id = context.trace_id.clone();
+    let database = fixture.database.clone();
+    let native = fixture.native.clone();
+    let in_flight = tokio::spawn(async move {
+        decision::check(
+            &database,
+            &native,
+            BFF_ID,
+            CheckRequest {
+                resource: Some(policy::workspace(&context.workspace_uid)),
+                context: Some(context),
+                action: Action::FilesObserve as i32,
+                target: "/workspace/src/main.rs".into(),
+                stream_receipt_id: String::new(),
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let blocked: bool = audit_lock.query_one(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='ofz.audit'::regclass AND mode='RowExclusiveLock' AND NOT granted)", &[],
+            ).await.unwrap().get(0);
+            if blocked { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the content decision must reach its audit write before narrowing");
+    persist(
+        &mut connection.client,
+        BFF_ID,
+        &prepared,
+        &fingerprint(&narrowing, BFF_ID).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        fixture.database.state().await.unwrap().version,
+        narrowing.expected_version
+    );
+    audit_lock.commit().await.unwrap();
+    assert_eq!(
+        in_flight.await.unwrap().unwrap_err().code(),
+        Code::PermissionDenied,
+        "a cached Viewer decision cannot survive restrictive intent committed during its audit write"
+    );
+    let receipt: AuditReceipt = store::decode(audit_connection.query_one(
+        "SELECT receipt FROM ofz.audit WHERE receipt->>'trace_id'=$1 ORDER BY sequence DESC LIMIT 1", &[&trace_id],
+    ).await.unwrap().get(0)).unwrap();
+    assert!(
+        !receipt.allowed,
+        "late disclosure denial must leave an immutable denial receipt"
+    );
+    assert_eq!(
+        viewer_content_check(
+            fixture,
+            viewer,
+            uid,
+            epoch,
+            Action::FilesObserve,
+            "/workspace/src/main.rs",
+            &allowed.audit_receipt_id
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied,
+        "a durable narrowing intent must immediately deny the previous target before native finalization"
+    );
+    let revision = fixture
+        .native
+        .apply(
+            &narrowing.operation_id,
+            narrowing.expected_version,
+            &prepared.changes,
+        )
+        .await
+        .unwrap();
+    finalize(&mut connection.client, &prepared, &revision, false)
+        .await
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        viewer_content_check(
+            fixture,
+            viewer,
+            uid,
+            epoch,
+            Action::FilesObserve,
+            "/workspace/src/main.rs",
+            &allowed.audit_receipt_id
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied,
+        "an existing stream retained a removed Viewer target"
+    );
+    let current = viewer_content_check(
+        fixture,
+        viewer,
+        uid,
+        epoch,
+        Action::FilesObserve,
+        "/workspace/narrow/a",
+        "",
+    )
+    .await
+    .unwrap();
+    assert!(current.allowed);
+    assert_eq!(current.effective_scope, Some(narrower.clone()));
+    let roster = workspace_roster(&fixture.service, &fixture.database, owner, uid).await;
+    assert_eq!(
+        roster
+            .into_iter()
+            .find(|entry| entry.subject_id == viewer.0)
+            .unwrap()
+            .scope,
+        Some(narrower)
+    );
+    execute(&fixture.database, &fixture.native, owner, assignment(None)).await;
+    assert_eq!(
+        viewer_content_check(
+            fixture,
+            viewer,
+            uid,
+            epoch,
+            Action::FilesObserve,
+            "/workspace/narrow/a",
+            &current.audit_receipt_id
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied,
+        "removing a Viewer scope retained content authority"
+    );
+    assert!(
+        read(
+            &fixture.database,
+            &fixture.native,
+            viewer,
+            uid,
+            Action::WorkspaceMetadataRead
+        )
+        .await
+        .unwrap()
+        .allowed
+    );
+    assert!(
+        read(
+            &fixture.database,
+            &fixture.native,
+            owner,
+            uid,
+            Action::FilesObserve
+        )
+        .await
+        .unwrap()
+        .effective_scope
+        .is_none()
+    );
+    acknowledge_fixture_archive(&fixture.admin).await;
+}
+
 async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &WorkspaceFixture) -> String {
     let ControlFixture {
         admin,
@@ -2993,6 +3439,7 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
     let live_projection = runtime_state(service, database, owner, &uid).await;
     assert!(live_projection.running && live_projection.runtime_allowed);
     assert_eq!(live_projection.runtime_epoch, runtime_epoch);
+    verify_viewer_scope(fixture, &uid, &runtime_epoch).await;
     verify_guest_maintenance(fixture, &uid, &runtime_epoch).await;
     let client = admin.pool.get().await.unwrap();
     let owner_session = Uuid::parse_str(&owner.1).unwrap();
