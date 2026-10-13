@@ -477,8 +477,7 @@ Flat accounts require exact equity agreement. Matching receipt timestamps do not
 Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL
 `last_pass` projection. The sorted, deduplicated hashes come only from successful Jev observation persistence or
 successful batch-store results, including recovered batches. The journaled advance result binds these references
-into its version-two execution receipt; a completed research-capture event carries the same references alongside
-the controller invocation ID. Each hash resolves the exact persisted observation, whose manifest identifies its
+into its version-two execution receipt. Each hash resolves the exact persisted observation, whose manifest identifies its
 snapshot and whose existing batch plans identify candidate requests and terminal receipts. Store access does not
 prove that an observation was selected, submitted, traded, or profitable.
 
@@ -1041,8 +1040,10 @@ no older than ten seconds at observation. This definition is stricter than the s
 Available values, evidenced spread or size exclusions, and unavailable inputs are separate outcomes. Each outcome
 binds the definition, source, query, original receipt cut, decoded record-text hashes, and selected availability times.
 `recordTextSha256` hashes the decoded UTF-8 text, which can differ from the original byte hash for malformed UTF-8.
-The verified capture export and source hashes bind original bytes and receipt coordinates. Callers must verify the
-capture interval and source bytes through `replayResearchCaptureInterval` and `openBacktestSource` before using its cursor.
+Original-byte and receipt-coordinate verification remains a prerequisite for economic use. The in-process capture
+export and interval replay APIs have been removed. New complete original intervals are unavailable until the independent
+[market-data archive](../../docs/bayn/market-data-archive.md) passes its source and coverage checks. `openBacktestSource`
+validates the admitted offline source; it cannot establish an unobserved trading arrival or complete a missing interval.
 Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
 It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
 contract. Capture interval verification remains the caller's responsibility before economic research.

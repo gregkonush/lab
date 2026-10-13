@@ -925,7 +925,8 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('aligns each product Warehouse source paths with its exact image build filter', () => {
     expect(productNixWorkflow.concurrency).toEqual({
-      group: 'product-nix-images-${{ github.event.pull_request.number || github.run_id }}',
+      group:
+        "product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}",
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
 
@@ -952,7 +953,9 @@ describe('Kargo direct-push GitOps contract', () => {
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(sourcePaths).toEqual(buildPaths)
+      expect(
+        event === 'push' ? sourcePaths : sourcePaths.filter((path: string) => !path.endsWith('/kargo.test.ts')),
+      ).toEqual(buildPaths)
     }
   })
 
