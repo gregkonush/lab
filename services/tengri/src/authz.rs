@@ -177,6 +177,10 @@ impl WorkspaceAuthorization {
 
     pub(crate) async fn ready(&self) -> anyhow::Result<()> {
         match self {
+            #[cfg(test)]
+            Self::SynchronizedFixture(barrier) => {
+                barrier.wait().await;
+            }
             Self::Ofz(client) => {
                 let state = client.state().await?;
                 anyhow::ensure!(

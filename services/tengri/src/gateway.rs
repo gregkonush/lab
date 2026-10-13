@@ -326,20 +326,23 @@ pub fn preview_router(state: GatewayState) -> Router {
 }
 
 async fn readiness(State(state): State<GatewayState>) -> StatusCode {
-    if state.authorization.ready().await.is_err() {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    }
-    if state.tickets.stats().await.is_err() {
-        return StatusCode::SERVICE_UNAVAILABLE;
-    }
-
     let agents: Api<MicroVM> = Api::namespaced(state.client.clone(), &state.namespace);
-    let kubernetes_checks = async move {
-        agents.list(&ListParams::default().limit(1)).await?;
-        Ok::<(), kube::Error>(())
+    let checks = async {
+        tokio::try_join!(
+            async { state.authorization.ready().await.map_err(|_| ()) },
+            async { state.tickets.stats().await.map(|_| ()).map_err(|_| ()) },
+            async {
+                agents
+                    .list(&ListParams::default().limit(1))
+                    .await
+                    .map(|_| ())
+                    .map_err(|_| ())
+            },
+        )?;
+        Ok::<(), ()>(())
     };
 
-    match tokio::time::timeout(READINESS_TIMEOUT, kubernetes_checks).await {
+    match tokio::time::timeout(READINESS_TIMEOUT, checks).await {
         Ok(Ok(())) => StatusCode::NO_CONTENT,
         Ok(Err(_)) | Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -1534,6 +1537,42 @@ mod tests {
                 .unwrap(),
         );
         readiness.await.unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_readiness_checks_dependencies_concurrently_with_one_deadline() {
+        for release_authority in [true, false] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+            let mut state = shared_gateway_state(Client::new(service, "tengri")).await;
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            state.authorization =
+                crate::authz::WorkspaceAuthorization::SynchronizedFixture(barrier.clone());
+            let checking = tokio::spawn(readiness(State(state)));
+            let (_, response) = tokio::time::timeout(READINESS_TIMEOUT, handle.next_request())
+                .await
+                .expect("Kubernetes check must start while Ofz is still pending")
+                .unwrap();
+            response.send_response(Response::builder()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(KubeBody::from(r#"{"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVMList","metadata":{},"items":[]}"#.as_bytes().to_vec())).unwrap());
+            if release_authority {
+                barrier.wait().await;
+            }
+            let result = tokio::time::timeout(READINESS_TIMEOUT + Duration::from_secs(1), checking)
+                .await
+                .expect("one stalled dependency must not outlive the readiness deadline")
+                .unwrap();
+            assert_eq!(
+                result,
+                if release_authority {
+                    StatusCode::NO_CONTENT
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            );
+        }
     }
 
     #[tokio::test]
