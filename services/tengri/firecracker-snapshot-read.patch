@@ -1,0 +1,54 @@
+--- a/src/vmm/src/vstate/memory.rs
++++ b/src/vmm/src/vstate/memory.rs
+@@ -51,6 +51,8 @@
+     MemfdSetLen(std::io::Error),
+     /// Total sum of memory regions exceeds largest possible file offset
+     OffsetTooLarge,
++    /// Cannot advise snapshot memory mapping: {0}
++    Madvise(std::io::Error),
+     /// Cannot retrieve snapshot file metadata: {0}
+     FileMetadata(std::io::Error),
+     /// Memory region has zero slots
+@@ -593,12 +595,23 @@
+         return Err(MemoryError::OffsetTooLarge);
+     }
+ 
+-    create(
++    let memory = create(
+         regions.into_iter(),
+         libc::MAP_PRIVATE,
+         Some(file),
+         track_dirty_pages,
+-    )
++    )?;
++    // Guest physical addresses are sparse during demand-paged restore.
++    for region in &memory {
++        // SAFETY: Each region is a valid mapping for its complete length.
++        let result = unsafe {
++            libc::madvise(region.as_ptr().cast(), region.len() as usize, libc::MADV_RANDOM)
++        };
++        if result != 0 {
++            return Err(MemoryError::Madvise(std::io::Error::last_os_error()));
++        }
++    }
++    Ok(memory)
+ }
+ 
+ /// Defines the interface for snapshotting memory.
+@@ -699,6 +712,16 @@
+ 
+     /// Dumps all contents of GuestMemoryMmap to a writer.
+     fn dump<T: WriteVolatile + std::io::Seek>(&self, writer: &mut T) -> Result<(), MemoryError> {
++        // Full capture reads every page sequentially, including untouched snapshot-backed pages.
++        for region in self.iter() {
++            // SAFETY: Each region is a valid mapping for its complete length.
++            let result = unsafe {
++                libc::madvise(region.as_ptr().cast(), region.len() as usize, libc::MADV_NORMAL)
++            };
++            if result != 0 {
++                return Err(MemoryError::Madvise(std::io::Error::last_os_error()));
++            }
++        }
+         self.iter()
+             .flat_map(|region| region.slots())
+             .try_for_each(|(mem_slot, plugged)| {
