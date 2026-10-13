@@ -39,6 +39,20 @@ file while preserving Docker DNS for the shared SQL fixture. A real Docker repro
 ARC architectures resolved the bootstrap host through the configured public resolvers. The launcher regression passes;
 both native KVM qualifications must pass on the new main revision before publication or cutover.
 
+PR #14916 merged as `e89e1362f3248173bef4fdc15e860fdb39c6f495` after its checks and automatic review passed.
+Main Ofz identity qualification now passes, and all four native controller/guest images built. Native KVM acceptance
+and the coordinated service cutover remain release gates.
+
+The rebased HA layer #14909 preserves the merged credentials and post-DNAT ingress paths. Its four prepared targets
+render 65 resources, pass schema validation and Kubernetes server-side dry run, and reject 13 deliberately invalid
+HA/credential/network configurations. The target uses the active generated CRD, removing the unused preparation copy.
+Two consecutive real Keycloak/Ofz/controller browser runs pass 60 assertions in 68 and 66 seconds. They preserve the
+same authenticated subject and credentials after serving-process loss, including an in-flight passkey challenge.
+An earlier fixture stalled in a mocked Kubernetes exchange; the fixture now reports early handler completion instead
+of silently waiting for a request that can no longer arrive. Rust units/Clippy and CI routing/release tests pass.
+These are isolated source checks. Native database failover, deployed node loss, independent recovery and cutover remain
+unqualified. NUC access works through the existing SSH identity; its independent filesystem has about 63 GiB free.
+
 Source delivery continues through required CI and automatic review. Production remains held until the reviewed Ofz,
 BFF, runtime, guest, migration and broker contracts can activate together. Remaining implementation includes bounded
 observers, independent execution fencing, diagnostic proof keys and brokers, offboarding and independent recovery.

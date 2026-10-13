@@ -268,9 +268,7 @@ exit 0
     expect(controllerValidation).toContain('cargo fmt --check')
     expect(controllerValidation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(controllerValidation).toContain('cargo test --locked --all-targets')
-    expect(controllerValidation).toContain(
-      'diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml',
-    )
+    expect(controllerValidation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
     expect(guestValidation).toContain('GOWORK=off go test -race ./...')
     expect(guestValidation).toContain('GOWORK=off go vet ./...')
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
@@ -414,7 +412,6 @@ exit 0
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
-    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml')
   })
 
   it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {

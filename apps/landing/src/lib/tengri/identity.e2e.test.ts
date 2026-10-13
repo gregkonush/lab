@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
@@ -18,6 +18,41 @@ const identityTest = process.env.OFZ_IDENTITY_FIXTURE === '1' ? test : test.skip
 const root = path.resolve(import.meta.dir, '../../../../..')
 const processes: ReturnType<typeof spawn>[] = []
 const cleanups: (() => unknown)[] = []
+
+async function routingEndpoint(port: number, firstBackend: number) {
+  let backend = firstBackend
+  const connections = new Set<Socket>()
+  const service = tcpServer((incoming) => {
+    const upstream = createConnection(backend, '127.0.0.1')
+    for (const socket of [incoming, upstream]) {
+      connections.add(socket)
+      socket.once('close', () => connections.delete(socket))
+      socket.on('error', () => {
+        incoming.destroy()
+        upstream.destroy()
+      })
+    }
+    incoming.once('close', () => upstream.destroy())
+    upstream.once('close', () => incoming.destroy())
+    incoming.pipe(upstream).pipe(incoming)
+  })
+  service.listen(port, '127.0.0.1')
+  await once(service, 'listening')
+  const disconnect = () => {
+    for (const socket of connections) socket.destroy()
+  }
+  cleanups.push(() => {
+    disconnect()
+    return new Promise<void>((resolve) => service.close(() => resolve()))
+  })
+  return {
+    route(nextBackend: number) {
+      backend = nextBackend
+      disconnect()
+    },
+  }
+}
+
 afterAll(async () => {
   await Promise.all(
     processes.map(async (child) => {
@@ -416,6 +451,9 @@ identityTest(
     const kcHttp = await freePort(),
       kcHttps = await freePort(),
       ofzPort = await freePort()
+    const kcPrimaryHttps = await freePort(),
+      kcSecondaryHttp = await freePort(),
+      kcSecondaryHttps = await freePort()
     const base = `https://proompteng.ai:${bffAddress.port}`,
       issuer = `https://auth.proompteng.ai:${kcHttps}/realms/tengri`
     Object.assign(process.env, {
@@ -433,43 +471,102 @@ identityTest(
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
       SPIFFE_WORKLOAD_API_PROTO_PATH: fixture.protoPath,
     })
-    const kcLog = secret('keycloak.log', '')
-    const kc = spawn(
-      z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN),
-      [
-        'start-dev',
-        '--db=postgres',
-        `--db-url=jdbc:postgresql://localhost:${port}/keycloak?sslmode=verify-full&sslrootcert=${process.env.OFZ_TEST_CA_FILE}`,
-        '--db-username=postgres',
-        '--http-host=127.0.0.1',
-        `--http-port=${kcHttp}`,
-        `--https-port=${kcHttps}`,
-        `--hostname=https://auth.proompteng.ai:${kcHttps}`,
-        `--https-certificate-file=${certPath}`,
-        `--https-certificate-key-file=${keyPath}`,
-      ],
-      {
-        env: {
-          ...process.env,
-          KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
-          KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
-          JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    )
-    processes.push(kc)
-    kc.stdout?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
-    kc.stderr?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
-    const adminBase = `http://127.0.0.1:${kcHttp}`
-    for (let attempt = 0; ; attempt++) {
-      if (kc.exitCode !== null || attempt > 240)
-        throw new Error(`Fixture Keycloak startup failed: ${readFileSync(kcLog, 'utf8').slice(-1000)}`)
-      try {
-        if ((await fetch(adminBase + '/realms/master/.well-known/openid-configuration')).ok) break
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 500))
+    const freeCachePort = async () => {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const candidate = 10000 + Math.floor(Math.random() * 5000)
+        const sockets = [tcpServer(), tcpServer()]
+        try {
+          for (const [index, socket] of sockets.entries()) {
+            socket.listen(candidate + index * 50000, '127.0.0.1')
+            await once(socket, 'listening')
+          }
+          return candidate
+        } catch {
+        } finally {
+          await Promise.all(
+            sockets
+              .filter((socket) => socket.listening)
+              .map((socket) => new Promise<void>((resolve) => socket.close(() => resolve()))),
+          )
+        }
+      }
+      throw new Error('No isolated Keycloak transport and failure-detection port pair')
     }
+    const primaryHome = path.join(fixture.directory, 'keycloak-primary')
+    const secondaryHome = path.join(fixture.directory, 'keycloak-secondary')
+    cpSync(path.dirname(path.dirname(z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN))), primaryHome, {
+      recursive: true,
+    })
+    const startKeycloak = async (
+      home: string,
+      name: string,
+      httpPort: number,
+      httpsPort: number,
+      optimized: boolean,
+    ) => {
+      const log = secret(`keycloak-${name}.log`, '')
+      const server = spawn(
+        path.join(home, 'bin/kc.sh'),
+        [
+          'start',
+          ...(optimized ? ['--optimized'] : ['--db=postgres', '--health-enabled=true']),
+          '--cache=ispn',
+          '--cache-stack=jdbc-ping',
+          '--cache-embedded-mtls-enabled=true',
+          '--cache-embedded-network-bind-address=127.0.0.1',
+          `--cache-embedded-network-bind-port=${await freeCachePort()}`,
+          `--spi-cache-embedded--default--node-name=${name}`,
+          `--db-url=jdbc:postgresql://localhost:${port}/keycloak?sslmode=verify-full&sslrootcert=${process.env.OFZ_TEST_CA_FILE}`,
+          '--db-username=postgres',
+          '--db-pool-max-size=20',
+          '--http-enabled=true',
+          '--http-host=127.0.0.1',
+          `--http-port=${httpPort}`,
+          `--https-port=${httpsPort}`,
+          `--http-management-port=${await freePort()}`,
+          `--hostname=https://auth.proompteng.ai:${kcHttps}`,
+          `--https-certificate-file=${certPath}`,
+          `--https-certificate-key-file=${keyPath}`,
+        ],
+        {
+          env: {
+            ...process.env,
+            KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
+            KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
+            JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      processes.push(server)
+      server.stdout?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
+      server.stderr?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
+      const startupDeadline = Date.now() + 120_000
+      for (;;) {
+        if (server.exitCode !== null || server.signalCode !== null || Date.now() >= startupDeadline)
+          throw new Error(`Fixture Keycloak ${name} startup failed: ${readFileSync(log, 'utf8').slice(-3000)}`)
+        try {
+          if ((await fetch(`http://127.0.0.1:${httpPort}/realms/master/.well-known/openid-configuration`)).ok) break
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      return { server, log }
+    }
+    const kc = await startKeycloak(primaryHome, 'primary', kcHttp, kcPrimaryHttps, false)
+    cpSync(primaryHome, secondaryHome, { recursive: true })
+    const kcSecondary = await startKeycloak(secondaryHome, 'secondary', kcSecondaryHttp, kcSecondaryHttps, true)
+    for (let attempt = 0; ; attempt++) {
+      if (
+        [kc.log, kcSecondary.log].every((log) =>
+          /ISPN000094: Received new cluster view.*\(2\)/.test(readFileSync(log, 'utf8')),
+        )
+      )
+        break
+      if (attempt > 100) throw new Error('Production Keycloak instances did not form a two-member jdbc-ping cluster')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    const keycloakEndpoint = await routingEndpoint(kcHttps, kcPrimaryHttps)
+    let adminBase = `http://127.0.0.1:${kcHttp}`
     const bootstrap = (providerSecret: string, clientSecret: string) =>
       execFileSync('python3', [path.join(root, 'argocd/applications/keycloak/tengri/bootstrap.py')], {
         env: {
@@ -565,28 +662,7 @@ identityTest(
     const secondApiPort = await freePort()
     const firstApi = await startApi(firstApiPort)
     await startApi(secondApiPort)
-    let activeApiPort = firstApiPort
-    const connections = new Set<Socket>()
-    const service = tcpServer((incoming) => {
-      const upstream = createConnection(activeApiPort, '127.0.0.1')
-      for (const socket of [incoming, upstream]) {
-        connections.add(socket)
-        socket.once('close', () => connections.delete(socket))
-        socket.on('error', () => {
-          incoming.destroy()
-          upstream.destroy()
-        })
-      }
-      incoming.once('close', () => upstream.destroy())
-      upstream.once('close', () => incoming.destroy())
-      incoming.pipe(upstream).pipe(incoming)
-    })
-    service.listen(ofzPort, '127.0.0.1')
-    await once(service, 'listening')
-    cleanups.push(() => {
-      for (const socket of connections) socket.destroy()
-      return new Promise<void>((resolve) => service.close(() => resolve()))
-    })
+    const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
     const { ofzCall } = await import('./ofz')
     const { AuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
     await ofzCall(AuthorizationService.method.getPolicyState, {}).catch((error) => {
@@ -624,7 +700,7 @@ identityTest(
           'Isolated broker page: ' +
             (await page.locator('body').innerText()).slice(0, 1500) +
             '\n' +
-            readFileSync(kcLog, 'utf8')
+            readFileSync(kc.log, 'utf8')
               .split('\n')
               .filter((line) => line.includes('WARN') || line.includes('ERROR'))
               .slice(-8)
@@ -723,10 +799,9 @@ identityTest(
 
     // Routing removes the failed backend; the unchanged gRPC target must reconnect to the surviving process.
     const failoverStarted = Date.now()
-    activeApiPort = secondApiPort
+    apiEndpoint.route(secondApiPort)
     firstApi.kill('SIGKILL')
     await once(firstApi, 'exit')
-    for (const socket of connections) socket.destroy()
     let survivingIdentity: Awaited<ReturnType<typeof getTengriIdentity>> | undefined
     let failoverError: unknown
     while (Date.now() - failoverStarted < 30_000) {
@@ -864,12 +939,38 @@ identityTest(
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
+    const subjectBeforeFailover = (
+      await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [inspected.session.id])
+    ).rows[0]?.identity_subject
+    const credentialIdentities = async () =>
+      z
+        .array(z.object({ id: z.string(), type: z.string() }))
+        .parse(await (await adminCall(`/users/${subjectBeforeFailover}/credentials`)).json())
+    const passkeysBeforeFailover = await credentialIdentities()
+    const keycloakFailoverStarted = Date.now()
+    keycloakEndpoint.route(kcSecondaryHttps)
+    adminBase = `http://127.0.0.1:${kcSecondaryHttp}`
+    kc.server.kill('SIGKILL')
+    await once(kc.server, 'exit')
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
     expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
+    expect(Date.now() - keycloakFailoverStarted).toBeLessThan(30_000)
+    expect(await credentialIdentities()).toEqual(passkeysBeforeFailover)
+    const survivingSession = await getTengriIdentity(
+      new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }),
+    )
+    expect(survivingSession?.session.humanId).toBe(inspected.session.humanId)
+    expect(
+      (await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [survivingSession?.session.id]))
+        .rows[0]?.identity_subject,
+    ).toBe(subjectBeforeFailover)
+    console.log(
+      'PASS: two production Keycloak 26.7.4 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
+    )
 
     // A second numeric GitHub identity has the same verified email upstream.
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
@@ -1086,5 +1187,5 @@ identityTest(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )
   },
-  180_000,
+  300_000,
 )
