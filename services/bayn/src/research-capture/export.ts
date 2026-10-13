@@ -24,6 +24,81 @@ export interface ResearchCaptureObjectStore {
   readonly putVerified: (object: ResearchCaptureObject) => Effect.Effect<void, ResearchCaptureFailure>
 }
 
+export interface ResearchCaptureObjectReader {
+  readonly getVerified: (
+    contentHash: string,
+    maximumBytes: number,
+  ) => Effect.Effect<ResearchCaptureObject, ResearchCaptureFailure>
+}
+
+export const readResearchCaptureExport = (input: {
+  readonly seal: ResearchCaptureBytes
+  readonly claim?: ResearchCaptureBytes
+  readonly objects: ResearchCaptureObjectReader
+  readonly maximumBytes: number
+  readonly maximumChunks: number
+}) =>
+  Effect.gen(function* () {
+    const expected = yield* Effect.fromResult(deriveResearchCaptureExportManifest(input.seal)).pipe(
+      Effect.mapError((cause) => fail('Invalid durable export root', cause)),
+    )
+    const seal = yield* Effect.fromResult(decodeResearchCaptureSeal(input.seal)).pipe(
+      Effect.mapError((cause) => fail('Invalid durable seal', cause)),
+    )
+    if (
+      !Number.isSafeInteger(input.maximumBytes) ||
+      input.maximumBytes < 0 ||
+      !Number.isSafeInteger(input.maximumChunks) ||
+      input.maximumChunks < 0 ||
+      seal.persistedChunks > input.maximumChunks
+    )
+      return yield* fail('Capture read exceeds its declared bounds')
+    let remaining = input.maximumBytes
+    const read = (hash: string) =>
+      input.objects.getVerified(hash, Math.min(remaining, maximumResearchCaptureChunkBytes)).pipe(
+        Effect.tap((object) =>
+          Effect.sync(() => {
+            remaining -= object.payload.byteLength
+          }),
+        ),
+      )
+    const manifestObject = yield* read(expected.contentHash)
+    if (!Buffer.from(manifestObject.payload).equals(Buffer.from(expected.payload)))
+      return yield* fail('Durable manifest differs from SQL seal')
+    const sealObject = yield* read(input.seal.contentHash)
+    if (!Buffer.from(sealObject.payload).equals(Buffer.from(input.seal.payload)))
+      return yield* fail('Exported seal differs from SQL seal')
+    const objects: ResearchCaptureObject[] = []
+    let hash = seal.exportRoot?.lastChunkHash ?? null
+    for (let ordinal = seal.persistedChunks - 1; ordinal >= 0; ordinal--) {
+      if (hash === null) return yield* fail('Capture frame chain ends before its sealed frontier')
+      const object = yield* read(hash)
+      const decoded = yield* Effect.fromResult(decodeResearchCaptureExportChunk(object)).pipe(
+        Effect.mapError((cause) => fail('Invalid capture frame', cause)),
+      )
+      if (ordinal === 0) {
+        if (decoded.chunk.receipts[0]?.event.kind === 'session-attempt' && input.claim === undefined)
+          return yield* fail('Session export has no durable ownership claim')
+        if (
+          input.claim !== undefined &&
+          (input.claim.contentHash !== decoded.metadata.contentHash || input.claim.payload !== decoded.metadata.payload)
+        )
+          return yield* fail('Export differs from its SQL ownership claim')
+      }
+      objects.unshift(object)
+      hash = decoded.previousChunkHash
+    }
+    if (hash !== null) return yield* fail('Capture frame chain exceeds its sealed frontier')
+    const manifest = {
+      contentHash: manifestObject.contentHash,
+      payload: Buffer.from(manifestObject.payload).toString('utf8'),
+    }
+    const verified = yield* Effect.fromResult(verifyResearchCaptureExportPrefix(objects, input.seal, manifest)).pipe(
+      Effect.mapError((cause) => fail('Capture export verification failed', cause)),
+    )
+    return { ...verified, objects, manifest, readBytes: input.maximumBytes - remaining }
+  })
+
 export interface ResearchCaptureExportEntry {
   readonly receipt: ResearchCaptureReceipt
   readonly rawValue?: Uint8Array | null
@@ -34,7 +109,7 @@ const ObjectReferenceSchema = Schema.Struct({
   byteLength: NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(maximumResearchCaptureChunkBytes)),
 })
 export const ResearchCaptureExportManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export.v2'),
+  schemaVersion: Schema.Literal('bayn.research-capture-export.v3'),
   qualification: Schema.Enum(CaptureQualification),
   captureId: ResearchCaptureIdSchema,
   sourceRevision: GitSourceRevisionSchema,
@@ -163,7 +238,7 @@ export const deriveResearchCaptureExportManifest = (sealBytes: ResearchCaptureBy
     const metadataSeal = researchCaptureObject(sealBytes.payload)
     return researchCaptureObject(
       JSON.stringify({
-        schemaVersion: 'bayn.research-capture-export.v2',
+        schemaVersion: 'bayn.research-capture-export.v3',
         qualification: CaptureQualification.Unqualified,
         captureId: seal.captureId,
         sourceRevision: seal.sourceRevision,

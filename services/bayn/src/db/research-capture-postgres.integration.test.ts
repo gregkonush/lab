@@ -140,7 +140,13 @@ postgresTest('a session claim commits before objects and a fresh attempt cannot 
       expect((yield* second.status).invalidations).toContain(CaptureInvalidation.Persistence)
       expect(yield* second.finish).toBeUndefined()
       expect(yield* readResearchCapturePostgresChunk(sql, chunk.captureId, 0, 64 * 1024)).toEqual(claimed)
+      first.record(captureEvent('STARTED'))
+      first.record(captureEvent('STOPPED'))
       expect((yield* first.finish)?.qualification).toBe(CaptureQualification.Unqualified)
+      expect((yield* first.status).persistedReceipts).toBe(3)
+      expect(
+        Exit.isFailure(yield* Effect.exit(readResearchCapturePostgresChunk(sql, chunk.captureId, 1, 64 * 1024))),
+      ).toBe(true)
     }),
   ),
 )
@@ -309,16 +315,17 @@ postgresTest('durable SQL seal recovers raw objects after process state and seal
           recorder.record(captureEvent('STOPPED'), 100)
         }),
       )
-      const capturedChunk = yield* readResearchCapturePostgresChunk(
-        sql,
-        chunk.captureId,
-        0,
-        maximumResearchCaptureChunkBytes,
-      )
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(
+            readResearchCapturePostgresChunk(sql, chunk.captureId, 0, maximumResearchCaptureChunkBytes),
+          ),
+        ),
+      ).toBe(true)
       const seal = yield* readResearchCapturePostgresSeal(sql, chunk.captureId, maximumResearchCaptureSealBytes)
       const reads: string[] = []
       const recovered = Result.getOrThrow(
-        recoverCaptureFromStoredObjects([capturedChunk], seal, (key) => {
+        recoverCaptureFromStoredObjects([], seal, (key) => {
           reads.push(key)
           return bucket.get(key)
         }),

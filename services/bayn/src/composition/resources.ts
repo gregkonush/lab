@@ -42,7 +42,8 @@ import { researchCaptureS3Config } from '../research-capture/session-config'
 import { makeS3ResearchCaptureObjectStore } from '../research-capture/s3'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { sqlResource } from '../operations'
-import { operationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
+import type { DatabaseError } from '../db/database-error'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
 
@@ -98,9 +99,13 @@ const workerStreamingUniverse = (plan: ApplicationIdentity) => {
   }
 }
 
-/** Read-only Kafka consumption; no persistence, capture, broker, model or trading-driver acquisition. */
-export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
-  plan.config.kafka === undefined
+/** Server-owned market consumption; configured capture never acquires trading resources. */
+export const WorkerMarketProjectionLive = (
+  plan: ApplicationIdentity,
+  capture?: ResearchCaptureSession,
+): Layer.Layer<KafkaMarketProjection, OperationalError | DatabaseError> => {
+  const config = plan.config.kafka
+  return config === undefined
     ? Layer.effect(
         KafkaMarketProjection,
         Effect.fail(
@@ -111,7 +116,35 @@ export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
           }),
         ),
       )
-    : KafkaMarketProjectionLive(plan.config.kafka, workerStreamingUniverse(plan))
+    : capture === undefined
+      ? KafkaMarketProjectionLive(config, workerStreamingUniverse(plan))
+      : Layer.effect(
+          KafkaMarketProjection,
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const universe = workerStreamingUniverse(plan)
+            yield* capture.start(
+              makeResearchCapturePostgresStore(sql),
+              researchCaptureS3Config.pipe(Effect.flatMap(makeS3ResearchCaptureObjectStore)),
+              universe,
+            )
+            const market = yield* makeKafkaMarketProjection(
+              config,
+              universe,
+              undefined,
+              undefined,
+              capture.workerObserver,
+            )
+            capture.bind(market)
+            return market
+          }),
+        ).pipe(
+          Layer.provide(
+            PostgresClientLive(plan.config, { maxConnections: 1, applicationName: 'bayn-research-capture' }),
+          ),
+          Layer.provide(NodeServices.layer),
+        )
+}
 
 const WorkerMarketDataLive = (
   plan: ApplicationIdentity,
@@ -130,31 +163,7 @@ const WorkerMarketDataLive = (
         }),
       ),
     )
-  const universe = workerStreamingUniverse(plan)
-  const config = plan.config.kafka
-  const kafka =
-    capture === undefined
-      ? (prewarmedProjection ?? KafkaMarketProjectionLive(config, universe))
-      : Layer.effect(
-          KafkaMarketProjection,
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            yield* capture.start(
-              makeResearchCapturePostgresStore(sql),
-              researchCaptureS3Config.pipe(Effect.flatMap(makeS3ResearchCaptureObjectStore)),
-              universe,
-            )
-            const market = yield* makeKafkaMarketProjection(
-              config,
-              universe,
-              undefined,
-              undefined,
-              capture.workerObserver,
-            )
-            capture.bind(market)
-            return market
-          }),
-        ).pipe(Layer.provide(postgres))
+  const kafka = prewarmedProjection ?? WorkerMarketProjectionLive(plan, capture)
   return StreamingIntradayMarketDataLive.pipe(Layer.provide(kafka), Layer.provide(postgres))
 }
 

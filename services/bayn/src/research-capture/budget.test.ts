@@ -112,7 +112,7 @@ test.each(['object', 'sql'] as const)(
             maximumObjectBytes: kind === 'object' ? 2500 : 1_000_000,
             maximumSqlBytes: kind === 'sql' ? 1000 : 1_000_000,
           },
-          saved.objectStore,
+          kind === 'object' ? saved.objectStore : undefined,
         )
         recorder.record(captureEvent('STARTED'))
         yield* TestClock.adjust(50)

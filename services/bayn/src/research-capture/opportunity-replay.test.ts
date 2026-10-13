@@ -292,7 +292,7 @@ const seal = (selected: readonly Row[]) => {
     lastContentHash: metadata.contentHash,
     invalidations: [],
     exportRoot: {
-      schemaVersion: 'bayn.research-capture-export-root.v2',
+      schemaVersion: 'bayn.research-capture-export-root.v3',
       exportedChunks: 1,
       lastChunkHash: object.contentHash,
     },

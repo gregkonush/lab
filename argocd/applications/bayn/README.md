@@ -176,8 +176,10 @@ Without a configured research capture, each worker starts its existing read-only
 starts. The trading driver, broker session, model client and capital activation remain lazy. The same server-scoped
 projection is reused by the first execution runtime and its replacements, without another consumer. Bootstrap remains
 asynchronous: an accepting TCP endpoint does not imply complete signal history, and existing snapshot checks still
-reject rebuilding, missing or late input. A configured capture retains its existing lazy recorder/consumer lifecycle;
-prewarm does not start SQL/S3 recording on standby replicas.
+reject rebuilding, missing or late input. A configured capture claims its fixed identity through a separate one-connection pool before that same projection
+starts. One replica owns the claim; other replicas continue their ordinary projection without capture. No additional
+Kafka consumer, broker, model or trading-driver resource is started for capture. The claim and final seal are the only
+SQL capture writes; raw chunks and metadata share one immutable object chain.
 
 Prewarm moves the eventual per-replica consumption earlier. Both current replicas, and old/new replicas overlapping
 during rollout, can consume concurrently; it is not a claim of zero additional aggregate CPU or memory. Keep the

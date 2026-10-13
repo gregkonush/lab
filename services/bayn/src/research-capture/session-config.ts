@@ -3,7 +3,12 @@ import { Config, Option, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { SnapshotCalendarSchema } from '../market-data/streaming/manifest-schema'
 import { IsoDateSchema, strictParseOptions } from '../schemas'
-import { CaptureSessionDeclarationSchema, ResearchCaptureFailure, ResearchCaptureIdSchema } from './capture'
+import {
+  CaptureSessionDeclarationSchema,
+  ResearchCaptureFailure,
+  ResearchCaptureIdSchema,
+  researchCaptureObjectTimeoutMs,
+} from './capture'
 import { ResearchScheduleSchema } from './opportunity'
 
 export const ResearchCaptureSessionConfigSchema = Schema.Struct({
@@ -85,5 +90,5 @@ export const researchCaptureS3Config = Config.all({
   region: Config.String('BAYN_RESEARCH_CAPTURE_S3_REGION').pipe(Config.withDefault('')),
   accessKeyId: Config.Redacted('BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID'),
   secretAccessKey: Config.Redacted('BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY'),
-  timeoutMs: Config.succeed(1000),
+  timeoutMs: Config.succeed(researchCaptureObjectTimeoutMs),
 })

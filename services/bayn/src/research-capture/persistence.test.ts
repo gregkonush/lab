@@ -3,7 +3,9 @@ import { Deferred, Effect, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
-import { captureEvent } from './capture.test-support'
+import { captureEvent, marketEvent } from './capture.test-support'
+import { captureKafkaTransport, maximumResearchCaptureBufferBytes, maximumResearchCaptureReceipts } from './capture'
+import { sha256 } from '../hash'
 import { decodeResearchCaptureExportChunk, type ResearchCaptureObject } from './export'
 import { makeResearchCaptureRecorder } from './recorder'
 
@@ -83,3 +85,72 @@ test('bounded asynchronous capture can retain a real storage operation lasting o
       }),
     ).pipe(provideTestLayer(TestClock.layer())),
   ))
+
+test('four bounded frame writes preserve hash order and wait for the first frame acknowledgement', async () => {
+  const completed: number[] = []
+  let inFlight = 0
+  let maximumInFlight = 0
+  const raw = Buffer.alloc(1024 * 1024, 97)
+  const rawValueSha256 = sha256(raw)
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const first = yield* Deferred.make<void>()
+        const rest = yield* Deferred.make<void>()
+        const fourStarted = yield* Deferred.make<void>()
+        const laterFinished = yield* Deferred.make<void>()
+        const recorder = yield* makeResearchCaptureRecorder(
+          { append: () => Effect.die('Raw chunks must not write SQL'), seal: () => Effect.void },
+          {
+            ...options,
+            maximumQueuedBytes: maximumResearchCaptureBufferBytes,
+            maximumQueuedReceipts: maximumResearchCaptureReceipts,
+          },
+          {
+            putVerified: (object) =>
+              Effect.gen(function* () {
+                const decoded = decodeResearchCaptureExportChunk(object)
+                if (Result.isFailure(decoded)) return
+                const ordinal = decoded.success.chunk.chunkOrdinal
+                inFlight++
+                maximumInFlight = Math.max(maximumInFlight, inFlight)
+                if (inFlight === 4) yield* Deferred.succeed(fourStarted, undefined)
+                yield* Deferred.await(ordinal === 0 ? first : rest)
+                completed.push(ordinal)
+                inFlight--
+                if (ordinal !== 0) yield* Deferred.succeed(laterFinished, undefined)
+              }),
+          },
+        )
+        recorder.record(captureEvent('STARTED'))
+        for (let index = 0; index < 16; index++)
+          recorder.record(
+            {
+              ...marketEvent,
+              consumerSequence: index + 1,
+              rawValueSha256,
+              rawByteLength: raw.length,
+              originalTransport: captureKafkaTransport(0),
+            },
+            undefined,
+            raw,
+          )
+        recorder.record(captureEvent('STOPPED'))
+        const finishing = yield* recorder.finish.pipe(Effect.forkChild)
+        yield* Deferred.await(fourStarted)
+        expect(maximumInFlight).toBe(4)
+        yield* Deferred.succeed(rest, undefined)
+        yield* Deferred.await(laterFinished)
+        expect((yield* recorder.status).persistedReceipts).toBe(0)
+        expect(completed).not.toContain(0)
+        yield* Deferred.succeed(first, undefined)
+        const seal = yield* Fiber.join(finishing)
+        expect(maximumInFlight).toBe(4)
+        expect(seal?.persistedReceipts).toBe(18)
+        expect(seal?.invalidations).toEqual([])
+        expect(seal?.persistedChunks).toBe(completed.length)
+        expect(completed.toSorted((a, b) => a - b)).toEqual(Array.from({ length: completed.length }, (_, i) => i))
+      }),
+    ),
+  )
+})

@@ -1,6 +1,7 @@
 # Original receipt capture
 
-Production capture is **disabled by default**. Deployment manifests leave the fixed-session setting absent.
+Capture is **disabled when no fixed session is configured**. GitOps registers the single
+[October 13, 2026 session](../../../../argocd/applications/bayn/research-capture-session.yaml).
 The native execution worker has optional, fixed-session wiring through `BAYN_RESEARCH_CAPTURE_SESSION`. An absent or
 invalid setting acquires no capture recorder, S3 client, or capture database operation. Live activation, credentials,
 and capacity qualification require separate review and approval.
@@ -52,7 +53,7 @@ and missed slots; it is not complete market evidence, controller coverage, or ec
 remain `UNQUALIFIED` and controller coverage remains `UNKNOWN`.
 
 `startAtMs` is the earliest admission time on the selected UTC session date. `bootstrapDeadlineMs` is the latest time
-at which the existing lazy worker may begin the attempt. Both precede the session open. The worker must finish bootstrap
+at which the server-owned market projection may begin the attempt. Both precede the session open. The worker must finish bootstrap
 by `coverageStartMs`. Before `startAtMs`, the session timer acquires no client and writes no evidence. If the worker
 acquires early, the attempt ends incomplete and the worker starts without capture or raw mode. Activate capture inside
 the declared window. The observer cannot attach later to an existing consumer without losing its original assignment
@@ -62,8 +63,10 @@ another Kafka consumer, or changes native bootstrap timestamps. If the worker ne
 incomplete at its bootstrap deadline. A missed bootstrap, changed assignment, replacement worker, reversed clock,
 capture failure, or deadline without an actual cut ends the attempt without selecting another session.
 
-The worker uses its existing PostgreSQL client and capture tables. Explicit S3 configuration uses
-`BAYN_RESEARCH_CAPTURE_S3_ENDPOINT`, `BAYN_RESEARCH_CAPTURE_S3_BUCKET`, `BAYN_RESEARCH_CAPTURE_S3_REGION`,
+The capture uses the existing PostgreSQL tables through a separate one-connection pool. The server attaches its
+observer before the existing Kafka projection starts and reuses that projection in every lazy trading runtime.
+Competing replicas claim the same fixed identity once; a losing replica continues ordinary consumption without capture.
+No capture startup path acquires the broker, model, accounting or capital resources. Explicit S3 configuration uses `BAYN_RESEARCH_CAPTURE_S3_ENDPOINT`, `BAYN_RESEARCH_CAPTURE_S3_BUCKET`, `BAYN_RESEARCH_CAPTURE_S3_REGION`,
 `BAYN_RESEARCH_CAPTURE_S3_ACCESS_KEY_ID`, and `BAYN_RESEARCH_CAPTURE_S3_SECRET_ACCESS_KEY`.
 Use the native OBC's actual `BUCKET_NAME`, not the claim name or the legacy research bucket. The approved execution-worker
 manifest references the existing `bayn-research-captures` owner Secret and connection ConfigMap. The public status
@@ -75,8 +78,8 @@ It is the only chunk whose SQL write precedes object export. SQL must acknowledg
 can be exported. That frame contains the exact claim metadata and no raw values; its verified PUT/GET acknowledgement
 must arrive before raw admission begins. The marker participates in
 the ordinary hash and export chains but represents no consumer start or market delivery. Readers reject a marker in
-any other position. Normal data chunks retain object-readback-before-SQL ordering.
-The claim's complete SQL-and-export operation uses the smaller of the one-second write timeout and the remaining
+any other position. Data chunks persist once as verified objects. SQL retains the ownership claim and final seal, without a second copy of every data chunk.
+The claim's complete SQL-and-export operation uses the smaller of the thirty-second write timeout and the remaining
 admission window. At that deadline the recorder cancels the operation and retains incomplete evidence. Cancellation
 does not prove that a remote SQL commit rolled back. An unknown committed claim still consumes the fixed ID and cannot
 authorize an export, raw admission, or a replacement attempt.
@@ -87,7 +90,7 @@ start and bootstrap-deadline window. A failed claim or its export leaves no qual
 
 The configured `maximumObjectBytes` and `maximumSqlBytes` are cumulative logical-payload ceilings. They must not exceed
 24 GiB and 10 GiB respectively. Every attempted frame, seal, and manifest object is charged before its
-write. SQL charges each chunk and seal's UTF8 payload before its write. Failed or unknown writes keep their charge.
+write. SQL charges the claim and seal's UTF8 payload before its write. Failed or unknown writes keep their charge.
 The recorder uses two counters, not a per-event history. It refuses a write that would exceed its ceiling and invalidates
 capture. A limit may prevent the final seal, leaving an unknown tail. These are failure ceilings, not evidence of
 available storage or production throughput. They exclude SQL indexes, WAL, replication, object-store replication,
@@ -95,7 +98,9 @@ network readbacks, and runtime memory. The existing receipt, reservation, and co
 
 After the fixed close, the attempt checks the existing native `captureInterval` hook at most once per second. It
 records one successful cut and calls `finish` once. Otherwise it finishes incomplete at the fixed stop deadline.
-Final drainage and seal writes retain their existing one-second write bounds. The consumer keeps trading. Its raw
+Each write has a thirty-second aggregate bound, and each object operation has a ten-second bound.
+Data writes also stop at the fixed session deadline. A final invalidated seal may acknowledge within its bounded
+cleanup window after that deadline, without admitting another record. The consumer keeps trading. Its raw
 transport mode and scoped S3 client remain until normal worker disposal; remove the observer and temporary access
 through a separately approved GitOps change after the session. Do not stop the trading consumer to clean up capture.
 Controller observations still have `UNKNOWN` coverage, and every export remains `UNQUALIFIED`.
@@ -136,7 +141,7 @@ seal's acknowledgement arrived, raw export/readback, or full source and controll
 separate reviewed export protocol; this metadata-only API has no qualified seal variant.
 
 The buffer limit counts retained serialized receipt bytes. Draining splits that bounded buffer using the exact UTF8
-chunk envelope, receipt bytes, and comma separators, so no chunk exceeds the database's 4 MiB payload limit. Each receipt
+chunk envelope, receipt bytes, and comma separators, so no frame exceeds its 4 MiB payload limit. Each receipt
 is serialized for its admission size and once in its final chunk; splitting never repeatedly serializes growing prefixes.
 Capture identities are limited to 512 characters, and the persistence decoder rejects oversized chunks before SQL.
 
@@ -164,8 +169,8 @@ block. No leader-epoch qualification or offset-gap rule is added.
 Raw admission reserves `4 * receipt UTF8 bytes + 3 * raw bytes` bytes per entry and 64 KiB for envelopes and bounded SDK responses. The
 reservation covers owned bytes, binary assembly, exact metadata serialization and bounded readback payloads. It remains
 charged through in-flight writes, as does the receipt-count limit. It bounds application-owned payloads, not total
-JavaScript or SDK RSS. A raw recorder needs a buffer larger than the envelope reserve; the existing 4 MiB maximum still
-applies. Overflow rejects admission synchronously and invalidates only capture. There is no queue wait in execution.
+JavaScript or SDK RSS. A raw recorder needs a buffer larger than the envelope reserve; the production reservation is capped at 256 MiB and 65,536 receipts, including in-flight writes.
+Every individual frame still fits 4 MiB. Overflow rejects admission synchronously and invalidates only capture. There is no queue wait in execution.
 
 Each drained chunk writes one content-addressed binary frame. Its fixed 45-byte header contains the eight ASCII bytes
 `BAYNCAP2`, the unsigned four-byte big-endian metadata length, a one-byte previous-frame-hash presence flag and 32 hash
@@ -177,17 +182,19 @@ truncated or malformed UTF8 metadata, changed values and unreferenced tails. Hea
 must fit the existing 4 MiB bound, enforced before frame allocation and before decode.
 
 The metadata still binds original arrival, consumer epoch/sequence, topic/partition/offset, disposition and hash.
-The complete frame must pass exact readback before the SQL append, and that append must acknowledge before the recorder
-advances either frontier. The whole-frame content hash binds both metadata and raw values. The separate raw/metadata
-objects and byte-range index are removed. This hard migration has one live v2 writer and reader; stored v1 objects are
-retained without rewriting, deleting or qualifying them. Metadata-only captures retain their existing wire formats.
+Every complete frame must pass exact readback before the recorder advances its committed frontier.
+A bounded drain builds one hash chain, verifies at most four frames concurrently, and advances only after the entire
+drain acknowledges. A failed frame invalidates the batch; later durable objects remain unclaimed orphan evidence. The whole-frame content hash binds both metadata and raw values. The separate raw/metadata
+objects and byte-range index are removed. The live root and manifest use v3 with object-owned metadata. The binary frame remains BAYNCAP2 because
+its encoding is unchanged. Earlier synthetic objects and SQL rows remain retained without conversion or qualification. Metadata-only captures retain their existing wire formats.
 
-Raw-mode SQL seals retain `bayn.research-capture-export-root.v2`, binding `lastChunkHash` and the chunk count to the
-immutable metadata frontier. The `bayn.research-capture-export.v2` manifest references the exact seal bytes; the seal
+Raw-mode SQL seals retain `bayn.research-capture-export-root.v3`, binding `lastChunkHash` and the chunk count to the
+immutable metadata frontier. The `bayn.research-capture-export.v3` manifest references the exact seal bytes; the seal
 does not reference its own manifest hash. `deriveResearchCaptureExportManifest` is the single writer/reader
 representation. Given the exact durably read SQL seal, it derives the expected manifest bytes and content address.
 Derivation alone does not prove the object exists. A reader must Get that manifest and exact seal, traverse the frame
-chain by content-addressed keys, and compare each embedded metadata payload byte-for-byte with the bounded SQL chunk.
+chain by content-addressed keys, and compare the first frame with its exact SQL ownership claim.
+The chain hashes and final SQL seal bind every later metadata payload and raw value.
 No List or recorder status is needed. Verification checks both hash chains and every original value. Every export
 remains `UNQUALIFIED` and always reports `complete: false`.
 
@@ -202,7 +209,8 @@ seal and immutable manifest concurrently, with at most two object operations in 
 computed before either write. Both verifications must succeed before the SQL seal; a failed write interrupts its
 sibling and cleanup remains owned and awaited. The existing 64 KiB envelope retains its conservative reservation for
 payload assembly and bounded 8 KiB SDK response collectors. Fewer requests do not qualify storage capacity.
-The one-second aggregate write deadline, receipt admission bounds and cumulative byte ceilings are unchanged.
+A capture write has a thirty-second aggregate deadline. An object operation has a ten-second deadline.
+The 256 MiB reservation and 65,536-receipt ceiling include queued and in-flight data. Cumulative byte ceilings remain unchanged.
 The deadline invalidates admission immediately, before waiting for write interruption or transaction cleanup.
 An uninterruptible COMMIT may finish later; that outcome cannot acknowledge a chunk or advance the recorder's frontier.
 Later receipts are counted as observed without retaining their payloads.
@@ -229,7 +237,7 @@ duration without an extra query. Capture spans retain only operation kind, metad
 configured write timeout. The claim's remaining admission window can shorten that timeout. Raw adapter errors and
 capture identities are not included. Tracing does not change metadata, frame bytes, write order or qualification.
 
-The persistence start, deadline-expired and cleanup-finished events distinguish the one-second validity boundary from
+The persistence start, deadline-expired and cleanup-finished events distinguish the configured validity boundary from
 later cancellation cleanup. An uninterruptible COMMIT can become durable during cleanup, but the pending interruption
 reports a failed-or-unknown SQL outcome: neither `sql.acknowledged` nor `persistence.io_completed` is emitted. Inspect
 the existing driver COMMIT span and `cleanup_finished` event for that late outcome; neither advances the invalidated
@@ -237,8 +245,8 @@ capture frontier. Correlate object PUT/GET events with actual SQL COMMIT spans b
 COMMIT duration alone does not distinguish local WAL synchronization from synchronous-standby waiting. These spans
 add no storage operation, retry, collector or capacity qualification.
 
-The existing at-most-one-second write deadline contains the complete export-and-SQL operation, and finalization is
-cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
+The aggregate write deadline contains object verification and the claim or seal transaction when present.
+Finalization is cached once. It is not a production throughput claim. A timeout, readback failure, SQL failure, restart or missing seal
 leaves incomplete evidence and cannot change execution, retries, liquidation or capital authority.
 
 This implementation does not assert a session is complete, qualify a strategy, or enable model calls. Before
@@ -251,26 +259,12 @@ alone do not satisfy these gates.
 
 Run `bun test services/bayn/src/research-capture/latency-envelope.test.ts` from the repository root. It exercises the
 actual recorder with in-memory stores and a deterministic clock; it makes no network requests or production writes.
-The fixture caps each scenario at 5,500 market receipts, 450 raw bytes per receipt, 8 MiB attempted object payload and
-4 MiB attempted SQL payload. The existing 1,024 retained receipts, 4 MiB reservation and one-second deadline are unchanged.
-These logical payload bounds do not describe total JavaScript memory or production replication costs.
+The fixtures use explicit smaller queue and timeout settings to exercise overflow, byte ceilings and cancellation.
+They also verify that SQL latency affects ownership and sealing rather than every raw frame. Synthetic timing tests
+do not qualify production storage or full-session tails.
 
-The original 4,439-receipt/50 ms budget-test burst is synthetic. Its 256-record yield cadence matches the consumer;
-its arrival timestamps are not a measured native arrival schedule. Constant object-verification plus SQL latency of
-5 ms fits that fixture, while 6 ms overflows at 19 ms. A separate uniform 1,100-record/second, five-second comparison
-fits at 450 ms and overflows at 500 ms. Neither result is a production qualification or a full-session tail guarantee.
-The uniform comparison does not bound native millisecond peaks, variable payloads or bootstrap bursts.
-
-Both queued and in-flight raw receipts consume the retained-count budget. Once batches approach steady state, a
-uniform arrival rate can retain approximately two batches: the batch being written and arrivals during that write.
-For count-limited payloads this gives a useful necessary planning check near `2 * arrivalRate * writeLatency <= 1024`;
-it is not sufficient under bursts, variable payloads, deadline tails or callback scheduling. A one-second deadline alone
-therefore does not establish enough service capacity. Moving SQL off the per-frame path cannot fix an object PUT/GET
-latency that independently exceeds the workload's retention envelope.
-
-Before changing storage architecture, correlate actual capture persistence, object and SQL spans for the same
-synthetic operation and measure a bounded original-arrival workload envelope. Thirty-second counters only give
-coarse rates; reconstructed producer timestamps and unrelated Jev SQL COMMIT spans cannot supply capture phase timings.
+Before activation, measure the actual object and SQL stages, retain failed attempts, and exercise a bounded workload
+selected from current native observations. A passing finite burst does not establish indefinite peak throughput.
 The native consumer's existing periodic log now includes a fixed-size `arrivalEnvelope` for observed 1, 10, 100 and
 1000 ms windows. Its aligned lower bounds and adjacent-bin upper bounds measure incorporation-boundary record and
 raw-value byte bursts, including bootstrap, without enabling capture. Missing byte lengths or invalid clocks remain
@@ -307,10 +301,11 @@ original bytes, transport timestamps, and reproduced reducer dispositions. A sea
 an interval proof. Any recorded capture invalidation conservatively prevents import.
 
 The reader derives the sole manifest address from the exact durable SQL seal, fetches that object and its referenced
-seal, and walks the frame chain. Each frame's embedded metadata must equal its SQL counterpart. The aggregate input-byte
-budget charges the supplied SQL seal, object reads, and SQL metadata reads. The metadata callback receives the smaller
-of the remaining budget, the 4 MiB object limit, and the exact exported metadata length. Each callback must enforce its
-limit before materializing the payload. This bound covers input bytes, not total JavaScript memory.
+seal, and walks the frame chain. The first frame must match the supplied SQL ownership claim for a session.
+Every later metadata payload and original value is verified from the object chain. The aggregate byte budget charges
+the supplied seal, optional claim and each object once. Every object reader enforces its limit before allocation.
+`readResearchCaptureExport` performs this recovery without SQL reads per data chunk. This bounds retained input bytes,
+not total JavaScript memory.
 
 `readResearchCapturePostgresChunk` and `readResearchCapturePostgresSeal` enforce their limits in PostgreSQL with
 `octet_length(convert_to(payload, 'UTF8'))` predicates. Oversized rows never return payload text to the client. The

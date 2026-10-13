@@ -8,6 +8,7 @@ resources:
   - objectbucketclaim.yaml
   - research-storage.yaml
   - research-objectbucket.yaml
+  - research-capture-session.yaml
   - postgres-objectstore.yaml
   - postgres-cluster.yaml
   - postgres-monitoring.yaml

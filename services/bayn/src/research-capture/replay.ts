@@ -22,16 +22,14 @@ import { prepareResearchSchedule, reproduceResearchOpportunity } from './opportu
 import {
   CaptureIntervalRequestSchema,
   ResearchCaptureFailure,
-  maximumResearchCaptureChunkBytes,
   restoreKafkaTransportTimestamp,
   type CaptureIntervalRequest,
   type ResearchCaptureBytes,
 } from './capture'
 import {
-  deriveResearchCaptureExportManifest,
-  decodeResearchCaptureExportChunk,
-  ResearchCaptureExportManifestSchema,
   verifyResearchCaptureExportPrefix,
+  readResearchCaptureExport,
+  researchCaptureExportChunkHeaderBytes,
 } from './export'
 
 type ExportChunks = Parameters<typeof verifyResearchCaptureExportPrefix>[0]
@@ -394,72 +392,43 @@ export const replayResearchCaptureInterval = (
     }
   })
 
-/** Readers enforce each supplied limit before materializing object or SQL payload bytes. */
+/** Read the object-owned chain and its SQL ownership anchor within one byte budget. */
 export const readResearchCaptureInterval = (input: {
   readonly seal: ResearchCaptureBytes
+  readonly claim?: ResearchCaptureBytes
   readonly maximumBytes: number
   readonly readObject: (contentHash: string, maximumBytes: number) => Effect.Effect<Uint8Array, ResearchCaptureFailure>
-  readonly readMetadataChunk: (
-    ordinal: number,
-    maximumBytes: number,
-  ) => Effect.Effect<ResearchCaptureBytes, ResearchCaptureFailure>
   readonly request: CaptureIntervalRequest
   readonly universe: StreamingUniverse
 }) =>
   Effect.gen(function* () {
     if (!Number.isSafeInteger(input.maximumBytes) || input.maximumBytes <= 0)
       return yield* fail('Capture reader requires a finite positive byte budget')
-    let remaining = input.maximumBytes - Buffer.byteLength(input.seal.payload)
-    const read = (hash: string) =>
-      Effect.gen(function* () {
-        if (remaining < 0) return yield* fail('Capture export exceeds its read budget')
-        const limit = Math.min(remaining, maximumResearchCaptureChunkBytes)
-        const payload = yield* input.readObject(hash, limit)
-        if (!(payload instanceof Uint8Array) || payload.byteLength > limit || sha256(payload) !== hash)
-          return yield* fail('Capture object exceeds its read bound or differs from its content address')
-        remaining -= payload.byteLength
-        return { contentHash: hash, payload }
-      })
-    const asText = (object: { readonly contentHash: string; readonly payload: Uint8Array }): ResearchCaptureBytes => ({
-      contentHash: object.contentHash,
-      payload: Buffer.from(object.payload).toString('utf8'),
+    const retainedBytes =
+      Buffer.byteLength(input.seal.payload) + (input.claim === undefined ? 0 : Buffer.byteLength(input.claim.payload))
+    const captured = yield* readResearchCaptureExport({
+      seal: input.seal,
+      ...(input.claim === undefined ? {} : { claim: input.claim }),
+      maximumBytes: input.maximumBytes - retainedBytes,
+      maximumChunks: Math.floor(input.maximumBytes / researchCaptureExportChunkHeaderBytes),
+      objects: {
+        getVerified: (hash, limit) =>
+          input
+            .readObject(hash, limit)
+            .pipe(
+              Effect.flatMap((payload) =>
+                payload instanceof Uint8Array && payload.byteLength <= limit && sha256(payload) === hash
+                  ? Effect.succeed({ contentHash: hash, payload })
+                  : Effect.fail(fail('Capture object exceeds its read bound or differs from its content address')),
+              ),
+            ),
+      },
     })
-    const expected = yield* Effect.fromResult(deriveResearchCaptureExportManifest(input.seal))
-    const manifestBytes = asText(yield* read(expected.contentHash))
-    const manifest = yield* Schema.decodeUnknownEffect(
-      Schema.fromJsonString(ResearchCaptureExportManifestSchema),
-      strictParseOptions,
-    )(manifestBytes.payload)
-    const sealObject = asText(yield* read(manifest.metadataSeal.contentHash))
-    if (sealObject.payload !== input.seal.payload || sealObject.contentHash !== input.seal.contentHash)
-      return yield* fail('Durable SQL seal differs from its exported object')
-    const chunks: Array<ExportChunks[number]> = []
-    let hash = manifest.lastChunkHash
-    for (let ordinal = manifest.exportedChunks - 1; ordinal >= 0; ordinal--) {
-      if (hash === null) return yield* fail('Capture frame chain omits its declared tail')
-      const object = yield* read(hash)
-      const decoded = yield* Effect.fromResult(decodeResearchCaptureExportChunk(object))
-      const metadata = decoded.metadata
-      const metadataBytes = Buffer.byteLength(metadata.payload, 'utf8')
-      if (metadataBytes > remaining) return yield* fail('SQL metadata exceeds the remaining capture read budget')
-      const sqlLimit = Math.min(remaining, maximumResearchCaptureChunkBytes, metadataBytes)
-      const sqlMetadata = yield* input.readMetadataChunk(ordinal, sqlLimit)
-      const sqlBytes = Buffer.byteLength(sqlMetadata.payload, 'utf8')
-      if (sqlBytes > sqlLimit) return yield* fail('SQL metadata reader exceeded its byte limit')
-      remaining -= sqlBytes
-      if (metadata.contentHash !== sqlMetadata.contentHash || metadata.payload !== sqlMetadata.payload)
-        return yield* fail('Exported metadata differs from its exact SQL chunk')
-      chunks.push(object)
-      hash = decoded.previousChunkHash
-    }
-    if (hash !== null) return yield* fail('Capture frame chain exceeds the declared frontier')
     return yield* Effect.fromResult(
-      replayResearchCaptureInterval(chunks.reverse(), input.seal, manifestBytes, input.request, input.universe),
+      replayResearchCaptureInterval(captured.objects, input.seal, captured.manifest, input.request, input.universe),
     )
   }).pipe(
     Effect.mapError((cause) =>
-      cause instanceof ResearchCaptureFailure
-        ? cause
-        : new ResearchCaptureFailure({ message: 'Cannot read original capture interval', cause }),
+      cause instanceof ResearchCaptureFailure ? cause : fail('Cannot read original capture interval', cause),
     ),
   )

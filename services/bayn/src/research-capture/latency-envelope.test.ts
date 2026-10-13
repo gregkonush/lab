@@ -19,6 +19,8 @@ test.each([
   [5, 0],
   [0, 5],
   [3, 2],
+  [0, 6],
+  [3, 3],
 ])('the synthetic 50ms burst fits with object=%ims and SQL=%ims', async (object, sql) => {
   const result = await runCaptureLatencyEnvelope(object, sql)
   bounded(result)
@@ -27,18 +29,17 @@ test.each([
   expect(result.firstInvalidationAtMs).toBeNull()
 })
 
-test.each([
-  [6, 0],
-  [0, 6],
-  [3, 3],
-])('the same synthetic burst overflows before the deadline with object=%ims and SQL=%ims', async (object, sql) => {
-  const result = await runCaptureLatencyEnvelope(object, sql)
-  bounded(result)
-  expect(result.invalidations).toEqual([CaptureInvalidation.Overflow])
-  expect(result.firstInvalidationAtMs).toBe(19)
-  expect(result.maximumRetainedReceipts).toBe(1024)
-  expect(result.persistedReceipts).toBeLessThan(result.observedReceipts)
-})
+test.each([[6, 0]])(
+  'the same synthetic burst overflows before the deadline with object=%ims and SQL=%ims',
+  async (object, sql) => {
+    const result = await runCaptureLatencyEnvelope(object, sql)
+    bounded(result)
+    expect(result.invalidations).toEqual([CaptureInvalidation.Overflow])
+    expect(result.firstInvalidationAtMs).toBe(19)
+    expect(result.maximumRetainedReceipts).toBe(1024)
+    expect(result.persistedReceipts).toBeLessThan(result.observedReceipts)
+  },
+)
 
 // A uniform comparison, not a measured native arrival schedule or a bound on real bursts.
 const uniform = { receipts: 5500, durationMs: 5000 }
@@ -47,6 +48,8 @@ test.each([
   [450, 0],
   [0, 450],
   [200, 200],
+  [0, 500],
+  [250, 250],
 ])('a uniform 1100/s comparison fits with object=%ims and SQL=%ims', async (object, sql) => {
   const result = await runCaptureLatencyEnvelope(object, sql, uniform)
   bounded(result)
@@ -54,11 +57,7 @@ test.each([
   expect(result.persistedReceipts).toBe(5501)
 })
 
-test.each([
-  [500, 0],
-  [0, 500],
-  [250, 250],
-])('a uniform 1100/s comparison overflows with object=%ims and SQL=%ims', async (object, sql) => {
+test.each([[500, 0]])('a uniform 1100/s comparison overflows with object=%ims and SQL=%ims', async (object, sql) => {
   const result = await runCaptureLatencyEnvelope(object, sql, uniform)
   bounded(result)
   expect(result.invalidations).toEqual([CaptureInvalidation.Overflow])
@@ -67,11 +66,11 @@ test.each([
   expect(result.persistedReceipts).toBeLessThan(result.observedReceipts)
 })
 
-test('separate sub-second object and SQL phases still share the aggregate write deadline', async () => {
-  const result = await runCaptureLatencyEnvelope(600, 600)
+test('a slow SQL seal cannot acknowledge an otherwise persisted raw frontier', async () => {
+  const result = await runCaptureLatencyEnvelope(600, 600, { receipts: 10, durationMs: 50 })
   bounded(result)
   expect(result.invalidations).toEqual([CaptureInvalidation.Persistence])
-  expect(result.persistedReceipts).toBe(0)
+  expect(result.persistedReceipts).toBe(11)
   expect(result.sqlAppends).toBe(0)
   expect(result.sqlSeals).toBe(0)
 })

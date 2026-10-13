@@ -16,6 +16,12 @@ import {
   type ResearchCaptureObject,
 } from './export'
 
+export const captureChunksFromObjects = (objects: Iterable<ResearchCaptureObject>): ResearchCaptureBytes[] =>
+  Array.from(objects).flatMap((object) => {
+    const decoded = decodeResearchCaptureExportChunk(object)
+    return Result.isSuccess(decoded) ? [decoded.success.metadata] : []
+  })
+
 export const recoverCaptureFromStoredObjects = (
   sqlChunks: readonly ResearchCaptureBytes[],
   sqlSeal: ResearchCaptureBytes | undefined,
@@ -47,20 +53,27 @@ export const recoverCaptureFromStoredObjects = (
     const manifest = yield* Schema.decodeUnknownResult(Schema.fromJsonString(ResearchCaptureExportManifestSchema))(
       manifestBytes.payload,
     )
-    if (manifest.exportedChunks !== sqlChunks.length)
-      return yield* Result.fail(fail('SQL frontier differs from export root'))
+    if (sqlChunks.length > 1)
+      return yield* Result.fail(fail('Object-owned capture has more than one SQL ownership claim'))
     const sealObject = asText(yield* read(manifest.metadataSeal.contentHash))
     if (sealObject.contentHash !== sqlSeal.contentHash || sealObject.payload !== sqlSeal.payload)
       return yield* Result.fail(fail('SQL and exported seal differ'))
     const chunks: ResearchCaptureObject[] = []
     let hash = manifest.lastChunkHash
-    for (let ordinal = sqlChunks.length - 1; ordinal >= 0; ordinal--) {
+    for (let ordinal = manifest.exportedChunks - 1; ordinal >= 0; ordinal--) {
       if (hash === null) return yield* Result.fail(fail('Missing capture frame tail'))
       const object = yield* read(hash)
       const decoded = yield* decodeResearchCaptureExportChunk(object)
       const metadata = decoded.metadata
-      if (metadata.payload !== sqlChunks[ordinal]?.payload || metadata.contentHash !== sqlChunks[ordinal]?.contentHash)
-        return yield* Result.fail(fail('SQL and exported metadata differ'))
+      const claim = sqlChunks[0]
+      if (
+        ordinal === 0 &&
+        claim !== undefined &&
+        (metadata.payload !== claim.payload || metadata.contentHash !== claim.contentHash)
+      )
+        return yield* Result.fail(fail('SQL ownership claim and exported metadata differ'))
+      if (ordinal === 0 && decoded.chunk.receipts[0]?.event.kind === 'session-attempt' && claim === undefined)
+        return yield* Result.fail(fail('Exported session is missing its SQL ownership claim'))
       chunks.unshift(object)
       hash = decoded.previousChunkHash
     }

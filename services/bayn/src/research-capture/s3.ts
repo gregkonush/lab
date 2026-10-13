@@ -14,10 +14,11 @@ import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   StrictNonEmptyStringSchema,
+  Sha256Schema,
   strictParseOptions,
 } from '../schemas'
-import { ResearchCaptureFailure, maximumResearchCaptureChunkBytes } from './capture'
-import { researchCaptureObjectKey, type ResearchCaptureObjectStore } from './export'
+import { ResearchCaptureFailure, maximumResearchCaptureChunkBytes, researchCaptureObjectTimeoutMs } from './capture'
+import { researchCaptureObjectKey, type ResearchCaptureObjectStore, type ResearchCaptureObjectReader } from './export'
 
 const CaptureS3OptionsSchema = Schema.Struct({
   endpoint: StrictNonEmptyStringSchema,
@@ -25,7 +26,7 @@ const CaptureS3OptionsSchema = Schema.Struct({
   region: Schema.String,
   accessKeyId: Schema.Redacted(StrictNonEmptyStringSchema),
   secretAccessKey: Schema.Redacted(StrictNonEmptyStringSchema),
-  timeoutMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1000)),
+  timeoutMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(researchCaptureObjectTimeoutMs)),
 })
 const ReadbackSchema = Schema.Struct({
   ContentLength: NonNegativeIntegerSchema,
@@ -123,6 +124,65 @@ export const makeS3ResearchCaptureObjectStore = (
         }),
     )
     return {
+      getVerified: Effect.fn('bayn.capture.object.get_verified', {
+        kind: 'client',
+        attributes: { 'bayn.dependency': 'object-storage', 'bayn.operation': 'GET_VERIFIED' },
+      })(
+        function* (contentHash: string, maximumBytes: number) {
+          const hash = yield* Schema.decodeUnknownEffect(Sha256Schema)(contentHash).pipe(Effect.mapError(safeFailure))
+          const limit = yield* Schema.decodeUnknownEffect(NonNegativeIntegerSchema)(maximumBytes).pipe(
+            Effect.mapError(safeFailure),
+          )
+          return yield* Effect.tryPromise({
+            try: async (signal) => {
+              const get = new GetObjectCommand({ Bucket: options.bucket, Key: researchCaptureObjectKey(hash) })
+              get.middlewareStack.add(
+                (next) => async (args) => {
+                  const result = await next(args)
+                  cancelResponseWith(result.response, signal)
+                  return result
+                },
+                { step: 'deserialize', priority: 'low', name: 'captureResponseCancellation' },
+              )
+              const response = await client.send(get, { abortSignal: signal })
+              const decoded = Schema.decodeUnknownResult(ReadbackSchema)(response)
+              if (
+                Result.isFailure(decoded) ||
+                response.ContentRange !== undefined ||
+                decoded.success.ContentLength > Math.min(limit, maximumResearchCaptureChunkBytes)
+              ) {
+                if (response.Body instanceof Readable) response.Body.destroy()
+                throw failure('Capture object read lacks a bounded full-object length or stream')
+              }
+              const stream = decoded.success.Body
+              const bytes = Buffer.alloc(decoded.success.ContentLength)
+              const abort = () => stream.destroy(new Error('Capture object read cancelled'))
+              signal.addEventListener('abort', abort, { once: true })
+              try {
+                if (signal.aborted) abort()
+                let length = 0
+                for await (const part of stream) {
+                  if (!(part instanceof Uint8Array) || length + part.byteLength > bytes.byteLength)
+                    throw failure('Capture object read exceeded its exact length')
+                  bytes.set(part, length)
+                  length += part.byteLength
+                }
+                if (signal.aborted || length !== bytes.byteLength || sha256(bytes) !== hash)
+                  throw failure('Capture object read is truncated or differs from its content address')
+                return { contentHash: hash, payload: bytes }
+              } finally {
+                signal.removeEventListener('abort', abort)
+                if (!stream.destroyed) stream.destroy()
+              }
+            },
+            catch: safeFailure,
+          })
+        },
+        Effect.timeoutOrElse({
+          duration: options.timeoutMs,
+          orElse: () => Effect.fail(failure('Capture object read did not finish before its deadline')),
+        }),
+      ),
       putVerified: (object) =>
         Effect.gen(function* () {
           const span = yield* Effect.currentSpan.pipe(Effect.orDie)
@@ -246,5 +306,5 @@ export const makeS3ResearchCaptureObjectStore = (
             { captureStackTrace: false },
           ),
         ),
-    } satisfies ResearchCaptureObjectStore
+    } satisfies ResearchCaptureObjectStore & ResearchCaptureObjectReader
   })

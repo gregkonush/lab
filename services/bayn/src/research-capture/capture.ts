@@ -28,6 +28,10 @@ export enum CaptureQualification {
 }
 
 export const maximumResearchCaptureChunkBytes = 4 * 1024 * 1024
+export const maximumResearchCaptureBufferBytes = 256 * 1024 * 1024
+export const maximumResearchCaptureReceipts = 65_536
+export const researchCaptureWriteTimeoutMs = 30_000
+export const researchCaptureObjectTimeoutMs = 10_000
 export const maximumResearchCaptureSealBytes = 64 * 1024
 export const ResearchCaptureIdSchema = StrictNonEmptyStringSchema.check(Schema.isMaxLength(512))
 
@@ -250,12 +254,15 @@ export const ResearchCaptureChunkSchema = Schema.Struct({
   sourceRevision: GitSourceRevisionSchema,
   chunkOrdinal: NonNegativeIntegerSchema,
   previousContentHash: Schema.NullOr(Sha256Schema),
-  receipts: Schema.Array(ResearchCaptureReceiptSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+  receipts: Schema.Array(ResearchCaptureReceiptSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(maximumResearchCaptureReceipts),
+  ),
 })
 export type ResearchCaptureChunk = typeof ResearchCaptureChunkSchema.Type
 
 const ResearchCaptureExportRootSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v2'),
+  schemaVersion: Schema.Literal('bayn.research-capture-export-root.v3'),
   lastChunkHash: Schema.NullOr(Sha256Schema),
   exportedChunks: NonNegativeIntegerSchema,
 })

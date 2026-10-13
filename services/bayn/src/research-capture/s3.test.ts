@@ -5,6 +5,7 @@ import { Deferred, Effect, Exit, Fiber, Option, Redacted, Result, Tracer } from 
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
+import { sha256 } from '../hash'
 import { captureKafkaTransport } from './capture'
 import { captureEvent, marketEvent, recoverCaptureFromStoredObjects } from './capture.test-support'
 import { researchCaptureObject, researchCaptureObjectKey, type ResearchCaptureObject } from './export'
@@ -111,6 +112,44 @@ const fixture = (fault: Fault = 'none') => {
   }
 }
 
+test.each(['none', 'truncated', 'oversized', 'wrong-bytes', 'wrong-length', 'stream-error'] as const)(
+  'content-addressed reads validate exact bounded original bytes (%s)',
+  async (fault) => {
+    const saved = fixture(fault)
+    const expected = Buffer.from('fixture payload')
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const store = yield* makeS3ResearchCaptureObjectStore(options, saved.handler)
+          return yield* store.getVerified(sha256(expected), expected.byteLength)
+        }),
+      ),
+    )
+    if (fault === 'none') {
+      if (Exit.isFailure(exit)) throw new Error('Expected a verified read')
+      expect(exit.value.payload).toEqual(expected)
+      expect(exit.value.contentHash).toBe(sha256(expected))
+    } else expect(Exit.isFailure(exit)).toBe(true)
+    expect(saved.requests.map((request) => request.method)).toEqual(['GET'])
+    expect(saved.readback()?.destroyed).toBe(true)
+    expect(saved.destroys()).toBe(1)
+  },
+)
+
+test('content-addressed reads reject an oversized response before allocating its body', async () => {
+  const saved = fixture()
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const store = yield* makeS3ResearchCaptureObjectStore(options, saved.handler)
+        return yield* store.getVerified(sha256('fixture payload'), 1)
+      }),
+    ),
+  )
+  expect(Exit.isFailure(exit)).toBe(true)
+  expect(saved.readback()?.destroyed).toBe(true)
+})
+
 test('the recorder verifies one binary frame with two S3 requests before SQL and verifies both terminal objects', async () => {
   const { spans, tracer } = captureSpans()
   const objects = new Map<string, ResearchCaptureObject>()
@@ -186,7 +225,8 @@ test('the recorder verifies one binary frame with two S3 requests before SQL and
   )
   expect(requests.filter((method) => method === 'PUT')).toHaveLength(3)
   expect(requests.filter((method) => method === 'GET')).toHaveLength(3)
-  expect(writes.slice(0, 3)).toEqual(['put', 'get', 'sql-chunk'])
+  expect(writes.slice(0, 2)).toEqual(['put', 'get'])
+  expect(chunks).toEqual([])
   expect(writes.at(-1)).toBe('sql-seal')
   expect(objects.size).toBe(3)
   expect(destroys).toBe(1)
@@ -196,7 +236,7 @@ test('the recorder verifies one binary frame with two S3 requests before SQL and
     const children = spans.filter((span) => Option.getOrUndefined(span.parent)?.spanId === operation.spanId)
     const sql = children.filter((span) => span.name === 'bayn.capture.sql')
     const objectSpans = children.filter((span) => span.name === 'bayn.capture.object.put_verified')
-    expect(sql).toHaveLength(1)
+    expect(sql).toHaveLength(index === 0 ? 0 : 1)
     expect(objectSpans).toHaveLength(index === 0 ? 1 : 2)
     for (const objectSpan of objectSpans) {
       expect(objectSpan.traceId).toBe(operation.traceId)

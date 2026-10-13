@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test'
-import { Deferred, Effect, Fiber, Option, Tracer } from 'effect'
+import { Deferred, Effect, Fiber, Option, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { provideTestLayer } from '../effect-test-support'
 import { CaptureInvalidation, ResearchCaptureFailure, type ResearchCaptureBytes } from './capture'
 import { captureEvent } from './capture.test-support'
-import type { ResearchCaptureObject } from './export'
+import { decodeResearchCaptureExportChunk, type ResearchCaptureObject } from './export'
 import { makeResearchCaptureRecorder, type ResearchCaptureStore } from './recorder'
 import { sessionConfig, sessionStart } from './session.test-support'
 
@@ -128,11 +128,11 @@ test('capture operation spans correlate object verification and SQL without chan
     }),
     saved.tracer,
   )
-  expect(order).toEqual(['put', 'get', 'append', 'put', 'get', 'put', 'get', 'seal'])
+  expect(order).toEqual(['put', 'get', 'put', 'get', 'put', 'get', 'seal'])
   const operations = saved.spans.filter((span) => span.name === 'bayn.capture.persistence')
   const sql = saved.spans.filter((span) => span.name === 'bayn.capture.sql')
   expect(operations.map((span) => span.attributes.get('bayn.capture.persistence.operation'))).toEqual(['CHUNK', 'SEAL'])
-  expect(sql).toHaveLength(2)
+  expect(sql).toHaveLength(1)
   for (const [index, span] of operations.entries()) {
     expect(events(span)).toEqual([
       'bayn.capture.persistence.started',
@@ -140,12 +140,18 @@ test('capture operation spans correlate object verification and SQL without chan
       'bayn.capture.persistence.cleanup_finished',
     ])
     expect(span.attributes.get('bayn.capture.metadata.sha256')).toBe(
-      (index === 0 ? saved.chunks : saved.seals)[0]?.contentHash,
+      index === 0
+        ? objects[0] === undefined
+          ? undefined
+          : Result.getOrThrow(decodeResearchCaptureExportChunk(objects[0])).metadata.contentHash
+        : saved.seals[0]?.contentHash,
     )
-    const sqlSpan = sql[index]
-    if (sqlSpan === undefined) throw new Error('Missing SQL child span')
-    expect(parent(sqlSpan)).toBe(span.spanId)
-    expect(events(sqlSpan)).toEqual(['bayn.capture.sql.started', 'bayn.capture.sql.acknowledged'])
+    if (index === 1) {
+      const sqlSpan = sql[0]
+      if (sqlSpan === undefined) throw new Error('Missing SQL seal span')
+      expect(parent(sqlSpan)).toBe(span.spanId)
+      expect(events(sqlSpan)).toEqual(['bayn.capture.sql.started', 'bayn.capture.sql.acknowledged'])
+    }
     expect(
       saved.spans.filter((child) => child.name === 'fixture.object' && parent(child) === span.spanId),
     ).toHaveLength(index === 0 ? 1 : 2)
@@ -174,25 +180,26 @@ test('capture operation spans correlate object verification and SQL without chan
 })
 
 test.each([false, true])(
-  'capture deadline is visible at one second before eight-second SQL cleanup (raw=%s)',
+  'capture deadline is visible at one second before eight-second persistence cleanup (raw=%s)',
   async (raw) => {
     const saved = fixture()
     await run(
       Effect.gen(function* () {
         const entered = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
+        const blocked = <A, E>(effect: Effect.Effect<A, E>) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined)
+            yield* Deferred.await(release)
+            return yield* effect
+          }).pipe(Effect.uninterruptible)
         const recorder = yield* makeResearchCaptureRecorder(
           {
             ...saved.store,
-            append: (bytes) =>
-              Effect.gen(function* () {
-                yield* Deferred.succeed(entered, undefined)
-                yield* Deferred.await(release)
-                yield* saved.store.append(bytes)
-              }).pipe(Effect.uninterruptible),
+            append: (bytes) => blocked(saved.store.append(bytes)),
           },
           options,
-          raw ? { putVerified: () => Effect.void } : undefined,
+          raw ? { putVerified: () => blocked(Effect.void) } : undefined,
         )
         recorder.record(captureEvent('STARTED'), 0)
         yield* TestClock.adjust(50)
@@ -217,14 +224,17 @@ test.each([false, true])(
         expect(operation.events.find(([name]) => name === 'bayn.capture.persistence.cleanup_finished')?.[1]).toBe(
           8_050_000_000n,
         )
-        expect(saved.chunks).toHaveLength(1)
+        expect(saved.chunks).toHaveLength(raw ? 0 : 1)
         expect((yield* recorder.status).persistedReceipts).toBe(0)
         expect(events(operation)).not.toContain('bayn.capture.persistence.io_completed')
         const sql = saved.spans.find((span) => span.name === 'bayn.capture.sql')
-        if (sql === undefined) throw new Error('Missing delayed SQL span')
-        expect(events(sql)).not.toContain('bayn.capture.sql.acknowledged')
+        if (raw) expect(sql).toBeUndefined()
+        else {
+          if (sql === undefined) throw new Error('Missing delayed SQL span')
+          expect(events(sql)).not.toContain('bayn.capture.sql.acknowledged')
+        }
         yield* recorder.finish
-        expect(saved.chunks).toHaveLength(1)
+        expect(saved.chunks).toHaveLength(raw ? 0 : 1)
       }),
       saved.tracer,
     )
@@ -303,13 +313,13 @@ test.each(['object', 'sql'] as const)(
         )
         recorder.record(captureEvent('STARTED'), 0)
         yield* recorder.finish
-        expect((yield* recorder.status).persistedReceipts).toBe(0)
+        expect((yield* recorder.status).persistedReceipts).toBe(stage === 'sql' ? 1 : 0)
         expect((yield* recorder.status).invalidations).toContain(CaptureInvalidation.Persistence)
       }),
       saved.tracer,
     )
     const sql = saved.spans.filter((span) => span.name === 'bayn.capture.sql')
-    expect(sql.length).toBe(stage === 'object' ? 0 : 2)
+    expect(sql.length).toBe(stage === 'object' ? 0 : 1)
     for (const span of sql)
       expect(events(span)).toEqual(['bayn.capture.sql.started', 'bayn.capture.sql.failed_or_unknown'])
     const emitted = JSON.stringify(

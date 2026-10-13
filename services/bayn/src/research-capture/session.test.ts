@@ -7,7 +7,7 @@ import { canonicalHashV1 } from '../hash'
 import { momentumFirstJevProtocolDocument } from '../jev/protocol'
 import { KafkaMarketFailure } from '../market-data/streaming/kafka'
 import { CaptureInvalidation, CaptureQualification, ResearchCaptureFailure, type CaptureIntervalCut } from './capture'
-import { captureEvent, recoverCaptureFromStoredObjects } from './capture.test-support'
+import { captureEvent, captureChunksFromObjects, recoverCaptureFromStoredObjects } from './capture.test-support'
 import { researchCaptureObjectKey, verifyResearchCaptureExportPrefix } from './export'
 import { makeResearchCaptureSession } from './session'
 import { decodeResearchCaptureSessionConfig, researchCaptureSessionConfig } from './session-config'
@@ -184,14 +184,20 @@ test('one successful native cut closes once while the worker remains alive and e
       const sealed = saved.seals[0]
       const manifest = saved.objects.at(-1)
       if (sealed === undefined || manifest === undefined) throw new Error('Expected sealed export')
-      const verified = verifyResearchCaptureExportPrefix(saved.objects.slice(0, saved.chunks.length), sealed, {
-        contentHash: manifest.contentHash,
-        payload: Buffer.from(manifest.payload).toString('utf8'),
-      })
+      const verified = verifyResearchCaptureExportPrefix(
+        saved.objects.slice(0, status.phase === 'finished' ? status.seal?.persistedChunks : 0),
+        sealed,
+        {
+          contentHash: manifest.contentHash,
+          payload: Buffer.from(manifest.payload).toString('utf8'),
+        },
+      )
       expect(Result.isSuccess(verified) && verified.success.exportVerified).toBe(true)
       expect(Result.isSuccess(verified) && verified.success.complete).toBe(false)
       expect(saved.chunks[0]?.payload).toContain('session-attempt')
-      const receipts = saved.chunks.flatMap((chunk) => Result.getOrThrow(decodeResearchCaptureChunk(chunk)).receipts)
+      const receipts = captureChunksFromObjects(saved.objects).flatMap(
+        (chunk) => Result.getOrThrow(decodeResearchCaptureChunk(chunk)).receipts,
+      )
       const research = Result.getOrThrow(prepareResearchSchedule(receipts))
       expect(research.schedule).not.toBeNull()
       expect(research.expectedCount).toBe(10)

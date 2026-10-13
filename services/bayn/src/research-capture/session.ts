@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, Result, type Scope } from 'effect'
+import { Cause, Clock, Effect, Exit, Result, type Scope } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import type { KafkaMarketFailure, KafkaProjectionRead } from '../market-data/streaming/kafka'
@@ -6,6 +6,9 @@ import type { StreamingUniverse } from '../market-data/streaming/raw-events'
 import {
   CaptureInvalidation,
   ResearchCaptureFailure,
+  maximumResearchCaptureBufferBytes,
+  maximumResearchCaptureReceipts,
+  researchCaptureWriteTimeoutMs,
   type CaptureIntervalCut,
   type CaptureIntervalRequest,
   type ResearchCaptureObserver,
@@ -215,11 +218,11 @@ export const makeResearchCaptureSession = (
               {
                 captureId: config.captureId,
                 sourceRevision,
-                maximumQueuedReceipts: 1024,
-                maximumQueuedBytes: 4 * 1024 * 1024,
+                maximumQueuedReceipts: maximumResearchCaptureReceipts,
+                maximumQueuedBytes: maximumResearchCaptureBufferBytes,
                 maximumReceiptBytes: 64 * 1024,
-                flushIntervalMs: 50,
-                writeTimeoutMs: 1000,
+                flushIntervalMs: 1000,
+                writeTimeoutMs: researchCaptureWriteTimeoutMs,
                 maximumObjectBytes: config.maximumObjectBytes,
                 maximumSqlBytes: config.maximumSqlBytes,
                 session: declaration,
@@ -248,7 +251,13 @@ export const makeResearchCaptureSession = (
             yield* Effect.addFinalizer(() => finish(CaptureInvalidation.Interrupted))
           })
         }).pipe(
-          Effect.onExit((exit) => (Exit.isFailure(exit) ? finish(CaptureInvalidation.Persistence) : Effect.void)),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit)
+              ? finish(
+                  Cause.hasInterrupts(exit.cause) ? CaptureInvalidation.Interrupted : CaptureInvalidation.Persistence,
+                )
+              : Effect.void,
+          ),
           Effect.ignoreCause,
         ),
       bind: (projection: SessionProjection): void => {

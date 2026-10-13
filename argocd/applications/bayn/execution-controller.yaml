@@ -182,6 +182,11 @@ spec:
               value: dorvud.producer-clock.v1
             - name: BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS
               value: "300000"
+            - name: BAYN_RESEARCH_CAPTURE_SESSION
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-research-capture-session
+                  key: session
             - name: BAYN_RESEARCH_CAPTURE_S3_ENDPOINT
               value: http://rook-ceph-rgw-objectstore.rook-ceph.svc.cluster.local:80
             - name: BAYN_RESEARCH_CAPTURE_S3_BUCKET

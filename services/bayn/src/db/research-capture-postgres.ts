@@ -133,10 +133,35 @@ export const makeResearchCapturePostgresStore = (sql: PgClient.PgClient): Resear
             `.pipe(Effect.flatMap(decodeRows))
             if (prior.length !== 0) return yield* verifyExisting(prior, bytes)
             const last = yield* frontier(sql, seal.captureId)
+            const objectOwned = seal.exportRoot !== undefined
+            if (objectOwned && last !== undefined) {
+              const claimRows = yield* sql`
+                SELECT content_hash, payload FROM research_capture_chunks
+                WHERE capture_id = ${seal.captureId} AND chunk_ordinal = 0
+              `.pipe(Effect.flatMap(decodeRows))
+              const claim = claimRows[0]
+              const decoded =
+                claim === undefined
+                  ? undefined
+                  : yield* Effect.fromResult(
+                      decodeResearchCaptureChunk({ contentHash: claim.content_hash, payload: claim.payload }),
+                    )
+              if (
+                last.ordinal !== 0 ||
+                decoded?.receipts.length !== 1 ||
+                decoded.receipts[0]?.event.kind !== 'session-attempt' ||
+                decoded.sourceRevision !== seal.sourceRevision ||
+                seal.persistedChunks < 1 ||
+                seal.persistedReceipts < 1 ||
+                (seal.persistedChunks === 1 && seal.lastContentHash !== last.content_hash)
+              )
+                return yield* failure('Object-owned capture seal does not extend its exact SQL ownership claim')
+            }
             if (
-              seal.persistedChunks !== (last === undefined ? 0 : last.ordinal + 1) ||
-              seal.persistedReceipts !== (last?.sequence ?? 0) ||
-              seal.lastContentHash !== (last?.content_hash ?? null) ||
+              (!objectOwned &&
+                (seal.persistedChunks !== (last === undefined ? 0 : last.ordinal + 1) ||
+                  seal.persistedReceipts !== (last?.sequence ?? 0) ||
+                  seal.lastContentHash !== (last?.content_hash ?? null))) ||
               seal.observedReceipts < seal.persistedReceipts ||
               (seal.invalidations.length === 0 && seal.observedReceipts !== seal.persistedReceipts)
             )

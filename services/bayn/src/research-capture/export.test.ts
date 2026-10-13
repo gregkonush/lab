@@ -58,12 +58,13 @@ const text = (object: ResearchCaptureObject): ResearchCaptureBytes => ({
 })
 const memory = () => {
   const chunks: ResearchCaptureBytes[] = []
+  const sqlChunks: ResearchCaptureBytes[] = []
   const seals: ResearchCaptureBytes[] = []
   const objects: ResearchCaptureObject[] = []
   const store: ResearchCaptureStore = {
     append: (value) =>
       Effect.sync(() => {
-        chunks.push(value)
+        sqlChunks.push(value)
       }),
     seal: (value) =>
       Effect.sync(() => {
@@ -74,6 +75,8 @@ const memory = () => {
     putVerified: (object) =>
       Effect.sync(() => {
         objects.push({ ...object, payload: Buffer.from(object.payload) })
+        const decoded = decodeResearchCaptureExportChunk(object)
+        if (Result.isSuccess(decoded)) chunks.push(decoded.success.metadata)
       }),
   }
   const verify = () => {
@@ -83,7 +86,7 @@ const memory = () => {
     const exported = objects.slice(0, chunks.length)
     return verifyResearchCaptureExport(exported, seal, text(manifest))
   }
-  return { chunks, seals, objects, store, objectStore, verify }
+  return { chunks, sqlChunks, seals, objects, store, objectStore, verify }
 }
 
 test('one verified object per data chunk and two terminal objects precede the SQL seal', () =>
@@ -102,7 +105,7 @@ test('one verified object per data chunk and two terminal objects precede the SQ
     }),
   ))
 
-test('one complete frame must acknowledge before the SQL chunk and frontier advance', () =>
+test('one complete frame must acknowledge before the frontier advances', () =>
   run(
     Effect.gen(function* () {
       yield* TestClock.setTime(100)
@@ -127,7 +130,7 @@ test('one complete frame must acknowledge before the SQL chunk and frontier adva
       const finishing = yield* recorder.finish.pipe(Effect.forkScoped)
       yield* Deferred.await(started)
       expect(saved.objects).toHaveLength(1)
-      expect(saved.chunks).toEqual([])
+      expect(saved.sqlChunks).toEqual([])
       expect((yield* recorder.status).persistedReceipts).toBe(0)
       const frame = saved.objects[0]
       if (frame === undefined) throw new Error('Expected complete original-byte frame')
@@ -136,6 +139,7 @@ test('one complete frame must acknowledge before the SQL chunk and frontier adva
       expect(decoded.rawValues.get(2)).toEqual(Buffer.from('é'))
       yield* Deferred.succeed(release, undefined)
       yield* Fiber.join(finishing)
+      expect(saved.sqlChunks).toEqual([])
       expect(saved.chunks).toEqual([decoded.metadata])
       expect(saved.objects).toHaveLength(3)
       expect(Result.getOrThrow(saved.verify()).structurallyClosed).toBe(true)
@@ -154,7 +158,7 @@ const emptySeal = () =>
     persistedChunks: 0,
     lastContentHash: null,
     invalidations: [],
-    exportRoot: { schemaVersion: 'bayn.research-capture-export-root.v2', exportedChunks: 0, lastChunkHash: null },
+    exportRoot: { schemaVersion: 'bayn.research-capture-export-root.v3', exportedChunks: 0, lastChunkHash: null },
   })
 
 test('frame decoding rejects malformed lengths, versions, flags, UTF8, missing bytes and unreferenced tails', () => {
@@ -359,7 +363,7 @@ test.each(['acknowledged', 'seal-ack-lost', 'manifest-ack-lost', 'interrupted-pr
       }),
     )
     const reads: string[] = []
-    const recovered = recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => {
+    const recovered = recoverCaptureFromStoredObjects(saved.sqlChunks, saved.seals[0], (key) => {
       reads.push(key)
       return bucket.get(key)
     })
@@ -402,7 +406,7 @@ test.each(['manifest', 'seal', 'frame', 'corrupt-frame', 'corrupt-seal'] as cons
           bucket.set(key, { ...target, payload: Buffer.from('wrong') })
         else bucket.delete(key)
         expect(
-          Result.isFailure(recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => bucket.get(key))),
+          Result.isFailure(recoverCaptureFromStoredObjects(saved.sqlChunks, saved.seals[0], (key) => bucket.get(key))),
         ).toBe(true)
       }),
     ),
@@ -441,7 +445,7 @@ test('metadata-only capture retains byte-identical legacy chunks and seals', () 
         lastContentHash: chunk.contentHash,
         invalidations: [],
       })
-      expect(saved.chunks).toEqual([chunk])
+      expect(saved.sqlChunks).toEqual([chunk])
       expect(saved.seals).toEqual([seal])
       expect(recorder.rawValues).toBeUndefined()
       expect(Result.isFailure(deriveResearchCaptureExportManifest(seal))).toBe(true)
@@ -474,8 +478,8 @@ test('absent and inconsistent durable roots cannot reconstruct an export manifes
       const decoded = Result.getOrThrow(decodeResearchCaptureSeal(stored))
       for (const exportRoot of [
         undefined,
-        { schemaVersion: 'bayn.research-capture-export-root.v2', exportedChunks: 2, lastChunkHash: 'a'.repeat(64) },
-        { schemaVersion: 'bayn.research-capture-export-root.v2', exportedChunks: 1, lastChunkHash: null },
+        { schemaVersion: 'bayn.research-capture-export-root.v3', exportedChunks: 2, lastChunkHash: 'a'.repeat(64) },
+        { schemaVersion: 'bayn.research-capture-export-root.v3', exportedChunks: 1, lastChunkHash: null },
         { schemaVersion: 'foreign-root.v1', exportedChunks: 1, lastChunkHash: 'a'.repeat(64) },
       ]) {
         const bytes = text(researchCaptureObject(JSON.stringify({ ...decoded, exportRoot })))
@@ -517,7 +521,7 @@ test('raw capture owns exact malformed, ignored, empty and tombstone bytes while
       expect(saved.objects).toHaveLength(3)
       expect(seal).toMatchObject({
         exportRoot: {
-          schemaVersion: 'bayn.research-capture-export-root.v2',
+          schemaVersion: 'bayn.research-capture-export-root.v3',
           exportedChunks: 1,
           lastChunkHash: saved.objects[0]?.contentHash,
         },
@@ -596,7 +600,7 @@ test('in-flight payload and receipt reservations cannot be reused by nonblocking
     }),
   ))
 
-test.each(['sql-append', 'object-ack', 'object-defect', 'object-throw', 'object-interrupt'] as const)(
+test.each(['object-ack', 'object-defect', 'object-throw', 'object-interrupt'] as const)(
   '%s failure never advances the durable raw frontier or changes the owner result',
   (fault) =>
     run(
@@ -606,14 +610,7 @@ test.each(['sql-append', 'object-ack', 'object-defect', 'object-throw', 'object-
         const recorder = yield* makeResearchCaptureRecorder(
           {
             ...saved.store,
-            append: (bytes) =>
-              fault === 'sql-append'
-                ? saved.store
-                    .append(bytes)
-                    .pipe(
-                      Effect.andThen(Effect.fail(new ResearchCaptureFailure({ message: 'SQL acknowledgement lost' }))),
-                    )
-                : saved.store.append(bytes),
+            append: (bytes) => saved.store.append(bytes),
           },
           options,
           {
@@ -694,7 +691,7 @@ test('property: immutable frames round-trip arbitrary binary payloads and detect
         lastContentHash: metadata.contentHash,
         invalidations: [],
         exportRoot: {
-          schemaVersion: 'bayn.research-capture-export-root.v2',
+          schemaVersion: 'bayn.research-capture-export-root.v3',
           exportedChunks: 1,
           lastChunkHash: objects.contentHash,
         },
@@ -728,7 +725,7 @@ test('property: immutable frames round-trip arbitrary binary payloads and detect
         const changedSeal = encodeResearchCapture({
           ...seal,
           exportRoot: {
-            schemaVersion: 'bayn.research-capture-export-root.v2',
+            schemaVersion: 'bayn.research-capture-export-root.v3',
             exportedChunks: 1,
             lastChunkHash: changedFrame.contentHash,
           },
@@ -786,7 +783,7 @@ test('periodic drains form one immutable frame chain and a different worker cann
       const bucket = new Map(saved.objects.map((object) => [researchCaptureObjectKey(object.contentHash), object]))
       const reads: string[] = []
       const recovered = Result.getOrThrow(
-        recoverCaptureFromStoredObjects(saved.chunks, saved.seals[0], (key) => {
+        recoverCaptureFromStoredObjects(saved.sqlChunks, saved.seals[0], (key) => {
           reads.push(key)
           return bucket.get(key)
         }),

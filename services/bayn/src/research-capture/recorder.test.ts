@@ -180,18 +180,22 @@ test.each([false, true])(
         const saved = memory()
         const entered = yield* Deferred.make<void>()
         const release = yield* Deferred.make<void>()
+        let completedWrites = 0
+        const blocked = <A, E>(effect: Effect.Effect<A, E>) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined)
+            yield* Deferred.await(release)
+            const value = yield* effect
+            completedWrites++
+            return value
+          }).pipe(Effect.uninterruptible)
         const recorder = yield* makeResearchCaptureRecorder(
           {
             ...saved.store,
-            append: (bytes) =>
-              Effect.gen(function* () {
-                yield* Deferred.succeed(entered, undefined)
-                yield* Deferred.await(release)
-                yield* saved.store.append(bytes)
-              }).pipe(Effect.uninterruptible),
+            append: (bytes) => blocked(saved.store.append(bytes)),
           },
           { ...options, maximumQueuedBytes: 131_072 },
-          raw ? { putVerified: () => Effect.void } : undefined,
+          raw ? { putVerified: () => blocked(Effect.void) } : undefined,
         )
         recorder.record(captureEvent('STARTED'))
         yield* TestClock.adjust(options.flushIntervalMs)
@@ -200,12 +204,13 @@ test.each([false, true])(
         const deadline = yield* recorder.status
         recorder.record(captureEvent('STOPPED'))
         const afterRecord = yield* recorder.status
-        const commitsBeforeRelease = saved.chunks.length
+        const commitsBeforeRelease = completedWrites
         yield* Deferred.succeed(release, undefined)
         yield* TestClock.adjust(1)
         const cleaned = yield* recorder.status
         expect(commitsBeforeRelease).toBe(0)
-        expect(saved.chunks).toHaveLength(1)
+        expect(completedWrites).toBe(1)
+        expect(saved.chunks).toHaveLength(raw ? 0 : 1)
         expect(cleaned.persistedReceipts).toBe(0)
         expect(cleaned.invalidations).toContain(CaptureInvalidation.Persistence)
         expect(deadline.invalidations).toContain(CaptureInvalidation.Persistence)
