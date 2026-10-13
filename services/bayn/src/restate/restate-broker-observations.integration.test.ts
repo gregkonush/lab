@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Effect, Exit, Option, Schedule, Scope } from 'effect'
+import { Config, Effect, Exit, Option, Schedule, Schema, Scope } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { brokerObservationJsonSerde, makeBaynBrokerObservations } from './restate-broker-observations'
@@ -50,8 +50,6 @@ describeRestate('Real Restate broker observation journal', () => {
     let fail = false
     const makeObserved = () =>
       makeBaynBrokerObservations(config, {
-        nextPollNotBeforeMs: async () => 0,
-        preparePoll: async () => 'test-capture',
         activate: async () => {
           activations += 1
         },
@@ -156,6 +154,25 @@ describeRestate('Real Restate broker observation journal', () => {
           yield* waitFor(() => invoke('status').pipe(Effect.map(() => polls > beforeRestart)))
           expect(activations).toBe(1)
           expect(polls).toBeGreaterThan(beforeRestart)
+          const metrics = yield* json(
+            `${admin}/query`,
+            {
+              query: `SELECT journal_size FROM sys_invocation WHERE target_service_name = 'BaynBrokerObservations'
+                AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'poll'
+                AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
+            },
+            { accept: 'application/json' },
+          ).pipe(
+            Effect.flatMap(
+              Schema.decodeUnknownEffect(
+                Schema.Struct({ rows: Schema.Array(Schema.Struct({ journal_size: Schema.Number })) }),
+              ),
+            ),
+          )
+          const journalSize = metrics.rows[0]?.journal_size
+          expect(journalSize).toBeDefined()
+          expect(journalSize).toBeLessThanOrEqual(16)
+          process.stdout.write(`BROKER_OBSERVATION_JOURNAL_SIZE=${journalSize}\n`)
         }),
       ),
     )

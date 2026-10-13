@@ -48,32 +48,36 @@ export const makeBrokerObservationStore = (
     WHERE account_id = ${accountId}
   `.pipe(Effect.asVoid),
   )
-  const begin = run(
-    sql`
+  const begin = (captureId: string) =>
+    run(
+      sql`
+    WITH claimed AS (
+      INSERT INTO broker_observation_captures (account_id, capture_id)
+      SELECT account_id, ${captureId} FROM broker_observations
+      WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+      ON CONFLICT DO NOTHING
+      RETURNING account_id
+    )
     UPDATE broker_observations SET generation = generation + 1
     WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
+      AND EXISTS (SELECT 1 FROM claimed)
     RETURNING generation,
       to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "startedAt"
   `.pipe(
-      Effect.flatMap(
-        Schema.decodeUnknownEffect(
-          Schema.Array(
-            Schema.Struct({
-              generation: Schema.Int.check(Schema.isGreaterThan(0)),
-              startedAt: UtcInstantSchema,
-            }),
-          ).check(Schema.isMinLength(1), Schema.isMaxLength(1)),
-          strictParseOptions,
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            Schema.Array(
+              Schema.Struct({
+                generation: Schema.Int.check(Schema.isGreaterThan(0)),
+                startedAt: UtcInstantSchema,
+              }),
+            ).check(Schema.isMaxLength(1)),
+            strictParseOptions,
+          ),
         ),
+        Effect.map((rows) => rows[0]),
       ),
-      Effect.map((rows) => rows[0]),
-      Effect.flatMap((ticket) =>
-        ticket === undefined
-          ? Effect.fail(observationUnavailable('Broker observation owner is unavailable'))
-          : Effect.succeed(ticket),
-      ),
-    ),
-  )
+    )
   const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot) =>
     run(
       Effect.gen(function* () {

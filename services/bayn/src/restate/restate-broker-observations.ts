@@ -1,5 +1,5 @@
 import * as restate from '@restatedev/restate-sdk'
-import { Result, Schema } from 'effect'
+import { Clock, Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { brokerObservationQuotaWindowMs } from '../broker/alpaca/poll-budget'
@@ -35,12 +35,10 @@ export type BrokerObservationPoll = (
 
 export interface BrokerObservationRuntime {
   readonly activate: (signal: AbortSignal) => Promise<void>
-  readonly nextPollNotBeforeMs: (signal: AbortSignal) => Promise<number>
-  readonly preparePoll: (signal: AbortSignal) => Promise<string>
   readonly poll: (
     signal: AbortSignal,
     reservation: {
-      readonly captureToken: string
+      readonly captureId: string
       readonly captureStartDeadlineMs: number
       readonly interruptedNotBeforeMs: number
     },
@@ -62,6 +60,7 @@ export const makeBaynBrokerObservations = (
   config: BrokerObservationOwnerConfig,
   runtime: BrokerObservationRuntime,
   hooks: readonly restate.HooksProvider[] = [],
+  transportClock: Pick<Clock.Clock, 'currentTimeMillisUnsafe'> = Clock.Clock.defaultValue(),
 ) => {
   const abortTimeoutMs = config.operationTimeoutMs * 3
   const verifyKey = (ctx: restate.ObjectContext) => {
@@ -79,56 +78,32 @@ export const makeBaynBrokerObservations = (
     })
   const sample = async (
     ctx: restate.ObjectContext,
-    startedAt: number,
   ): Promise<{ readonly poll: BrokerObservationPoll; readonly startedAt: number }> => {
-    let captureStartedAt = startedAt
-    let notBefore = 0
-    let interruptedNotBeforeMs = 0
+    const stored = await ctx.get<unknown>(budgetKey)
+    const notBefore = stored === null ? 0 : decode(BudgetDeadlineSchema, stored)
+    const startedAt = await ctx.date.now()
+    if (notBefore > startedAt) return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: notBefore }, startedAt }
+    const captureStartDeadlineMs = startedAt + config.operationTimeoutMs
+    const interruptedNotBeforeMs = captureStartDeadlineMs + abortTimeoutMs + brokerObservationQuotaWindowMs
+    ctx.set(budgetKey, interruptedNotBeforeMs)
     try {
-      const stored = await ctx.get<unknown>(budgetKey)
-      notBefore = Math.max(
-        stored === null ? 0 : decode(BudgetDeadlineSchema, stored),
-        await ctx.run(
-          'read broker observation budget',
-          () => runtime.nextPollNotBeforeMs(ctx.request().attemptCompletedSignal),
-          { maxRetryAttempts: 0 },
-        ),
-      )
-      ctx.set(budgetKey, notBefore)
-      if (notBefore > startedAt) {
-        await ctx.sleep({ milliseconds: notBefore - startedAt })
-        captureStartedAt = await ctx.date.now()
-      }
-      const captureToken = await ctx.run(
-        'prepare broker observation capture',
-        () => runtime.preparePoll(ctx.request().attemptCompletedSignal),
-        { maxRetryAttempts: 0 },
-      )
-      captureStartedAt = await ctx.date.now()
-      const captureStartDeadlineMs = captureStartedAt + config.operationTimeoutMs
-      interruptedNotBeforeMs = captureStartDeadlineMs + abortTimeoutMs + brokerObservationQuotaWindowMs
-      ctx.set(budgetKey, interruptedNotBeforeMs)
       const poll = await ctx.run(
         'poll and publish broker observation',
         () =>
           runtime.poll(ctx.request().attemptCompletedSignal, {
-            captureToken,
+            captureId: ctx.request().id,
             captureStartDeadlineMs,
             interruptedNotBeforeMs,
           }),
         { maxRetryAttempts: 0 },
       )
-      // Keep this after the existing journaled poll command: only a returned result proves settled usage
-      // or an atomically consumed unused ticket. Replay reuses that proof without claiming another ticket.
-      notBefore = Math.max(notBefore, poll.nextPollNotBeforeMs)
-      ctx.set(budgetKey, notBefore)
-      return { poll: { ...poll, nextPollNotBeforeMs: notBefore }, startedAt: captureStartedAt }
+      // Only a returned, journaled result can replace the unknown-work reservation.
+      const nextPollNotBeforeMs = Math.max(notBefore, poll.nextPollNotBeforeMs)
+      ctx.set(budgetKey, nextPollNotBeforeMs)
+      return { poll: { ...poll, nextPollNotBeforeMs }, startedAt }
     } catch {
       ctx.console.warn('Broker observation poll failed before publication')
-      return {
-        poll: { _tag: 'Unavailable', nextPollNotBeforeMs: Math.max(notBefore, interruptedNotBeforeMs) },
-        startedAt: captureStartedAt,
-      }
+      return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: interruptedNotBeforeMs }, startedAt }
     }
   }
   const nextDelay = (poll: BrokerObservationPoll, startedAt: number, completedAt: number) =>
@@ -154,7 +129,7 @@ export const makeBaynBrokerObservations = (
             () => runtime.activate(ctx.request().attemptCompletedSignal),
             { maxRetryAttempts: 0 },
           )
-        const { poll, startedAt } = await sample(ctx, await ctx.date.now())
+        const { poll, startedAt } = await sample(ctx)
         const sameRevision = current?.sourceRevision === config.sourceRevision
         const state: State = {
           sourceRevision: config.sourceRevision,
@@ -163,7 +138,7 @@ export const makeBaynBrokerObservations = (
           ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, state)
-        schedule(ctx, state, nextDelay(poll, startedAt, await ctx.date.now()))
+        schedule(ctx, state, nextDelay(poll, startedAt, transportClock.currentTimeMillisUnsafe()))
         return state
       }),
       poll: restate.handlers.object.exclusive(async (ctx: restate.ObjectContext, candidate: unknown) => {
@@ -179,7 +154,7 @@ export const makeBaynBrokerObservations = (
           tick.sequence !== current.sequence
         )
           return
-        const { poll, startedAt } = await sample(ctx, await ctx.date.now())
+        const { poll, startedAt } = await sample(ctx)
         const next: State = {
           sourceRevision: current.sourceRevision,
           epoch: current.epoch,
@@ -187,7 +162,7 @@ export const makeBaynBrokerObservations = (
           ...(poll._tag === 'Published' ? { lastSnapshotHash: poll.snapshotHash } : {}),
         }
         ctx.set(key, next)
-        schedule(ctx, next, nextDelay(poll, startedAt, await ctx.date.now()))
+        schedule(ctx, next, nextDelay(poll, startedAt, transportClock.currentTimeMillisUnsafe()))
       }),
       status: restate.handlers.object.shared(async (ctx: restate.ObjectSharedContext, _candidate: unknown) => {
         if (ctx.key !== config.controllerKey)

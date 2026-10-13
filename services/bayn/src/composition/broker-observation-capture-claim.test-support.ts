@@ -14,9 +14,20 @@ const logs: { message: unknown; annotations: unknown }[] = []
 const logger = Logger.make(({ message, fiber }) => {
   logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) })
 })
-const sql = (strings: TemplateStringsArray) =>
+const claims = new Set<unknown>()
+const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
   Effect.suspend(() => {
-    if (!strings.join('').includes('SET generation = generation + 1, available = false'))
+    if (strings.join('').includes('RETURNING generation')) {
+      if (claims.has(values[0])) return Effect.succeed([])
+      claims.add(values[0])
+      return Clock.currentTimeMillis.pipe(
+        Effect.map((now) => [{ generation: 1, startedAt: new Date(now).toISOString() }]),
+      )
+    }
+    if (
+      !strings.join('').includes('SET available = false') &&
+      !strings.join('').includes('SET generation = generation + 1, available = false')
+    )
       return Effect.die('unexpected observation query')
     invalidations += 1
     if (invalidateOutcome === 'failure') return Effect.fail(new Error('injected invalidation failure'))
@@ -57,30 +68,28 @@ const result = await Effect.runPromise(
       const { runtime } = yield* acquireBrokerObservationRuntime(plan)
       const signal = new AbortController().signal
       const now = yield* Clock.currentTimeMillis
-      const measuredDeadline = yield* Effect.promise(() => runtime.nextPollNotBeforeMs(signal))
       const reservation = {
-        captureToken: yield* Effect.promise(() => runtime.preparePoll(signal)),
+        captureId: 'test-capture',
         captureStartDeadlineMs: now - 17_000,
         interruptedNotBeforeMs: now + 133_000,
       }
       const expired = yield* Effect.promise(() => runtime.poll(signal, reservation))
       const duplicate = yield* Effect.promise(() => runtime.poll(signal, reservation))
-      const missing = yield* Effect.promise(() => runtime.poll(signal, { ...reservation, captureToken: 'missing' }))
       const { runtime: replacement } = yield* acquireBrokerObservationRuntime(plan)
       const replaced = yield* Effect.promise(() => replacement.poll(signal, reservation))
       const failures = []
       for (const outcome of ['failure', 'interruption', 'defect'] as const) {
-        const captureToken = yield* Effect.promise(() => runtime.preparePoll(signal))
+        const captureId = `failed-${outcome}`
         invalidateOutcome = outcome
         const completion = yield* Effect.tryPromise({
-          try: () => runtime.poll(signal, { ...reservation, captureToken }),
+          try: () => runtime.poll(signal, { ...reservation, captureId }),
           catch: () => 'not completed',
         }).pipe(Effect.result)
         invalidateOutcome = 'success'
-        const retry = yield* Effect.promise(() => runtime.poll(signal, { ...reservation, captureToken }))
+        const retry = yield* Effect.promise(() => runtime.poll(signal, { ...reservation, captureId }))
         failures.push({ outcome, completion: completion._tag, retry })
       }
-      return { expired, duplicate, missing, replaced, failures, measuredDeadline, reservation, attempts, invalidations }
+      return { expired, duplicate, replaced, failures, reservation, attempts, invalidations }
     }),
   ).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
 )

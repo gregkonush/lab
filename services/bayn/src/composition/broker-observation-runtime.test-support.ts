@@ -7,6 +7,7 @@ import type { ApplicationPlanFor } from '../app'
 import * as actualHttp from '../broker/alpaca/http'
 import * as actualSession from '../broker/alpaca/session'
 import * as actualPostgres from '../db/postgres-client'
+import * as actualRestateTelemetry from '../restate/restate-telemetry'
 
 let attempts = 0
 const spans: Tracer.NativeSpan[] = []
@@ -39,6 +40,12 @@ const sql = (strings: TemplateStringsArray) => {
   if (query.includes('SET available = false')) return Effect.fail(new Error('injected completed persistence failure'))
   return Effect.succeed([])
 }
+
+await mock.module('../restate/restate-telemetry', () => ({
+  ...actualRestateTelemetry,
+  currentOpenTelemetryParentSpan: () =>
+    Tracer.externalSpan({ traceId: 'a'.repeat(32), spanId: 'b'.repeat(16), sampled: true }),
+}))
 
 await mock.module('../db/postgres-client', () => ({
   ...actualPostgres,
@@ -98,11 +105,10 @@ const result = await Effect.runPromise(
         },
       } as unknown as ApplicationPlanFor<'AutonomousService'>)
       const signal = new AbortController().signal
-      const captureToken = yield* Effect.promise(() => runtime.preparePoll(signal))
       const now = yield* Clock.currentTimeMillis
       const poll = yield* Effect.promise(() =>
         runtime.poll(signal, {
-          captureToken,
+          captureId: 'test-capture',
           captureStartDeadlineMs: now + 1_000,
           interruptedNotBeforeMs: now + 180_000,
         }),
@@ -110,12 +116,10 @@ const result = await Effect.runPromise(
       const attemptsAtReturn = attempts
       releaseAcquisition.resolve()
       yield* Effect.promise(() => acquisitionFinished.promise)
-      const nextPollNotBeforeMs = yield* Effect.promise(() => runtime.nextPollNotBeforeMs(signal))
       return {
         poll,
         attemptsAtReturn,
         attemptsAfterReturn: attempts,
-        nextPollNotBeforeMs,
         persistenceTelemetry,
         brokerTelemetry,
       }

@@ -44,7 +44,14 @@ from capital authority. Authorized bootstrap drains a predecessor controller, pu
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
 
-The observation owner's child runtimes share the worker's configured logger and tracer. The
+A polling invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
+`broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later polls and
+source rotation, so a repeated or late invocation cannot repeat its capture. A reserved quota window schedules a
+successor without sleeping inside the exclusive handler. Only a returned journaled result releases the conservative
+unknown-work quota reservation. The database generation continues to fence publication after mutations and rotation.
+
+The observation owner's child runtimes share the worker's configured logger and tracer. The polling span inherits
+the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
 `bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
@@ -64,7 +71,8 @@ without scanning historical payloads. Events without a retained snapshot cannot 
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
-for elapsed polling time, with a one-second minimum delay. Capture is bounded by the smaller of the operation timeout
+for elapsed polling time using the live transport clock, with a one-second minimum delay. Position closures waiting
+for fresh broker evidence resume after one second instead of the normal 30-second controller cadence. Capture is bounded by the smaller of the operation timeout
 and maximum age minus the poll interval. Freshness starts at the earlier of the poll start and the oldest original
 observation. Expired, premature, corrupt, foreign-account, failed or wrong-revision snapshots fail closed. Restate's
 poll epoch/sequence and a database generation prevent duplicate, obsolete or late results from reviving a cut.
