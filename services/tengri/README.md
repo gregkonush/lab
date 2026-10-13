@@ -279,6 +279,8 @@ as the native images, including the KVM harness cache, to reuse the release comp
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The retained Tengri fixture includes the native `runner-seccomp.json` profile.
+The guest receives a separate resolver file. Docker's network resolver at `127.0.0.11` stays in the fixture container
+for shared SQL discovery; copying it into the VM would send DNS requests to the guest's own loopback.
 Routine main publication runs
 three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
 requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page

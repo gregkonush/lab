@@ -102,7 +102,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     .await?;
     for (source, destination) in [
         (&configuration, "/etc/tengri-slot.json"),
-        (&PathBuf::from("/etc/resolv.conf"), "/etc/resolv.conf"),
+        (&PathBuf::from("/guest/resolv.conf"), "/etc/resolv.conf"),
     ] {
         let result = tokio::process::Command::new("debugfs")
             .args(["-w", "-R"])

@@ -122,6 +122,7 @@ export KEYCLOAK_FIXTURE_BIN="$(bash services/ofz/tests/keycloak-runtime.sh /tmp/
 bash services/ofz/test-control.sh identity
 ```
 
+The fixture compiles the Ofz server and Tengri test binary before starting the browser's three-minute deadline.
 This fixture uses real Keycloak, Ofz, SPIFFE mTLS, PostgreSQL and SpiceDB, with a synthetic GitHub upstream and virtual
 passkeys. It exercises duplicate-email identity separation, membership and quota changes through the actual Access UI,
 minimum-administrator protection, stale MFA and fresh step-up, downgraded assurance denial, nonmember admission denial,
