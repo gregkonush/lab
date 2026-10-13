@@ -34,6 +34,49 @@ fn principal(action: Action) -> Principal {
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_replay_guard_tolerates_clock_lead_without_expiry_grace() {
+    let (database, _, _) = fixture().await;
+    let client = database.connection().await.unwrap();
+    let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    let accepted: bool = client
+        .query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5500)",
+            &[&nonce],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        accepted,
+        "a verified five-second request may lead the database clock by 500 ms"
+    );
+    let replay: bool = client
+        .query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5500)",
+            &[&nonce],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(!replay);
+    for offset in [-1_i64, 6500] {
+        let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+        let error = client
+            .query_one(
+                "SELECT tengri.consume_nonce($1,tengri.now_ms()+$2)",
+                &[&nonce, &offset],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            crate::control::sql_error(error).code(),
+            Code::Unauthenticated
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_backend_reconnection_does_not_forget_an_accepted_nonce() {
     let (database, _, _) = fixture().await;
     let other = Database::shared_fixture().await;
@@ -403,6 +446,19 @@ async fn runtime_shared_state_signed_nonce_is_shared_and_payload_bound() {
     );
     let fresh = signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
     assert!(b.authorize(&fresh, path).await.is_ok());
+    for deadline in [
+        crate::ofz::now_ms().unwrap() - 1,
+        crate::ofz::now_ms().unwrap() + 5500,
+    ] {
+        let mut invalid = owner.clone();
+        invalid.context.deadline_unix_ms = deadline;
+        let request =
+            signed_fixture_request(GetAgentRequest { id: "agent".into() }, &invalid, path);
+        assert_eq!(
+            a.authorize(&request, path).await.unwrap_err().code(),
+            Code::Unauthenticated
+        );
+    }
     let mut duplicated =
         signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
     let nonce = duplicated.metadata().get("x-tengri-nonce").unwrap().clone();

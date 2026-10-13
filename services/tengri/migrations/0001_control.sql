@@ -33,10 +33,14 @@ CREATE TABLE tengri.replay_nonces (
 CREATE INDEX replay_nonce_expiry ON tengri.replay_nonces(expires_at_ms);
 CREATE FUNCTION tengri.consume_nonce(p_nonce_hash bytea,p_expires_at_ms bigint)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE v_now bigint;
 BEGIN
     PERFORM pg_advisory_xact_lock(726635522920);
-    DELETE FROM tengri.replay_nonces WHERE expires_at_ms<=tengri.now_ms();
-    IF p_expires_at_ms<=tengri.now_ms() OR p_expires_at_ms>tengri.now_ms()+5000 THEN
+    v_now := tengri.now_ms();
+    DELETE FROM tengri.replay_nonces WHERE expires_at_ms<=v_now;
+    -- Authenticators enforce the signed five-second budget. This separate clock may lag by up to one second.
+    -- Keep the exact signed expiry; this allowance only applies to the future upper bound.
+    IF p_expires_at_ms<=v_now OR p_expires_at_ms>v_now+6000 THEN
         RAISE EXCEPTION 'Invalid nonce deadline' USING ERRCODE='22023';
     END IF;
     IF (SELECT count(*) FROM tengri.replay_nonces)>=8192 THEN

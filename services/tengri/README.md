@@ -141,7 +141,9 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 ## Transport and workload identity
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
-SPIRE mTLS authenticates both host hops. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
+SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
+replay database permits at most one second of clock lead in its future bound and retains the exact signed expiry;
+expired requests and used nonces remain rejected. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
 accepts only `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. Every slot supervisor has
 `spiffe://proompteng.ai/ns/tengri/slot/pod/<Pod UID>` and accepts only Tengri. Certificates rotate outside guest memory.
 
