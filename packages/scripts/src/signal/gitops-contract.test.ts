@@ -159,6 +159,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT INSERT ON signal.intraday_trades_v1',
       'GRANT INSERT ON signal.intraday_features_v1',
       'GRANT INSERT ON signal.crypto_market_events_v1',
+      'GRANT INSERT ON signal.crypto_market_features_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v1',
       'GRANT SELECT, INSERT ON signal.snapshot_manifests_v2',
     ])
@@ -213,6 +214,8 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(migration).toContain('signal.intraday_quotes_v1 ON CLUSTER default')
     expect(migration).toContain('signal.intraday_trades_v1 ON CLUSTER default')
     expect(migration).toContain('signal.crypto_market_events_v1 ON CLUSTER default')
+    expect(migration).toContain('signal.crypto_market_features_v1 ON CLUSTER default')
+    expect(migration).toContain('TTL toDateTime(window_end) + INTERVAL 30 DAY DELETE')
     expect(migration).toContain('TTL toDateTime(event_ts) + INTERVAL 30 DAY DELETE')
     expect(migration.match(/event_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(3)
     expect(migration.match(/ingest_ts DateTime64\(9, 'UTC'\)/g)).toHaveLength(3)
@@ -308,6 +311,13 @@ describe('Signal publisher GitOps authority contract', () => {
     expect(websocket.data.TOPIC_CRYPTO_EVENTS).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
     expect(websocket.data.ALPACA_CRYPTO_LOCATION).toBe(config.data.ARCHIVE_CRYPTO_LOCATION)
     expect(websocket.data.ALPACA_CRYPTO_SYMBOLS).toBe(config.data.ARCHIVE_CRYPTO_SYMBOLS)
+    const ta = parse(readFileSync(resolve(root, 'argocd/applications/torghut/ta/configmap.yaml'), 'utf8'))
+    expect(ta.data.TA_CRYPTO_TOPIC).toBe(config.data.ARCHIVE_CRYPTO_TOPIC)
+    expect(ta.data.TA_CRYPTO_LOCATION).toBe(config.data.ARCHIVE_CRYPTO_LOCATION)
+    expect(ta.data.TA_CRYPTO_SYMBOLS).toBe(config.data.ARCHIVE_CRYPTO_SYMBOLS)
+    expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).toBe('bayn.market-data.crypto.features.v1')
+    expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).toBe(config.data.ARCHIVE_CRYPTO_FEATURES_TOPIC)
+    expect(ta.data.TA_CRYPTO_FEATURES_TOPIC).not.toBe(ta.data.TA_CRYPTO_TOPIC)
     expect(environment(websocketDeployment.spec.template.spec.containers[0]).get('ALPACA_KEY_ID')).toEqual({
       name: 'ALPACA_KEY_ID',
       valueFrom: { secretKeyRef: { name: 'torghut-alpaca', key: 'APCA_API_KEY_ID' } },
@@ -346,7 +356,7 @@ describe('Signal publisher GitOps authority contract', () => {
     )
     const names = topics.map((topic) => topic.metadata.name)
 
-    expect(new Set(names).size).toBe(8)
+    expect(new Set(names).size).toBe(9)
     expect(names).toEqual(
       expect.arrayContaining([
         'bayn.market-data.delayed-sip.trades.v1',
@@ -357,6 +367,7 @@ describe('Signal publisher GitOps authority contract', () => {
         'bayn.market-data.overnight.bars.1m.v1',
         'bayn.market-data.observation.status.v1',
         'bayn.market-data.crypto.v1',
+        'bayn.market-data.crypto.features.v1',
       ]),
     )
     for (const topic of topics) {

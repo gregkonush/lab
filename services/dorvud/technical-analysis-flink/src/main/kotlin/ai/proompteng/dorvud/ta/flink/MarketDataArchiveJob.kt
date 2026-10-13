@@ -77,6 +77,7 @@ data class MarketDataArchiveConfig(
   val featuresTopic: String? = null,
   val technicalFeaturesTopic: String? = null,
   val crypto: CryptoArchiveConfig? = null,
+  val cryptoFeaturesTopic: String? = null,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -192,6 +193,7 @@ data class MarketDataArchiveConfig(
         featuresTopic = optional("ARCHIVE_FEATURES_TOPIC"),
         technicalFeaturesTopic = optional("ARCHIVE_TECHNICAL_FEATURES_TOPIC"),
         crypto = CryptoArchiveConfig.fromEnv(env),
+        cryptoFeaturesTopic = optional("ARCHIVE_CRYPTO_FEATURES_TOPIC"),
       )
     }
   }
@@ -315,6 +317,16 @@ internal fun configureMarketDataArchiveJob(
   config.featuresTopic?.let { configureMarketFeatureArchive(environment, config, it) }
   config.technicalFeaturesTopic?.let { configureMarketFeatureArchive(environment, config, it, technical = true) }
   config.crypto?.let { configureCryptoMarketDataArchive(environment, config, it) }
+  config.cryptoFeaturesTopic?.let { topic ->
+    configureCryptoMarketFeatureArchive(
+      environment,
+      config,
+      requireNotNull(config.crypto) {
+        "crypto features require their raw source"
+      },
+      topic,
+    )
+  }
 }
 
 internal class ArchiveKafkaRecordDeserializer : KafkaRecordDeserializationSchema<ArchiveKafkaRecord> {
