@@ -9,7 +9,7 @@ product acceptance, independent restore and the required soak. On 2026-10-13 the
 migration with deletion of the old workspaces and homes. Migration rehearsals and legacy-data import are no longer
 requirements. Published source and passing fixtures are intermediate evidence.
 
-The service split is published in native GitHub stack [#14917](https://github.com/proompteng/lab/pull/14908).
+The service split is published in the native GitHub stack beginning at [#14908](https://github.com/proompteng/lab/pull/14908).
 
 | Service or contract                      | Reviewable implementation                              | Deployed acceptance                         |
 | ---------------------------------------- | ------------------------------------------------------ | ------------------------------------------- |
@@ -41,9 +41,12 @@ both native KVM qualifications must pass on the new main revision before publica
 
 PR #14916 merged as `e89e1362f3248173bef4fdc15e860fdb39c6f495` after its checks and automatic review passed.
 Main Ofz identity qualification now passes, and all four native controller/guest images built. Native KVM acceptance
-and the coordinated service cutover remain release gates.
+and the coordinated service cutover remain release gates. ARM64 KVM passed on that revision with a 664 ms maximum
+resume; AMD64 passed its functional checks but failed its first cold resume at 1,429 ms against the 1,000 ms limit.
+The new HA main revision requires its own native qualifications.
 
-The rebased HA layer #14909 preserves the merged credentials and post-DNAT ingress paths. Its four prepared targets
+PR #14909 merged at `464a773c35cc900fbd99dd63c7d6ab2359cc7cc4` after its applicable CI and automatic review passed.
+The HA layer preserves the merged credentials and post-DNAT ingress paths. Its four prepared targets
 render 65 resources, pass schema validation and Kubernetes server-side dry run, and reject 13 deliberately invalid
 HA/credential/network configurations. The target uses the active generated CRD, removing the unused preparation copy.
 Two consecutive real Keycloak/Ofz/controller browser runs pass 60 assertions in 68 and 66 seconds. They preserve the
@@ -178,3 +181,15 @@ not to deleted users; pool retirement remains the controller's responsibility du
 
 This removes the retained-data migration blocker. The new Ofz API is not yet deployed, and the image publication hold
 remains false. This deletion does not establish deployment or acceptance of the new authorization contract.
+
+The isolated physical-promotion fixture passes against pinned PostgreSQL 18.6 and SpiceDB. A physical base backup
+includes the native datastore, Ofz control tables and shared runtime state. The fixture requires synchronous streaming,
+kills the original primary, and promotes the standby at the same service address. The 2026-10-13 control fixture commits
+50 commands and 125 immutable receipts. Existing clients recover in 2.94 seconds
+and deny a consumed nonce before its original five-second expiry. Atomic pending/spent tickets, live/revoked previews,
+session/workspace/runtime bindings, unique leader acquisition and stale-fence denial all pass. Owner access stays allowed
+and a revoked viewer stays denied; every Ofz control table has the same hash before and after promotion. The initial run
+exposed Docker's requirement for an explicit subnet when reassigning an IP, which the fixture now provisions. The test
+runs once in Ofz CI, replacing the separate control-only run, and requires the exact promotion test to pass. An empty
+test selection fails qualification. Shared runtime validation stays in the Tengri image workflow. This two-node fixture does not prove three-node CNPG or Kubernetes recovery, independent backups, or
+post-failure synchronous write availability. Those deployed/recovery gates remain open.

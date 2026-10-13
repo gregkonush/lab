@@ -80,7 +80,8 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
           bash test-policy.sh
-          bash test-control.sh
+      - name: Verify control state and synchronous physical database promotion
+        run: bash services/tengri/test-database-failover.sh
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
