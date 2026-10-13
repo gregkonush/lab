@@ -2,7 +2,7 @@
 
 ## Overview
 
-The observability stack uses Grafana Mimir Ruler for alert evaluation and Mimir Alertmanager for routing. Critical infrastructure alerts are routed to email through Brevo SMTP.
+The observability stack uses Grafana Mimir Ruler for alert evaluation and Mimir Alertmanager for routing. Critical and warning alerts that opt into email are routed through Brevo SMTP.
 
 GitOps source:
 
@@ -70,14 +70,15 @@ MX records, delegating nameservers, enabling link tracking, or forwarding DMARC 
 
 ## Routing Contract
 
-Only alerts with both labels are emailed:
+Email requires `notify: email` and one of these severity labels:
 
-```yaml
-severity: critical
-notify: email
-```
+| Severity | Repeat interval while firing |
+| -------- | ---------------------------- |
+| `critical` | One hour |
+| `warning` | Four hours |
 
-Warning alerts are evaluated and visible in Mimir/Grafana, but they do not send email by default.
+Both routes send resolved notifications through the existing `critical-email` receiver. Alerts without the email
+opt-in remain visible in Mimir/Grafana without sending email.
 
 Ceph opts `CephClusterHealthError`, `CephSlowOps`, and `CephOsdCommitLatencyCritical` into this route with
 `notify: email`. The route repeats firing notifications every hour and sends a resolved notification.
