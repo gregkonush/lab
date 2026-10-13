@@ -142,7 +142,8 @@ promotes the standby at the unchanged service address. Existing clients must rej
 original five-second deadline, preserve atomic tickets, preview/session bindings and leader fencing, and retain
 both allowed and revoked native policy results. Hashes of every Ofz control table must match across promotion.
 The fixture promotes a two-node disposable database; it does not establish three-node CNPG recovery or post-failure
-synchronous write availability. The normal Ofz CI workflow runs this test.
+synchronous write availability. Ofz CI runs the combined control and promotion fixture once, and rejects an empty
+selection of the exact promotion test. Shared runtime validation remains in the Tengri image workflow.
 
 The HA fixture also forms a two-node Keycloak 26.7.4 production cluster with JDBC discovery and transport mTLS.
 Killing its serving process during an in-flight passkey challenge preserves the subject and credential identities,

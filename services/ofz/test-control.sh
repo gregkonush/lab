@@ -122,7 +122,10 @@ SQL
         source tests/database-failover.sh
         export TENGRI_DATABASE_FAILOVER_FIXTURE=1
         prepare_database_failover "$fixture_database" "$fixture_standby" "$fixture_network" "$fixture_primary_ip" "$postgres_image" "$fixture_dir" "${docker_args[@]}"
-        cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri physical_database_promotion -- --ignored --nocapture --test-threads=1
+        cargo test --manifest-path ../tengri/Cargo.toml --locked --bin tengri \
+          runtime_state_test::physical_database_promotion_preserves_authority_and_consumed_capabilities \
+          -- --ignored --exact --nocapture --test-threads=1 2>&1 | tee "$fixture_dir/promotion-test.log"
+        grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/promotion-test.log"
       else
         export TENGRI_KVM_NETWORK="$fixture_network"
         export TENGRI_KVM_DATABASE_HOST="$fixture_database"
