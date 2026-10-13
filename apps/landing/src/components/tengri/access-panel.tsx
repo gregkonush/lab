@@ -26,11 +26,7 @@ import {
 
 type View = 'workspace' | 'platform' | 'audit'
 const actions = ['membership', 'collaborator', 'quota', 'target', 'grant', 'revoke', 'transfer', 'emergency'] as const
-const lines = (value: string) =>
-  value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
+const lines = (value: string) => value.split('\n').filter(Boolean)
 const formSchema = z
   .object({
     action: z.enum(actions),

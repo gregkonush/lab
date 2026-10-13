@@ -71,6 +71,8 @@ That receipt proves publication of the factory revision, not deployment or compl
   the browser now rejects an oversized scope inline without an identity lookup or policy change.
   An accepted 64 KiB command also reproduced a late 429 from the private gRPC envelope caps. Both sender and decoder
   now allow 128 KiB envelopes; the real BFF-to-Ofz boundary command commits and its scope can be removed afterward.
+  The browser also reproduces the old form's trimming of a whitespace-bearing file root, thread ID and terminal ID.
+  Target splitting now preserves each nonempty line exactly; the complete fixture passes with those literal targets.
 - The prepared protocol-4 continuation passes Rust units/contracts, Go race/vet on macOS and native Linux, real RPC/SPIFFE
   interoperability, deterministic vector parity and 26 shared SQL tests. Ofz retains the full scope; signed guest proofs
   carry one exact authorized target and output budget. Retired protocol-3 proofs remain rejected.

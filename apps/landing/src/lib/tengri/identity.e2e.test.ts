@@ -995,18 +995,18 @@ identityTest(
       versionBeforeInvalidScope,
     )
     expect(await storedViewer()).toEqual({ role: 3, scope: null })
-    await roots.fill('/workspace/src')
-    await page.getByLabel('Codex thread IDs', { exact: true }).fill('thread-approved')
-    await page.getByLabel('Terminal IDs', { exact: true }).fill('terminal-approved')
+    await roots.fill('/workspace/src ')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill(' thread-approved ')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill('terminal-approved ')
     await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
     await page.getByLabel('Maximum items', { exact: true }).fill('20')
     await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
     await applyChange(200)
     await browserExpect(viewerRow.getByText('/workspace/src')).toBeVisible()
     const approvedScope = {
-      file_roots: ['/workspace/src'],
-      thread_ids: ['thread-approved'],
-      terminal_ids: ['terminal-approved'],
+      file_roots: ['/workspace/src '],
+      thread_ids: [' thread-approved '],
+      terminal_ids: ['terminal-approved '],
       browser_screenshot: false,
       max_bytes: 4096,
       max_items: 20,

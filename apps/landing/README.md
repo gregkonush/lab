@@ -48,6 +48,7 @@ the content opt-in. Scope fields validate canonical workspace paths, credential 
 inline before submission; the BFF independently validates the same command. The full encoded command, including JSON
 escaping and metadata, must fit the shared 64 KiB request budget. Developer assignments and removals cannot
 carry a Viewer scope. The roster shows the exact approved targets and budgets, or `Metadata only` after scope removal.
+Scope targets preserve their exact entered characters, including surrounding spaces; empty lines are ignored.
 Selected content can contain private information. Scoped guest content remains denied until the separate bounded
 observer handlers are implemented and qualified.
 The prepared identity release is held until the controller and every runtime channel complete the hard migration.

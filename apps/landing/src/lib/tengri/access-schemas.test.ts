@@ -24,6 +24,16 @@ describe('workspace collaborator command boundary', () => {
   test('Viewer content is opt-in and preserves the approved scope exactly', () => {
     expect(accessCommandSchema.parse(collaborator)).not.toHaveProperty('scope')
     expect(accessCommandSchema.parse({ ...collaborator, scope })).toEqual({ ...collaborator, scope })
+    const literalScope = {
+      ...scope,
+      fileRoots: ['/workspace/project '],
+      threadIds: [' thread-approved '],
+      terminalIds: ['terminal-approved '],
+    }
+    expect(accessCommandSchema.parse({ ...collaborator, scope: literalScope })).toEqual({
+      ...collaborator,
+      scope: literalScope,
+    })
   })
 
   test('scope cannot be attached to a Developer or disabled collaborator', () => {
