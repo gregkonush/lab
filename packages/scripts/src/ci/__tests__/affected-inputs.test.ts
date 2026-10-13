@@ -91,6 +91,7 @@ test('Ofz image qualification follows its shared publication helpers', () => {
     if (!Array.isArray(paths)) throw new Error('Missing Ofz image trigger paths')
     for (const file of [
       'packages/scripts/src/shared/oci.ts',
+      'packages/scripts/src/shared/cli.ts',
       'nix/oci-push.sh',
       'nix/oci-inspect-archive.sh',
       'nix/oci-release-contract.sh',
