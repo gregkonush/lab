@@ -5,7 +5,8 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
       - 'services/tengri/**'
-      - 'services/ofz/**'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
       - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
@@ -20,7 +21,8 @@ on:
     paths:
       - 'apps/landing/**'
       - 'services/tengri/**'
-      - 'services/ofz/**'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
       - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'

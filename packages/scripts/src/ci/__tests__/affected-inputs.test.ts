@@ -59,6 +59,29 @@ test('native Tengri images do not consume Bun metadata', () => {
   }
 })
 
+test('Ofz API changes qualify independently of native guest images', () => {
+  const workflow = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
+    for (const file of [
+      'services/ofz/src/lib.rs',
+      'services/ofz/Cargo.lock',
+      'services/ofz/README.md',
+      'nix/images/ofz.nix',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
+    }
+    for (const file of [
+      'services/ofz/operations.json',
+      'services/ofz/test-control.sh',
+      'proto/proompteng/authz/v1/authz.proto',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
 test('a changed transitive dependency still runs its consumers', () => {
   const upgraded = { ...before, packages: { ...before.packages, dayjs: after.packages.dayjs } }
   expect(selectAffectedInputs(['bun.lock'], targets, before, upgraded)).toEqual({ bayn: true, landing: false })
