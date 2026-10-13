@@ -425,11 +425,9 @@ impl AuthorizationService for Service {
     ) -> Result<Response<proto::GetCommandResponse>, Status> {
         let _capacity = self.acquire()?;
         let peer = transport::peer(&request)?;
-        let receipt =
+        let response =
             commands::get(&self.database, &self.native, &peer, request.into_inner()).await?;
-        Ok(Response::new(proto::GetCommandResponse {
-            receipt: Some(receipt),
-        }))
+        Ok(Response::new(response))
     }
     async fn establish_session(
         &self,

@@ -4,10 +4,10 @@ The goal is the complete migration and deployed acceptance described in
 [the authorization plan](ofz-enterprise-authorization-plan.md). Work proceeds through dependent PRs, without subagents.
 Production keeps its current authority until the coordinated hard cutover. New code has no legacy authorization fallback.
 
-The active Codex goal was recreated and verified on 2026-10-11 after goal readback returned empty. It has no token
-limit. Completion requires the exact deployed release, every service's allow/deny/revocation and failure checks,
-retained-data product acceptance, independent restore and the required soak. Published source and passing fixtures
-are intermediate evidence.
+Completion requires the exact deployed release, every service's allow/deny/revocation and failure checks, fresh-workspace
+product acceptance, independent restore and the required soak. On 2026-10-13 the owner explicitly replaced retained-data
+migration with deletion of the old workspaces and homes. Migration rehearsals and legacy-data import are no longer
+requirements. Published source and passing fixtures are intermediate evidence.
 
 The service split is published in native GitHub stack [#14917](https://github.com/proompteng/lab/pull/14908).
 
@@ -27,7 +27,7 @@ The service split is published in native GitHub stack [#14917](https://github.co
 Source delivery continues through required CI and automatic review. Production remains held until the reviewed Ofz,
 BFF, runtime, guest, migration and broker contracts can activate together. Remaining implementation includes bounded
 observers, independent execution fencing, diagnostic proof keys and brokers, offboarding and independent recovery.
-P8 still requires migration rehearsals, real custodian enrollment, coordinated GitOps activation and full acceptance.
+P8 requires real custodian enrollment, coordinated GitOps activation and fresh-workspace acceptance.
 
 The 2026-10-11 delivery checkpoint rebases all ten layers onto current main while preserving the runtime performance
 changes. The assembled runtime passes Rust units/contracts, Clippy, 23 real shared-database tests and Rust-Go RPC
@@ -49,7 +49,8 @@ These are source checks. Remote CI, reviewed merge and deployed acceptance remai
 - [ ] P5: enforce every runtime channel and add pure observers.
 - [ ] P6: proof-bound diagnostic grants, Kubernetes and connector brokers.
 - [ ] P7: offboarding, independent archive/backups and isolated restore.
-- [ ] P8: migration rehearsals, reviewed release, hard cutover and full product acceptance.
+- [x] P8 deletion: old MicroVMs, homes, guest Pods, slot Leases and old workspace grants removed; creation fenced.
+- [ ] P8 delivery: reviewed release, hard cutover and fresh-workspace product acceptance.
 
 Both required custodians are named and their numeric identities verified. NUC has approximately 63 GiB free at the
 initial readback, below the 192 GiB uncompressed home-storage ceiling. Database recovery and home recovery must each
@@ -124,3 +125,27 @@ and returned HTTP 429 on the seventh request under the corrected configuration. 
 production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
 The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
 only Ofz's classification changed in the current repository inventory.
+
+## PR 14915 review correction
+
+PR #14908 merged as `b06b8baa3d73af4ba8cd52d0ec3871990797e84c`. The new Ofz API remains excluded from the
+production kustomization. This merge does not establish production authorization or complete the migration.
+
+PR #14915 now includes its matching BFF consumers. Moving signed-context metadata, reservation creation and Ofz
+lifecycle commands out of the later Landing layer makes the breaking runtime contract reviewable together. The
+controller and BFF credentials and required network paths are wired in complete cutover overlays, excluded from active
+applications until the Ofz and credential dependencies exist. The active quota reserves the seventh election Lease.
+Fixture fixes use the real shared TLS database and canonical opaque preview tickets.
+
+CI compares the generated schema with the active CRD as well as its preparation copy. The owner authorized deleting
+both old workspaces and their homes on 2026-10-13. Their controller finalizers stopped the guests and removed the
+MicroVMs, guest Pods, home PVCs and slot Leases. Both reclaim-policy `Delete` PVs are gone. A fully consistent SpiceDB
+read returned zero `tengri_workspace` relationships. No existing workspace needs reservation/epoch enrollment.
+
+The temporary `tengri-ofz-cutover` ValidatingAdmissionPolicy and binding reject MicroVM creation only in `tengri`.
+A server-side dry-run verified the denial. Keep this fence until the new authority and required dependencies are
+running, then remove both objects and prove fresh workspace creation. Four unused prepared homes belong to the pool,
+not to deleted users; pool retirement remains the controller's responsibility during image replacement.
+
+This removes the retained-data migration blocker. The new Ofz API is not yet deployed, and the image publication hold
+remains false. This deletion does not establish deployment or acceptance of the new authorization contract.

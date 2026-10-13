@@ -387,7 +387,7 @@ async fn verify_runtime_removal(
     commands::execute(database, native, CONTROLLER_ID, stop)
         .await
         .unwrap();
-    execute(
+    let removal = execute(
         database,
         native,
         next_owner,
@@ -396,6 +396,42 @@ async fn verify_runtime_removal(
         }),
     )
     .await;
+    let mut removal_status = GetCommandRequest {
+        context: request(
+            database,
+            next_owner,
+            Command::RemoveWorkspace(RemoveWorkspace {
+                workspace_uid: uid.into(),
+            }),
+        )
+        .await
+        .context,
+        operation_id: removal.operation_id,
+        ..Default::default()
+    };
+    assert!(
+        !commands::get(database, native, BFF_ID, removal_status.clone())
+            .await
+            .unwrap()
+            .workspace_removed
+    );
+    let mut other_actor = removal_status.clone();
+    other_actor.context = request(
+        database,
+        owner,
+        Command::RemoveWorkspace(RemoveWorkspace {
+            workspace_uid: uid.into(),
+        }),
+    )
+    .await
+    .context;
+    assert_eq!(
+        commands::get(database, native, BFF_ID, other_actor)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
     let removing = runtime_state(service, database, owner, uid).await;
     assert_eq!(removing.state, "removing");
     assert!(!removing.running && !removing.runtime_allowed);
@@ -462,6 +498,14 @@ async fn verify_runtime_removal(
     assert_eq!(
         runtime_state(service, database, owner, uid).await.state,
         "removed"
+    );
+    removal_status.context.as_mut().unwrap().deadline_unix_ms =
+        database.state().await.unwrap().now_ms + 2000;
+    assert!(
+        commands::get(database, native, BFF_ID, removal_status)
+            .await
+            .unwrap()
+            .workspace_removed
     );
     assert_eq!(
         admin
@@ -2827,6 +2871,8 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
     assert_eq!(
         commands::get(database, native, BFF_ID, replay.clone())
             .await
+            .unwrap()
+            .receipt
             .unwrap(),
         recovered
     );

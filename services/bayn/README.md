@@ -1005,6 +1005,19 @@ A standing mandate's next scheduled cycle does not make the reconciled performan
 submission window is still in the future and it has no durable decision or intent. Blocked cycles, started cycles,
 and any future cycle with durable execution work still prevent a sufficient receipt.
 
+Completion checks materialize the exact cycle and bound decision before evaluating JSON evidence, so unrelated
+historical decision bodies cannot enter the completion scan. Account/time indexes support the reconciliation cutoff
+and latest broker-event timestamp across every event kind. Identity, terminal-order, partial-fill, unknown-mutation
+and exact-reconciliation predicates are unchanged; the indexes do not grant authority or cache mutable evidence.
+Migration 0095 builds these indexes transactionally through normal startup migration. Schedule its first rollout
+while the account is flat outside the regular session because ordinary index creation blocks table writes.
+Startup migrations use a private single-connection pool with a five-minute overall deadline, a 295-second SQL
+deadline and a 297.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
+query, socket and trading deadlines remain unchanged. The additive indexes and compatible completion predicate can remain when
+rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
+The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
+readiness and liveness probes retain their normal cadence after startup.
+
 ## Replay and backtesting
 
 `bayn-gap-recovery` is an offline, original-receipt decision replay command in the

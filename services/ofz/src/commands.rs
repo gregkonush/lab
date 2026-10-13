@@ -1388,7 +1388,7 @@ pub async fn get(
     native: &Native,
     peer: &str,
     request: crate::proto::GetCommandRequest,
-) -> Result<CommandReceipt, Status> {
+) -> Result<crate::proto::GetCommandResponse, Status> {
     if !matches!(request.client_request_hash.len(), 0 | 32) {
         return Err(Status::invalid_argument("invalid client request hash"));
     }
@@ -1414,13 +1414,13 @@ pub async fn get(
             "operation belongs to another actor",
         ));
     }
-    if !request.client_request_hash.is_empty() {
-        let prepared: Prepared = store::decode(row.get(3))?;
-        if prepared.request.client_request_hash != request.client_request_hash {
-            return Err(Status::already_exists(
-                "operation ID bound to a different client request",
-            ));
-        }
+    let prepared: Prepared = store::decode(row.get(3))?;
+    if !request.client_request_hash.is_empty()
+        && prepared.request.client_request_hash != request.client_request_hash
+    {
+        return Err(Status::already_exists(
+            "operation ID bound to a different client request",
+        ));
     }
     let state = database.state().await?;
     decision::validate_context(context, peer, &state)?;
@@ -1432,5 +1432,22 @@ pub async fn get(
     } else if context.actor != Some(decision::workload_actor(peer)) {
         return Err(Status::unauthenticated("invalid actor"));
     }
-    store::decode(row.get(2))
+    let workspace_removed =
+        if let Some(Command::RemoveWorkspace(command)) = prepared.request.command {
+            connection
+                .client
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM ofz.workspaces WHERE uid=$1 AND state='removed')",
+                    &[&parse_uuid(&command.workspace_uid)?],
+                )
+                .await
+                .map_err(sql_error)?
+                .get(0)
+        } else {
+            false
+        };
+    Ok(crate::proto::GetCommandResponse {
+        receipt: Some(store::decode(row.get(2))?),
+        workspace_removed,
+    })
 }
