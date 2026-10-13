@@ -31,7 +31,7 @@ permissions:
 env:
   IMAGE: registry.ide-newton.ts.net/lab/talos-kata-runtimes
   KATA_SOURCE_COMMIT: 894e1956bb340752b30f7ad49879972234a0098c
-  VERSION: 4.1.0-talos-v1.13.9-r5
+  VERSION: 4.1.0-talos-v1.13.9-r6
 
 jobs:
   changes:
@@ -284,7 +284,7 @@ jobs:
           SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/kata-firecracker-extension.yaml@refs/heads/main
         run: |
           set -euo pipefail
-          tag="installer-v1.13.9-kata-4.1.0-r5-${{ matrix.profile }}"
+          tag="installer-v1.13.9-kata-4.1.0-r6-${{ matrix.profile }}"
           reference="${IMAGE}:${tag}"
           source_reference="$(
             tar -xOf "${INSTALLER_TAR}" manifest.json |
