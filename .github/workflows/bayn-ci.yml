@@ -255,13 +255,15 @@ jobs:
         env:
           BAYN_TEST_JDBC_RETAIN_ARCHIVE: 'true'
         run: |
-          ./gradlew :technical-analysis-flink:test --tests '*ArchiveTimestampPrecisionIntegrationTest' --tests '*CryptoMarketDataClickhouseIntegrationTest' || {
+          ./gradlew :technical-analysis-flink:test --tests '*ArchiveTimestampPrecisionIntegrationTest' --tests '*CryptoMarketDataClickhouseIntegrationTest' --tests '*CryptoMarketFeatureClickhouseIntegrationTest' || {
             cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
             cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketDataClickhouseIntegrationTest.xml
+            cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketFeatureClickhouseIntegrationTest.xml
             exit 1
           }
           cat technical-analysis-flink/build/test-results/test/TEST-*ArchiveTimestampPrecisionIntegrationTest.xml
           cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketDataClickhouseIntegrationTest.xml
+          cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketFeatureClickhouseIntegrationTest.xml
       - name: Verify Bayn reads the actual JDBC archive fixture
         run: bun test services/bayn/src/market-data/archive-jdbc-readback.integration.test.ts
       - name: Verify complete Bayn PostgreSQL persistence workflows
