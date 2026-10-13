@@ -1284,25 +1284,24 @@ fn is_editor_asset(path: &str) -> bool {
 }
 
 fn forward_request_header(name: &HeaderName) -> bool {
-    !matches!(
-        name.as_str().to_ascii_lowercase().as_str(),
-        "authorization"
-            | "accept-encoding"
-            | "connection"
-            | "host"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-            | "x-forwarded-for"
-            | "x-forwarded-host"
-            | "x-forwarded-proto"
-            | "x-tengri-microvm-uid"
-            | "x-tengri-claim-epoch"
-    )
+    !name.as_str().starts_with("x-tengri-")
+        && !matches!(
+            name.as_str(),
+            "authorization"
+                | "accept-encoding"
+                | "connection"
+                | "host"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "x-forwarded-for"
+                | "x-forwarded-host"
+                | "x-forwarded-proto"
+        )
 }
 
 fn forward_response_header(name: &HeaderName) -> bool {
@@ -1330,6 +1329,24 @@ mod tests {
     use kube::client::Body as KubeBody;
     use tower::ServiceExt as _;
 
+    #[test]
+    fn preview_does_not_forward_caller_authority_headers() {
+        for name in [
+            "x-tengri-microvm-uid",
+            "x-tengri-claim-epoch",
+            "x-tengri-runtime-epoch",
+            "x-tengri-guest-authorization",
+            "x-tengri-guest-signature",
+            "x-tengri-unknown-authority",
+        ] {
+            assert!(
+                !forward_request_header(&HeaderName::from_static(name)),
+                "caller header {name} is reserved for trusted authority"
+            );
+        }
+        assert!(forward_request_header(&header::CONTENT_TYPE));
+        assert!(forward_request_header(&header::IF_NONE_MATCH));
+    }
     fn test_gateway_state(client: Client) -> GatewayState {
         let tickets = TicketStore::new(
             "https://tengri.proompteng.ai".to_owned(),

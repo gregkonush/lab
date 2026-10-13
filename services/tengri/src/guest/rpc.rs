@@ -62,6 +62,13 @@ impl RpcClient {
                 crate::slot::supervisor::CLAIM_EPOCH_HEADER,
                 claim.epoch.to_string().parse().expect("numeric epoch"),
             );
+            request.metadata_mut().insert(
+                crate::slot::supervisor::RUNTIME_EPOCH_HEADER,
+                claim
+                    .runtime_epoch
+                    .parse()
+                    .expect("validated runtime epoch"),
+            );
         }
         if let Some(timeout) = timeout {
             request.set_timeout(timeout);
