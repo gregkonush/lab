@@ -63,16 +63,21 @@ Verified on 2026-10-11 with Supermicro BMC firmware `1.01`:
 
 ## Cooling Topology
 
+The operator identified four case fans, one CPU-cooler fan, and one pump
+on 2026-10-12:
+
+| Headers     | Connection     | PWM control group |
+| ----------- | -------------- | ----------------- |
+| `FAN1,FAN3` | Two case fans  | 0                 |
+| `FAN2`      | CPU-cooler fan | 0                 |
+| `FANA,FANB` | Two case fans  | 1                 |
+| `FAN4`      | Pump           | Stable 12V        |
+
 - Pump: SilverStone `XE360-SP5` pump tach on motherboard `FAN4`.
 - Pump behavior: stable 12V/full speed. Do not slow it for noise control.
-- Radiator fans: three 4-pin PWM fans on the SilverStone daisy-chain connected
-  to motherboard `FAN2`.
-- `FAN2` reads one tach signal, but the PWM duty applies to all three radiator
-  fans.
-- Use exactly one motherboard fan-header connection for the radiator daisy
-  chain. Leave unused pass-through connectors unused/capped.
-- Only one fan tach reports to the motherboard header. Multiple tach wires tied
-  together can confuse BMC fan monitoring.
+- The BMC exposes shared duty control for groups 0 and 1. Different fan
+  models in the same group can run at different RPM at the same duty.
+- Case-fan front/rear positions remain unverified.
 
 ## Source Notes
 
@@ -81,10 +86,9 @@ Verified on 2026-10-11 with Supermicro BMC firmware `1.01`:
 - SilverStone `XE360-SP5` pump spec: `3 pin`, `12V`, `0.38A`,
   `4000 +/- 10% RPM`.
 - SilverStone `XE360-SP5` radiator fan spec: `4 pin PWM`, `600-2800 RPM`.
-- SilverStone documentation calls for stable 12V pump power and the included
-  `3 in 1 Fan cable` for the radiator fans.
+- SilverStone documentation calls for stable 12V pump power.
 - The cooler does not include a SilverStone software fan controller or quiet-mode
-  module. The radiator fans follow a single motherboard/controller PWM input.
+  module. The CPU-cooler fan follows its motherboard/controller PWM input.
 
 ## Verified BMC controls
 
@@ -202,7 +206,7 @@ These are separate brief tests on 2026-10-11, not steady-load thermal acceptance
 
 `FAN1`, `FAN2`, and `FAN3` respond together. `FANA` and `FANB` form the second
 group. The three-pin pump's unchanged RPM does not establish a separate PWM
-group. The radiator and pump roles above come from the recorded wiring;
+group. The CPU-cooler and pump roles above come from the recorded wiring;
 front/rear case-fan positions and Noctua-to-header assignments remain unverified.
 The BMC reports header names and RPM, not cable routing or fan model numbers.
 
@@ -212,7 +216,7 @@ setting or continuous fan controller was left running.
 
 ### Operator-requested manual case-fan setting
 
-On 2026-10-12, the operator selected approximately 1,300 RPM for the case-fan
+On 2026-10-12, the operator selected approximately 1,250 RPM for the case-fan
 headers. With manual bypass already active, the tested duties were 70% for
 group 0 and 72% for group 1:
 
@@ -226,9 +230,10 @@ turin_ipmi sensor get FAN1 FAN2 FAN3 FAN4 FANA FANB
 
 The request bytes `0x47,0x49` are 71% and 73%; readback `0x46,0x48` is 70%
 and 72% after rounding. `FAN1,FAN3,FANA,FANB` reported 1,260 RPM, the closest
-reported step to the target. The radiator's shared group put `FAN2` at
-1,680 RPM; the `FAN4` pump stayed at 3,780 RPM. The radiator cannot receive
+reported step to the target. The CPU-cooler fan's shared group put `FAN2` at
+1,680 RPM; the `FAN4` pump stayed at 3,780 RPM. The CPU-cooler fan cannot receive
 an independent duty while it shares group 0 with `FAN1,FAN3`.
+The operator accepted that CPU-cooler speed while retaining the case-fan target.
 These commands assume the existing manual bypass; they do not establish a
 temperature-controlled fan policy.
 
@@ -245,7 +250,7 @@ requires more cooling; the requested RPM alone is not thermal acceptance.
 
 ## Hardware Fan-Control Path
 
-Keep the pump on stable 12V and control only the radiator fans.
+Keep the pump on stable 12V and control only the CPU-cooler fan.
 
 For physical PWM adjustment, `Noctua NA-FC1` is an alternative to software control.
 
@@ -261,7 +266,7 @@ Recommended wiring:
 ```text
 PSU SATA power -> NA-FC1 SATA power adapter
 H14SSL-NT FAN2 -> NA-FC1 input
-NA-FC1 output -> three radiator fans
+NA-FC1 output -> CPU-cooler fan
 ```
 
 Startup procedure:
@@ -281,7 +286,7 @@ Other controller options:
 
 Avoid plain PWM hubs as the noise fix. `SilverStone CPF04`, `Noctua NA-FH1`, and
 the case `Nexus+ 2` are powered splitters; they repeat the motherboard PWM
-signal. If the H14SSL-NT/BMC sends 100%, those hubs still run the radiator fans
+signal. If the H14SSL-NT/BMC sends 100%, those hubs still run the CPU-cooler fan
 hard.
 
 The Fractal Design Define 7 XL rear `Nexus+ 2` hub remains useful only as a

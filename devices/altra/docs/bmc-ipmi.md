@@ -199,7 +199,7 @@ of an RPM value and compare duty changes using the same interface. The native
 fan-property table was uninitialized, so do not use `--set-fan-speed` as a
 calibrated RPM controller or change its property table to conceal the mismatch.
 
-### Set the installed Noctua case fans near 1,300 RPM
+### Set the installed Noctua case fans near 1,250 RPM
 
 The operator identified four connected Noctua case fans on 2026-10-12:
 three at the front and one at the rear, with no pump identified on these
@@ -207,17 +207,17 @@ headers. The header-to-position mapping is not established.
 
 The earlier 1,200-RPM fixed profile let the hottest RAM channels reach
 86–87 C against an 80 C memory-hot threshold. After a higher-airflow trial,
-the operator selected 1,300 RPM. Check RAM temperatures under the current
+the operator selected 1,250 RPM. Check RAM temperatures under the current
 load; matching the requested RPM does not establish adequate cooling.
 
 The tested fixed duties are:
 
 | Carrier header | PWM/tach channel | Duty | Native RPM samples |
 | -------------- | ---------------: | ---: | -----------------: |
-| `FAN_1`        |                0 |  58% |               1315 |
-| `FAN_2`        |                1 |  35% |               1306 |
-| `FAN_4`        |                3 |  71% |               1312 |
-| `FAN_5`        |                4 |  71% |               1312 |
+| `FAN_1`        |                0 |  55% |               1256 |
+| `FAN_2`        |                1 |  33% |               1251 |
+| `FAN_4`        |                3 |  67% |               1246 |
+| `FAN_5`        |                4 |  67% |               1249 |
 
 These are native-tool readings, not calibrated physical speeds. The BMC
 carrier's IPMI RPM values use a different scale, as described above.
@@ -247,10 +247,10 @@ attempts full duty on every channel and starts the stock manager if absent:
         echo 'thermalmgr is still running' >&2
         exit 1
     fi
-    "$tool" 0 --set-pwm-dutycycle 0 58
-    "$tool" 0 --set-pwm-dutycycle 1 35
-    "$tool" 0 --set-pwm-dutycycle 3 71
-    "$tool" 0 --set-pwm-dutycycle 4 71
+    "$tool" 0 --set-pwm-dutycycle 0 55
+    "$tool" 0 --set-pwm-dutycycle 1 33
+    "$tool" 0 --set-pwm-dutycycle 3 67
+    "$tool" 0 --set-pwm-dutycycle 4 67
     sleep 5
     for channel in 0 1 3 4; do
         "$tool" 0 --get-pwm-dutycycle "$channel"
