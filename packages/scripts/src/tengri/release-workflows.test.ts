@@ -109,8 +109,13 @@ describe('Tengri image workflow', () => {
             CALLS: calls,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_NETWORK: 'disposable-fixture-network',
+            TENGRI_KVM_DATABASE_HOST: 'disposable-fixture-database',
+            TENGRI_DATABASE_CA_FILE: resolve(fixture, 'ca.crt'),
+            TENGRI_DATABASE_PASSWORD_FILE: resolve(fixture, 'runtime.password'),
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: samples,
+            TENGRI_KVM_SECCOMP: resolve(repositoryRoot, 'devices/galactic/omni/tengri-runner-amd64.json'),
           },
         })
         expect(result.exitCode).not.toBe(0)
@@ -125,12 +130,20 @@ describe('Tengri image workflow', () => {
     'requires a retained lifecycle receipt when the fixture exits successfully: %s',
     (receipt) => {
       const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
+      const guestDns = resolve(fixture, 'guest-resolv.conf')
       try {
+        writeFileSync(resolve(fixture, 'ca.crt'), 'disposable-ca')
+        writeFileSync(resolve(fixture, 'runtime.password'), 'disposable-password')
         writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "1.1.1.1 dev fixture0\\n"\n', { mode: 0o755 })
         writeFileSync(resolve(fixture, 'cat'), '#!/bin/sh\nprintf "1500\\n"\n', { mode: 0o755 })
         writeFileSync(
           resolve(fixture, 'docker'),
           `#!/bin/sh
+if [ "$1" = run ]; then
+  for argument do
+    if [ "$argument" = /artifacts/resolv.conf ]; then /bin/cat > "$GUEST_DNS"; fi
+  done
+fi
 if [ "$1" = cp ]; then
   case "$2" in *:/work/result.json)
   case "$RECEIPT" in
@@ -148,13 +161,20 @@ exit 0
             ...process.env,
             PATH: `${fixture}:${process.env.PATH}`,
             RECEIPT: receipt,
+            GUEST_DNS: guestDns,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_NETWORK: 'disposable-fixture-network',
+            TENGRI_KVM_DATABASE_HOST: 'disposable-fixture-database',
+            TENGRI_DATABASE_CA_FILE: resolve(fixture, 'ca.crt'),
+            TENGRI_DATABASE_PASSWORD_FILE: resolve(fixture, 'runtime.password'),
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: '3',
+            TENGRI_KVM_SECCOMP: resolve(repositoryRoot, 'devices/galactic/omni/tengri-runner-amd64.json'),
           },
         })
         expect(result.exitCode === 0).toBe(receipt === 'present')
+        expect(readFileSync(guestDns, 'utf8')).toBe('nameserver 1.1.1.1\nnameserver 8.8.8.8\n')
       } finally {
         rmSync(fixture, { recursive: true, force: true })
       }
@@ -387,7 +407,7 @@ exit 0
     expect(validation).toContain('cargo fmt --check')
     expect(validation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(validation).toContain('cargo test --locked --all-targets')
-    expect(validation).toContain('bash test-authz.sh')
+    expect(validation).toContain('bash test-runtime.sh')
     expect(validation).toContain('bash test-rpc-interop.sh')
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')

@@ -102,7 +102,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     .await?;
     for (source, destination) in [
         (&configuration, "/etc/tengri-slot.json"),
-        (&PathBuf::from("/etc/resolv.conf"), "/etc/resolv.conf"),
+        (&PathBuf::from("/guest/resolv.conf"), "/etc/resolv.conf"),
     ] {
         let result = tokio::process::Command::new("debugfs")
             .args(["-w", "-R"])
@@ -153,9 +153,36 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     };
     let runner_task = tokio::spawn(runner::serve(config));
     let tls = slot_identity.slot_server_tls("tengri")?;
+    let database = std::sync::Arc::new(crate::control::Database::shared_fixture().await);
+    let supervisor_database = std::sync::Arc::new(
+        crate::control::Database::connect(
+            &std::env::var("TENGRI_DATABASE_DSN")?
+                .replace("user=tengri_controller", "user=tengri_supervisor"),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE")?),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE")?),
+            "tengri_supervisor",
+        )
+        .await?,
+    );
+    supervisor_database.verify_schema().await?;
+    let fence = database
+        .acquire(uuid::Uuid::new_v4())
+        .await?
+        .context("fixture leadership unavailable")?;
+    let renew_database = database.clone();
+    let renew_task = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            assert!(
+                renew_database.renew(fence).await.unwrap(),
+                "fixture leader expired"
+            );
+        }
+    });
     let supervisor_task = tokio::spawn(supervisor::serve(
         TcpListener::bind("127.0.0.1:8443").await?,
         tls,
+        supervisor_database,
     ));
     let pod: Pod = serde_json::from_value(
         json!({"metadata":{"uid":"interop-agent"},"status":{"podIP":"127.0.0.1"}}),
@@ -200,7 +227,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             started.elapsed().as_secs_f64() * 1000.0
         );
     };
-    client.lifecycle("restore", &claim).await?;
+    client.fixture_restore(&claim, fence).await?;
     stage("restore");
     let rpc = guest(&identity, &claim, &token)?;
     rpc.verify_identity("interop-agent").await?;
@@ -242,7 +269,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     for action in ["sleep", "stop"] {
         ensure!(
-            client.lifecycle(action, &foreign).await.is_err(),
+            client.lifecycle(action, &foreign, fence).await.is_err(),
             "foreign owner changed the guest lifecycle"
         );
         ensure!(
@@ -257,6 +284,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     )
     .await?;
     let reconnect = guest_administration(&rpc, &terminal.id, &reconnect).await?;
+    let responsiveness = responsiveness(&rpc).await?;
     let mut timings = Vec::with_capacity(samples);
     let mut memory = Vec::with_capacity(samples);
     let mut reconnect = reconnect;
@@ -273,7 +301,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let awake_memory = cgroup_memory().await?;
         let vmm_rss = firecracker_rss().await?.context("awake guest has no VMM")?;
         let save_started = Instant::now();
-        let sleeping = client.lifecycle("sleep", &claim).await?;
+        let sleeping = client.lifecycle("sleep", &claim, fence).await?;
         let sleep_ms = save_started.elapsed().as_secs_f64() * 1000.0;
         ensure!(
             matches!(sleeping.state, SlotState::Sleeping { .. }),
@@ -288,7 +316,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let mut wrong = claim.clone();
         wrong.epoch += 1;
         ensure!(
-            client.lifecycle("restore", &wrong).await.is_err(),
+            client.fixture_restore(&wrong, fence).await.is_err(),
             "wrong epoch restored the guest"
         );
         if index == 0 {
@@ -307,7 +335,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
                 started.elapsed().as_secs_f64() * 1000.0
             );
         };
-        client.lifecycle("restore", &claim).await?;
+        client.fixture_restore(&claim, fence).await?;
         stage("restore");
         let rpc = guest(&identity, &claim, &token)?;
         rpc.verify_identity("interop-agent").await?;
@@ -348,7 +376,13 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             })),
         "real guest Codex did not install its browser computer tool"
     );
-    client.lifecycle("stop", &claim).await?;
+    disk_read_error(&rpc).await?;
+    ensure!(
+        client.status().await?.state.serves(&claim),
+        "disk error lost the current owner"
+    );
+    rpc.verify_identity("interop-agent").await?;
+    client.lifecycle("stop", &claim, fence).await?;
     timings.sort_by(f64::total_cmp);
     let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
     let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
@@ -360,10 +394,13 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
-        "browserStarted":true,"browserComputerToolInstalled":true
+        "browserStarted":true,"browserComputerToolInstalled":true,
+        "responsiveness":responsiveness,"diskReadErrorReported":true
     }))?).await?;
     runner_task.abort();
     supervisor_task.abort();
+    renew_task.abort();
+    database.release(fence).await?;
     ensure!(
         create_ms < 1000.0,
         "slot prepared creation is {create_ms:.2} ms"
@@ -495,6 +532,217 @@ async fn terminal_round_trip(
     })
     .await??;
     Ok((pid, ready.token))
+}
+
+struct TerminalProbe {
+    sender: mpsc::Sender<proto::TerminalInput>,
+    stream: tonic::Streaming<proto::TerminalOutput>,
+}
+
+impl TerminalProbe {
+    async fn open(rpc: &RpcClient, name: &str) -> anyhow::Result<Self> {
+        let terminal = rpc.create_terminal(name, "/", 100, 30).await?.session;
+        let (sender, receiver) = mpsc::channel(4);
+        sender
+            .send(proto::TerminalInput {
+                action: Some(proto::terminal_input::Action::Attach(
+                    proto::TerminalAttach {
+                        id: terminal.id,
+                        columns: 100,
+                        rows: 30,
+                        ..Default::default()
+                    },
+                )),
+            })
+            .await?;
+        let mut stream = rpc.attach_terminal(ReceiverStream::new(receiver)).await?;
+        let first = stream
+            .message()
+            .await?
+            .context("probe terminal closed before readiness")?;
+        ensure!(
+            matches!(first.event, Some(proto::terminal_output::Event::Ready(_))),
+            "probe terminal was not ready"
+        );
+        Ok(Self { sender, stream })
+    }
+
+    async fn input(&self, command: &[u8]) -> anyhow::Result<()> {
+        self.sender
+            .send(proto::TerminalInput {
+                action: Some(proto::terminal_input::Action::Input(command.to_vec())),
+            })
+            .await?;
+        Ok(())
+    }
+
+    async fn marker(&mut self, marker: &[u8]) -> anyhow::Result<()> {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let mut output = Vec::new();
+            while let Some(message) = self.stream.message().await? {
+                match message.event {
+                    Some(proto::terminal_output::Event::Output(data)) => {
+                        output.extend(data.data);
+                        ensure!(output.len() <= 1 << 20, "probe output exceeded its limit");
+                        if output.windows(marker.len()).any(|window| window == marker) {
+                            return Ok(());
+                        }
+                    }
+                    Some(proto::terminal_output::Event::Error(error)) => {
+                        anyhow::bail!("probe terminal: {error}")
+                    }
+                    Some(proto::terminal_output::Event::ExitCode(code)) => {
+                        anyhow::bail!("probe terminal exited: {code}")
+                    }
+                    _ => {}
+                }
+            }
+            anyhow::bail!("probe terminal closed before marker")
+        })
+        .await
+        .context("probe marker timed out")?
+    }
+
+    async fn ping(&mut self) -> anyhow::Result<Duration> {
+        let started = Instant::now();
+        self.sender
+            .send(proto::TerminalInput {
+                action: Some(proto::terminal_input::Action::Ping(proto::Empty {})),
+            })
+            .await?;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(message) = self.stream.message().await? {
+                match message.event {
+                    Some(proto::terminal_output::Event::Pong(_)) => return Ok(started.elapsed()),
+                    Some(proto::terminal_output::Event::Error(error)) => {
+                        anyhow::bail!("probe heartbeat: {error}")
+                    }
+                    Some(proto::terminal_output::Event::ExitCode(code)) => {
+                        anyhow::bail!("probe terminal exited: {code}")
+                    }
+                    _ => {}
+                }
+            }
+            anyhow::bail!("probe terminal closed before heartbeat")
+        })
+        .await
+        .context("probe heartbeat timed out")?
+    }
+}
+
+async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
+    let started = Instant::now();
+    let mut terminal = TerminalProbe::open(rpc, "fixture-responsiveness").await?;
+    terminal
+        .input(b"printf '\\036TENGRI_OUTPUT_READY\\037'\n")
+        .await?;
+    terminal.marker(b"\x1eTENGRI_OUTPUT_READY\x1f").await?;
+    let first_output_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let started = Instant::now();
+    terminal.input(b"nvim /tmp/tengri-kvm-editor.txt +\"lua vim.schedule(function() vim.cmd('redraw'); io.stderr:write(string.char(30)..'TENGRI_EDITOR_READY'..string.char(31)); io.stderr:flush() end)\"; printf '\\036TENGRI_EDITOR_EXIT\\037'\n").await?;
+    terminal.marker(b"\x1eTENGRI_EDITOR_READY\x1f").await?;
+    let editor_ms = started.elapsed().as_secs_f64() * 1000.0;
+    terminal.input(b"\x1b:qall!\r").await?;
+    terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
+    terminal.input(b"timeout 8s sh -c 'while :; do dd if=/dev/zero of=/workspace/.tengri-kvm-io bs=1M count=16 conv=fdatasync status=none || exit 1; done' >/tmp/tengri-kvm-io.log 2>&1 & TENGRI_IO=$!; printf '\\036TENGRI_IO_READY\\037'; wait \"$TENGRI_IO\"; TENGRI_IO_RESULT=$?; rm -f /workspace/.tengri-kvm-io; printf '\\036TENGRI_IO_END_%s\\037' \"$TENGRI_IO_RESULT\"\n").await?;
+    terminal.marker(b"\x1eTENGRI_IO_READY\x1f").await?;
+    let mut heartbeats = Vec::with_capacity(50);
+    let mut peak_workers = 0;
+    for _ in 0..50 {
+        heartbeats.push(terminal.ping().await?.as_secs_f64() * 1000.0);
+        peak_workers = peak_workers.max(uring_workers().await?);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    terminal.marker(b"\x1eTENGRI_IO_END_124\x1f").await?;
+    heartbeats.sort_by(f64::total_cmp);
+    let p95_ms = heartbeats[47];
+    let pids_limit = fs::read_to_string("/sys/fs/cgroup/pids.max").await?;
+    ensure!(
+        pids_limit.trim() == "512",
+        "fixture PID limit is not enforced"
+    );
+    ensure!(
+        peak_workers > 0 && peak_workers <= 16,
+        "io_uring worker count is outside the two-drive bound: {peak_workers}"
+    );
+    ensure!(
+        first_output_ms < 300.0,
+        "awake terminal output took {first_output_ms:.2} ms"
+    );
+    ensure!(
+        editor_ms < 1000.0,
+        "first managed Neovim screen took {editor_ms:.2} ms"
+    );
+    ensure!(
+        p95_ms < 100.0,
+        "terminal heartbeat p95 under disk activity was {p95_ms:.2} ms"
+    );
+    terminal
+        .sender
+        .send(proto::TerminalInput {
+            action: Some(proto::terminal_input::Action::Terminate(proto::Empty {})),
+        })
+        .await?;
+    Ok(
+        json!({"terminalFirstOutputMs":first_output_ms,"neovimFirstScreenMs":editor_ms,
+        "heartbeatSamples":50,"heartbeatP95Ms":p95_ms,"heartbeatMaxMs":heartbeats[49],
+        "heartbeatMs":heartbeats,"peakUringWorkers":peak_workers,"workerCgroupVerified":true,"pidsMax":512,
+        "storageActivity":"eight seconds of repeated 16 MiB guest writes with fdatasync on the fixture home disk"}),
+    )
+}
+
+async fn uring_workers() -> anyhow::Result<usize> {
+    let expected = fs::read_to_string("/proc/self/cgroup").await?;
+    let mut processes = fs::read_dir("/proc").await?;
+    let mut count = 0;
+    while let Some(process) = processes.next_entry().await? {
+        if process
+            .file_name()
+            .to_string_lossy()
+            .parse::<u32>()
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(command) = fs::read(process.path().join("cmdline")).await else {
+            continue;
+        };
+        if !command.starts_with(b"/usr/local/bin/firecracker\0") {
+            continue;
+        }
+        let mut tasks = fs::read_dir(process.path().join("task")).await?;
+        while let Some(task) = tasks.next_entry().await? {
+            let Ok(name) = fs::read_to_string(task.path().join("comm")).await else {
+                continue;
+            };
+            if name.starts_with("iou-wrk-") {
+                let Ok(cgroup) = fs::read_to_string(task.path().join("cgroup")).await else {
+                    continue;
+                };
+                ensure!(
+                    cgroup == expected,
+                    "io_uring worker escaped the fixture cgroup"
+                );
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
+async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
+    let mut terminal = TerminalProbe::open(rpc, "fixture-disk-error").await?;
+    // Fault only the disposable fixture disk, after continuity and browser acceptance.
+    fs::OpenOptions::new()
+        .write(true)
+        .open("/work/slot/home.ext4")
+        .await?
+        .set_len(0)
+        .await?;
+    terminal.input(b"LC_ALL=C sudo -n /usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
+    terminal.marker(b"\x1eTENGRI_DISK_ERROR_OK\x1f").await?;
+    terminal.ping().await?;
+    Ok(())
 }
 
 async fn firecracker_rss() -> anyhow::Result<Option<u64>> {

@@ -193,12 +193,12 @@ const expected = {
       'packages/scripts/src/shared/__tests__/kargo.test.ts',
     ],
   },
-  rune: {
+  'bayn-model': {
     creationCriteria: 'image-revision',
     requiresBuildReceipt: true,
     tagRegex: runQualifiedTagRegex,
-    images: [imageRepo('rune')],
-    apps: ['rune'],
+    images: [imageRepo('bayn-model')],
+    apps: ['bayn-model'],
   },
   restate: {
     creationCriteria: 'single',
@@ -676,11 +676,11 @@ describe('Kargo direct-push GitOps contract', () => {
     ).toBe(source)
   })
 
-  it('promotes the tested Rune image revision after a stack ends beyond its last owned path', () => {
+  it('promotes the tested Bayn model image revision after a stack ends beyond its last owned path', () => {
     const source = '21c7541cea499b753c4003bab998ac1e2818239b'
     const filteredAncestor = '31ee20b0b6e90b534dec72e7e420cee3d1c1ce68'
     const run = '37271710194'
-    const warehouse = byName(warehouses).get('rune')
+    const warehouse = byName(warehouses).get('bayn-model')
     const expression = warehouse?.spec?.freightCreationCriteria?.expression
     const image = {
       Tag: `kargo-sha-${source}-run-${run}`,
@@ -720,7 +720,7 @@ describe('Kargo direct-push GitOps contract', () => {
       expect(evaluate({ ...image, Annotations: annotations })).toBe(false)
     }
 
-    const stage = byName(stages).get('rune')
+    const stage = byName(stages).get('bayn-model')
     const clone = stage?.spec?.promotionTemplate?.spec?.steps.find(
       (step: Record<string, any>) => step.uses === 'git-clone',
     )
@@ -729,7 +729,7 @@ describe('Kargo direct-push GitOps contract', () => {
       runInNewContext(
         sourceExpression,
         {
-          vars: { imageRepo: imageRepo('rune'), gitRepo },
+          vars: { imageRepo: imageRepo('bayn-model'), gitRepo },
           imageFrom: () => image,
           commitFrom: () => ({ ID: filteredAncestor }),
         },
@@ -925,7 +925,8 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('aligns each product Warehouse source paths with its exact image build filter', () => {
     expect(productNixWorkflow.concurrency).toEqual({
-      group: 'product-nix-images-${{ github.event.pull_request.number || github.run_id }}',
+      group:
+        "product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}",
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
 
@@ -952,19 +953,37 @@ describe('Kargo direct-push GitOps contract', () => {
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(sourcePaths).toEqual(buildPaths)
+      expect(
+        event === 'push' ? sourcePaths : sourcePaths.filter((path: string) => !path.endsWith('/kargo.test.ts')),
+      ).toEqual(buildPaths)
     }
   })
 
-  it.each(['pull_request', 'push'])('limits Rune %s builds to its owned inputs', (event) => {
-    const workflow = YAML.parse(readRepoFile('.github/workflows/rune-images.yml'))
+  it('tests the exact pinned Bayn vLLM server used beside the promoted provisioner', () => {
+    const deployment = YAML.parse(readRepoFile('argocd/applications/bayn-model/deployment.yaml'))
+    const workflow = YAML.parse(readRepoFile('.github/workflows/bayn-model-images.yml'))
+    const servingContract = workflow.jobs.build.steps.find(
+      (step: { env?: { VLLM_IMAGE?: string } }) => step.env?.VLLM_IMAGE !== undefined,
+    )
+    expect(servingContract.env.VLLM_IMAGE).toBe(deployment.spec.template.spec.containers[0].image)
+    expect(
+      deployment.spec.template.spec.containers[0].env.find(
+        (entry: { name: string }) => entry.name === 'BAYN_MODEL_SERVING_IMAGE',
+      ).value,
+    ).toBe(servingContract.env.VLLM_IMAGE.split('@')[1])
+    expect(deployment.spec.template.spec.initContainers[0].image).toBe(`${imageRepo('bayn-model')}:unpromoted`)
+    expect(deployment.spec.template.spec.containers[0].command).toEqual(['python3', '/opt/bayn-model/serve.py'])
+  })
+
+  it.each(['pull_request', 'push'])('limits Bayn model %s builds to its owned inputs', (event) => {
+    const workflow = YAML.parse(readRepoFile('.github/workflows/bayn-model-images.yml'))
     const paths = workflow.on[event].paths.map((path: string) => new Glob(path))
     const triggersBuild = (path: string) => paths.some((glob: Glob) => glob.match(path))
 
     for (const path of [
-      'services/rune/Dockerfile',
-      '.github/workflows/rune-images.yml',
-      'argocd/applications/rune/deployment.yaml',
+      'services/bayn-model/Dockerfile',
+      '.github/workflows/bayn-model-images.yml',
+      'argocd/applications/bayn-model/deployment.yaml',
     ]) {
       expect(triggersBuild(path), path).toBe(true)
     }
@@ -1067,7 +1086,7 @@ describe('Kargo direct-push GitOps contract', () => {
       })
       expect(push?.config?.force).toBeUndefined()
 
-      if (['jangar', 'symphony', 'torghut', 'rune'].includes(stageName)) {
+      if (['jangar', 'symphony', 'torghut', 'bayn-model'].includes(stageName)) {
         const commit = steps.find((step) => step.uses === 'git-commit')
         expect(commit?.config?.message).toContain(
           contract.creationCriteria === 'image-revision'
@@ -1101,7 +1120,7 @@ describe('Kargo direct-push GitOps contract', () => {
               ? '1h15m0s'
               : ['forgejo', 'devbox'].includes(stageName)
                 ? '45m0s'
-                : stageName === 'rune'
+                : stageName === 'bayn-model'
                   ? '4h0m0s'
                   : '20m0s',
         errorThreshold: 3,
@@ -1206,6 +1225,14 @@ describe('Kargo direct-push GitOps contract', () => {
         expect.arrayContaining(keys),
       )
     }
+    expectYamlUpdate(
+      'arc-runner',
+      './out/argocd/applications/arc/application.yaml',
+      [1, 2, 3].flatMap((index) => [
+        `spec.sources.${index}.helm.valuesObject.template.spec.initContainers.0.image`,
+        `spec.sources.${index}.helm.valuesObject.template.spec.containers.0.image`,
+      ]),
+    )
     expectYamlUpdate('bumba', './out/argocd/applications/bumba/deployment.yaml', [
       'spec.template.spec.containers.0.env.6.value',
     ])

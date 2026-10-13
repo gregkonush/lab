@@ -55,8 +55,6 @@ import {
   WorkerMarketProjectionLive,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
-import { makeResearchCaptureSession, type ResearchCaptureSession } from '../research-capture/session'
-import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -672,17 +670,11 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   }
 }
 
-export const prewarmNativeMarketProjection = <E, R>(
-  capture: ResearchCaptureSession | undefined,
-  projection: Layer.Layer<KafkaMarketProjection, E, R>,
-) =>
-  // A configured capture retains its existing lazy recorder/consumer ownership and bootstrap evidence.
-  capture !== undefined
-    ? Effect.succeed(null)
-    : Layer.build(projection).pipe(
-        Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
-        Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
-      )
+export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<KafkaMarketProjection, E, R>) =>
+  Layer.build(projection).pipe(
+    Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+    Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
+  )
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -692,23 +684,9 @@ export const acquireNativeExecutionRuntime = (
     const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
     const config: ExecutionControllerConfig =
       previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
-    const requestedCapture = yield* researchCaptureSessionConfig.pipe(Effect.result)
-    const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
-    const capture =
-      decodedCapture !== undefined && Result.isSuccess(decodedCapture)
-        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision).pipe(
-            Effect.catchCause(() =>
-              Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
-                Effect.as(undefined),
-              ),
-            ),
-          )
-        : undefined
-    if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
-      yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
-    const prewarmedProjection = yield* prewarmNativeMarketProjection(capture, WorkerMarketProjectionLive(plan))
+    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
-      AutonomousWorkerApplicationResourcesLive(plan, capture, prewarmedProjection ?? undefined),
+      AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
     ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
     const executionResources = Layer.merge(
@@ -734,5 +712,5 @@ export const acquireNativeExecutionRuntime = (
       logManaged,
       config.planHash,
     )
-    return { config, runtime: capture === undefined ? runtime : { ...runtime, capture: capture.observer } }
+    return { config, runtime }
   })

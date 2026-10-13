@@ -123,17 +123,17 @@ describe('Bayn cycle operations alert contract', () => {
     expect(kubeStateMetricsSource).toContain('name: deployment_spec_replicas')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
     const baynLogDiscovery = /discovery\.kubernetes "bayn_log_pods" \{(.*?)\n\}/s.exec(alloy)?.[1]
-    expect(baynLogDiscovery).toContain('names = ["bayn"]')
+    expect(baynLogDiscovery).toContain('names = ["bayn", "bayn-model"]')
     expect(baynLogDiscovery).not.toContain('app.kubernetes.io/part-of')
     const baynContainerKeepRule =
       /source_labels = \["__meta_kubernetes_pod_container_name"\]\s+regex\s+=\s+"([^"]+)"/s.exec(alloy)?.[1]
     if (baynContainerKeepRule === undefined) throw new Error('Bayn container log keep rule is missing')
     const retainedBaynContainer = new RegExp(`^(?:${baynContainerKeepRule})$`)
     expect(
-      ['bayn', 'execution-controller', 'activate', 'postgres'].filter((container) =>
+      ['bayn', 'execution-controller', 'activate', 'postgres', 'vllm', 'provision-model'].filter((container) =>
         retainedBaynContainer.test(container),
       ),
-    ).toEqual(['bayn', 'execution-controller', 'activate', 'postgres'])
+    ).toEqual(['bayn', 'execution-controller', 'activate', 'postgres', 'vllm', 'provision-model'])
     expect(
       ['lifecycle', 'register', 'egress-proxy'].filter((container) => retainedBaynContainer.test(container)),
     ).toEqual([])

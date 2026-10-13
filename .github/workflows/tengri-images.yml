@@ -2,9 +2,19 @@ name: Tengri images
 
 on:
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
     paths:
       - 'services/tengri/**'
+      - 'services/ofz/src/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
+      - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
+      - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
@@ -16,7 +26,16 @@ on:
     paths:
       - 'apps/landing/**'
       - 'services/tengri/**'
+      - 'services/ofz/src/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
+      - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
+      - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
@@ -33,7 +52,7 @@ on:
         default: '3'
 
 concurrency:
-  group: tengri-images-${{ github.ref }}
+  group: tengri-images-${{ github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
   cancel-in-progress: true
 
 permissions:
@@ -45,8 +64,9 @@ env:
 
 jobs:
   validate-tengri:
+    if: github.event.action != 'edited' || github.event.changes.base
     name: Validate Tengri
-    runs-on: arc-amd64
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -58,16 +78,34 @@ jobs:
           toolchain: 1.90.0
           components: clippy,rustfmt
 
+      - name: Cache validation Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tengri-validation
+          workspaces: |
+            services/tengri -> target
+            services/ofz -> target
       - name: Install native build tools
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
 
-      - name: Set up Go for guest interoperability
+      - name: Set up Go for seccomp and guest interoperability
         uses: actions/setup-go@v6
         with:
-          go-version-file: services/nanoagent/go.mod
-          cache-dependency-path: services/nanoagent/go.sum
+          go-version-file: services/tengri/seccomp/go.mod
+          cache-dependency-path: |
+            services/nanoagent/go.sum
+            services/tengri/seccomp/go.sum
+
+      - name: Validate native runner seccomp profile
+        working-directory: services/tengri/seccomp
+        env:
+          GOWORK: 'off'
+        run: |
+          set -euo pipefail
+          go test .
+          go run . | diff -u ../../../devices/galactic/omni/tengri-runner-amd64.json -
 
       - name: Validate controller and generated CRD
         working-directory: services/tengri
@@ -76,15 +114,16 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
-          bash test-authz.sh
+          bash test-runtime.sh
           bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
 
   validate-nanoagent:
+    if: github.event.action != 'edited' || github.event.changes.base
     name: Validate Nanoagent
-    runs-on: arc-amd64
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -115,6 +154,7 @@ jobs:
           bash -n bootstrap-codex.sh
           bash -n bootstrap-toolchain.sh
           bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
+          bash -n build-editor.sh launch-editor.sh test-editor-bundle.sh
           bash -n validate-rootfs.sh validate-rootfs.test.sh
           bash -n build-boot-artifacts.sh tengri-init.sh
           bash validate-rootfs.test.sh
@@ -128,6 +168,10 @@ jobs:
           GOWORK=off go vet ./...
 
   build:
+    if: >-
+      (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.base.ref == github.event.repository.default_branch && !github.event.pull_request.draft))
     name: Build ${{ matrix.service }} (${{ matrix.architecture }})
     timeout-minutes: 75
     strategy:
@@ -168,6 +212,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
           platforms: linux/${{ matrix.architecture }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
@@ -197,6 +244,8 @@ jobs:
             --file services/tengri/Dockerfile --target kvm-test \
             --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64" \
             --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64" \
+            --build-context ofz-proto=proto \
+            --build-context ofz-catalog=services/ofz \
             --build-context nanoagent-tests=.artifacts/nanoagent-tests \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag tengri-kvm-test:fixture services/tengri
@@ -214,6 +263,8 @@ jobs:
           if [[ "$SERVICE" == tengri ]]; then
             image=tengri-kvm-test:fixture
             cp services/tengri/test-kvm.sh .artifacts/kvm-fixture/
+            jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+              devices/galactic/omni/tengri-runner-amd64.json > .artifacts/kvm-fixture/runner-seccomp.json
           fi
           docker save "$image" | gzip -1 > ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz"
           config_path="$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" manifest.json | \
@@ -230,7 +281,7 @@ jobs:
           cd .artifacts/kvm-fixture
           sha256sum "${SERVICE}-images.tar.gz" "${SERVICE}.json" > "${SERVICE}-SHA256SUMS"
           if [[ "$SERVICE" == tengri ]]; then
-            sha256sum test-kvm.sh >> "${SERVICE}-SHA256SUMS"
+            sha256sum test-kvm.sh runner-seccomp.json >> "${SERVICE}-SHA256SUMS"
           fi
 
       - name: Retain native KVM fixture image
@@ -261,8 +312,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install execution network tools
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2
+      - name: Set up Rust for the owning Ofz migrator
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Install execution network and fixture build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2 build-essential protobuf-compiler openssl
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -297,6 +353,8 @@ jobs:
           load: true
           tags: tengri-kvm-test:validation
           build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
             nanoagent-tests=docker-image://${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: |
             type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
@@ -309,7 +367,12 @@ jobs:
           TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
           TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
           TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
-        run: bash services/tengri/test-kvm.sh
+          TENGRI_KVM_SECCOMP: ${{ github.workspace }}/.artifacts/runner-seccomp.json
+        run: |
+          mkdir -p .artifacts
+          jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+            devices/galactic/omni/tengri-runner-${{ matrix.architecture }}.json > "$TENGRI_KVM_SECCOMP"
+          bash services/ofz/test-control.sh kvm
 
       - name: Retain KVM diagnostics
         if: always()

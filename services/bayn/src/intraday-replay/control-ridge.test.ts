@@ -1,3 +1,4 @@
+import { makeJevEntryQuery } from '../jev/observation-query'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
@@ -22,13 +23,7 @@ import {
   selectBoundRidge,
 } from './control-ridge'
 import { ControlPolicy, ControlStudyFailure } from './control-portfolio'
-import {
-  ControlManagementMode,
-  makeControlEntryQuery,
-  runControlSession,
-  runControlStudy,
-  type ControlMarket,
-} from './control-study'
+import { ControlManagementMode, runControlSession, runControlStudy, type ControlMarket } from './control-study'
 import { runControlPreflight } from './control-preflight'
 import { sixBarResearchDefinition, SixBarResearchStatus } from './six-bar-features'
 import {
@@ -201,7 +196,7 @@ const fixture = (
     }
     const bound = yield* Effect.fromResult(prepareBoundRidge(input, context))
     const actualCapture = { ...captured, source: { ...captured.source, sourceManifestHash: hash(source) } }
-    const query = makeControlEntryQuery({
+    const query = makeJevEntryQuery({
       protocol,
       calendar: executionCalendar,
       sessionDate: '2026-09-04',
@@ -482,7 +477,9 @@ test.each(['cash', 'filled'] as const)(
         })
         const receipt = yield* Effect.fromResult(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
         const input = {
-          schemaVersion: 'bayn.control-study-input.v6',
+          schemaVersion: 'bayn.control-study-input.v7',
+          entry: 'DETERMINISTIC',
+          repeatedTargetWeightPpm: 100000,
           management: ControlManagementMode.Mechanical,
           decisionLatencyMs: 1000,
           turnoverPolicy: data.context.turnoverPolicy,
@@ -524,7 +521,7 @@ test.each(['cash', 'filled'] as const)(
           },
         }
         const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-        expect(report.schemaVersion).toBe('bayn.control-study-report.v5')
+        expect(report.schemaVersion).toBe('bayn.control-study-report.v6')
         expect(report.sessions.map((result) => result.policy)).toEqual([
           ControlPolicy.Ridge,
           ControlPolicy.TrainingMean,
@@ -628,7 +625,6 @@ const simulate = (
       decisionLatencyMs: 1000,
       pollIntervalMs: data.context.pollIntervalMs,
       turnoverPolicy: data.context.turnoverPolicy,
-      accountScheduledOpportunities: true,
       assumptions,
       eligibleSymbols: new Set(protocol.candidateSymbols),
       market,

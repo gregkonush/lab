@@ -203,7 +203,7 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
   const ready = incorporateMarketRecord(base, record(), universe, end + 2200)
   expect(select(ready).technical?.features[0]?.value).toEqual(feature)
   expect(select(ready).technical?.unavailableSymbols).toEqual([])
-  expect(summarizeStreamingSymbol(ready, 'AAPL').technical?.matchedFeatures[0]).toMatchObject({
+  expect(summarizeStreamingSymbol(ready, 'AAPL', observed).technical?.matchedFeatures[0]).toMatchObject({
     featureId: feature.featureId,
     matchedRawBars: 30,
     values: feature.material.values,
@@ -218,7 +218,7 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
     end + 2400,
   )
   expect(select(conflict).technical?.features).toHaveLength(0)
-  expect(summarizeStreamingSymbol(conflict, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
+  expect(summarizeStreamingSymbol(conflict, 'AAPL', observed).technical?.matchedFeatures).toHaveLength(0)
   const malformed = incorporateMarketRecord(ready, { ...record('2'), value: '{' }, universe, end + 2400)
   const discarded = {
     ...ready,
@@ -226,7 +226,7 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
   }
   for (const invalidated of [malformed, discarded]) {
     expect(select(invalidated).technical?.features).toHaveLength(0)
-    expect(summarizeStreamingSymbol(invalidated, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
+    expect(summarizeStreamingSymbol(invalidated, 'AAPL', observed).technical?.matchedFeatures).toHaveLength(0)
   }
   expect(select(conflict).featureReceipts).toEqual(select(base).featureReceipts)
   const wrong = { ...feature.material, universeId: 'other' }
@@ -265,7 +265,9 @@ test('a valid technical record after an evicted rejection in the same millisecon
   expect(select(state).technical?.features).toHaveLength(0)
   const recovered = incorporateMarketRecord(state, record('257'), universe, end + 2200)
   expect(select(recovered).technical?.features[0]?.value.featureId).toBe(feature.featureId)
-  expect(summarizeStreamingSymbol(recovered, 'AAPL').technical?.matchedFeatures[0]?.featureId).toBe(feature.featureId)
+  expect(summarizeStreamingSymbol(recovered, 'AAPL', observed).technical?.matchedFeatures[0]?.featureId).toBe(
+    feature.featureId,
+  )
 })
 
 test('a new technical revision supersedes the previous value before matching raw correction arrives', () => {
@@ -278,7 +280,7 @@ test('a new technical revision supersedes the previous value before matching raw
   const waiting = incorporateMarketRecord(ready, record('1', corrected), universe, end + 2500)
   expect(select(waiting).technical?.features).toHaveLength(0)
   expect(select(waiting).technical?.unavailableSymbols).toEqual(['AAPL'])
-  expect(summarizeStreamingSymbol(waiting, 'AAPL').technical?.matchedFeatures).toHaveLength(0)
+  expect(summarizeStreamingSymbol(waiting, 'AAPL', observed).technical?.matchedFeatures).toHaveLength(0)
   const earlier = Result.getOrThrow(
     selectStreamingInputs(waiting, { ...query, observedAt: new Date(end + 2400).toISOString() }),
   )
@@ -304,9 +306,9 @@ test('a new technical revision supersedes the previous value before matching raw
     end + 2700,
   )
   expect(select(updated).technical?.features[0]?.value.featureId).toBe(corrected.featureId)
-  expect(summarizeStreamingSymbol(updated, 'AAPL').technical?.matchedFeatures.map((value) => value.featureId)).toEqual([
-    corrected.featureId,
-  ])
+  expect(
+    summarizeStreamingSymbol(updated, 'AAPL', observed).technical?.matchedFeatures.map((value) => value.featureId),
+  ).toEqual([corrected.featureId])
 })
 
 test('rolling regeneration time cannot admit technical records computed after their arrival', () => {

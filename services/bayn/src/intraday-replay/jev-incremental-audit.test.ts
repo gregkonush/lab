@@ -237,13 +237,15 @@ test('real lifecycle and summary can favor Jev selection while immediate momentu
       momentumSymbol: 'AAPL',
       modelAvailable: true,
       jev,
-      momentum: delayed,
+      delayedMomentum: delayed,
+      immediateMomentum: immediate,
+      timingAvailable: true,
       inferenceCostMicros: '1000000',
       sharedOperatingCostMicros: '0',
     })),
     [],
   )
-  expect(summary.recommendation).toBe(MatchedRecommendation.TestPortfolio)
+  expect(summary.recommendation).toBe(MatchedRecommendation.Stop)
   const net = (outcome: typeof immediate) => {
     if (outcome.netExecutionPnlMicros === null) throw new Error('Expected complete synthetic outcome')
     return BigInt(outcome.netExecutionPnlMicros)
@@ -271,7 +273,9 @@ test('missing post-entry observations cannot be dropped after seeing model selec
         momentumSymbol: 'AAPL',
         modelAvailable: true,
         jev: incomplete,
-        momentum: complete,
+        delayedMomentum: complete,
+        immediateMomentum: complete,
+        timingAvailable: true,
         inferenceCostMicros: '1000000',
         sharedOperatingCostMicros: '0',
       },
@@ -279,7 +283,7 @@ test('missing post-entry observations cannot be dropped after seeing model selec
     [],
   )
   expect(summary.completion).toBe('INCOMPLETE')
-  expect(summary.means.incrementalBudgetReturnBps).toBeNull()
+  expect(summary.means.totalBudgetReturnBps).toBeNull()
 })
 
 test('an earlier abstention changes the next opportunity through each portfolio own inventory', () => {
