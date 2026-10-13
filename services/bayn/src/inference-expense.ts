@@ -61,6 +61,18 @@ export const InferenceExpenseQuoteSchema = Schema.Struct({
 })
 export type InferenceExpenseQuote = typeof InferenceExpenseQuoteSchema.Type
 
+export enum InferenceExpenseCoverageIssue {
+  MissingQuote = 'MISSING_FROZEN_QUOTE',
+  UnverifiedLedger = 'UNVERIFIED_LEDGER',
+  UnknownUsage = 'UNKNOWN_USAGE',
+  UnpricedUsage = 'UNPRICED_USAGE',
+}
+
+type InferenceExpenseRequestCoverage = Pick<
+  InferenceExpenseQuote['line'],
+  'requestId' | 'model' | 'purpose' | 'usageStatus' | 'receiptHash' | 'resolutionHash'
+> & { readonly issues: readonly InferenceExpenseCoverageIssue[] }
+
 export const makeInferenceExpenseQuote = (
   source: InferenceExpenseSource,
   rateCard: {
@@ -229,21 +241,44 @@ export const verifyInferenceExpenseCoverage = (
     let missingQuoteCount = 0
     let unverifiedRequestCount = 0
     let gapRequestCount = 0
+    const requestsWithCoverageIssues: InferenceExpenseRequestCoverage[] = []
     for (const line of original.requests) {
+      const issues: InferenceExpenseCoverageIssue[] = []
       const matches = (byRequest.get(line.requestId) ?? []).filter(
         (row) => row.quote.line.receiptHash === line.receiptHash,
       )
       if (matches.length === 0) {
         missingQuoteCount++
-        continue
+        issues.push(InferenceExpenseCoverageIssue.MissingQuote)
+      } else {
+        const current = matches[0]
+        if (matches.length !== 1 || current === undefined)
+          return yield* Result.fail(
+            new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
+          )
+        if (current.verifiedAt === null) {
+          unverifiedRequestCount++
+          issues.push(InferenceExpenseCoverageIssue.UnverifiedLedger)
+        }
+        if (current.quote.line.estimatedCostPicoUsd === null) {
+          gapRequestCount++
+          issues.push(
+            current.quote.line.usageStatus === InferenceUsageStatus.Unknown
+              ? InferenceExpenseCoverageIssue.UnknownUsage
+              : InferenceExpenseCoverageIssue.UnpricedUsage,
+          )
+        }
       }
-      const current = matches[0]
-      if (matches.length !== 1 || current === undefined)
-        return yield* Result.fail(
-          new InferenceCostError({ message: 'Inference expense request has conflicting frozen coverage' }),
-        )
-      if (current.verifiedAt === null) unverifiedRequestCount++
-      if (current.quote.line.estimatedCostPicoUsd === null) gapRequestCount++
+      if (issues.length > 0)
+        requestsWithCoverageIssues.push({
+          requestId: line.requestId,
+          model: line.model,
+          purpose: line.purpose,
+          usageStatus: line.usageStatus,
+          receiptHash: line.receiptHash,
+          resolutionHash: line.resolutionHash,
+          issues,
+        })
     }
     return {
       sourceAsOf: evidence.asOf,
@@ -251,6 +286,7 @@ export const verifyInferenceExpenseCoverage = (
       missingQuoteCount,
       unverifiedRequestCount,
       gapRequestCount,
+      requestsWithCoverageIssues,
       completeMeteredCoverage: missingQuoteCount === 0 && unverifiedRequestCount === 0 && gapRequestCount === 0,
     }
   })

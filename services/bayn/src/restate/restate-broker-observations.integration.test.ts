@@ -39,7 +39,7 @@ const waitFor = (check: () => Effect.Effect<boolean, unknown>) =>
   )
 
 describeRestate('Real Restate broker observation journal', () => {
-  test('private RPC, delayed polls, duplicate invocation and endpoint restart retain one owner', async () => {
+  test('private RPC, delayed polls, duplicate invocation and eager-state migration retain one owner', async () => {
     if (admin === undefined || ingress === undefined) throw new Error('Missing local Restate URLs')
     for (const target of [admin, ingress]) {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(target).hostname))
@@ -83,7 +83,10 @@ describeRestate('Real Restate broker observation journal', () => {
           }),
       },
     })
-    const handler = restate.createEndpointHandler({ services: [makeObserved(), bridge] })
+    const initial = makeObserved()
+    const handler = restate.createEndpointHandler({
+      services: [{ ...initial, options: { ...initial.options, enableLazyState: true } }, bridge],
+    })
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
@@ -151,7 +154,8 @@ describeRestate('Real Restate broker observation journal', () => {
           yield* Effect.sleep('1200 millis')
           const restarted = createServer(restate.createEndpointHandler({ services: [makeObserved(), bridge] }))
           yield* acquireRestateHttp2Server(restarted, address.port)
-          yield* waitFor(() => invoke('status').pipe(Effect.map(() => polls > beforeRestart)))
+          yield* json(`${admin}/deployments`, { uri: `http://host.docker.internal:${address.port}`, force: true })
+          yield* waitFor(() => invoke('status').pipe(Effect.map(() => polls >= beforeRestart + 2)))
           expect(activations).toBe(1)
           expect(polls).toBeGreaterThan(beforeRestart)
           const metrics = yield* json(
@@ -171,7 +175,20 @@ describeRestate('Real Restate broker observation journal', () => {
           )
           const journalSize = metrics.rows[0]?.journal_size
           expect(journalSize).toBeDefined()
-          expect(journalSize).toBeLessThanOrEqual(16)
+          expect(journalSize).toBeLessThanOrEqual(13)
+          const stateReads = yield* json(
+            `${admin}/query`,
+            {
+              query: `SELECT COUNT(*) AS lazy_state_reads FROM sys_journal
+                WHERE entry_type = 'Command: GetLazyState' AND id IN (
+                  SELECT id FROM sys_invocation WHERE target_service_name = 'BaynBrokerObservations'
+                    AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'poll'
+                    AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 1
+                )`,
+            },
+            { accept: 'application/json' },
+          )
+          expect(stateReads).toEqual({ rows: [{ lazy_state_reads: 0 }] })
           process.stdout.write(`BROKER_OBSERVATION_JOURNAL_SIZE=${journalSize}\n`)
         }),
       ),
