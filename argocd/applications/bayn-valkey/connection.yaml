@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-valkey-connection
+data:
+  VALKEY_HOST: bayn-valkey.bayn.svc.cluster.local
+  VALKEY_PORT: "6379"
+  VALKEY_USERNAME: default
+  VALKEY_TLS_SERVER_NAME: bayn-valkey.bayn
+  VALKEY_CLUSTER_MODE: "true"
+  VALKEY_PASSWORD_SECRET: bayn-valkey-auth
+  VALKEY_CLIENT_TLS_SECRET: bayn-valkey-client-tls
