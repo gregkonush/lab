@@ -42,7 +42,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - >
-              if (Date.now() + 3_600_000 >= Date.parse('2026-10-13T13:00:00Z')) {
+              if (Date.now() + 3_600_000 >= Date.parse('2026-10-13T22:15:00Z')) {
                 throw new Error('Recovery start deadline passed; preserving the next scheduled writer window')
               }
 
