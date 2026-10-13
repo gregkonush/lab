@@ -3,6 +3,8 @@ kind: Job
 metadata:
   name: bayn-valkey-acceptance-v3
   annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-wave: "2"
 spec:
   backoffLimit: 2

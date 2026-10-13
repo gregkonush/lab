@@ -37,11 +37,18 @@ A synced SealedSecret does not prove User admission.
 
 ## Acceptance
 
-The bounded, tokenless `bayn-valkey-acceptance-v3` Job uses only the application
-credential. It writes to the primary, waits for one replica acknowledgement on
+The bounded, tokenless `bayn-valkey-acceptance-v3` Sync hook uses only the
+application credential. It writes to the primary, waits for one replica acknowledgement on
 the same connection, reads the replicated value and removes the synthetic key.
 It also checks key-prefix rejection and rejection without a password. Keys
 expire after ten minutes if the Job is interrupted.
+
+`BeforeHookCreation` recreates an earlier completed or failed attempt on the
+next full Application sync. If startup exceeds the five-minute Job deadline,
+let the operator recover, then run a full reviewed sync of `bayn-valkey` to
+rerun acceptance. Do not use a `--resource` selective sync for this check:
+[Argo hooks do not run during selective sync](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/#hook-lifecycle-and-cleanup).
+Successful Job history stays available until the next attempt.
 
 ```sh
 kustomize build argocd/applications/bayn-valkey > /tmp/bayn-valkey.yaml
