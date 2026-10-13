@@ -37,6 +37,7 @@ pub const CLAIM_UID_HEADER: &str = "x-tengri-microvm-uid";
 pub const CLAIM_EPOCH_HEADER: &str = "x-tengri-claim-epoch";
 pub const LEADER_OWNER_HEADER: &str = "x-tengri-leader-owner";
 pub const LEADER_GENERATION_HEADER: &str = "x-tengri-leader-generation";
+pub(crate) const READINESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Clone)]
 struct Supervisor {
@@ -251,7 +252,7 @@ async fn readiness(
         );
         Ok::<(), anyhow::Error>(())
     };
-    match tokio::time::timeout(std::time::Duration::from_secs(2), check).await {
+    match tokio::time::timeout(READINESS_TIMEOUT, check).await {
         Ok(Ok(())) => StatusCode::OK,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     }

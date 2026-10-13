@@ -165,7 +165,7 @@ pub fn build_slot_pod(
                 "ports": [{"name": "guest-api", "containerPort": 8443}, {"name": "health", "containerPort": 8080}],
                 "securityContext": restricted,
                 "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "250m", "memory": "128Mi"}},
-                "readinessProbe": {"httpGet": {"path": "/readyz", "port": "health"}, "periodSeconds": 1, "timeoutSeconds": 1, "failureThreshold": 3},
+                "readinessProbe": {"httpGet": {"path": "/readyz", "port": "health"}, "periodSeconds": 1, "timeoutSeconds": 3, "failureThreshold": 3},
                 "livenessProbe": {"httpGet": {"path": "/livez", "port": "health"}, "periodSeconds": 5, "timeoutSeconds": 1, "failureThreshold": 3},
                 "volumeMounts": [{"name": "sockets", "mountPath": "/run/tengri"},
                     {"name": "workload-api", "mountPath": "/spiffe-workload-api", "readOnly": true},
@@ -213,6 +213,37 @@ mod tests {
             .unwrap();
         requests.get_mut("storage").unwrap().0 = "16Gi".into();
         assert!(validate_home(&home).is_err());
+    }
+
+    #[test]
+    fn slot_readiness_probe_covers_supervisor_deadline() {
+        let mut home = build_pvc("tengri", "test-slot");
+        home.metadata.uid = Some("home-uid".into());
+        let pod = build_slot_pod(
+            "tengri",
+            "test-slot",
+            "guest-image",
+            "runtime-image",
+            MicroVMArchitecture::Amd64,
+            &home,
+        );
+        let spec = pod.spec.unwrap();
+        let supervisor = spec
+            .containers
+            .iter()
+            .find(|c| c.name == "supervisor")
+            .unwrap();
+        let probe = supervisor.readiness_probe.as_ref().unwrap();
+        assert_eq!(
+            probe.http_get.as_ref().unwrap().path.as_deref(),
+            Some("/readyz")
+        );
+        let probe_timeout =
+            std::time::Duration::from_secs(probe.timeout_seconds.unwrap().try_into().unwrap());
+        assert!(
+            probe_timeout > crate::slot::supervisor::READINESS_TIMEOUT,
+            "the kubelet must leave time for the supervisor's complete check and response"
+        );
     }
 
     #[test]
