@@ -88,8 +88,9 @@ publication, and the old guest network path after the final old guest and its st
 the host supervisor registration and private vsock credential.
 
 The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
-retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
+is exactly `true`. Keep it false until the authorized cutover has removed the old workspaces and homes and the new
+authority dependencies are ready for the immutable image pair. The owner chose fresh workspaces for this cutover;
+no retained-data import or migration rehearsal is required. Kargo's existing automatic promotion policy remains in place.
 Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
 cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
@@ -238,8 +239,10 @@ are accepted, and zero disables automatic sleep. Manual sleep always releases re
 starts a new idle interval; authenticated activity extends it. Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
-exact-peer SPIFFE registrations and coordinated BFF signing-key rotation. Preserve every retained home UID and fence
-all old writers before activating the new images. Runtime readiness, a healthy Argo Application, and unit tests do not
+exact-peer SPIFFE registrations and coordinated BFF signing-key rotation. The owner authorized deleting the existing
+workspaces and homes for this cutover; they were removed on 2026-10-13. The temporary `tengri-ofz-cutover` admission
+policy and binding prevent old-contract creation until the new authority is deployed. Remove both after verifying
+the new dependencies and images, then prove fresh workspace creation. Runtime readiness, a healthy Argo Application, and unit tests do not
 replace live allow/deny, stream revocation, recovery, history and fleet qualification.
 
 Normal delivery uses the paired image publisher, Kargo, and Argo. Native AMD64/ARM64 guest artifacts contain the
