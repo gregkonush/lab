@@ -11,7 +11,9 @@ spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c4fe8147a4579e7ab4907ff73e03955c83a0498982034ae8c0eed6888c0552cb
   imagePullPolicy: IfNotPresent
-  restartNonce: 15
+  # Cut over from the skewed v2 quote consumer to the repartitioned v3 consumer.
+  # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
+  restartNonce: 14
   flinkVersion: v2_2
   serviceAccount: torghut-runtime
   flinkConfiguration:
