@@ -174,6 +174,9 @@ recovery generation. One mounted 32-byte key encoded as lowercase hexadecimal si
 RPC path, full context and fresh nonce. Tengri reads `TENGRI_INTERNAL_HMAC_KEY_FILE` for each request. There is no
 old owner-header or multi-key protocol. Cutover rotates both peers together while traffic is fenced.
 `OFZ_GRPC_ENDPOINT` is a fixed DNS authority and must present `spiffe://proompteng.ai/ns/ofz/sa/ofz-api`.
+The active controller and BFF manifests both select the namespace-local `tengri-internal-request-key` Secret,
+whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The controller additionally mounts
+`tengri-controller-db` and `ofz-database-ca`. Provision these before promotion; missing credentials fail startup.
 
 `TENGRI_DATABASE_DSN`, `TENGRI_DATABASE_PASSWORD_FILE` and `TENGRI_DATABASE_CA_FILE` select the TLS-only
 `tengri_control` database. Controller and supervisor use separate `tengri_controller` and `tengri_supervisor` roles.
@@ -188,6 +191,10 @@ enabling slot creation during cutover.
 Supervisor readiness checks the shared database schema and runner state together under a two-second deadline.
 A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
 unavailable. Process liveness remains independent of that dependency.
+
+The namespace reserves seven Leases for six slots and the controller election. Its twelve-Secret quota covers
+six slot bootstraps, four Ofz credentials and the two old keys retained until the fenced cutover. NetworkPolicy
+permits the controller to call Ofz on 9443 and both controller and supervisors to reach only Ofz PostgreSQL on 5432.
 
 The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
 are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks

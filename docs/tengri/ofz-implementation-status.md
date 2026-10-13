@@ -124,3 +124,19 @@ and returned HTTP 429 on the seventh request under the corrected configuration. 
 production ingress acceptance remains part of P8. Fifty-seven focused inventory, rollout and ingress checks pass.
 The enabled-app inventory follows declared nested Kustomize inputs, excluding prepared directories until referenced;
 only Ofz's classification changed in the current repository inventory.
+
+## PR 14915 review correction
+
+PR #14908 merged as `b06b8baa3d73af4ba8cd52d0ec3871990797e84c`. The new Ofz API remains excluded from the
+production kustomization. This merge does not establish production authorization or complete the migration.
+
+PR #14915 now includes its matching BFF consumers. Moving signed-context metadata, reservation creation and Ofz
+lifecycle commands out of the later Landing layer makes the breaking runtime contract reviewable together. The
+controller credentials, shared BFF request-key mount, database egress and seventh election Lease are wired in the
+active source manifests. Fixture fixes use the real shared TLS database and canonical opaque preview tickets.
+
+CI now compares the generated schema with the active CRD as well as its preparation copy. The retained-object
+review thread remains unresolved. Live inspection found two pre-contract MicroVMs, one ready and one sleeping,
+with retained homes. Production promotion stays held until their verified enrollment, credential provisioning and
+old-writer fencing are proved together.
+No retained production object was modified by this review correction. Server-side manifest checks use dry-run only.

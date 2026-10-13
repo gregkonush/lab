@@ -97,6 +97,7 @@ jobs:
           bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
           diff -u /tmp/tengri-crd.yaml crd.yaml
+          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
           diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml
 
   validate-nanoagent:

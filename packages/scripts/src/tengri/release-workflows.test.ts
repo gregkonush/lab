@@ -405,6 +405,7 @@ exit 0
     expect(validation).toContain('bash test-rpc-interop.sh')
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
+    expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/prepared/crd.yaml')
   })
 

@@ -57,11 +57,20 @@ spec:
               kubernetes.io/metadata.name: ofz
           podSelector:
             matchLabels:
-              authzed.com/cluster: ofz
-              authzed.com/cluster-component: spicedb
+              app.kubernetes.io/name: ofz-api
       ports:
         - protocol: TCP
-          port: 8443
+          port: 9443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: ofz-db
+      ports:
+        - protocol: TCP
+          port: 5432
     - to:
         - namespaceSelector:
             matchLabels:
@@ -139,6 +148,16 @@ spec:
         - protocol: TCP
           port: 8080
   egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: ofz-db
+      ports:
+        - protocol: TCP
+          port: 5432
     - to:
         - namespaceSelector:
             matchLabels:
