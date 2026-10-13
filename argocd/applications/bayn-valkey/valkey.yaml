@@ -5,7 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: bayn
   annotations:
-    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+    argocd.argoproj.io/sync-options: Prune=true,Delete=false
 spec:
   version: "9.1"
   arch: replica
