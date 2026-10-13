@@ -59,7 +59,19 @@ class ForwarderCryptoTest {
                 subscriptions += subscription
                 val ack = JsonObject(subscription - "action" + ("T" to JsonPrimitive("subscription")))
                 send(Frame.Text(JsonArray(listOf(ack)).toString()))
-                if (path.endsWith("/crypto/us")) send(Frame.Text(payloads.toString()))
+                if (path.endsWith("/crypto/us")) {
+                  val trade = payloads.first().jsonObject
+                  val batch =
+                    JsonArray(
+                      listOf(
+                        payloads.first(),
+                        JsonObject(trade + ("t" to JsonPrimitive("invalid-timestamp"))),
+                        JsonObject(trade + ("T" to JsonObject(emptyMap()))),
+                        JsonObject(trade + ("T" to JsonArray(emptyList()))),
+                      ) + payloads.drop(1),
+                    )
+                  send(Frame.Text(batch.toString()))
+                }
                 awaitCancellation()
               }
             }

@@ -8,6 +8,7 @@ import ai.proompteng.dorvud.platform.decodeCryptoMarketData
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import java.time.DateTimeException
 import java.time.Instant
 
 data class AlpacaCryptoMessage(
@@ -19,6 +20,8 @@ data class AlpacaCryptoMessage(
 internal fun decodeAlpacaCryptoMessage(payload: JsonObject): AlpacaCryptoMessage =
   try {
     AlpacaCryptoMessage(decodeCryptoMarketData(payload))
+  } catch (cause: DateTimeException) {
+    throw SerializationException("invalid Alpaca crypto event", cause)
   } catch (cause: IllegalArgumentException) {
     throw SerializationException("invalid Alpaca crypto event", cause)
   } catch (cause: IllegalStateException) {

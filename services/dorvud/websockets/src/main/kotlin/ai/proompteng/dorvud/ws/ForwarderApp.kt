@@ -676,7 +676,7 @@ class ForwarderApp(
           return messages.mapNotNull { el ->
             try {
               if (feed.config.marketType == AlpacaMarketType.CRYPTO && el is JsonObject &&
-                el["T"]?.jsonPrimitive?.content in setOf("t", "q", "b", "u", "o")
+                (el["T"] as? JsonPrimitive)?.content in setOf("t", "q", "b", "u", "o")
               ) {
                 decodeAlpacaCryptoMessage(el)
               } else {
