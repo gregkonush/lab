@@ -729,10 +729,10 @@ request graph, the full scoped TigerBeetle account and transfer sets, and posted
 quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
 The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
 and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
-`coverage.requestsWithCoverageIssues` identifies each missing quote, unverified ledger acknowledgement, unknown
+The private ledger command's `coverage.requestsWithCoverageIssues` identifies each missing quote, unverified ledger acknowledgement, unknown
 usage or unpriced model with its request ID, purpose and immutable evidence hashes. It excludes account identity
 and model payloads. An abandoned request without a receipt remains an unknown charge; absence of a response cannot
-establish that the provider performed no billable work.
+establish that the provider performed no billable work. The forward-performance summary retains aggregate counts.
 `invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
 expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
 
