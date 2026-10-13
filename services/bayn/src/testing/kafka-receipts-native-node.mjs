@@ -164,12 +164,17 @@ try {
   }
   assert.notEqual(receipts[2].event.rawValueSha256, receipts[3].event.rawValueSha256)
   const objectText = (object) => ({ contentHash: object.contentHash, payload: object.payload.toString('utf8') })
-  const exported = objects.slice(0, chunks.length)
-  assert.equal(objects.length, chunks.length + 2)
+  const persistedChunks = JSON.parse(seals[0].payload).persistedChunks
+  const exported = objects.slice(0, persistedChunks)
+  assert.deepEqual(chunks, [])
+  assert.equal(objects.length, persistedChunks + 2)
   const verified = Result.getOrThrow(verifyResearchCaptureExport(exported, seals[0], objectText(objects.at(-1))))
   assert.deepEqual(
-    verified.chunks.map((chunk) => chunk.metadata),
-    chunks,
+    verified.chunks
+      .flatMap(({ chunk }) => chunk.receipts)
+      .filter(({ event }) => event.kind === 'market-record')
+      .map(({ event, observedAtMs }) => ({ event, observedAtMs })),
+    receipts,
   )
   assert.equal(verified.complete, false)
   assert.equal(verified.exportVerified, true)
@@ -349,6 +354,7 @@ try {
         const exactSeal = intervalSeals[0]
         assert.ok(exactSeal)
         const retained = intervalChunks.flatMap((chunk) => JSON.parse(chunk.payload).receipts)
+        assert.equal(intervalChunks.length, 1)
         assert.equal(retained[0].event.kind, 'session-attempt')
         assert.equal(retained[0].event.session.intervalId, request.intervalId)
         assert.equal(
@@ -357,6 +363,7 @@ try {
         )
         replayed = yield* readResearchCaptureInterval({
           seal: exactSeal,
+          claim: intervalChunks[0],
           maximumBytes: 4 * 1024 * 1024,
           request,
           universe: intervalUniverse,
@@ -366,12 +373,6 @@ try {
               assert.ok(bytes)
               assert.ok(bytes.byteLength <= limit)
               return bytes
-            }),
-          readMetadataChunk: (ordinal, limit) =>
-            Effect.sync(() => {
-              assert.ok(intervalChunks[ordinal])
-              assert.ok(Buffer.byteLength(intervalChunks[ordinal].payload, 'utf8') <= limit)
-              return intervalChunks[ordinal]
             }),
         })
         assert.equal(replayed.structurallyClosed, false)
