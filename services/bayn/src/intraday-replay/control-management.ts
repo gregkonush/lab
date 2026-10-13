@@ -140,7 +140,7 @@ export const makeControlManagementBatch = (input: {
       executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
-    const accountId = `research-control-management-${runId}`
+    const accountId = `research-control-${runId}`
     const entryIdentity = yield* canonicalHashV1Result({
       runId,
       entryDecisionHash,
@@ -243,7 +243,7 @@ export const makeControlManagementBatch = (input: {
     })
     const observation = yield* makeJevObservation({
       cycleId: yield* canonicalHashV1Result({ runId, sessionDate: input.snapshot.manifest.sessionDate }),
-      authorityGenerationHash: yield* canonicalHashV1Result({ runId, scope: 'SIMULATED_CONTROL_MANAGEMENT', protocol }),
+      authorityGenerationHash: yield* canonicalHashV1Result({ runId, scope: 'SIMULATED_CONTROL', protocol }),
       protocol,
       portfolio,
       snapshot: input.snapshot,

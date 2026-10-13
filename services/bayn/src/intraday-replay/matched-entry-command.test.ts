@@ -6,7 +6,9 @@ import { Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
 import { canonicalHashV1, sha256 } from '../hash'
-import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
+import { JevBatchPlanVersion } from '../jev/batch'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { makeJevObservation } from '../jev/observation'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
@@ -18,6 +20,8 @@ import { ControlExit } from './control-portfolio'
 import { OrderSide } from '../execution/contracts'
 import { backtestSourcePartitions, type BacktestSourceManifest } from './source'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
+import { matchedCommittedDecisionFixture } from './matched-entry.test-support'
+import { SignalStudyFailure } from './signal-study'
 
 const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => {
   const base = nativeJevFixture()
@@ -39,7 +43,17 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
       snapshot,
     }),
   )
-  const { decidedAt: _decidedAt, ...batch } = nativeJevDecisionEvidence({ ...base, snapshot, observation })
+  const native = { ...base, snapshot, observation }
+  const retained = nativeJevDecisionEvidence(native)
+  const batchPlan = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation: retained.observation,
+      expiresAt: retained.batchPlan.expiresAt,
+      planVersion: JevBatchPlanVersion.V3,
+    }),
+  )
+  const evidence = { ...retained, batchPlan, batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt) }
+  const { decidedAt: _decidedAt, ...batch } = evidence
   const at = Date.parse(snapshot.manifest.observedAt)
   const events = [
     ...historicalRawArrivals(snapshot, at),
@@ -132,7 +146,8 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     capacityEvidenceHash: null,
   }
   const input = {
-    schemaVersion: 'bayn.matched-entry-input.v1',
+    schemaVersion: 'bayn.matched-entry-input.v2',
+    timings: [{ batchId: batch.batchPlan.batchId, witness: null }],
     witnesses: [],
     study: {
       schemaVersion: 'bayn.jev-signal-study-input.v1',
@@ -148,8 +163,217 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     })),
     costs: [{ batchId: batch.batchPlan.batchId, inference: null, sharedOperating: null }],
   }
-  return { body, input, registration, receipt: retainedReplayCaptureFixture(completeSource) }
+  return { body, input, registration, receipt: retainedReplayCaptureFixture(completeSource), native, evidence }
 }
+
+const witnessedFixture = () =>
+  Effect.gen(function* () {
+    const data = fixture(5100)
+    const fs = yield* FileSystem.FileSystem
+    const directory = yield* fs.makeTempDirectoryScoped()
+    const arrivals = `${directory}/arrivals.gz`
+    yield* fs.writeFile(arrivals, gzipSync(data.body))
+    const batch = data.input.study.batches[0]
+    if (batch === undefined) throw new Error('Missing native batch')
+    const committed = yield* matchedCommittedDecisionFixture(data.native, data.evidence)
+    const decisionBytes = JSON.stringify(committed)
+    const decisionEvidenceHash = sha256(decisionBytes)
+    const decisionPath = `${directory}/decision.json`
+    yield* fs.writeFileString(decisionPath, decisionBytes)
+    const at = Date.parse(batch.observation.observedAt)
+    const clocks = {
+      inputAvailableAt: batch.observation.observedAt,
+      deterministicSelectedAt: batch.observation.observedAt,
+      deterministicSymbol: 'AAPL',
+      batchCompletedAt: batch.batchResult.completedAt,
+      decisionCommittedAt: new Date(at + 5100).toISOString(),
+    }
+    const timingBytes = JSON.stringify({
+      schemaVersion: 'bayn.jev-entry-timing.v1',
+      sourceRevision: data.registration.sourceRevision,
+      batchId: batch.batchPlan.batchId,
+      observationHash: batch.batchPlan.observationHash,
+      snapshotHash: batch.observation.manifest.contentHash,
+      decisionHash: committed.contentHash,
+      ...clocks,
+    })
+    const evidenceHash = sha256(timingBytes)
+    const path = `${directory}/timing.json`
+    yield* fs.writeFileString(path, timingBytes)
+    const input = {
+      ...data.input,
+      witnesses: [
+        { path, sha256: evidenceHash },
+        { path: decisionPath, sha256: decisionEvidenceHash },
+      ],
+      timings: [{ batchId: batch.batchPlan.batchId, witness: { ...clocks, evidenceHash, decisionEvidenceHash } }],
+    }
+    return {
+      data,
+      fs,
+      directory,
+      arrivals,
+      batch,
+      committed,
+      at,
+      clocks,
+      timingBytes,
+      evidenceHash,
+      decisionEvidenceHash,
+      input,
+    }
+  })
+
+test.each(
+  (['latency', 'capacity', 'inventory', 'inference', 'operating'] as const).flatMap((gate) =>
+    (['verified', 'missing', 'changed'] as const).map((state) => [gate, state] as const),
+  ),
+)('matched study verifies %s witness bytes when %s', async (gate, state) => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const data = fixture()
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.gz`
+      yield* fs.writeFile(arrivals, gzipSync(data.body))
+      const path = `${directory}/evidence.bin`
+      const bytes = new Uint8Array([0, 255, 192, 128, 10])
+      const evidenceHash = sha256(bytes)
+      if (state !== 'missing')
+        yield* fs.writeFile(path, state === 'changed' ? new Uint8Array([0, 255, 192, 128, 11]) : bytes)
+      const registration = {
+        ...data.registration,
+        latencyEvidenceHash: gate === 'latency' ? evidenceHash : null,
+        capacityEvidenceHash: gate === 'capacity' ? evidenceHash : null,
+      }
+      const cost = { costMicros: '17', evidenceHash, unresolvedCount: 0 }
+      const input = {
+        ...data.input,
+        witnesses: [{ path, sha256: evidenceHash }],
+        inventory: data.input.inventory.map((entry, index) => ({
+          ...entry,
+          evidenceHash: gate === 'inventory' && index === 0 ? evidenceHash : null,
+        })),
+        costs: data.input.costs.map((entry) => ({
+          ...entry,
+          inference: gate === 'inference' ? cost : null,
+          sharedOperating: gate === 'operating' ? cost : null,
+        })),
+      }
+      const result = yield* runMatchedEntryStudy(input, registration, arrivals, data.receipt).pipe(Effect.result)
+      if (state === 'verified') {
+        expect(Result.isSuccess(result)).toBeTrue()
+      } else {
+        expect(Result.isFailure(result)).toBeTrue()
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(SignalStudyFailure)
+          expect(result.failure).toMatchObject({
+            message:
+              state === 'missing'
+                ? 'Referenced private witness cannot be read'
+                : 'Referenced private witness bytes differ',
+          })
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('witnessed immediate and delayed arms on the same symbol keep independent fills and hold clocks', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const { data, arrivals, at, input } = yield* witnessedFixture()
+      const report = yield* runMatchedEntryStudy(input, data.registration, arrivals, data.receipt)
+      const pair = report.pairs[0]
+      expect(pair?.timingAvailable).toBe(true)
+      expect(pair?.immediateMomentum?.fills[0]?.observedAt).toBe(new Date(at + 100).toISOString())
+      expect(pair?.delayedMomentum?.fills[0]?.observedAt).toBe(new Date(at + 5200).toISOString())
+      expect(pair?.immediateMomentum?.fills[0]?.priceMicros).not.toBe(pair?.delayedMomentum?.fills[0]?.priceMicros)
+      expect(pair?.jev).toEqual(pair?.delayedMomentum)
+      expect(pair?.immediateMomentum?.episodes[0]?.exitedAtMs).not.toBe(pair?.delayedMomentum?.episodes[0]?.exitedAtMs)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test.each([
+  ['selection-clock', 'Timing receipt belongs to another batch, source or clock'],
+  ['decision-file', 'Timing receipt does not bind the committed native entry decision'],
+  ['decision-hash', 'Timing receipt does not bind the committed native entry decision'],
+] as const)('timing witness rejects an unrelated %s', async (variant, message) => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const {
+        data,
+        fs,
+        directory,
+        arrivals,
+        batch,
+        committed,
+        at,
+        clocks,
+        timingBytes,
+        evidenceHash,
+        decisionEvidenceHash,
+        input,
+      } = yield* witnessedFixture()
+      let changed = input
+      if (variant === 'selection-clock') {
+        changed = {
+          ...input,
+          timings: [
+            {
+              batchId: batch.batchPlan.batchId,
+              witness: {
+                ...clocks,
+                evidenceHash,
+                decisionEvidenceHash,
+                deterministicSelectedAt: new Date(at - 1).toISOString(),
+              },
+            },
+          ],
+        }
+      } else {
+        const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
+        expect(alternate.contentHash).not.toBe(committed.contentHash)
+        if (variant === 'decision-file') {
+          const alternateBytes = JSON.stringify(alternate)
+          const alternateHash = sha256(alternateBytes)
+          const alternatePath = `${directory}/alternate-decision.json`
+          yield* fs.writeFileString(alternatePath, alternateBytes)
+          changed = {
+            ...input,
+            witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
+            timings: [
+              {
+                batchId: batch.batchPlan.batchId,
+                witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
+              },
+            ],
+          }
+        } else {
+          const wrongReceiptBytes = JSON.stringify({ ...JSON.parse(timingBytes), decisionHash: alternate.contentHash })
+          const wrongReceiptHash = sha256(wrongReceiptBytes)
+          const wrongReceiptPath = `${directory}/wrong-timing.json`
+          yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
+          changed = {
+            ...input,
+            witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
+            timings: [
+              {
+                batchId: batch.batchPlan.batchId,
+                witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
+              },
+            ],
+          }
+        }
+      }
+      const result = yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(Effect.result)
+      expect(Result.isFailure(result) && result.failure instanceof SignalStudyFailure && result.failure.message).toBe(
+        message,
+      )
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
 
 test('offline command reproduces native observations, prices shared lifecycle once, hashes report and refuses overwrite', async () => {
   const data = fixture()
@@ -268,15 +492,15 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v2')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v3')
       expect(report.pairs).toHaveLength(1)
-      expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.momentum)
+      expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
       expect(report.pairs[0]?.jev?.episodes[0]?.exitedAtMs).toBe(
         Date.parse(report.observations[0]?.decidedAt ?? '') + 100 + 15 * 60_000 + 100,
       )
       expect(report.summary.completion).toBe('INCOMPLETE')
-      expect(report.summary.means.incrementalBudgetReturnBps).toBeNull()
+      expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
       const { reportHash, ...material } = report
       expect(canonicalHashV1(material)).toBe(reportHash)
       expect(JSON.parse(yield* fs.readFileString(outputPath))).toEqual(report)

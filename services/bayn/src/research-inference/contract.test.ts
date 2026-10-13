@@ -4,17 +4,18 @@ import { sha256 } from '../hash'
 import {
   decodeResearchRun,
   hashResearch,
+  maximumResearchStreamBytes,
   ResearchOutcome,
   researchRequest,
   researchServingIdentity,
   sealResearchReceipt,
 } from './contract'
 import { researchExpensePlan, verifyResearchReceipt } from './store'
-import { researchFixture, streamFixture } from './test-support'
+import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
 
 const run = researchFixture()
 const id = Result.getOrThrow(hashResearch(run))
-const receipt = (outcome = ResearchOutcome.Complete) =>
+const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), completionTokens = 20) =>
   Result.getOrThrow(
     sealResearchReceipt(run, {
       runId: id,
@@ -26,14 +27,37 @@ const receipt = (outcome = ResearchOutcome.Complete) =>
       httpStatus: 200,
       servingIdentity: researchServingIdentity(run.policy),
       serverRequestId: 'chatcmpl-synthetic',
-      responseBase64: Buffer.from(streamFixture()).toString('base64'),
-      responseHash: sha256(streamFixture()),
+      responseBase64: Buffer.from(stream).toString('base64'),
+      responseHash: sha256(stream),
       responseText: '<alpha_list>alpha001</alpha_list>',
       factors: ['alpha001'],
-      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      usage: { prompt_tokens: 10, completion_tokens: completionTokens, total_tokens: 10 + completionTokens },
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('verifies and prices an immutable receipt containing the full approved stream', () => {
+    const value = receipt(ResearchOutcome.Complete, fullTokenBudgetStreamFixture(), 4096)
+    expect(Result.getOrThrow(verifyResearchReceipt(run, value))).toEqual(value)
+    expect(Result.getOrThrow(researchExpensePlan(run, value)).transfers[0]?.amount).toBe(1001000002n)
+  })
+  test('rejects decoded response bytes above the bound even when base64 padding has spare capacity', () => {
+    const bytes = Buffer.alloc(maximumResearchStreamBytes + 1)
+    const value = {
+      ...receipt(ResearchOutcome.Expired),
+      responseBase64: bytes.toString('base64'),
+      responseHash: sha256(bytes),
+    }
+    const {
+      schemaVersion: _version,
+      qualification: _qualification,
+      receiptHash: _hash,
+      costPicoUsd: _cost,
+      ...material
+    } = value
+    expect(Result.isFailure(verifyResearchReceipt(run, Result.getOrThrow(sealResearchReceipt(run, material))))).toBe(
+      true,
+    )
+  })
   test('binds all generation overrides, semantic bytes, arm and attempt identities', () => {
     for (const policy of [
       { ...run.policy, seed: 2 },
