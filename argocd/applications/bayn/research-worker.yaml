@@ -45,6 +45,29 @@ spec:
             - name: restate
               containerPort: 9080
           env:
+            - name: BAYN_PUBLIC_INFORMATION_ENABLED
+              value: 'true'
+            - name: BAYN_PUBLIC_INFORMATION_PROXY
+              value: http://bayn-egress-proxy.bayn.svc.cluster.local:3128
+            - name: BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT
+              value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+            - name: BAYN_PUBLIC_INFORMATION_SYMBOLS
+              value: '["AAPL","AMD","AMZN","AVGO","COHR","CRDO","IWM","LITE","MRVL","MU","NVDA","QQQ","SMH","SNDK","SPY","WDC"]'
+            - name: BAYN_PUBLIC_INFORMATION_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-research-captures
+                  key: BUCKET_NAME
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-captures
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-research-captures
+                  key: AWS_SECRET_ACCESS_KEY
             - name: BAYN_RESEARCH_APPROVAL_KEY
               valueFrom:
                 secretKeyRef:

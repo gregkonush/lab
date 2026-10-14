@@ -62,7 +62,10 @@ The native schema read/write calls follow the [Authzed schema API](https://githu
 The journal records the server's installed schema hash and rejects a changed schema during initialization or activation.
 
 Activation requires acknowledgement of the bootstrap and all prior audit receipts, a healthy archive checkpoint,
-unchanged initial administrator/workload authority and the installed schema. It rechecks archive health after its own
+unchanged initial administrator/workload authority and the installed schema. A fully consistent bounded read must
+match exactly the eight approved platform relationships; surplus principals, cross-role assignments and retired
+platform objects keep activation fenced. The final authority check repeats that comparison after the audit insertion.
+It rechecks archive health after its own
 audit insertion before removing the platform fence. Completed retries return their original receipt and report current
 fence, version, recovery generation and archive health. They cannot re-add an offboarded administrator or undo a later
 recovery fence. Bootstrap markers use a separate namespace from ordinary policy-command UUIDs. Audit identifies the
@@ -118,6 +121,25 @@ Archive health requires a recent acknowledgement and no unacknowledged receipt o
 against both the outbox and the durable sequence checkpoint. A live exporter heartbeat cannot hide a backlog. The final decision guard rechecks archive health after the native
 permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
 fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
+
+The image also packages `/bin/ofz-audit-export`, which exports bounded batches from the durable outbox to the
+[independent NUC archive](../../devices/nuc/ofz-recovery/README.md). It requires the separate `ofz_archiver` SQL role
+and verifies database TLS and the native S3 certificate. Configure `OFZ_DATABASE_DSN`,
+`OFZ_DATABASE_PASSWORD_FILE`, `OFZ_DATABASE_CA_FILE`, `OFZ_ARCHIVE_ACCESS_KEY_FILE` and
+`OFZ_ARCHIVE_SECRET_KEY_FILE` with mounted files. The destination is the approved private NUC endpoint on port 9444.
+
+The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a fifteen-second database
+idle-session limit bound abandoned connections. Every batch records ordered sequences, original receipts, target
+hashes and database timestamps. Its immutable key includes the complete payload hash. SQL acknowledges a batch only
+after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
+late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
+heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
+
+Run `bash services/ofz/test-control.sh archive` for the real owner CLI, PostgreSQL and S3 qualification. It uses the
+production credential generator, writer policy and synchronized SQLite/object configuration. It proves initial
+archive-gated activation, deletion/retention denial, uncertain uploads, out-of-order commits, archive loss and
+crash/restart readback at the unchanged endpoint. This isolated fixture does not establish the deployed NUC TLS route,
+Kubernetes exporter adoption, independent database/home backups or a completed restore.
 
 Controller runtime reads compare workspace authority and global policy/fence state from one SQL snapshot immediately
 before disclosure. Restrictive intent can quarantine a workspace before native policy finalization advances the global
