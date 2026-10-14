@@ -2,8 +2,14 @@ use std::{env, path::PathBuf};
 
 use anyhow::bail;
 use ofz::{
-    commands, native::Native, proto::authorization_service_server::AuthorizationServiceServer,
-    service::Service, sessions::Issuer, store::Database, transport,
+    bootstrap::{self, Manifest, Operation},
+    commands,
+    native::Native,
+    proto::authorization_service_server::AuthorizationServiceServer,
+    service::Service,
+    sessions::Issuer,
+    store::Database,
+    transport,
 };
 use tokio::net::TcpListener;
 use tonic::transport::Server;
@@ -30,8 +36,26 @@ async fn main() -> anyhow::Result<()> {
             database.migrate_runtime().await?;
             return Ok(());
         }
+        Some(command @ ("bootstrap" | "activate")) => {
+            if env::args().len() != 3 {
+                bail!("bootstrap and activate require one protected manifest path");
+            }
+            let manifest = Manifest::read(std::path::Path::new(&env::args().nth(2).unwrap()))?;
+            let native = Native::new(
+                &env::var("OFZ_SPICEDB_ENDPOINT")?,
+                PathBuf::from(env::var("OFZ_SPICEDB_KEY_FILE")?),
+            )?;
+            let operation = if command == "bootstrap" {
+                Operation::Bootstrap
+            } else {
+                Operation::Activate
+            };
+            let report = bootstrap::execute(&database, &native, operation, manifest).await?;
+            println!("{}", serde_json::to_string(&report)?);
+            return Ok(());
+        }
         Some("serve") | None => {}
-        _ => bail!("expected serve, migrate or migrate-runtime"),
+        _ => bail!("expected serve, migrate, migrate-runtime, bootstrap or activate"),
     }
     database.verify_schema().await?;
     tracing::debug!("control database schema verified");

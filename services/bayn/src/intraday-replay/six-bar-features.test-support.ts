@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -20,10 +21,10 @@ export const sixBarObservedMs = sixBarEndMs + 2_000
 const iso = (at: number) => new Date(at).toISOString()
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 export const sixBarUniverse = {
-  universeId: protocol.universeId,
-  universeSymbolHash: protocol.universeSymbolHash,
-  symbols: protocol.universe,
-  topics: { ...protocol.sourceTopics, features: protocol.streamingInput.featureTopic },
+  universeId: equityMarketProfile.universeId,
+  universeSymbolHash: equityMarketProfile.universeSymbolHash,
+  symbols: equityMarketProfile.universe,
+  topics: { ...equityMarketProfile.sourceTopics, features: equityMarketProfile.streamingInput.featureTopic },
 }
 
 export interface SixBarFixtureInput {
@@ -163,15 +164,15 @@ export const sixBarFixture = (
     rangeStartAt: iso(sixBarOpenMs),
     rangeEndAt: iso(sixBarEndMs),
     observedAt: iso(sixBarObservedMs),
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    universe: protocol.universe,
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
+    universe: equityMarketProfile.universe,
     symbols: ['AAPL', 'SPY'],
     candidateSymbols: ['AAPL'],
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
-    feed: protocol.feed,
-    delayClass: protocol.delayClass,
-    sourceTopics: protocol.sourceTopics,
+    feed: equityMarketProfile.feed,
+    delayClass: equityMarketProfile.delayClass,
+    sourceTopics: equityMarketProfile.sourceTopics,
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: 2_000,
   }

@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { ReconciliationStatus } from '../execution/contracts'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -23,7 +24,7 @@ const fixture = () => {
     inference: {
       mode: 'measured-provider',
       model: jevModel,
-      inputDefinition: 'bayn.jev-trading-signal-state.v2',
+      inputDefinition: 'bayn.jev-trading-signal-state.v3',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     },
     allocatedDataCostPerSessionMicros: '0',
@@ -39,7 +40,7 @@ const fixture = () => {
     openingCashMicros: '100000000000',
     fractionalTrading: false,
     calendar: [...source.input.input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
-    assets: source.input.protocol.universe.map((symbol, index) => ({
+    assets: equityMarketProfile.universe.map((symbol, index) => ({
       id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
       symbol,
       class: 'us_equity',
@@ -74,7 +75,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v2')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v3')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
   const strategy = prepared.strategy.provenance.strategy

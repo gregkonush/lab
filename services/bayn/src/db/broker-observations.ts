@@ -15,6 +15,45 @@ import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { currentUtcInstant } from '../time'
 import { UtcInstantSchema, strictParseOptions } from '../schemas'
 
+export enum BrokerObservationClaimStatus {
+  Reserved = 'RESERVED',
+  QuotaWait = 'QUOTA_WAIT',
+  AlreadyClaimed = 'ALREADY_CLAIMED',
+}
+export type BrokerObservationClaim =
+  | {
+      readonly status: BrokerObservationClaimStatus.Reserved
+      readonly ticket: BrokerObservationTicket
+      readonly nextPollNotBeforeMs: number
+    }
+  | {
+      readonly status: BrokerObservationClaimStatus.QuotaWait | BrokerObservationClaimStatus.AlreadyClaimed
+      readonly nextPollNotBeforeMs: number
+    }
+const quotaDeadline = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+)
+const claimRows = Schema.Array(
+  Schema.Union([
+    Schema.Struct({
+      status: Schema.Literal(BrokerObservationClaimStatus.Reserved),
+      generation: Schema.Int.check(Schema.isGreaterThan(0)),
+      startedAt: UtcInstantSchema,
+      nextPollNotBeforeMs: quotaDeadline,
+    }),
+    Schema.Struct({
+      status: Schema.Union([
+        Schema.Literal(BrokerObservationClaimStatus.QuotaWait),
+        Schema.Literal(BrokerObservationClaimStatus.AlreadyClaimed),
+      ]),
+      generation: Schema.Null,
+      startedAt: Schema.Null,
+      nextPollNotBeforeMs: quotaDeadline,
+    }),
+  ]),
+).check(Schema.isMaxLength(1))
+
 export const makeBrokerObservationStore = (
   sql: PgClient.PgClient,
   accountId: string,
@@ -33,15 +72,18 @@ export const makeBrokerObservationStore = (
           : observationUnavailable('Broker observation persistence failed', cause),
       ),
     )
-  const activate = run(
-    sql`
-    INSERT INTO broker_observations (account_id, source_revision)
-    VALUES (${accountId}, ${sourceRevision})
+  const activate = (nextPollNotBeforeMs: number) =>
+    run(
+      sql`
+    INSERT INTO broker_observations (account_id, source_revision, next_poll_not_before)
+    VALUES (${accountId}, ${sourceRevision}, to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
     ON CONFLICT (account_id) DO UPDATE SET source_revision = EXCLUDED.source_revision,
       generation = broker_observations.generation + 1, available = false,
-      poll_started_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, payload = NULL
+      poll_started_at = NULL, observed_at = NULL, completed_at = NULL, snapshot_hash = NULL, payload = NULL,
+      next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
+          to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0))
   `.pipe(Effect.asVoid),
-  )
+    )
   const invalidate = run(
     sql`
     UPDATE broker_observations SET generation = generation + 1, available = false
@@ -66,41 +108,59 @@ export const makeBrokerObservationStore = (
       AND generation IN (SELECT generation FROM unfinished)
   `.pipe(Effect.asVoid),
     )
-  const begin = (captureId: string) =>
+  const begin = (
+    captureId: string,
+    interruptedNotBeforeMs: number,
+  ): Effect.Effect<BrokerObservationClaim, BrokerReadError> =>
     run(
       sql`
     WITH owner AS (
-      SELECT account_id, generation FROM broker_observations
+      SELECT account_id, generation, next_poll_not_before, clock_timestamp() AS checked_at FROM broker_observations
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision}
       FOR UPDATE
     ), claimed AS (
       INSERT INTO broker_observation_captures (account_id, capture_id, generation)
       SELECT account_id, ${captureId}, generation + 1 FROM owner
+      WHERE next_poll_not_before <= checked_at
       ON CONFLICT DO NOTHING
       RETURNING account_id, generation
-    )
-    UPDATE broker_observations SET generation = claimed.generation
+    ), reserved AS (
+    UPDATE broker_observations SET generation = claimed.generation, quota_generation = claimed.generation,
+      next_poll_not_before = GREATEST(broker_observations.next_poll_not_before,
+        to_timestamp(${interruptedNotBeforeMs}::double precision / 1000.0))
     FROM claimed WHERE broker_observations.account_id = claimed.account_id
     RETURNING broker_observations.generation,
-      to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "startedAt"
+      to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "startedAt",
+      (EXTRACT(EPOCH FROM broker_observations.next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
+    )
+    SELECT 'RESERVED' AS status, generation, "startedAt", "nextPollNotBeforeMs" FROM reserved
+    UNION ALL
+    SELECT CASE WHEN EXISTS (
+      SELECT 1 FROM broker_observation_captures WHERE account_id = owner.account_id AND capture_id = ${captureId}
+    ) THEN 'ALREADY_CLAIMED' ELSE 'QUOTA_WAIT' END AS status,
+      NULL::integer AS generation, NULL::text AS "startedAt",
+      (EXTRACT(EPOCH FROM next_poll_not_before) * 1000)::double precision AS "nextPollNotBeforeMs"
+    FROM owner WHERE NOT EXISTS (SELECT 1 FROM reserved)
   `.pipe(
-        Effect.flatMap(
-          Schema.decodeUnknownEffect(
-            Schema.Array(
-              Schema.Struct({
-                generation: Schema.Int.check(Schema.isGreaterThan(0)),
-                startedAt: UtcInstantSchema,
-              }),
-            ).check(Schema.isMaxLength(1)),
-            strictParseOptions,
-          ),
-        ),
+        Effect.flatMap(Schema.decodeUnknownEffect(claimRows, strictParseOptions)),
         Effect.flatMap((rows) =>
-          rows[0] === undefined ? Effect.as(recoverUnfinished(captureId), undefined) : Effect.succeed(rows[0]),
+          Effect.gen(function* () {
+            const row = rows[0]
+            if (row === undefined)
+              return yield* observationUnavailable('Broker observation owner is not active for this revision')
+            if (row.status === BrokerObservationClaimStatus.Reserved)
+              return {
+                status: row.status,
+                ticket: { generation: row.generation, startedAt: row.startedAt },
+                nextPollNotBeforeMs: row.nextPollNotBeforeMs,
+              }
+            if (row.status === BrokerObservationClaimStatus.AlreadyClaimed) yield* recoverUnfinished(captureId)
+            return { status: row.status, nextPollNotBeforeMs: row.nextPollNotBeforeMs }
+          }),
         ),
       ),
     )
-  const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot) =>
+  const publish = (ticket: BrokerObservationTicket, value: ObservedBrokerSnapshot, nextPollNotBeforeMs: number) =>
     run(
       Effect.gen(function* () {
         const decoded = decodeObservedBrokerSnapshot(value)
@@ -116,7 +176,8 @@ export const makeBrokerObservationStore = (
       WITH published AS (
       UPDATE broker_observations SET available = true, poll_started_at = ${value.startedAt}::timestamptz,
         observed_at = ${value.observedAt}::timestamptz, completed_at = ${value.completedAt}::timestamptz,
-        snapshot_hash = ${observedBrokerSnapshotHash(value)}, payload = ${sql.json(value)}
+        snapshot_hash = ${observedBrokerSnapshotHash(value)}, payload = ${sql.json(value)},
+        next_poll_not_before = to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0)
       WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND generation = ${ticket.generation}
         AND (poll_started_at IS NULL OR poll_started_at <= ${ticket.startedAt}::timestamptz)
         AND NOT EXISTS (
@@ -136,14 +197,16 @@ export const makeBrokerObservationStore = (
         return rows.length === 1
       }),
     )
-  const failed = (ticket: BrokerObservationTicket) =>
+  const failed = (ticket: BrokerObservationTicket, nextPollNotBeforeMs: number) =>
     run(
       sql`
     WITH failed AS (
-    UPDATE broker_observations SET available = false, poll_started_at = ${ticket.startedAt}::timestamptz,
-      completed_at = NULL
-    WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND generation = ${ticket.generation}
-      AND (poll_started_at IS NULL OR poll_started_at <= ${ticket.startedAt}::timestamptz)
+    UPDATE broker_observations SET
+      available = CASE WHEN generation = ${ticket.generation} THEN false ELSE available END,
+      poll_started_at = CASE WHEN generation = ${ticket.generation} THEN ${ticket.startedAt}::timestamptz ELSE poll_started_at END,
+      completed_at = CASE WHEN generation = ${ticket.generation} THEN NULL ELSE completed_at END,
+      next_poll_not_before = to_timestamp(${nextPollNotBeforeMs}::double precision / 1000.0)
+    WHERE account_id = ${accountId} AND source_revision = ${sourceRevision} AND quota_generation = ${ticket.generation}
     RETURNING account_id
     )
     UPDATE broker_observation_captures SET settled = true

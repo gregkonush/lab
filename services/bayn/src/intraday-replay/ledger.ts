@@ -36,8 +36,8 @@ export type IntradayReplayLedgerFailure =
   | {
       readonly _tag: 'IntradayReplayLedgerOversell'
       readonly symbol: string
-      readonly requestedQuantityMicros: string
-      readonly positionQuantityMicros: string
+      readonly requestedQuantityAtoms: string
+      readonly positionQuantityAtoms: string
     }
   | {
       readonly _tag: 'IntradayReplayLedgerInsufficientCash'
@@ -53,14 +53,14 @@ export interface EconomicReplayFill {
   readonly symbol: string
   readonly side: 'buy' | 'sell'
   readonly observedAt: string
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly priceMicros: string
   readonly notionalMicros: string
 }
 
 export interface ReplayPosition {
   readonly symbol: string
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly costBasisMicros: string
 }
 
@@ -115,7 +115,7 @@ const cumulativeFees = (fills: readonly EconomicReplayFill[], model: ExecutionMo
       const inputs = sessions.get(date) ?? []
       inputs.push({
         side: fill.side,
-        quantityMicros: BigInt(fill.quantityMicros),
+        quantityAtoms: BigInt(fill.quantityAtoms),
         notionalMicros: BigInt(fill.notionalMicros),
       })
       sessions.set(date, inputs)
@@ -157,7 +157,7 @@ export const createReplayLedger = <Fill extends EconomicReplayFill = EconomicRep
 export const applyReplayFill = <Fill extends EconomicReplayFill>(
   ledger: ReplayLedger<Fill>,
   fill: Fill,
-  requestedQuantityMicros: string,
+  requestedQuantityAtoms: string,
   executionModel: ExecutionModel,
   feeMultiplierPpm: number,
 ): Result.Result<ReplayLedger<Fill>, IntradayReplayLedgerFailure> => {
@@ -165,12 +165,12 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   if (Result.isFailure(feeMultiplier)) return Result.fail(feeMultiplier.failure)
   const side = fill.side
   if (side !== 'buy' && side !== 'sell') return invalid('fill.side', side, 'invalid-side')
-  const requestedQuantity = parseUnsigned(requestedQuantityMicros, 'requestedQuantityMicros', true)
+  const requestedQuantity = parseUnsigned(requestedQuantityAtoms, 'requestedQuantityAtoms', true)
   if (Result.isFailure(requestedQuantity)) return Result.fail(requestedQuantity.failure)
-  const filledQuantity = parseUnsigned(fill.quantityMicros, 'fill.quantityMicros', true)
+  const filledQuantity = parseUnsigned(fill.quantityAtoms, 'fill.quantityAtoms', true)
   if (Result.isFailure(filledQuantity)) return Result.fail(filledQuantity.failure)
   if (filledQuantity.success > requestedQuantity.success) {
-    return invalid('fill.quantityMicros', fill.quantityMicros, 'quantity-exceeds-requested')
+    return invalid('fill.quantityAtoms', fill.quantityAtoms, 'quantity-exceeds-requested')
   }
   const price = parseUnsigned(fill.priceMicros, 'fill.priceMicros', true)
   if (Result.isFailure(price)) return invalid('fill.priceMicros', fill.priceMicros, 'invalid-price')
@@ -193,11 +193,11 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   const existing = existingIndex < 0 ? undefined : ledger.positions[existingIndex]
   let nextPositions: readonly ReplayPosition[]
   if (side === 'buy') {
-    const quantity = (existing === undefined ? 0n : BigInt(existing.quantityMicros)) + filledQuantity.success
+    const quantity = (existing === undefined ? 0n : BigInt(existing.quantityAtoms)) + filledQuantity.success
     const costBasis = (existing === undefined ? 0n : BigInt(existing.costBasisMicros)) + fillNotional.success
     const nextPosition: ReplayPosition = {
       symbol: fill.symbol,
-      quantityMicros: quantity.toString(),
+      quantityAtoms: quantity.toString(),
       costBasisMicros: costBasis.toString(),
     }
     nextPositions =
@@ -209,17 +209,17 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
       return Result.fail({
         _tag: 'IntradayReplayLedgerOversell',
         symbol: fill.symbol,
-        requestedQuantityMicros: filledQuantity.success.toString(),
-        positionQuantityMicros: '0',
+        requestedQuantityAtoms: filledQuantity.success.toString(),
+        positionQuantityAtoms: '0',
       })
     }
-    const positionQuantity = BigInt(existing.quantityMicros)
+    const positionQuantity = BigInt(existing.quantityAtoms)
     if (filledQuantity.success > positionQuantity) {
       return Result.fail({
         _tag: 'IntradayReplayLedgerOversell',
         symbol: fill.symbol,
-        requestedQuantityMicros: filledQuantity.success.toString(),
-        positionQuantityMicros: existing.quantityMicros,
+        requestedQuantityAtoms: filledQuantity.success.toString(),
+        positionQuantityAtoms: existing.quantityAtoms,
       })
     }
     const soldCostBasis = saleCostBasisMicros(
@@ -237,7 +237,7 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
             index === existingIndex
               ? {
                   ...position,
-                  quantityMicros: remainingQuantity.toString(),
+                  quantityAtoms: remainingQuantity.toString(),
                   costBasisMicros: remainingCostBasis.toString(),
                 }
               : position,

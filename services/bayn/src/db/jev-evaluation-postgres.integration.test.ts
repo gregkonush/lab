@@ -1,3 +1,4 @@
+import { jevRequestForSnapshot } from '../jev/native.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -9,17 +10,21 @@ import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
+import { IsoDateSchema } from '../schemas'
 import { JevBatchPlanVersion } from '../jev/batch'
+import { JevFailure } from '../jev/contract'
+import { InferenceUsageStatus } from '../inference-costs'
+import { buildInferenceExpensePlan, makeInferenceExpenseQuote } from '../inference-expense'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
-import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from '../jev/trading-signals'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
+import { nativeJevFixture } from '../jev/native.test-support'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
@@ -42,10 +47,8 @@ const makeRuntime = () =>
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-const fixture = candidateObservationFixture()
-const prepared = Result.getOrThrow(
-  makeJevTradingSignalRequest(fixture.snapshot, 'AAPL', fixture.protocol.benchmarkSymbol),
-)
+const fixture = nativeJevFixture()
+const prepared = Result.getOrThrow(jevRequestForSnapshot(fixture.snapshot, 'AAPL'))
 const request = Result.getOrThrow(
   makeJevEvaluationRequest({
     schemaVersion: 'bayn.jev-evaluation-request.v1',
@@ -55,8 +58,10 @@ const request = Result.getOrThrow(
     request: prepared.request,
     cycleId: fixture.draft.identity.cycleId,
     snapshotId: fixture.snapshot.manifest.snapshotId,
-    observedAt: fixture.input.observedAt,
-    expiresAt: new Date(Date.parse(fixture.input.observedAt) + 5000).toISOString(),
+    observedAt: fixture.observation.payload.observedAt,
+    expiresAt: new Date(
+      Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+    ).toISOString(),
   }),
 )
 const receipt = Result.getOrThrow(
@@ -75,7 +80,7 @@ const batch = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: request.expiresAt,
-    planVersion: JevBatchPlanVersion.V1,
+    planVersion: JevBatchPlanVersion.V4,
   }),
 )
 const recorded = Result.getOrThrow(
@@ -103,11 +108,15 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
-        yield* (yield* CycleStore).acquire(fixture.draft, fixture.cycle.createdAt)
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
+        yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
       ) VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${request.observedAt})`
+        const r = fixture.portfolio.brokerState.reconciliation
+        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+          VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+        yield* (yield* CandidateObservationStore).record(fixture.observation)
+
         yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen((yield* JevBatchStore).begin(batch)),
           Effect.provide(TestClock.layer()),
@@ -117,6 +126,62 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('retains a zero-cost receipt when the durable claim crosses expiry without dispatch', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        let calls = 0
+        const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+          Effect.andThen(evaluateJevOnce(request)),
+          Effect.result,
+          Effect.provideService(JevEvaluationStore, {
+            ...store,
+            begin: (value) => store.begin(value).pipe(Effect.tap(() => TestClock.setTime(Date.parse(value.expiresAt)))),
+          }),
+          Effect.provideService(JevClient, {
+            evaluate: () =>
+              Effect.sync(() => {
+                calls += 1
+                return inferenceFixture()
+              }),
+          }),
+          Effect.provide(TestClock.layer()),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        expect(calls).toBe(0)
+        const recovered = yield* store.begin(request)
+        expect(recovered.status).toBe(JevClaim.Recorded)
+        if (recovered.status !== JevClaim.Recorded) throw new Error('Missing durable undispatched receipt')
+        expect(recovered.receipt.outcome).toEqual({
+          status: JevOutcome.Failed,
+          failure: JevFailure.NotDispatched,
+          httpStatus: null,
+          responseHash: null,
+          rejectedResponse: null,
+        })
+        const quote = Result.getOrThrow(
+          makeInferenceExpenseQuote(
+            {
+              accountId: 'fixture-account',
+              sessionDate: yield* Schema.decodeUnknownEffect(IsoDateSchema)(request.observedAt.slice(0, 10)),
+              asOf: request.expiresAt,
+              requestId: request.requestId,
+              cycleId: request.cycleId,
+              authorityGenerationHash: request.authorityGenerationHash,
+              request,
+              receipt: recovered.receipt,
+              resolution: recovered.resolution,
+            },
+            { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
+          ),
+        )
+        expect(quote.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
+        expect(quote.line.estimatedCostPicoUsd).toBe('0')
+        expect(Result.getOrThrow(buildInferenceExpensePlan([quote])).transfers).toHaveLength(0)
+      }),
+    )
   })
 
   test('only one concurrent caller owns inference; later callers recover the exact durable result', async () => {

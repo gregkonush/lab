@@ -50,9 +50,33 @@ test('delivers the sealed Jev credential only to the worker without blocking ind
   }
 })
 
-test('requires the sealed mandate to match the reviewed strategy and every runtime lineage', () => {
+test('binds PAPER authority to the sealed strategy and lineage, or requires explicit OBSERVE', () => {
   const secret = read('argocd/applications/bayn/alpaca-sealedsecret.yaml')
   const encodedIdentity = secret.metadata.annotations?.['proompteng.ai/bayn.mandate-identity']
+  const request = secret.spec.encryptedData['capital-activation-request']
+  if (request === undefined) {
+    expect(encodedIdentity).toBeUndefined()
+    expect(steps.some((step: { uses: string; as?: string }) => step.uses === 'yaml-parse' && step.as === 'bayn')).toBe(
+      false,
+    )
+    for (const file of ['deployment', 'execution-controller', 'execution-activation']) {
+      const environment = read(`argocd/applications/bayn/${file}.yaml`).spec.template.spec.containers[0].env
+      expect(
+        environment.filter((entry: { name: string }) =>
+          [
+            'BAYN_CAPITAL_ACTIVATION_REQUEST',
+            'BAYN_CAPITAL_ACTIVATION_KIND',
+            'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+          ].includes(entry.name),
+        ),
+      ).toEqual([])
+      expect(environment.find((entry: { name: string }) => entry.name === 'BAYN_BROKER_ACCESS')?.value).toBe(
+        'read-only',
+      )
+      expect(environment.find((entry: { name: string }) => entry.name === 'BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
+    }
+    return
+  }
   expect(typeof encodedIdentity).toBe('string')
   const identity = JSON.parse(encodedIdentity)
   expect(identity.ciphertextHash).toBe(
@@ -147,7 +171,10 @@ test('writes source, digest, and research lineage into the correct field in ever
     expect(assignments.get('BAYN_CODE_REVISION')).toBe('${{ commitFrom(vars.gitRepo).ID }}')
     expect(assignments.get('BAYN_IMAGE_DIGEST')).toBe('${{ imageFrom(vars.imageRepo).Digest }}')
     const lineage = assignments.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
-    expect(typeof lineage).toBe('string')
+    const configuredLineage = environment.some(
+      (entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+    )
+    expect(typeof lineage).toBe(configuredLineage ? 'string' : 'undefined')
     if (lineage) lineageValues.push(lineage)
     expect(assignments.has('BAYN_BROKER_ACCESS')).toBe(false)
     expect(assignments.has('BAYN_CAPITAL_AUTHORITY')).toBe(false)
@@ -173,8 +200,11 @@ test('writes source, digest, and research lineage into the correct field in ever
       expect(assignments.has('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toBe(false)
     }
   }
-  expect(lineageValues).toHaveLength(3)
-  expect(new Set(lineageValues).size).toBe(1)
+  const hasMandate =
+    read('argocd/applications/bayn/alpaca-sealedsecret.yaml').spec.encryptedData['capital-activation-request'] !==
+    undefined
+  expect(lineageValues).toHaveLength(hasMandate ? 3 : 0)
+  expect(new Set(lineageValues).size).toBe(hasMandate ? 1 : 0)
 })
 
 test.each([

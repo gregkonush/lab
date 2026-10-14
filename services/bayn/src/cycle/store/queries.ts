@@ -275,7 +275,7 @@ export const makeCycleQueries = (
                     FROM orders AS partial_order
                     WHERE partial_order.account_id = intent.account_id
                       AND partial_order.intent_id = intent.intent_id
-                      AND partial_order.filled_quantity_micros > 0
+                      AND partial_order.filled_quantity_atoms > 0
                   )
                 )
                 OR (

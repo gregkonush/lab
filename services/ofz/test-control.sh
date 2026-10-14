@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 fixture_mode="${1:-control}"
-case "$fixture_mode" in control|identity|runtime|kvm|editor|failover) ;; *) printf 'Expected control, identity, runtime, kvm, editor or failover fixture\n' >&2; exit 2 ;; esac
+case "$fixture_mode" in control|bootstrap|identity|runtime|kvm|editor|failover) ;; *) printf 'Expected control, bootstrap, identity, runtime, kvm, editor or failover fixture\n' >&2; exit 2 ;; esac
 fixture_dir="$(mktemp -d)"
 fixture_name="ofz-control-$(basename "$fixture_dir" | tr '[:upper:]' '[:lower:]')"
 fixture_database="$fixture_name-db"
@@ -92,6 +92,12 @@ for attempt in $(seq 1 60); do
   if curl --silent --fail --max-time 1 "$OFZ_TEST_NATIVE_ENDPOINT/healthz" >/dev/null; then
     if [[ "$fixture_mode" == control ]]; then
       cargo test --locked --lib control_integration -- --ignored --nocapture
+    elif [[ "$fixture_mode" == bootstrap ]]; then
+      cargo build --locked
+      OFZ_BOOTSTRAP_CLI_FIXTURE="$PWD/target/debug/ofz" \
+        cargo test --locked --lib bootstrap::tests::real_bootstrap_activation_and_interrupted_retries \
+        -- --ignored --exact --nocapture 2>&1 | tee "$fixture_dir/bootstrap-test.log"
+      grep -Eq '^test result: ok\. 1 passed; 0 failed;' "$fixture_dir/bootstrap-test.log"
     elif [[ "$fixture_mode" == runtime || "$fixture_mode" == kvm || "$fixture_mode" == editor || "$fixture_mode" == failover ]]; then
       if [[ "$fixture_mode" == failover ]]; then
         cargo test --locked --lib control_integration -- --ignored --nocapture

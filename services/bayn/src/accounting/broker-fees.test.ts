@@ -17,6 +17,7 @@ const planHash = hashLedgerPlanResult(plan)
 if (Result.isFailure(planHash)) throw new Error('fee fixture hash failed')
 const record: StoredBrokerFee = {
   data,
+  coin_cost_basis_micros: null,
   read_evidence: {
     requestId: 'read-1',
     status: 200,

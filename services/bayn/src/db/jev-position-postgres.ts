@@ -59,13 +59,13 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
         WHERE fill.account_id = ${fill.accountId} AND fill.fill_id = ${fill.fillId}
           AND fill.broker_order_id = ${fill.brokerOrderId} AND fill.client_order_id = ${fill.clientOrderId}
           AND fill.intent_id = ${fill.intentId ?? null} AND fill.symbol = ${fill.symbol} AND fill.side = ${fill.side}
-          AND fill.quantity_micros = ${fill.quantityMicros} AND fill.price_micros = ${fill.priceMicros}
+          AND fill.quantity_atoms = ${fill.quantityAtoms} AND fill.price_atoms = ${fill.priceAtoms}
           AND fill.fee_micros = ${fill.feeMicros} AND event.occurred_at = ${fill.occurredAt}::timestamptz
           AND event.observed_at <= ${r.reconciledAt}::timestamptz AND receipt.recorded_at <= ${r.reconciledAt}::timestamptz
           AND receipt.intent_id = fill.intent_id
           AND transaction.intent_id = fill.intent_id AND transaction.account_id = fill.account_id
           AND transaction.symbol = fill.symbol AND transaction.side = fill.side
-          AND transaction.quantity_micros = fill.quantity_micros AND transaction.price_micros = fill.price_micros
+          AND transaction.quantity_atoms = fill.quantity_atoms AND transaction.price_atoms = fill.price_atoms
           AND transaction.fee_micros = fill.fee_micros AND transaction.occurred_at = event.occurred_at
       ) AS matches
     `,
@@ -95,8 +95,8 @@ export const makeJevPositionStore = Effect.gen(function* () {
         SELECT jsonb_build_object(
           'schemaVersion', fill.schema_version, 'accountId', fill.account_id, 'fillId', fill.fill_id,
           'brokerOrderId', fill.broker_order_id, 'clientOrderId', fill.client_order_id, 'intentId', fill.intent_id,
-          'symbol', fill.symbol, 'side', fill.side, 'quantityMicros', fill.quantity_micros::text,
-          'priceMicros', fill.price_micros::text, 'feeMicros', fill.fee_micros::text,
+          'symbol', fill.symbol, 'side', fill.side, 'quantityAtoms', fill.quantity_atoms::text,
+          'priceAtoms', fill.price_atoms::text, 'feeMicros', fill.fee_micros::text,
           'occurredAt', to_char(event.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
         ) AS fill
         FROM fills AS fill JOIN broker_events AS event ON event.event_id = fill.event_id

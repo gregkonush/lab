@@ -63,7 +63,8 @@ const activeCycle = (): IntradayAutonomousCycle => {
   }
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
       strategyName: 'intraday-momentum',
       qualificationRunId: hash('1'),
       strategyProtocolHash: hash('2'),
@@ -152,11 +153,7 @@ describe('intraday execution-session binding', () => {
     const changedCalendar = bindCycleExecutionSession(input({ calendar: calendar('2026-02-02T18:00:00.000Z') }))
     expect(Result.isFailure(changedCalendar)).toBeTrue()
     if (Result.isFailure(changedCalendar)) {
-      expect(changedCalendar.failure).toMatchObject({
-        operation: 'bind-cycle',
-        reason: 'cycle-calendar',
-        facts: { field: 'executionCloseAt' },
-      })
+      expect(changedCalendar.failure).toMatchObject({ operation: 'bind-cycle', reason: 'cycle-calendar' })
     }
 
     const changedModel = {

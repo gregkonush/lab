@@ -46,6 +46,7 @@ import {
   type ExecutionProgramDependencies,
 } from './runtime-program'
 import {
+  brokerAssetFixture,
   cachedBrokerStateFixture,
   nativeBrokerStateFixture,
   submissionProjectionFixture,
@@ -147,6 +148,9 @@ const readEvidence: ReadEvidence = {
 }
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
 const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
+  cryptoStatus: null,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -167,7 +171,7 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
   exchange: AssetExchange.Nasdaq,
   assetClass: AssetClass.UsEquity,
   side: PositionSide.Long,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
@@ -181,7 +185,7 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
   return submissionProjectionFixture({
     account: Effect.succeed(readResult(account)),
     accountConfiguration: unusedRead,
-    assetBySymbol: () => unusedRead,
+    assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
     positions: Effect.succeed(readResult(positions)),
     orders: () => Effect.succeed(readResult([])),
     orderById: () => unusedRead,
@@ -239,7 +243,7 @@ const finalLiveFixture = () => {
     side: OrderSide.Buy,
     orderType: OrderType.Market,
     timeInForce: TimeInForce.Day,
-    quantityMicros: '1000000',
+    quantityAtoms: '1000000000',
     notionalLimitMicros: '100000000',
     state: IntentState.IoStarted,
     createdAt: '2026-07-28T07:59:00.000Z',
@@ -970,7 +974,7 @@ describe('same-code execution program composition', () => {
               assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
               symbol: 'NVDA',
               side: PositionSide.Short,
-              quantityMicros: '-2000000',
+              quantityAtoms: '-2000000000',
               marketValueMicros: '-200000000',
             }),
           ]),
@@ -1098,7 +1102,7 @@ describe('same-code execution program composition', () => {
       side: OrderSide.Buy,
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
@@ -1183,7 +1187,7 @@ describe('same-code execution program composition', () => {
         return readResult(brokerAccount())
       }),
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
       positions: Effect.sync(() => {
         trace.push('positions')
         positionReads += 1
@@ -1247,7 +1251,7 @@ describe('same-code execution program composition', () => {
         return readResult(brokerAccount())
       }),
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
       positions: Effect.sync(() => {
         trace.push('positions')
         return readResult([])
@@ -1329,7 +1333,7 @@ describe('same-code execution program composition', () => {
       side: OrderSide.Buy,
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',

@@ -4,27 +4,36 @@ import { Effect } from 'effect'
 
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { settleCompletedBrokerObservationPoll } from '../composition/broker-observation-runtime'
-import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
+import {
+  makeBaynBrokerObservations,
+  type BrokerObservationPoll,
+  type BrokerObservationRuntime,
+} from './restate-broker-observations'
 
 const controllerKey = 'a'.repeat(64)
 const sourceRevision = 'b'.repeat(40)
 const config = { controllerKey, sourceRevision, pollIntervalMs: 10_000, operationTimeoutMs: 30_000 }
+type TestRuntime = Omit<Partial<BrokerObservationRuntime>, 'poll'> & {
+  poll?: (signal: AbortSignal, reservation: { captureId: string }) => Promise<BrokerObservationPoll>
+}
 type State = { sourceRevision: string; epoch: number; sequence: number; lastSnapshotHash?: string }
 const harness = (
   input: {
-    runtime?: Partial<BrokerObservationRuntime>
+    runtime?: TestRuntime
     state?: State
     key?: string
     elapsedMs?: number
     now?: () => Promise<number>
     sleep?: (milliseconds: number) => Promise<void>
     budgetDeadline?: number
+    quotaDeadline?: number
     runResults?: Map<string, unknown>
     losePollResult?: 'before-journal' | 'after-journal'
   } = {},
 ) => {
   let state: State | null = input.state ?? null
   let budgetDeadline = input.budgetDeadline ?? null
+  let quotaDeadline = input.quotaDeadline ?? 0
   let activations = 0
   let polls = 0
   let now = 0
@@ -38,12 +47,16 @@ const harness = (
   const object = makeBaynBrokerObservations(
     config,
     {
-      activate:
-        input.runtime?.activate ??
-        (async () => {
-          activations += 1
-        }),
+      activate: async (signal, deadline) => {
+        quotaDeadline = Math.max(quotaDeadline, deadline)
+        if (input.runtime?.activate) await input.runtime.activate(signal, deadline)
+        else activations += 1
+      },
       poll: async (signal, reservation) => {
+        const startedAtMs = now
+        if (quotaDeadline > now)
+          return { poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: quotaDeadline }, startedAtMs, completedAtMs: now }
+        quotaDeadline = now + 180_000
         const result = await (
           input.runtime?.poll ??
           (async () => {
@@ -52,7 +65,8 @@ const harness = (
           })
         )(signal, reservation)
         now += input.elapsedMs ?? 0
-        return result
+        quotaDeadline = result.nextPollNotBeforeMs
+        return { poll: result, startedAtMs, completedAtMs: now }
       },
     },
     [],
@@ -64,6 +78,9 @@ const harness = (
     console: { warn: () => undefined },
     request: () => ({ id: 'test-capture', attemptCompletedSignal: new AbortController().signal }),
     get: async (key: string) => (key === 'polling' ? state : budgetDeadline),
+    clear: () => {
+      budgetDeadline = null
+    },
     set: (key: string, value: State | number) => {
       if (key === 'polling') {
         if (typeof value === 'number') throw new Error('unexpected numeric owner state')
@@ -112,21 +129,22 @@ const harness = (
     },
     calls: () => ({ activations, polls }),
     state: () => state,
-    budgetDeadline: () => budgetDeadline,
+    budgetDeadline: () => quotaDeadline,
+    legacyBudget: () => budgetDeadline,
   }
 }
 
 describe('Restate broker observation owner', () => {
-  test('a reserved quota window schedules a successor without holding the owner or calling a worker', async () => {
-    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, budgetDeadline: 180_000 })
+  test('a reserved quota window schedules a successor without holding the owner or starting HTTP', async () => {
+    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, quotaDeadline: 180_000 })
     await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
     expect(h.sleeps).toEqual([])
-    expect(h.commands).toEqual([])
+    expect(h.commands).toEqual(['poll and publish broker observation'])
     expect(h.calls().polls).toBe(0)
     expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
   })
   test('deployment activation waits for reserved quota and returns its fresh published cut', async () => {
-    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, budgetDeadline: 180_000 })
+    const h = harness({ state: { sourceRevision, epoch: 1, sequence: 1 }, quotaDeadline: 180_000 })
     const state = await h.handlers.activate(h.context, { sourceRevision })
     expect(h.sleeps).toEqual([180_000])
     expect(state.lastSnapshotHash).toBe('c'.repeat(64))
@@ -137,17 +155,17 @@ describe('Restate broker observation owner', () => {
     async (losePollResult) => {
       const runResults = new Map<string, unknown>()
       let captures = 0
-      const runtime: Partial<BrokerObservationRuntime> = {
+      const runtime: TestRuntime = {
         poll: async (_, reservation) => {
           expect(reservation.captureId).toBe('test-capture')
           return ++captures === 1
             ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
-            : { _tag: 'Unavailable', nextPollNotBeforeMs: reservation.interruptedNotBeforeMs }
+            : { _tag: 'Unavailable', nextPollNotBeforeMs: 180_000 }
         },
       }
       const first = harness({ runtime, runResults, losePollResult })
       await first.handlers.activate(first.context, { sourceRevision })
-      expect(first.budgetDeadline()).toBe(180_000)
+      expect(first.budgetDeadline()).toBe(0)
       const replay = harness({ runtime, runResults })
       await replay.handlers.activate(replay.context, { sourceRevision })
       expect(replay.budgetDeadline()).toBe(losePollResult === 'before-journal' ? 180_000 : 0)
@@ -217,7 +235,17 @@ describe('Restate broker observation owner', () => {
     await h.handlers.activate(h.context, { sourceRevision })
     expect(h.state()?.lastSnapshotHash).toBeUndefined()
     expect(h.budgetDeadline()).toBe(180_000)
-    expect(h.deliveries[0]?.delay.milliseconds).toBe(180_000)
+    expect(h.deliveries[0]?.delay.milliseconds).toBe(10_000)
+    h.advance(10_000)
+    await h.handlers.poll(h.context, { sourceRevision, epoch: 1, sequence: 1 })
+    expect(h.deliveries[1]?.delay.milliseconds).toBe(170_000)
+  })
+  test('activation hands the legacy durable deadline to the database and clears its old key', async () => {
+    const h = harness({ state: { sourceRevision: 'd'.repeat(40), epoch: 1, sequence: 1 }, budgetDeadline: 180_000 })
+    await h.handlers.activate(h.context, { sourceRevision })
+    expect(h.sleeps).toEqual([180_000])
+    expect(h.legacyBudget()).toBeNull()
+    expect(h.calls()).toEqual({ activations: 1, polls: 1 })
   })
   test('publishes before returning activation and schedules only one serial successor', async () => {
     const h = harness()
@@ -342,9 +370,10 @@ describe('Restate broker observation owner', () => {
     'refuses a corrupt durable budget %s without starting a broker poll',
     async (budgetDeadline) => {
       const h = harness({ budgetDeadline })
-      await expect(h.handlers.activate(h.context, { sourceRevision })).rejects.toThrow()
+      const failure = await h.handlers.activate(h.context, { sourceRevision }).catch((cause: unknown) => cause)
+      expect(failure).toBeInstanceOf(Error)
       expect(h.calls().polls).toBe(0)
-      expect(h.budgetDeadline()).toBe(budgetDeadline)
+      expect(h.legacyBudget()).toBe(budgetDeadline)
     },
   )
   test.each([{ sourceRevision: 'd'.repeat(40) }, { sourceRevision, interval: 1 }])(

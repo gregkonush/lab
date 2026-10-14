@@ -1,3 +1,4 @@
+import { exchangeSessions } from '../../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { IsoDateSchema } from '../../contracts'
@@ -68,7 +69,7 @@ describe('streaming strategy and recorded decision replay', () => {
 
   test('uses all seven decision symbols and reproduces the exact streaming decision', () => {
     const { snapshot, rows, protocol } = streamingFixture()
-    const session = snapshot.manifest.calendar.sessions[0]
+    const session = exchangeSessions(snapshot.manifest.calendar)[0]
     if (session === undefined) throw new Error('missing fixture session')
     const calendar = Result.getOrThrow(
       makeExecutionCalendarObservation({

@@ -1,3 +1,6 @@
+import type { JevProtocol } from '../../jev/protocol'
+import { equityMarketProfile } from '../../jev/markets'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { canonicalHashV1 } from '../../hash'
 import type { IntradaySnapshotRequest } from '../../market-data'
 import type { IntradayMarketSnapshot } from '../../market-data/intraday/model'
@@ -11,12 +14,17 @@ export const intradayTestArchiveTopics = Object.freeze({
 } as const)
 
 export const makeIntradayMomentumTestSnapshot = (
-  protocol: Pick<IntradayMomentumProtocol, 'delayClass' | 'feed' | 'universe' | 'universeId' | 'universeSymbolHash'>,
+  inputProtocol:
+    | Pick<IntradayMomentumProtocol, 'delayClass' | 'feed' | 'universe' | 'universeId' | 'universeSymbolHash'>
+    | JevProtocol,
   request: IntradaySnapshotRequest,
   premiums: Readonly<Record<string, number>> = {},
   basePrice = 100,
   bidSizes: Readonly<Record<string, number>> = {},
-): IntradayMarketSnapshot => {
+): IntradayMarketSnapshot & { readonly manifest: { readonly calendar: MarketCalendarObservation } } => {
+  const protocol = 'marketProfiles' in inputProtocol ? equityMarketProfile : inputProtocol
+  if (request.calendar.schemaVersion === 'bayn.continuous-market-hours.v1')
+    throw new Error('equity fixture requires exchange hours')
   const rangeStartEpoch = Date.parse(request.rangeStartAt)
   const rangeMinutes = (Date.parse(request.rangeEndAt) - rangeStartEpoch) / 60_000
   const requestedSymbols = request.symbols ?? request.universe
@@ -147,5 +155,5 @@ export const makeIntradayMomentumTestSnapshot = (
       contentHash,
       snapshotId: canonicalHashV1({ ...material, contentHash }),
     },
-  } as unknown as IntradayMarketSnapshot
+  }
 }
