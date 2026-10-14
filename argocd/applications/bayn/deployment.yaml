@@ -64,7 +64,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: fa7562dde3cf726f7e12cdab4c6987ce3e699867
+              value: 27bc084125b7833c071914f0fa3575f412c6bddd
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -79,7 +79,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:2457655596eaace6cb441defc8e0967eedb1fbda440443c7d27a1a03a21e2b15
+              value: sha256:5ae3522729588c71620f2838244386f34a65dee38511f3d60a8e1584d1f6f639
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "420011c3d2552eaf702adadc67ecb8441bf320bdea89aad090dd0ad243b528e0"
             - name: BAYN_STRATEGY_PARAMETER_HASH
