@@ -10,6 +10,9 @@ including nights, weekends and UTC date boundaries. Both markets share the same 
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
 and at most one open position. Crypto uses cash buying power, quantity-based LIMIT/IOC entries and closes, and
 MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
+An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
+profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
+Bound decisions, orders and positions retain recovery priority.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros. Migration 97
 requires flat, settled inventory and complete accounting, archives the original projections and preserves existing

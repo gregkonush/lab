@@ -70,7 +70,10 @@ separate required work.
 3. Reconcile Ofz at its exact Kargo-generated revision. For held Keycloak, sync only the reviewed database Cluster,
    ObjectStore, database writer SealedSecret, ScheduledBackup and protected one-off Backup before upgrading the identity server.
 4. Verify both initial physical backups complete, WAL objects arrive encrypted, and the database writers cannot read
-   the other database or the audit archive. A successful Backup resource alone does not prove recovery.
+   the other database or the audit archive. The initial cutover backups target the primary to force a new checkpoint
+   after the archive destination changes. A standby can use an older restartpoint whose WAL exists only in the retired
+   archive. Daily backups can prefer a standby after this baseline is established. A successful Backup resource alone
+   does not prove recovery.
 5. Restore each physical backup and its WAL into an isolated NUC PostgreSQL instance of the pinned production version.
    Verify the expected databases and application state before allowing the identity and runtime cutover.
 

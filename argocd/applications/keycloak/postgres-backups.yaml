@@ -56,14 +56,14 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Backup
 metadata:
-  name: keycloak-db-nuc-cutover
+  name: keycloak-db-nuc-cutover-primary
   annotations:
     argocd.argoproj.io/sync-wave: "-6"
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   cluster:
     name: keycloak-db
-  target: prefer-standby
+  target: primary
   method: plugin
   pluginConfiguration:
     name: barman-cloud.cloudnative-pg.io

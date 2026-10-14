@@ -1,11 +1,12 @@
 import { continuousMarketHours, type MarketHours } from '../../market-hours'
 import { canonicalHashV1 } from '../../hash'
-import { Effect, Option, pipe } from 'effect'
+import { Effect, Option, pipe, Schema } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
-import { CycleState, type AutonomousCycle } from '../model'
+import { IsoDateSchema } from '../../schemas'
+import { CycleState, intradayCycleEntryAttemptOrdinal, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
 import { CycleStore } from '../store'
 import { isTerminalCycleState } from '../transitions'
@@ -48,13 +49,43 @@ export const discoverAutonomousCyclePass = <R>(
   }
   return Effect.gen(function* () {
     const observedAt = yield* currentIsoTime
+    const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
+      Effect.mapError(calendarQueryFailureError),
+    )
+    const sessionDate = yield* Schema.decodeUnknownEffect(IsoDateSchema)(query.start).pipe(
+      Effect.mapError((cause) =>
+        runnerError({
+          operation: 'build-cycle',
+          failure: 'contract',
+          message: 'current admission date is invalid',
+          cause,
+        }),
+      ),
+    )
+    const store = yield* CycleStore
+    const existing = yield* store
+      .readAuthoritySlot({
+        qualificationRunId: context.cycleBindingId,
+        accountId: context.accountId,
+        executionSessionDate: sessionDate,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          runnerError({
+            operation: 'read-authority-slot',
+            failure: 'store',
+            message: 'durable intraday cycle authority-slot read failed',
+            cause,
+          }),
+        ),
+      )
     let hours: MarketHours = continuousMarketHours
     let hoursReadHash = canonicalHashV1(continuousMarketHours)
     // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
-    if (Math.floor(Date.parse(observedAt) / 60_000) % 2 === 0) {
-      const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
-        Effect.mapError(calendarQueryFailureError),
-      )
+    if (
+      Option.isNone(existing) ||
+      (isIntradayAutonomousCycle(existing.value) && intradayCycleEntryAttemptOrdinal(existing.value.identity) % 2 === 0)
+    ) {
       const broker = yield* BrokerRead
       const calendar = yield* broker.marketCalendar(query).pipe(
         Effect.mapError((cause) =>
@@ -92,23 +123,6 @@ export const discoverAutonomousCyclePass = <R>(
         }),
       ),
     )
-    const store = yield* CycleStore
-    const existing = yield* store
-      .readAuthoritySlot({
-        qualificationRunId: context.cycleBindingId,
-        accountId: context.accountId,
-        executionSessionDate: firstAttemptDraft.identity.executionSessionDate,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          runnerError({
-            operation: 'read-authority-slot',
-            failure: 'store',
-            message: 'durable intraday cycle authority-slot read failed',
-            cause,
-          }),
-        ),
-      )
     let recoveredBlockedCycle = false
     if (
       Option.isSome(existing) &&
