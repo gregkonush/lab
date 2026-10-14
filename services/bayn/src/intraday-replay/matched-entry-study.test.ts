@@ -44,7 +44,7 @@ const outcome = (net: string): NonNullable<MatchedPair['jev']> => ({
     symbol: 'AAPL',
     side: side === 'buy' ? ('buy' as const) : ('sell' as const),
     observedAt: '2026-09-04T14:00:00.000Z',
-    quantityMicros: '100000000',
+    quantityAtoms: '100000000000',
     priceMicros: '100000000',
     notionalMicros: '10000000000',
   })),

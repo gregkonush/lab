@@ -33,7 +33,7 @@ describe('strategy protocol', () => {
   test('pins the current account-neutral causal parameter identity', () => {
     const decoded = decodeDefaultProtocol()
     if (Result.isFailure(decoded)) throw decoded.failure
-    expect(hashParameters(decoded.success)).toBe('150f22c28829c60d6c5947ee44361de1e4c53c18269fa3585e3a81cb5b3e3d1b')
+    expect(hashParameters(decoded.success)).toBe('7e74f3f968cecd06707a31ddce1d9403cfbd5587344ee9954e7deeb2216b5123')
   })
 
   test('decodes unknown protocol documents once into a typed pure result', () => {
@@ -222,7 +222,7 @@ describe('strategy protocol', () => {
       ['order', 'fillPriceReference'],
       ['order', 'buyingPowerPolicy'],
       ['order', 'submissionCutoffLeadMinutes'],
-      ['precision', 'quantityIncrementMicros'],
+      ['precision', 'quantityIncrementAtoms'],
       ['precision', 'priceIncrementMicros'],
       ['precision', 'minimumBuyNotionalMicros'],
       ['priceImpact', 'halfSpreadBps'],

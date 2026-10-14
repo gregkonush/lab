@@ -1,3 +1,5 @@
+import { quantityFromDecimal } from '../quantity'
+import { exchangeSessions } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -87,7 +89,7 @@ export const intradayPerformanceDecisionRequest = (
       minimumWatermarkLagMs: manifest.minimumWatermarkLagMs,
       archiveWatermarks,
     })
-    const session = original.calendar.sessions.find((item) => item.date === request.executionSessionDate)
+    const session = exchangeSessions(original.calendar).find((item) => item.date === request.executionSessionDate)
     if (
       request.sourceFeed !== 'iex' ||
       request.decisionSnapshotAsOfSession !== manifest.sessionDate ||
@@ -202,9 +204,12 @@ export const makeIntradayPerformanceVolumeEvidence = (
           failure('intraday performance bar violates identity, ordering, availability or watermark bounds'),
         )
       }
-      const volume = micros(bar.volume)
+      const volumeResult = quantityFromDecimal(String(bar.volume))
+      const volume = Result.isSuccess(volumeResult) ? volumeResult.success : undefined
       if (volume === undefined)
-        return yield* Result.fail(failure('intraday performance volume cannot be represented exactly in microshares'))
+        return yield* Result.fail(
+          failure('intraday performance volume cannot be represented exactly in quantity atoms'),
+        )
       quantity += volume
       lastEvent = event
       if (ingested > intradayInstantNanos(finalizedAt))
@@ -225,7 +230,7 @@ export const makeIntradayPerformanceVolumeEvidence = (
       schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v1' as const,
       volumeScope: 'IEX_RECORDED_SESSION_VOLUME' as const,
       terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE' as const,
-      quantityMicros: quantity.toString(),
+      quantityAtoms: quantity.toString(),
       closePriceMicros: price.toString(),
       finalizedAt,
       archiveRequest: archive,
@@ -262,7 +267,7 @@ export const validIntradayPerformanceVolumeEvidence = (
     evidence.volumeScope === 'IEX_RECORDED_SESSION_VOLUME' &&
     evidence.terminalPriceBasis === 'FINAL_MINUTE_BAR_CLOSE' &&
     /^[a-f0-9]{64}$/.test(evidence.barsContentHash) &&
-    /^[1-9][0-9]*$/.test(evidence.quantityMicros) &&
+    /^[1-9][0-9]*$/.test(evidence.quantityAtoms) &&
     /^[1-9][0-9]*$/.test(evidence.closePriceMicros) &&
     evidence.barCount > 0 &&
     evidence.barCount + missing.length === expectedMinutes &&

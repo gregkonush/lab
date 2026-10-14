@@ -4,6 +4,7 @@ import type { ExecutionModel } from '../../execution-model-contract'
 import { roundUnsignedHalfUp } from '../../unsigned-round-half-up'
 import { MICROS, WEIGHT_SCALE, type ExecutionModelFailure } from './model'
 import { Pipeable } from '../../pipeable'
+import { quantityScale } from '../../quantity'
 
 export type ExecutionResult<A> = Result.Result<A, ExecutionModelFailure>
 
@@ -104,6 +105,17 @@ const quantizeNearestDataFirst = (value: bigint, increment: bigint): ExecutionRe
 
 export const quantizeNearest = Pipeable.dual(2, quantizeNearestDataFirst)
 
+export const priceNumberToMicros = (
+  value: number,
+  field = 'price',
+  rounding: 'UP' | 'DOWN' | 'NEAREST' = 'NEAREST',
+): ExecutionResult<bigint> =>
+  scaledNumber(value, field, 1_000_000_000).pipe(
+    Result.map((atoms) =>
+      rounding === 'UP' ? (atoms + 999n) / 1000n : rounding === 'DOWN' ? atoms / 1000n : (atoms + 500n) / 1000n,
+    ),
+  )
+
 const numberToMicrosDataFirst = (value: number, field = 'value'): ExecutionResult<bigint> => {
   const scale = Number(MICROS)
   if (!Number.isFinite(value)) {
@@ -145,12 +157,12 @@ const referencePriceMicrosDataFirst = (price: number, model: ExecutionModel): Ex
 
 export const referencePriceMicros = Pipeable.dual(2, referencePriceMicrosDataFirst)
 
-const notionalMicrosDataFirst = (quantityMicros: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
-  roundDiv(quantityMicros * priceMicros, MICROS)
+const notionalMicrosDataFirst = (quantityAtoms: bigint, priceMicros: bigint): ExecutionResult<bigint> =>
+  roundDiv(quantityAtoms * priceMicros, quantityScale)
 
 export const notionalMicros = Pipeable.dual(2, notionalMicrosDataFirst)
 
-const desiredQuantityMicrosDataFirst = (
+const desiredQuantityAtomsDataFirst = (
   equityMicros: bigint,
   weight: number,
   priceMicros: bigint,
@@ -178,9 +190,9 @@ const desiredQuantityMicrosDataFirst = (
         })
       }
       return pipe(
-        ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment', 1n),
+        ensureUnsigned(model.precision.quantityIncrementAtoms, 'quantity increment', 1n),
         Result.flatMap((increment) => {
-          const raw = (equityMicros * weightUnits * MICROS) / (WEIGHT_SCALE * priceMicros)
+          const raw = (equityMicros * weightUnits * quantityScale) / (WEIGHT_SCALE * priceMicros)
           return quantizeDown(raw, increment)
         }),
       )
@@ -188,4 +200,4 @@ const desiredQuantityMicrosDataFirst = (
   )
 }
 
-export const desiredQuantityMicros = Pipeable.dual(4, desiredQuantityMicrosDataFirst)
+export const desiredQuantityAtoms = Pipeable.dual(4, desiredQuantityAtomsDataFirst)

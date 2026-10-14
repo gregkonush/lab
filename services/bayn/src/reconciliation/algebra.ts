@@ -1,15 +1,11 @@
+import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
 import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import {
-  compatibleOrderRequestBody,
-  MutationOperation,
-  orderPriceBoundaryMicros,
-  orderRequestNotionalMicros,
-} from '../broker/alpaca-mutations'
+import { MutationOperation } from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
@@ -60,7 +56,7 @@ export interface IntentProjectionRow {
   readonly side: OrderSide
   readonly order_type: OrderType
   readonly time_in_force: TimeInForce
-  readonly quantity_micros: string
+  readonly quantity_atoms: string
   readonly notional_limit_micros: string
   readonly state: IntentState
   readonly terminal_outcome: TerminalOutcome | null
@@ -68,6 +64,7 @@ export interface IntentProjectionRow {
   readonly mutation_operation: MutationOperation | null
   readonly mutation_event_type: MutationEventType | null
   readonly mutation_occurred_at: string | null
+  readonly submit_request_body?: unknown
   readonly submit_request_hash: string | null
 }
 
@@ -232,7 +229,7 @@ const fail = (failure: ReconciliationAlgebraFailure): Result.Result<never, Recon
 
 type SubmittedOrderRepresentation = Pick<
   IntentExpectation,
-  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityMicros'
+  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityAtoms'
 >
 
 const invalidSubmitRepresentation = (row: IntentProjectionRow, cause: unknown): ReconciliationAlgebraFailure => ({
@@ -252,42 +249,12 @@ const submittedOrderRepresentation = (
     )
   }
 
-  const requestIntent = {
-    clientOrderId: row.client_order_id,
-    notionalLimitMicros: row.notional_limit_micros,
-    orderType: row.order_type,
-    quantityMicros: row.quantity_micros,
-    side: row.side,
+  return submittedOrderEvidence(row.submit_request_body, {
+    requestHash: row.submit_request_hash,
     symbol: row.symbol,
-    timeInForce: row.time_in_force,
-  }
-  return Result.flatMap(
-    Result.mapError(compatibleOrderRequestBody(requestIntent, row.submit_request_hash), (cause) =>
-      invalidSubmitRepresentation(row, cause),
-    ),
-    (body) => {
-      if (!('limit_price' in body)) {
-        if ('notional' in body) {
-          const submittedNotionalMicros = orderRequestNotionalMicros(body)
-          return submittedNotionalMicros === undefined
-            ? Result.fail(invalidSubmitRepresentation(row, 'accepted broker notional is not canonical micros'))
-            : Result.succeed({ submittedOrderType: OrderType.Market, submittedNotionalMicros })
-        }
-        return Result.succeed({
-          submittedOrderType: OrderType.Market,
-          submittedQuantityMicros: row.quantity_micros,
-        })
-      }
-      return Result.map(
-        Result.mapError(orderPriceBoundaryMicros(requestIntent), (cause) => invalidSubmitRepresentation(row, cause)),
-        (boundary): SubmittedOrderRepresentation => ({
-          submittedOrderType: OrderType.Limit,
-          submittedQuantityMicros: row.quantity_micros,
-          submittedLimitPriceMicros: boundary.toString(),
-        }),
-      )
-    },
-  )
+    side: row.side,
+    clientOrderId: row.client_order_id,
+  }).pipe(Result.mapError((cause) => invalidSubmitRepresentation(row, cause)))
 }
 
 const mutationIsUnresolved = (row: IntentProjectionRow): boolean =>
@@ -308,7 +275,7 @@ const projectIntentExpectation = (
     orderType: row.order_type,
     ...submitted,
     timeInForce: row.time_in_force,
-    quantityMicros: row.quantity_micros,
+    quantityAtoms: row.quantity_atoms,
     state: row.state,
     ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
     expectsBrokerOrder: row.broker_order_id !== null,

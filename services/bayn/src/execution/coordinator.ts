@@ -294,7 +294,7 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       Effect.flatMap((existing) =>
         readIntent(MutationOperation.Submit, intentId).pipe(
           Effect.flatMap((stored) =>
-            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent, closeOnly)).pipe(
+            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent)).pipe(
               Effect.flatMap(({ request, requestHash }) =>
                 existing === undefined
                   ? startSubmit(services, stored, requestHash, request, consistencyDelayMs, closeOnly)

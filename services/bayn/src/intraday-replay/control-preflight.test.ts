@@ -1,3 +1,5 @@
+import { equityMarketProfile } from '../jev/markets'
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
@@ -8,7 +10,7 @@ import { ControlInputCoverage, scanControlInputs } from './control-preflight'
 import type { ControlMarket } from './control-study'
 
 const fixture = nativeJevFixture()
-const originalSession = fixture.snapshot.manifest.calendar.sessions[0]
+const originalSession = exchangeSessions(fixture.snapshot.manifest.calendar)[0]
 if (originalSession === undefined) throw new Error('Fixture requires a session')
 const openMs = Date.parse(originalSession.openAt)
 const session = { ...originalSession, closeAt: new Date(openMs + 90 * 60_000).toISOString() }
@@ -21,7 +23,7 @@ const scan = (options: { unavailable?: boolean; excludeAll?: boolean; durationMs
       Effect.sync(() => {
         observations.push(Date.parse(query.observedAt))
         expect(Date.parse(query.rangeEndAt)).toBe(Math.floor((Date.parse(query.observedAt) - 2000) / 60_000) * 60_000)
-        expect(query.candidateSymbols).toEqual(fixture.protocol.candidateSymbols)
+        expect(query.candidateSymbols).toEqual(equityMarketProfile.candidateSymbols)
         expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
         if (options.unavailable)
           return {
@@ -35,7 +37,7 @@ const scan = (options: { unavailable?: boolean; excludeAll?: boolean; durationMs
             manifest: {
               ...fixture.snapshot.manifest,
               candidateExclusions: options.excludeAll
-                ? fixture.protocol.candidateSymbols.map((symbol) => ({
+                ? equityMarketProfile.candidateSymbols.map((symbol) => ({
                     symbol,
                     reason: 'freshness' as const,
                     message: 'Candidate quote is stale',

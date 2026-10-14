@@ -174,8 +174,11 @@ const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): rea
   ) {
     issues.push({ path: ['executionModel', 'order'], issue: 'must bind the exact rolling decision interval' })
   }
-  if (protocol.executionModel.precision.quantityIncrementMicros !== '1000000') {
-    issues.push({ path: ['executionModel', 'precision'], issue: 'IOC equity execution requires whole-share sizing' })
+  if (protocol.executionModel.precision.quantityIncrementAtoms !== '1') {
+    issues.push({
+      path: ['executionModel', 'precision'],
+      issue: 'cash-spot execution requires the common exact quantity unit',
+    })
   }
   return issues
 }

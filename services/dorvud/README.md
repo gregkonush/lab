@@ -38,7 +38,7 @@ keeps sending control frames. REST recovery cannot reset the provider-event cloc
 The forwarder opens the Alpaca `v1beta3/crypto/{location}` websocket with the same `ALPACA_KEY_ID` and
 `ALPACA_SECRET_KEY` used by the equity connection. `ALPACA_CRYPTO_SYMBOLS` supplies unique `BASE/QUOTE` pairs,
 `ALPACA_CRYPTO_LOCATION` selects `us`, `us-1`, or `eu-1`, and `TOPIC_CRYPTO_EVENTS` names the Kafka topic.
-The committed configuration collects `BTC/USD` and `ETH/USD` from `us`. It subscribes to trades, quotes,
+The committed configuration collects `BTC/USD`, `ETH/USD`, and `SOL/USD` from `us`. It subscribes to trades, quotes,
 minute bars, updated bars, and order books. Authentication, subscription acknowledgement, Kafka delivery,
 freshness, and reconnect checks run on weekends and holidays. Sparse trades and updated bars require subscription
 acknowledgement without inventing a minimum event rate. Quotes, minute bars, and order books require fresh delivery.
