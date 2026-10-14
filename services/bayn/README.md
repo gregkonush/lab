@@ -214,6 +214,13 @@ A bound sell's remaining position keeps the cycle active; clearing that obligati
 with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
 Close documents retain their existing residual-replanning and hard-deadline failure behavior.
 
+A known pre-transmission rejection records a bounded `denialReason` on its `SUBMIT_DENIED` event. Expired risk or
+submission windows, stale or consumed broker state, changed authority, and known sizing failures retain distinct
+reasons without storing exception messages or request payloads. The reason is hashed with the event and committed
+atomically with the terminal intent transition. Exact retries retain that first reason; conflicting retries fail.
+Historical events without a reason remain unchanged and readable, and unrecognized failures remain explicitly
+`UNCLASSIFIED_INVALID_REQUEST`. A local denial is not broker rejection evidence and cannot permit another submission.
+
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
 intent's own start event; other mutations or newer durable broker evidence invalidate it. Submit/cancel invalidate

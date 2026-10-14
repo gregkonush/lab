@@ -1,3 +1,4 @@
+import submissionDenialReason from '../../migrations/0099_submission_denial_reason'
 import valkeyBrokerMaterializations from '../../migrations/0098_valkey_broker_materializations'
 import brokerObservationQuota from '../../migrations/0096_broker_observation_quota'
 import continuousCashSpot from '../../migrations/0097_continuous_cash_spot'
@@ -100,6 +101,7 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '99_submission_denial_reason': submissionDenialReason,
   '98_valkey_broker_materializations': valkeyBrokerMaterializations,
   '96_broker_observation_quota': brokerObservationQuota,
   '97_continuous_cash_spot': continuousCashSpot,

@@ -64,6 +64,7 @@ const eventIdentity = (event: Omit<MutationEvent, 'eventId'>) => ({
   ...(event.requestId === undefined ? {} : { requestId: event.requestId }),
   ...(event.responseStatus === undefined ? {} : { responseStatus: event.responseStatus }),
   ...(event.responseContentHash === undefined ? {} : { responseContentHash: event.responseContentHash }),
+  ...(event.denialReason === undefined ? {} : { denialReason: event.denialReason }),
   occurredAt: event.occurredAt,
 })
 
@@ -661,6 +662,7 @@ const sameOutcome = (previous: MutationEvent, event: MutationEvent): boolean =>
   previous.requestId === event.requestId &&
   previous.responseStatus === event.responseStatus &&
   previous.responseContentHash === event.responseContentHash &&
+  previous.denialReason === event.denialReason &&
   previous.brokerOrderId === event.brokerOrderId
 
 const matchesReplayIntent = (
@@ -730,7 +732,7 @@ const decideMutationEventContract = (
         return false
     }
   })()
-  return valid
+  return valid && (event.denialReason === undefined || event.eventType === MutationEventType.SubmitDenied)
     ? Result.succeed(undefined)
     : Result.fail(
         storeError({
@@ -801,6 +803,7 @@ const decideMutationOutcomeDataFirst = (
     ...(input.evidence?.requestId === undefined ? {} : { requestId: input.evidence.requestId }),
     ...(input.evidence?.status === undefined ? {} : { responseStatus: input.evidence.status }),
     ...(input.evidence?.contentHash === undefined ? {} : { responseContentHash: input.evidence.contentHash }),
+    ...(input.denialReason === undefined ? {} : { denialReason: input.denialReason }),
     occurredAt: input.occurredAt,
   })
   if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
