@@ -96,8 +96,7 @@ export const makeValkeyCache = Effect.gen(function* () {
           command('put', async (signal) => {
             const connection = client.withAbortSignal(signal)
             await connection.set(key, value, { PX: ttlMs })
-            if ((await connection.wait(1, 250)) < 1 && (await connection.wait(1, 250)) < 1)
-              throw new Error('Valkey replica did not acknowledge publication')
+            while ((await connection.wait(1, 250)) < 1) signal.throwIfAborted()
           }),
         ),
         Effect.asVoid,
