@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import {
   Cause,
   Context,
@@ -1420,6 +1422,80 @@ describe('native execution runtime', () => {
     expect(failure).toBeInstanceOf(TransientExecutionFailure)
     expect(advanceCount).toBe(0)
   })
+
+  test.each(['adapter', 'managed', 'recovering'] as const)(
+    '%s execution spans retain the native Restate parent across the Effect runtime boundary',
+    async (kind) => {
+      const provider = new NodeTracerProvider()
+      provider.register()
+      const nativeParent = { traceId: 'b'.repeat(32), spanId: 'c'.repeat(16), traceFlags: TraceFlags.SAMPLED }
+      let observedTraceId: string | undefined
+      let rootParentId: string | undefined
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const tracedDriver = {
+                ...driver,
+                advance: Effect.gen(function* () {
+                  const span = yield* Effect.currentSpan.pipe(Effect.orDie)
+                  observedTraceId = span.traceId
+                  let parent = span.parent
+                  while (Option.isSome(parent)) {
+                    rootParentId = parent.value.spanId
+                    parent = parent.value._tag === 'Span' ? parent.value.parent : Option.none()
+                  }
+                  return { observation: windowClosedObservation }
+                }).pipe(Effect.withSpan('execution-pass-test')),
+              }
+              const ready = yield* Deferred.make<void, NativeExecutionRuntimeError>()
+              yield* Deferred.succeed(ready, undefined)
+              const slot = {
+                ready,
+                state: yield* Ref.make<RecoveryFirstCycleDriverSlotState>({ _tag: 'Ready', driver: tracedDriver }),
+              }
+              const store = statusStore((candidate) => ({ _tag: 'Applied', status: candidate }))
+              const resources = Layer.merge(
+                Layer.succeed(PublishedExecutionCycleDriver, slot),
+                Layer.succeed(ExecutionControllerStatusStore, store),
+              )
+              const managed = yield* ScopedRef.fromAcquire(
+                Effect.acquireRelease(
+                  Effect.sync(() => ManagedRuntime.make(resources)),
+                  (runtime) => runtime.disposeEffect,
+                ),
+              )
+              const runner = { runPromise: Effect.runPromise }
+              const runtime =
+                kind === 'adapter'
+                  ? makeNativeExecutionRuntimeAdapter(Effect.succeed(tracedDriver), store, runner, controllerPlanHash)
+                  : kind === 'managed'
+                    ? makeManagedNativeExecutionRuntimeAdapter(ScopedRef.getUnsafe(managed), runner, controllerPlanHash)
+                    : makeRecoveringManagedNativeExecutionRuntimeAdapter(
+                        managed,
+                        resources,
+                        ScopedRef.getUnsafe(managed),
+                        runner,
+                        controllerPlanHash,
+                      )
+              yield* Effect.promise(() =>
+                context.with(trace.setSpanContext(context.active(), nativeParent), () =>
+                  runtime.advance(command, new AbortController().signal),
+                ),
+              )
+            }),
+          ),
+        )
+        expect(observedTraceId).toBe(nativeParent.traceId)
+        expect(rootParentId).toBe(nativeParent.spanId)
+      } finally {
+        await provider.shutdown()
+        context.disable()
+        propagation.disable()
+        trace.disable()
+      }
+    },
+  )
 
   test('forwards Restate cancellation into the Effect runner', async () => {
     const abort = new AbortController()

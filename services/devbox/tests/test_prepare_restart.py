@@ -90,6 +90,46 @@ class PrepareRestartTests(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(state, "auto-restart")
 
+    def test_docker_start_failure_does_not_prevent_preparation_retries(self):
+        dependency = self.root.name + "-docker.service"
+        dependency_path = pathlib.Path("/run/systemd/system") / dependency
+        dependency_path.write_text(
+            "[Service]\nType=oneshot\nRemainAfterExit=yes\n"
+            "ExecStart=/bin/sh -c 'test -f \""
+            + str(self.root / "docker-ready")
+            + "\"'\n"
+        )
+        config = configparser.ConfigParser(interpolation=None)
+        config.optionxform = str
+        config.read(self.unit_path)
+        source = configparser.ConfigParser(interpolation=None)
+        source.read(
+            pathlib.Path(__file__).resolve().parents[1] / "devbox-prepare.service"
+        )
+        for key in ("After", "Requires", "Wants"):
+            if "docker.service" in source["Unit"].get(key, "").split():
+                config["Unit"][key] = dependency
+        with self.unit_path.open("w") as file:
+            config.write(file, space_around_delimiters=False)
+        self.control("daemon-reload")
+        try:
+            self.assertNotEqual(
+                self.control("start", dependency, check=False).returncode, 0
+            )
+            self.control("start", self.unit, check=False)
+            self.wait_for(lambda: self.attempts() >= 2)
+            self.assertFalse((self.root / "setup-ready").exists())
+            (self.root / "docker-ready").touch()
+            (self.root / "daemon-ready").touch()
+            self.control("reset-failed", dependency)
+            self.control("start", dependency)
+            self.wait_for(lambda: (self.root / "setup-ready").exists())
+        finally:
+            self.control("stop", self.unit, dependency, check=False)
+            self.control("reset-failed", dependency, check=False)
+            dependency_path.unlink(missing_ok=True)
+            self.control("daemon-reload")
+
 
 if __name__ == "__main__":
     unittest.main()

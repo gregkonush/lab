@@ -14,23 +14,53 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 
 	"github.com/mdlayher/vsock"
+	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 	"golang.org/x/sys/unix"
 )
 
 type guestSlotConfig struct {
-	PodUID         string `json:"podUid"`
-	Token          string `json:"token"`
-	InitializeHome bool   `json:"initializeHome"`
+	PodUID             string `json:"podUid"`
+	Token              string `json:"token"`
+	InitializeHome     bool   `json:"initializeHome"`
+	VerificationKey    []byte `json:"verificationKey"`
+	RecoveryGeneration uint64 `json:"recoveryGeneration"`
 }
 
 type guestClaim struct {
-	MicroVMID  string `json:"microvmId"`
-	MicroVMUID string `json:"microvmUid"`
-	Epoch      uint64 `json:"epoch"`
+	MicroVMID    string `json:"microvmId"`
+	MicroVMUID   string `json:"microvmUid"`
+	Epoch        uint64 `json:"epoch"`
+	RuntimeEpoch string `json:"runtimeEpoch"`
+}
+
+var runtimeEpochPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func (guest *guestLifecycle) validateResume(claim guestClaim) error {
+	for _, id := range []string{claim.MicroVMID, claim.MicroVMUID} {
+		if len(id) == 0 || len(id) > 63 {
+			return errors.New("invalid slot owner")
+		}
+		for _, c := range id {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+				return errors.New("invalid slot owner")
+			}
+		}
+	}
+	if claim.Epoch == 0 || !runtimeEpochPattern.MatchString(claim.RuntimeEpoch) {
+		return errors.New("resume requires a slot and runtime epoch")
+	}
+	if previous := guest.claim; previous != nil && *previous != claim {
+		if !guest.frozen || previous.MicroVMID != claim.MicroVMID || previous.MicroVMUID != claim.MicroVMUID || previous.Epoch != claim.Epoch {
+			return errors.New("guest is already bound to another owner or active runtime")
+		}
+	}
+	return nil
 }
 
 type guestLifecycleRequest struct {
@@ -44,6 +74,8 @@ type guestLifecycle struct {
 	claim      *guestClaim
 	frozen     bool
 	terminal   *guestReadinessTerminal
+	podUID     string
+	claimPath  string
 }
 
 const fsFreeze = 0xC0045877
@@ -65,6 +97,9 @@ func runGuestInit(logger *slog.Logger) error {
 	if config.PodUID == "" || len(config.Token) < 32 {
 		return errors.New("invalid private slot configuration")
 	}
+	if err := prepareGuestAuthority(filepath.Dir(guestVerificationKeyPath), config.VerificationKey, config.RecoveryGeneration); err != nil {
+		return err
+	}
 	if err := mountGuestHome(config.InitializeHome); err != nil {
 		return err
 	}
@@ -83,7 +118,7 @@ func runGuestInit(logger *slog.Logger) error {
 		return err
 	}
 	defer terminal.close()
-	lifecycle := &guestLifecycle{root: root, home: home, terminal: terminal}
+	lifecycle := &guestLifecycle{root: root, home: home, terminal: terminal, podUID: config.PodUID, claimPath: guestRuntimeClaimPath}
 	listener, err := vsock.Listen(1025, nil)
 	if err != nil {
 		return err
@@ -257,6 +292,9 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		if guest.frozen {
 			return errors.New("guest is already frozen")
 		}
+		if err := clearGuestClaim(guest.claimPath); err != nil {
+			return err
+		}
 		unix.Sync()
 		if err := unix.IoctlSetInt(int(guest.home.Fd()), fsFreeze, 0); err != nil {
 			return err
@@ -268,14 +306,14 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		guest.frozen = true
 		return nil
 	case "resume":
-		if request.Claim.MicroVMID == "" || request.Claim.MicroVMUID == "" || request.Claim.Epoch == 0 {
-			return errors.New("resume requires a slot owner and epoch")
-		}
-		if guest.claim != nil && *guest.claim != request.Claim {
-			return errors.New("guest is already bound to another owner or epoch")
+		if err := guest.validateResume(request.Claim); err != nil {
+			return err
 		}
 		if request.UnixTimeNanos <= 0 {
 			return errors.New("resume requires the host clock")
+		}
+		if err := clearGuestClaim(guest.claimPath); err != nil {
+			return err
 		}
 		if guest.frozen {
 			if err := unix.IoctlSetInt(int(guest.root.Fd()), fsThaw, 0); err != nil {
@@ -288,6 +326,12 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		}
 		clock := unix.NsecToTimespec(request.UnixTimeNanos)
 		if err := unix.ClockSettime(unix.CLOCK_REALTIME, &clock); err != nil {
+			return err
+		}
+		if err := publishGuestClaim(guest.claimPath, guestauth.RuntimeClaim{
+			WorkspaceUID: request.Claim.MicroVMUID, RuntimeEpoch: request.Claim.RuntimeEpoch,
+			SlotEpoch: request.Claim.Epoch, PodUID: guest.podUID,
+		}); err != nil {
 			return err
 		}
 		guest.claim = &request.Claim

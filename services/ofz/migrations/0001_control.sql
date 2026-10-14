@@ -56,6 +56,8 @@ CREATE TABLE ofz.collaborators (
     workspace_uid uuid NOT NULL REFERENCES ofz.workspaces(uid),
     human_id text NOT NULL CHECK (human_id ~ '^[0-9a-f]{64}$'),
     role integer NOT NULL CHECK (role BETWEEN 2 AND 3),
+    scope jsonb CHECK (scope IS NULL OR jsonb_typeof(scope) = 'object'),
+    CHECK (role = 3 OR scope IS NULL),
     PRIMARY KEY (workspace_uid, human_id)
 );
 CREATE VIEW ofz.quota_usage AS

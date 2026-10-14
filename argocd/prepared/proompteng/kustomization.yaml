@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: proompteng
 resources:
   - ../../applications/proompteng
+  - pod-disruption-budget.yaml
 patches:
   - path: deployment.patch.yaml
   - patch: |-
