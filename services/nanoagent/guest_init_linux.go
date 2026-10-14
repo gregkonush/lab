@@ -312,6 +312,10 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 		if request.UnixTimeNanos <= 0 {
 			return errors.New("resume requires the host clock")
 		}
+		clock := unix.NsecToTimespec(request.UnixTimeNanos)
+		if err := unix.ClockSettime(unix.CLOCK_REALTIME, &clock); err != nil {
+			return err
+		}
 		if err := clearGuestClaim(guest.claimPath); err != nil {
 			return err
 		}
@@ -323,10 +327,6 @@ func (guest *guestLifecycle) apply(request guestLifecycleRequest) error {
 				return err
 			}
 			guest.frozen = false
-		}
-		clock := unix.NsecToTimespec(request.UnixTimeNanos)
-		if err := unix.ClockSettime(unix.CLOCK_REALTIME, &clock); err != nil {
-			return err
 		}
 		if err := publishGuestClaim(guest.claimPath, guestauth.RuntimeClaim{
 			WorkspaceUID: request.Claim.MicroVMUID, RuntimeEpoch: request.Claim.RuntimeEpoch,

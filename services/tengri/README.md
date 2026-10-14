@@ -75,8 +75,8 @@ upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snaps
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
 `1.16.1+tengri-async-io.3`; journals from another VMM revision require fenced recovery. Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
 guest RAM. Full snapshot capture resets normal readahead before reading every page. Snapshot restore consumes the
-generation before vCPUs run, then thaws root/home,
-sets the guest clock, binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
+generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
+binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
@@ -359,7 +359,7 @@ BuildKit reports export errors without canceling required image publication
 or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
 The fixture uses a private Docker
-network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
+network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
