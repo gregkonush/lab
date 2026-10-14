@@ -114,7 +114,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
-    if (statement.includes('SELECT fee.data, fee.read_evidence')) {
+    if (statement.includes('SELECT fee.data, fee.coin_cost_basis_micros')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
         times === undefined
@@ -127,6 +127,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   date: '2026-07-20',
                   netAmountMicros: '-100',
                 },
+                coin_cost_basis_micros: null,
                 read_evidence: {
                   requestId: 'synthetic-fee-read',
                   status: 200,
@@ -439,7 +440,7 @@ describe('forward performance read program', () => {
       cycleId: marketVolumeRequest.cycleId,
       symbol: 'NVDA',
       executionSessionDate: '2026-07-20',
-      quantityMicros: '123456789',
+      quantityAtoms: '123456789000',
       closePriceMicros: '103000000',
       snapshotId: marketSnapshotId,
       manifestContentHash: canonicalHashV1(marketManifestMaterial),
@@ -536,7 +537,7 @@ describe('forward performance read program', () => {
       decisionSnapshotAsOfSession: '2026-07-19',
       snapshotId: marketSnapshotId,
       closePriceMicros: '103000000',
-      quantityMicros: '123456789',
+      quantityAtoms: '123456789000',
     })
     expect(
       evidence[0]?.schemaVersion === 'bayn.forward-performance-market-volume-evidence.v1' && evidence[0].snapshotId,
@@ -585,7 +586,7 @@ describe('forward performance read program', () => {
       accountId: identityResult.success.accountId,
       symbol: 'NVDA',
       side: 'BUY' as const,
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       terminalOrder: {
         eventId: hash('9'),
@@ -595,8 +596,8 @@ describe('forward performance read program', () => {
         accountId: identityResult.success.accountId,
         symbol: 'NVDA',
         side: 'BUY' as const,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '400000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '400000000',
         status: 'CANCELED' as const,
         occurredAt: '2026-07-20T20:00:00.000Z',
         observedAt: '2026-07-20T21:06:00.000Z',
@@ -634,7 +635,7 @@ describe('forward performance read program', () => {
       accountId: identityResult.success.accountId,
       symbol: 'NVDA',
       side: 'BUY' as const,
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       intent: {
         intentId,
@@ -644,7 +645,7 @@ describe('forward performance read program', () => {
         decisionHash: hash('7'),
         symbol: 'NVDA',
         side: 'BUY' as const,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         terminalOutcome: 'BLOCKED' as const,
         createdAt: '2026-07-20T13:00:00.000Z',
         updatedAt: '2026-07-20T13:05:00.000Z',
@@ -985,20 +986,25 @@ describe('forward performance read program', () => {
     const executionPolicyHash = hash('4')
     const strategyExecutionModelHash = hash('5')
     const fill: Fill = {
-      schemaVersion: 'bayn.paper-fill.v1',
+      schemaVersion: 'bayn.fill.v2',
       accountId: identityResult.success.accountId,
       fillId: 'cash-yield-crossover-fill',
       brokerOrderId: 'cash-yield-crossover-order',
       clientOrderId: 'cash-yield-crossover-client-order',
       symbol: 'NVDA',
       side: OrderSide.Sell,
-      quantityMicros: '1000000',
-      priceMicros: '900',
+      quantityAtoms: '1000000000',
+      priceAtoms: '900000',
       feeMicros: '0',
       occurredAt: '2026-07-20T20:00:00.000Z',
     }
     const prepared = success(
-      prepareAccounting(hash('6'), fill, { quantityMicros: '1000000', costMicros: '1000' }, config.tigerBeetle.ledger),
+      prepareAccounting(
+        hash('6'),
+        fill,
+        { quantityAtoms: '1000000000', costMicros: '1000' },
+        config.tigerBeetle.ledger,
+      ),
     )
     const receiptPlan = success(
       planAccountingReceipt(prepared, config.tigerBeetle.clusterId.toString(), config.tigerBeetle.ledger),
@@ -1231,7 +1237,7 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     expect(evidence[0]).toMatchObject({
       decisionSnapshotId: request.decisionSnapshotId,
       sourceFeed: 'iex',
-      quantityMicros: '39000000000',
+      quantityAtoms: '39000000000000',
       archiveRequest: archive,
     })
   },

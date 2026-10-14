@@ -1,3 +1,4 @@
+import { exchangeSessions } from '../../market-hours'
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
 import { Effect } from 'effect'
 
@@ -26,7 +27,7 @@ export const makeIntradayMarketDataQueries = (sql: ClickhouseClient.ClickhouseCl
   )
   const symbols = (request: IntradaySnapshotQuery) => sql.param('Array(String)', intradaySnapshotSymbols(request))
   const bounds = (request: IntradaySnapshotQuery) => {
-    const session = request.calendar.sessions.find((candidate) => candidate.date === request.sessionDate)
+    const session = exchangeSessions(request.calendar).find((candidate) => candidate.date === request.sessionDate)
     return {
       start: sql.param('String', request.rangeStartAt),
       end: sql.param('String', request.rangeEndAt),

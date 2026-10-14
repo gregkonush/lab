@@ -2,27 +2,25 @@
 # Sourced by the isolated control harness and its generated promotion command.
 
 control_fingerprint() {
-  fixture_docker exec "$1" psql -XAt -U postgres -d ofz_control -v ON_ERROR_STOP=1 -c "
-SELECT encode(sha256(convert_to(jsonb_build_object(
- 'commands',(SELECT jsonb_agg(to_jsonb(c) ORDER BY operation_id) FROM ofz.commands c),
- 'audit',(SELECT jsonb_agg(to_jsonb(a) ORDER BY sequence) FROM ofz.audit a),
- 'outbox',(SELECT jsonb_agg(to_jsonb(o) ORDER BY audit_sequence) FROM ofz.audit_outbox o),
- 'platform',(SELECT to_jsonb(p) FROM ofz.platform_state p),
- 'humans',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.humans t),
- 'memberships',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.memberships t),
- 'quotas',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.quotas t),
- 'reservations',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.reservations t),
- 'workspaces',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.workspaces t),
- 'collaborators',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.collaborators t),
- 'sessions',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.sessions t),
- 'session_revocations',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.session_revocations t),
- 'grants',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.grants t),
- 'emergency_approvals',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.emergency_approvals t),
- 'emergency_access',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.emergency_access t),
- 'archive',(SELECT to_jsonb(t) FROM ofz.archive_state t),
- 'replay',(SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ofz.replay t),
- 'schema',(SELECT to_jsonb(t) FROM ofz.schema_version t)
-)::text,'UTF8')),'hex');"
+  fixture_docker exec -i "$1" psql -XqAt -U postgres -d ofz_control -v ON_ERROR_STOP=1 <<'SQL'
+CREATE FUNCTION pg_temp.control_fingerprint() RETURNS text LANGUAGE plpgsql STABLE AS $fingerprint$
+DECLARE
+  relation record;
+  rows jsonb;
+  snapshot jsonb := '{}'::jsonb;
+BEGIN
+  FOR relation IN SELECT tablename FROM pg_tables WHERE schemaname='ofz' ORDER BY tablename LOOP
+    EXECUTE format('SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), ''[]''::jsonb) FROM ofz.%I t', relation.tablename) INTO rows;
+    snapshot := jsonb_set(snapshot, ARRAY[relation.tablename], rows);
+  END LOOP;
+  IF (SELECT count(*) FROM jsonb_object_keys(snapshot)) < 19 THEN
+    RAISE EXCEPTION 'incomplete authorization control fingerprint';
+  END IF;
+  RETURN encode(sha256(convert_to(snapshot::text,'UTF8')),'hex');
+END;
+$fingerprint$;
+SELECT pg_temp.control_fingerprint();
+SQL
 }
 
 prepare_database_failover() {

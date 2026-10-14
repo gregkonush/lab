@@ -1,14 +1,26 @@
 # Bayn
 
-Bayn is a single-writer intraday execution service. Restate schedules one account-keyed controller, pure TypeScript
+Bayn is a single-writer execution service for equities and continuous USD crypto markets. Restate schedules one account-keyed controller, pure TypeScript
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using momentum-first `bayn.jev.protocol.v2`. Historical strategy
-rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v3` and native Dorvud feature contracts.
+The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
+including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
+checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
+and at most one open position. Crypto uses cash buying power, quantity-based LIMIT/IOC entries and closes, and
+MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
 
-The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a protocol-v2 entry gate:
-exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
+Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros. Migration 97
+requires flat, settled inventory and complete accounting, archives the original projections and preserves existing
+ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
+published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).
+Retained history is audit evidence; retired protocols and order encodings cannot create or submit current orders.
+Crypto fee activities retain exact coin debits separately from USD cash fees. Same-day missing fee activities are
+incomplete cost evidence, never evidence of zero fees.
+
+The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
+exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
 
 ## Profitability goal
@@ -65,8 +77,9 @@ source rotation, so a repeated or late invocation cannot repeat its capture. Pub
 atomically with their existing database update. Replaying an unfinished claim invalidates and fences its generation;
 a published lost result and a newer cut remain usable. A reserved quota window schedules a
 successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
-before capturing the fresh snapshot required to start execution. Only a returned journaled result releases the conservative
-unknown-work quota reservation. The database generation continues to fence publication after mutations and rotation.
+before capturing the fresh snapshot required to start execution. The same database transaction reserves the account quota before HTTP. Publication or failure replaces that reservation
+with measured request debt in PostgreSQL, so losing the Restate result cannot repeat HTTP or discard outstanding quota.
+The database generation continues to fence publication after mutations and rotation.
 
 The observation owner's child runtimes share the worker's configured logger and tracer. The polling span inherits
 the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
@@ -149,31 +162,29 @@ at the default cadence. The background client's transport counts every actual at
 pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
 100 background calls per minute on average, or half a smaller reported account limit. The three independent history endpoints run concurrently; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
-or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
-journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
-captures, so worker replacement and source rotation preserve outstanding cost. Larger captures extend the
-poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
-activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
-and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
-allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
-deadline elapsed, returns unavailable without repeating broker I/O. When the same worker atomically consumes a
-matching unused expired ticket, successful invalidation and the existing journaled poll result prove that capture
-never started. Only then can the owner replace speculative debt with the existing measured HTTP/quota deadline;
-it logs the reason and capture-start lateness without ticket contents. A lost result before journaling still retains
-the full reservation. A journaled result replays without another claim or a reset capture clock.
-A completed capture replaces the reservation with
-its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
-timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
-Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
-quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
-Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
-client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
-and missing, mismatched, already claimed or replaced-worker capture tickets retain the conservative reservation.
-Failure or interruption before the unused-ticket result is journaled also retains that reservation.
-Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
-the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
-capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
-the background budget does not impose a global limit on other account callers.
+or unusable reset evidence causes a conservative sixty-second wait.
+
+The account's PostgreSQL observation row owns the next permissible poll time. The capture claim and its conservative
+unknown-work deadline commit atomically before HTTP. At default timeouts that deadline is three minutes. Completed
+captures atomically settle their claim and replace the reservation with measured HTTP debt, including rate-limit
+reset evidence. Snapshot invalidation and quota ownership use separate generations, so a mutation racing capture
+cannot strand the quota reservation or let an older capture shorten a newer reservation. A failed settlement leaves
+the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
+
+Ordinary native polls issue one journaled worker command and use eight journal entries rather than thirteen. They
+no longer journal separate clock and quota state updates. A quota-blocked poll returns its database deadline and
+schedules a successor without holding the exclusive owner. Deployment activation uses a durable timer to wait for
+quota before obtaining its required fresh cut. On the first activation of the new revision, the exclusive owner copies
+any old Restate quota deadline into PostgreSQL with `GREATEST`, then deletes the old key. There is no second runtime
+quota owner or compatibility polling path.
+
+The worker starts its bounded capture clock immediately before the durable claim. A claim that commits after its
+start deadline is invalidated without HTTP, and its unused reservation is settled only by the matching database
+owner. Clock regression fails closed. Lost, spent and replaced-worker claims cannot repeat HTTP. Failed captures
+dispose their broker runtime before recording failure or sampling request debt, so lazy client acquisition cannot
+continue issuing requests after recovery returns. Defects and interruption preserve unknown-work debt. Execution
+requests use their existing client and consume the remaining shared account quota; the background budget does not
+impose a global limit on other account callers.
 
 One serialized execution pass reads its unfinished cycle once and advances acquisition, activation and decision
 binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;
@@ -700,6 +711,11 @@ silently applied to a generation or window report.
 
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
 Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
+
+When a newly acquired request expires during durable claim persistence, the worker records a `NOT_DISPATCHED`
+receipt before returning the deadline failure. This positive pre-HTTP evidence supplies zero tokens and zero cost
+without a tariff or a TigerBeetle transfer. Missing receipts and dispatched requests without usage remain unknown;
+historical gaps cannot be classified as free from the absence of a provider response.
 
 ```sh
 bayn-inference-cost --session 2026-01-02 --rate-card /private/inference-rates.json
@@ -1399,3 +1415,38 @@ Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFI
 Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
 measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
 the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
+
+### Independent public information jobs
+
+`BaynPublicInformation` runs one private Restate Virtual Object per `SEC_FILINGS` and `MACRO_CALENDAR` source on the
+existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
+bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
+polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
+sent to Restate. The research worker submits these activations asynchronously after listening and registration.
+Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
+
+The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
+checks the BLS iCalendar and Federal Reserve FOMC calendar hourly. Requests use fixed official URLs, a dedicated public
+HTTP client, at least one second between requests, a sixteen-MiB body bound, a thirty-second capture deadline and a
+ten-minute run bound. Redirects are rejected. Broker, model and object-store credentials and trace propagation headers
+are absent from public requests. A missing ticker mapping or a company-facts 404 is an explicit exclusion.
+
+Original UTF-8 source bytes are written under `captures/v1/public-information/` in the existing private Rook research
+bucket. Before the first collection under each code revision, the job requires an owner-only private ACL and exact synthetic
+upload/readback verification. The generated `BUCKET_NAME` selects the bucket. The research worker uses its reflected OBC owner credential;
+no trading process receives it. Restate retains small artifact references, SHA-256, byte length, actual fetch/upload/check
+clocks, source revision, exclusions and failed URLs. It never journals the source documents. Unchanged content reuses its
+original artifact and fetch clock while advancing its successful check clock. A failed refresh retains the last good
+reference and its original timestamps within the current issuer universe. Retained symbol-to-CIK mappings keep a
+failed ticker refresh explicit while pruning references for removed issuers. These inputs support research; they do
+not change active entry or exit policy.
+
+The SEC artifacts are filing-history metadata and XBRL financial-fact JSON, not the full text of every filing. BLS and
+Federal Reserve artifacts retain the original calendar file and HTML. Changed content gets a new immutable object key;
+this rollout adds no automatic expiry or deletion of historical source snapshots.
+
+Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
+closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,
+upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
+attempt. Source-labelled duration, completed/incomplete polls, bytes, document counts, last-success metrics and traced
+fetch/upload spans support session diagnosis. The stale-input alert is a research warning and does not stop trading.

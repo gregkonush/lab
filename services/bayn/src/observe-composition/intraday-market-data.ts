@@ -1,9 +1,11 @@
+import { instrumentMarket, MarketKind } from '../instruments'
+import { quantityFromNumber, quantityScale } from '../quantity'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { Data, Effect, Result, Schema } from 'effect'
 
-import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import type { OperationalError } from '../errors'
-import { MICROS, numberToMicros } from '../execution-model'
+import { priceNumberToMicros } from '../execution-model'
 import {
   intradayAgeNanos,
   millisecondsAsNanos,
@@ -77,14 +79,14 @@ export const adverseQuotePrices = (
       return Result.fail(failure('prices', `intraday snapshot has no verified quote for ${symbol}`))
     }
     const prices = Result.all({
-      bid: numberToMicros(quote.bidPrice, `bid price for ${symbol}`),
-      ask: numberToMicros(quote.askPrice, `ask price for ${symbol}`),
+      bid: priceNumberToMicros(quote.bidPrice, `bid price for ${symbol}`, 'DOWN'),
+      ask: priceNumberToMicros(quote.askPrice, `ask price for ${symbol}`, 'UP'),
     })
     if (Result.isFailure(prices) || prices.success.bid <= 0n || prices.success.ask <= 0n) {
       return Result.fail(failure('prices', `quote for ${symbol} is outside the exact price domain`))
     }
-    bidPriceMicros[symbol] = quantizeAlpacaLimitPriceMicros(prices.success.bid, 'DOWN').toString()
-    askPriceMicros[symbol] = quantizeAlpacaLimitPriceMicros(prices.success.ask, 'UP').toString()
+    bidPriceMicros[symbol] = quantizeInstrumentPriceMicros(symbol, prices.success.bid, 'DOWN').toString()
+    askPriceMicros[symbol] = quantizeInstrumentPriceMicros(symbol, prices.success.ask, 'UP').toString()
   }
   return Result.succeed({
     bidPriceMicros: Object.freeze(bidPriceMicros),
@@ -125,12 +127,12 @@ export const adverseClosingQuotePrices = (
 
 export const requireFreshIntradayPositionQuotes = (
   snapshot: StrategyMarketSnapshot,
-  positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
+  positions: readonly { readonly symbol: string; readonly quantityAtoms: string }[],
 ): Result.Result<void, IntradayMarketDataFailure> => {
   const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
   const entryUniverse = new Set(snapshot.manifest.symbols)
   for (const position of positions) {
-    if (BigInt(position.quantityMicros) === 0n || !entryUniverse.has(position.symbol)) continue
+    if (BigInt(position.quantityAtoms) === 0n || !entryUniverse.has(position.symbol)) continue
     const quote = snapshot.latestQuotes[position.symbol]
     if (quote === undefined) {
       return Result.fail(failure('entry-decision', `existing position ${position.symbol} has no verified quote`))
@@ -159,7 +161,7 @@ export const maximumBuyQuantities = (
     if (quote === undefined) {
       return Result.fail(failure('entry-decision', `entry snapshot has no verified quote for ${symbol}`))
     }
-    const quantity = numberToMicros(quote.askSize, `entry ask size for ${symbol}`)
+    const quantity = quantityFromNumber(quote.askSize)
     if (Result.isFailure(quantity)) {
       return Result.fail(
         failure(
@@ -169,7 +171,8 @@ export const maximumBuyQuantities = (
         ),
       )
     }
-    const displayedWholeShareQuantity = (quantity.success / MICROS) * MICROS
+    const increment = instrumentMarket(symbol) === MarketKind.Crypto ? 1n : quantityScale
+    const displayedWholeShareQuantity = (quantity.success / increment) * increment
     if (displayedWholeShareQuantity === 0n) {
       quantities[symbol] = '0'
       continue

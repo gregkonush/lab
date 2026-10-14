@@ -1,3 +1,6 @@
+import { equityMarketProfile } from '../jev/markets'
+
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
@@ -29,7 +32,7 @@ import {
 } from './control-study'
 
 const fixture = nativeJevFixture()
-const openMs = Date.parse(fixture.snapshot.manifest.calendar.sessions[0]?.openAt ?? '')
+const openMs = Date.parse(exchangeSessions(fixture.snapshot.manifest.calendar)[0]?.openAt ?? '')
 const closeMs = openMs + 90 * 60_000
 const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
 const simulate = (
@@ -153,7 +156,7 @@ const simulate = (
                     ...value,
                     eventAt: query.observedAt,
                     ingestedAt: query.observedAt,
-                    ...(options.noSignal === true && symbol !== fixture.protocol.benchmarkSymbol ? { askSize: 0 } : {}),
+                    ...(options.noSignal === true && symbol !== 'SPY' ? { askSize: 0 } : {}),
                   },
                 ]),
               ),
@@ -166,7 +169,7 @@ const simulate = (
             return { status: 'AVAILABLE' as const, snapshot }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('control-session-test', fixture.protocol.universe)
+      const risk = yield* loadQuoteBoundExecutionRiskPolicy('control-session-test', equityMarketProfile.universe)
       const providerClock = yield* TestClock.make()
       const fs = yield* FileSystem.FileSystem
       const management =
@@ -229,7 +232,7 @@ const simulate = (
         decisionLatencyMs: options.decisionLatencyMs ?? 1000,
         pollIntervalMs: options.pollIntervalMs ?? 30_000,
         assumptions: { ...assumptions, latencyMs: options.routingLatencyMs ?? assumptions.latencyMs },
-        eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
+        eligibleSymbols: new Set(options.emptyAssets === true ? [] : equityMarketProfile.candidateSymbols),
         market,
         management: options.nativeEntry === true ? null : management,
         ...(options.nativeEntry === true && management !== null ? { entry: management } : {}),
@@ -359,7 +362,7 @@ test.each([
     { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 55, NO_SIGNAL: 0 },
   ],
   [
-    { excludedSymbols: fixture.protocol.candidateSymbols },
+    { excludedSymbols: equityMarketProfile.candidateSymbols },
     { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 },
   ],
 ] as const)('scheduled accounting preserves missing, excluded and consumed outcomes %#', async (options, expected) => {
@@ -668,7 +671,7 @@ test('small exit liquidity retries the same inventory and counts only completed 
   const { report } = await simulate({ tinyExit: true })
   const sells = report.ledger.fills.filter((fill) => fill.side === 'sell')
   expect(sells.length).toBeGreaterThan(report.completedEpisodes)
-  expect(sells.every((fill) => fill.quantityMicros === '1000000')).toBeTrue()
+  expect(sells.every((fill) => fill.quantityAtoms === '1000000000')).toBeTrue()
   expect(report.ledger.fills.filter((fill) => fill.side === 'buy').length).toBe(
     report.completedEpisodes + report.ledger.positions.length,
   )
@@ -765,7 +768,7 @@ const frozenControlFixture = () => {
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v2',
+        inputDefinition: 'bayn.jev-trading-signal-state.v3',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
@@ -779,7 +782,7 @@ const frozenControlFixture = () => {
         { date: '2026-09-08', open: '09:30', close: '16:00' },
         { date: '2026-09-09', open: '09:30', close: '16:00' },
       ],
-      assets: retained.input.protocol.universe.map((symbol, index) => ({
+      assets: equityMarketProfile.universe.map((symbol, index) => ({
         id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
         symbol,
         class: 'us_equity',

@@ -28,15 +28,15 @@ const success = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const fill = (name: string, side: OrderSide, priceMicros: string, feeMicros: string): Fill => ({
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId,
   fillId: `${name}-fill`,
   brokerOrderId: `${name}-broker-order`,
   clientOrderId: `${name}-client-order`,
   symbol: 'NVDA',
   side,
-  quantityMicros: '1000000',
-  priceMicros,
+  quantityAtoms: '1000000000',
+  priceAtoms: (BigInt(priceMicros) * 1000n).toString(),
   feeMicros,
   occurredAt: side === OrderSide.Buy ? '2026-07-20T15:30:00.000Z' : '2026-07-21T15:30:00.000Z',
 })
@@ -46,7 +46,7 @@ const plans = (): readonly LedgerPlan[] => [
     prepareAccounting(
       'a'.repeat(64),
       fill('buy', OrderSide.Buy, '100000000', '100'),
-      { quantityMicros: '0', costMicros: '0' },
+      { quantityAtoms: '0', costMicros: '0' },
       ledger,
     ),
   ).ledger,
@@ -54,7 +54,7 @@ const plans = (): readonly LedgerPlan[] => [
     prepareAccounting(
       'b'.repeat(64),
       fill('sell', OrderSide.Sell, '110000000', '200'),
-      { quantityMicros: '1000000', costMicros: '100000000' },
+      { quantityAtoms: '1000000000', costMicros: '100000000' },
       ledger,
     ),
   ).ledger,
@@ -65,7 +65,7 @@ const secondGenerationPlans = (): readonly LedgerPlan[] => [
     prepareAccounting(
       'c'.repeat(64),
       fill('second-buy', OrderSide.Buy, '200000000', '400'),
-      { quantityMicros: '0', costMicros: '0' },
+      { quantityAtoms: '0', costMicros: '0' },
       ledger,
     ),
   ).ledger,
@@ -73,7 +73,7 @@ const secondGenerationPlans = (): readonly LedgerPlan[] => [
     prepareAccounting(
       'd'.repeat(64),
       fill('second-sell', OrderSide.Sell, '220000000', '600'),
-      { quantityMicros: '1000000', costMicros: '200000000' },
+      { quantityAtoms: '1000000000', costMicros: '200000000' },
       ledger,
     ),
   ).ledger,

@@ -60,6 +60,9 @@ const evidence = (identity: string): ReadEvidence => ({
 })
 
 const account: BrokerAccount = {
+  cryptoStatus: null,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: BrokerAccountStatus.Active,
   currency: 'USD',
@@ -83,8 +86,8 @@ const order = (index: number): BrokerOrder => ({
   assetId: `asset-${index}`,
   symbol: 'NVDA',
   assetClass: AssetClass.UsEquity,
-  quantityMicros: '1000000',
-  filledQuantityMicros: '1000000',
+  quantityAtoms: '1000000000',
+  filledQuantityAtoms: '1000000000',
   filledAveragePriceMicros: '100000000',
   orderClass: OrderClass.Simple,
   orderType: BrokerOrderType.Market,
@@ -98,10 +101,10 @@ const order = (index: number): BrokerOrder => ({
 const fill = (index: number, sourceOrder = order(index)): FillActivity => ({
   accountId,
   activityId: `fill-${index}`,
-  cumulativeQuantityMicros: '1000000',
-  leavesQuantityMicros: '0',
-  priceMicros: '100000000',
-  quantityMicros: '1000000',
+  cumulativeQuantityAtoms: '1000000000',
+  leavesQuantityAtoms: '0',
+  priceAtoms: '100000000000',
+  quantityAtoms: '1000000000',
   side: sourceOrder.side,
   symbol: sourceOrder.symbol,
   transactionTime: observedAt,
@@ -441,7 +444,7 @@ describe('execution reconciliation loop', () => {
 
   test('reads every broker page before persisting and binds fills to their orders', async () => {
     const allOrders = Array.from({ length: 501 }, (_, index) =>
-      index < 101 ? order(index) : { ...order(index), status: BrokerOrderStatus.New, filledQuantityMicros: '0' },
+      index < 101 ? order(index) : { ...order(index), status: BrokerOrderStatus.New, filledQuantityAtoms: '0' },
     )
     const allFills = Array.from({ length: 101 }, (_, index) => fill(index, allOrders[index]))
     const orderCursors: Array<string | undefined> = []
@@ -608,7 +611,7 @@ describe('execution reconciliation loop', () => {
   })
 
   test('retains the exact typed cause of a normalization failure', async () => {
-    const malformedOrder = { ...order(0), extendedHours: true, filledQuantityMicros: '0' }
+    const malformedOrder = { ...order(0), extendedHours: true, filledQuantityAtoms: '0' }
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: () => Effect.succeed({ value: [malformedOrder], evidence: evidence('orders') }),

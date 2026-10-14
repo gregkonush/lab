@@ -9,16 +9,16 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.momentum-first.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "48517ebba573e0e2b6fbf57c135ec56f5bf5198e0d5e936a05065cb23c39f001";
-  # Canonical hash of the compiled bayn.jev.protocol.v2 document.
-  strategyParameterHash = "f787f21d7824f533ae9e6fc9266f0f9fddadc5e85d0df019a15670a61bbb804a";
+  # SHA-256 identity for bayn.jev.continuous-markets.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "420011c3d2552eaf702adadc67ecb8441bf320bdea89aad090dd0ad243b528e0";
+  # Canonical hash of the compiled bayn.jev.protocol.v3 document.
+  strategyParameterHash = "d97d393a316dd769857752321bd6951d3e7e7efad2df97523e585efe07625ca3";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "3b062274793e0a13b97334dbb38858e7322cc045280d0a8ed36b533aa8f38111";
+  strategyProtocolHash = "1d91d5148c8bedc5631c21881975af5be8db334826eb143335d4c7a663e0d394";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "b6fa12aa74014cb122a525ddbde52ee93d31f17096b88ffad507791a83ea4ce1";
+  executionRiskPolicyHash = "3374cc844630d2aa17ecff44abe77c8194fa549a06819b71a537fa37508e6a93";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -62,8 +62,8 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-a/HWgtlvWemZVGb52YrzidmIeir4d8Q+kyRdyneLNDE=";
-    aarch64-linux = "sha256-wlkhwdcXYYBMAEhQxrQ8SpnAwVDU1mpcms47v8i5NOY=";
+    x86_64-linux = "sha256-V3hT0BNmtio0O9VkMpG++a4pOd+/z9kYmfeQPVqtK4s=";
+    aarch64-linux = "sha256-fZdAwOSNSRrN9QZZrtIoXSc0kf/hunKzoVgsWpHwLrU=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"

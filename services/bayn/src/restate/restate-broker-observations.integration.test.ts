@@ -55,9 +55,11 @@ describeRestate('Real Restate broker observation journal', () => {
         },
         poll: async () => {
           polls += 1
-          return fail
+          const startedAtMs = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+          const poll: import('./restate-broker-observations').BrokerObservationPoll = fail
             ? { _tag: 'Unavailable', nextPollNotBeforeMs: 0 }
             : { _tag: 'Published', snapshotHash: '3'.repeat(64), nextPollNotBeforeMs: 0 }
+          return { poll, startedAtMs, completedAtMs: startedAtMs }
         },
       })
     const bridge = restate.service({
@@ -172,7 +174,7 @@ describeRestate('Real Restate broker observation journal', () => {
           )
           const journalSize = metrics.rows[0]?.journal_size
           expect(journalSize).toBeDefined()
-          expect(journalSize).toBeLessThanOrEqual(13)
+          expect(journalSize).toBeLessThanOrEqual(8)
           const stateReads = yield* json(
             `${admin}/query`,
             {
@@ -204,7 +206,12 @@ describeRestate('Real Restate broker observation journal', () => {
         activate: async () => undefined,
         poll: async () => {
           captures += 1
-          return { _tag: 'Published', snapshotHash: '4'.repeat(64), nextPollNotBeforeMs: 0 }
+          const startedAtMs = clock.currentTimeMillisUnsafe()
+          return {
+            poll: { _tag: 'Published', snapshotHash: '4'.repeat(64), nextPollNotBeforeMs: 0 },
+            startedAtMs,
+            completedAtMs: startedAtMs,
+          }
         },
       },
       [
