@@ -116,10 +116,14 @@ revision/layer links can remain; they do not retain the removed blob payloads.
 The collection deadline includes read-only rollout and frozen validation. On
 completion, failure or timeout, the controller deletes its helper and confirms
 deletion **before** restoring uploads and removing its owned Argo hold. Deployment
-restoration has a separate readiness timeout. If helper deletion cannot be
+restoration has a separate five-minute readiness timeout. If helper deletion cannot be
 confirmed, it leaves writes disabled and the hold intact. Never infer process
 exit from an exec disconnect. A timeout can leave a partial quarantine batch;
-its receipt remains valid for online deletion.
+its receipt remains valid for online deletion. After a collector deadline, the
+controller first confirms helper deletion and complete upload restoration, then
+checks its own durable receipt. A valid receipt permits online purge of the partial
+batch with `collectionTimedOut: true` in the completion log. A missing or invalid
+receipt still fails the run; failed validation never authorizes deletion.
 
 The result records the quarantine identifier and moved bytes. The controller
 checks the PVC UID/PV is unchanged. Verify a completed push and a full retained-image
