@@ -454,3 +454,19 @@ current with its scheduled tick sequence advancing; and the unrelated `Greeter` 
 The one-sync tombstone is no longer desired state. This cleanup removes its manifest so Argo naturally prunes the
 temporary deny-all `bayn-restate-retirement-hook-gc` NetworkPolicy. Do not recreate the tombstone or the destructive
 retirement hook unless a new independently reviewed recovery procedure explicitly requires it.
+
+
+## Restate public information collection
+
+The existing `bayn-research` RestateDeployment hosts independent SEC filings and macro-calendar virtual objects.
+`BAYN_PUBLIC_INFORMATION_ENABLED=true` starts their signed asynchronous activations after endpoint registration.
+No additional Kubernetes Job or CronJob is involved. The trading worker and its readiness remain independent.
+
+The prepared worker mounts the canonical reflected `bayn-research-captures` OBC credential and generated bucket name.
+This is an additional credential destination and needs approval under the repository scope rule before rollout.
+The existing bucket-owner permissions remain unchanged; application code uploads immutable content-derived keys.
+Only the research worker receives RGW egress. Its public HTTPS requests use the existing proxy with the SEC, BLS and
+Federal Reserve host allowlist; credentials never pass through that client. Its internal Restate egress only submits
+public-job activations. Verify the OBC ownership/private ACL and exact synthetic object SHA-256 readback before live
+collection, then inspect source-keyed Restate status, artifact readback and source metrics. A source failure cannot
+fail the trading endpoint or delay a protective closure.

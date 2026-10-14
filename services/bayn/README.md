@@ -1415,3 +1415,32 @@ Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFI
 Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
 measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
 the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
+
+
+### Independent public information jobs
+
+`BaynPublicInformation` runs one private Restate Virtual Object per `SEC_FILINGS` and `MACRO_CALENDAR` source on the
+existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
+bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
+polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
+sent to Restate. The research worker submits these activations asynchronously after listening and registration.
+
+The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
+checks the BLS iCalendar and Federal Reserve FOMC calendar hourly. Requests use fixed official URLs, a dedicated public
+HTTP client, at least one second between requests, a sixteen-MiB body bound, a thirty-second capture deadline and a
+ten-minute run bound. Redirects are rejected. Broker, model and object-store credentials and trace propagation headers
+are absent from public requests. A missing ticker mapping or a company-facts 404 is an explicit exclusion.
+
+Original UTF-8 source bytes are written under `captures/v1/public-information/` in the existing private Rook research
+bucket. Before the first collection under each code revision, the job requires an owner-only private ACL and exact synthetic
+upload/readback verification. The generated `BUCKET_NAME` selects the bucket. The research worker uses its reflected OBC owner credential;
+no trading process receives it. Restate retains small artifact references, SHA-256, byte length, actual fetch/upload/check
+clocks, source revision, exclusions and failed URLs. It never journals the source documents. Unchanged content reuses its
+original artifact and fetch clock while advancing its successful check clock. A failed refresh retains the last good
+reference and its original timestamps. These inputs support research; they do not change active entry or exit policy.
+
+Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
+closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,
+upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
+attempt. Source-labelled duration, completed/incomplete polls, bytes, document counts, last-success metrics and traced
+fetch/upload spans support session diagnosis. The stale-input alert is a research warning and does not stop trading.
