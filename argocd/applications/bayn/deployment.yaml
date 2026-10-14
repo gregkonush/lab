@@ -62,10 +62,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: bayn-valkey-connection
-                optional: true
           env:
             - name: BAYN_CODE_REVISION
-              value: 196d78da52b6211d5a3d31ad7a28abf4283cfae4
+              value: fefcf364cbe8683b1a5ce45e0585b79ae7832fe7
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: POD_NAMESPACE
@@ -80,7 +79,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:da60d9ba2ef4ecaf0939ab3862cf96e2da6355e05e7a0401cd3c3e9f310158d6
+              value: sha256:b4cce1783a52ddf440413992604e978e021b2a8e601d709077b3ad8145d991cb
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "420011c3d2552eaf702adadc67ecb8441bf320bdea89aad090dd0ad243b528e0"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -160,7 +159,6 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
-                  optional: true
           startupProbe:
             httpGet:
               path: /livez
@@ -211,7 +209,6 @@ spec:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
-            optional: true
             defaultMode: 0440
         - name: tmp
           emptyDir:

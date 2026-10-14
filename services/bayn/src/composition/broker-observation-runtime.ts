@@ -27,6 +27,7 @@ import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { withObservedSpan } from '../telemetry'
+import { ValkeyCache } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 
 export const settleCompletedBrokerObservationPoll = <R>(
@@ -52,9 +53,10 @@ export const acquireBrokerObservationRuntime = (
     readonly pollIntervalMs: number
   },
   never,
-  Scope.Scope
+  Scope.Scope | ValkeyCache
 > =>
   Effect.gen(function* () {
+    const cache = yield* ValkeyCache
     const telemetry = Layer.mergeAll(
       Layer.succeed(Logger.CurrentLoggers, yield* Logger.CurrentLoggers),
       Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
@@ -89,6 +91,7 @@ export const acquireBrokerObservationRuntime = (
         plan.config.alpaca.expectedAccountId,
         plan.config.build.sourceRevision,
         config.maxAgeMs,
+        cache,
       ),
     )
     return {

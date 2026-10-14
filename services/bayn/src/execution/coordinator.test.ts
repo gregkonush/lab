@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { SubmissionDenialReason } from './submission-denial'
 
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -1434,23 +1435,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
       setState(IntentState.Terminal, response.observedAt, TerminalOutcome.Rejected)
       return Effect.succeed(rejected)
     },
-    submitDenied: (_intentId, requestHash, occurredAt) =>
+    submitDenied: (_intentId, requestHash, occurredAt, denialReason) =>
       Effect.gen(function* () {
-        yield* Effect.fromResult(
+        const outcome = yield* Effect.fromResult(
           decideMutationOutcome(
-            { intentId: _intentId, requestHash, occurredAt },
+            { intentId: _intentId, requestHash, occurredAt, ...(denialReason === undefined ? {} : { denialReason }) },
             { _tag: 'SubmitDenied' },
             latest.get(MutationOperation.Submit),
             { state: stored.intent.state, terminalOutcome: stored.intent.terminalOutcome ?? null },
           ),
         )
-        const denied = event(
-          MutationOperation.Submit,
-          MutationEventType.SubmitDenied,
-          requestHash,
-          latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
-          occurredAt,
-        )
+        const denied = outcome.event
+        latest.set(MutationOperation.Submit, denied)
         setState(IntentState.Terminal, occurredAt, TerminalOutcome.Rejected)
         return denied
       }),
@@ -2131,6 +2127,7 @@ describe('execution coordinator', () => {
         failure: MutationFailure.InvalidRequest,
         outcome: MutationOutcome.Known,
         message: 'fresh quote crossed the durable order bound before transmission',
+        cause: { tag: 'ExpiredRiskDecision' },
       }),
     })
 
@@ -2145,6 +2142,7 @@ describe('execution coordinator', () => {
     )
 
     expect(result.denied.eventType).toBe(MutationEventType.SubmitDenied)
+    expect(result.denied.denialReason).toBe(SubmissionDenialReason.ExpiredRiskDecision)
     expect(result.replay).toEqual(result.denied)
     expect(harness.intent()).toMatchObject({
       state: IntentState.Terminal,
@@ -2304,6 +2302,7 @@ describe('execution coordinator', () => {
             const cached = yield* makeProjectedBrokerRead(fresh).pipe(
               Effect.provideService(BrokerObservations, {
                 read: observed,
+                readState: observed,
                 readForSubmit: () => observed,
                 invalidate: Effect.sync(() => {
                   available = false
