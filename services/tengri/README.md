@@ -192,6 +192,10 @@ The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatG
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
 
+Every supported guest exposes `model/list`. Catalog failures remain ordinary request failures; the desktop requires
+a valid model and reasoning selection before starting a turn and offers a catalog retry. There is no older-guest mode
+that silently drops selected settings. Existing history and active turns can still be recovered during a catalog outage.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
