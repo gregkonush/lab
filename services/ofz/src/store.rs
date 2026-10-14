@@ -25,6 +25,8 @@ pub struct Database {
     config: Config,
     tls: MakeRustlsConnect,
     command_slots: Arc<Semaphore>,
+    #[cfg(test)]
+    migration_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 pub struct CommandConnection {
@@ -101,6 +103,8 @@ impl Database {
             config,
             tls,
             command_slots: Arc::new(Semaphore::new(2)),
+            #[cfg(test)]
+            migration_barrier: None,
         })
     }
 
@@ -125,39 +129,58 @@ impl Database {
     }
 
     pub async fn migrate(&self) -> Result<(), Status> {
-        let connection = self.command_connection().await?;
-        let exists: bool = connection
-            .client
+        let mut connection = self.command_connection().await?;
+        let tx = connection.client.transaction().await.map_err(sql_error)?;
+        let exists: bool = tx
             .query_one("SELECT to_regclass('ofz.schema_version') IS NOT NULL", &[])
             .await
             .map_err(sql_error)?
             .get(0);
         if !exists {
-            connection
-                .client
-                .batch_execute(include_str!("../migrations/0001_control.sql"))
+            tx.batch_execute(include_str!("../migrations/0001_control.sql"))
                 .await
                 .map_err(sql_error)?;
-        }
-        let row = connection
-            .client
-            .query_one("SELECT version,checksum FROM ofz.schema_version", &[])
+            #[cfg(test)]
+            if let Some((created, resume)) = &self.migration_barrier {
+                created.notify_one();
+                resume.notified().await;
+            }
+            tx.execute(
+                "INSERT INTO ofz.schema_version(version,checksum) VALUES(1,$1)",
+                &[&migration_checksum()],
+            )
             .await
             .map_err(sql_error)?;
+        }
+        let row = tx
+            .query_opt("SELECT version,checksum FROM ofz.schema_version", &[])
+            .await
+            .map_err(sql_error)?
+            .ok_or_else(|| {
+                Status::failed_precondition("control schema migration checksum missing")
+            })?;
         let checksum: Option<Vec<u8>> = row.get(1);
         if row.get::<_, i32>(0) != 1
             || checksum
                 .as_ref()
-                .is_some_and(|value| *value != migration_checksum())
+                .is_none_or(|value| *value != migration_checksum())
         {
             return Err(Status::failed_precondition(
                 "control schema migration checksum mismatch",
             ));
         }
-        if checksum.is_none() {
-            connection.client.execute("UPDATE ofz.schema_version SET checksum=$1 WHERE version=1 AND checksum IS NULL", &[&migration_checksum()]).await.map_err(sql_error)?;
-        }
+        tx.commit().await.map_err(sql_error)?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_migration_barrier(
+        mut self,
+        created: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        self.migration_barrier = Some((created, resume));
+        self
     }
 
     pub async fn migrate_runtime(&self) -> Result<(), Status> {
