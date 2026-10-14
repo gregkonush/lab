@@ -445,6 +445,59 @@ def validate(targets):
         and ingress["tls"]["secretName"] == "auth-proompteng-ai-tls",
         "keycloak: reviewed HTTPS certificate required",
     )
+    for target in ["ofz", "keycloak"]:
+        store = resource(targets, target, "ObjectStore", f"{target}-db")["spec"]
+        config = store["configuration"]
+        require(
+            config["destinationPath"] == f"s3://{target}-database-backups/"
+            and config["endpointURL"] == "https://nuc.ide-newton.ts.net:9444"
+            and config["data"].get("encryption") == "AES256"
+            and config["wal"].get("encryption") == "AES256"
+            and store["retentionPolicy"] == "35d",
+            f"{target}: independent encrypted base backups and WAL are required",
+        )
+        require(
+            config["s3Credentials"]
+            == {
+                "accessKeyId": {
+                    "name": f"{target}-database-backup",
+                    "key": "AWS_ACCESS_KEY_ID",
+                },
+                "secretAccessKey": {
+                    "name": f"{target}-database-backup",
+                    "key": "AWS_SECRET_ACCESS_KEY",
+                },
+            },
+            f"{target}: database writer must be separate from the audit writer",
+        )
+        cluster = resource(targets, target, "Cluster", f"{target}-db")["spec"]
+        require(
+            cluster["postgresql"]["parameters"]["archive_timeout"] == "60s"
+            and cluster["plugins"]
+            == [
+                {
+                    "name": "barman-cloud.cloudnative-pg.io",
+                    "enabled": True,
+                    "isWALArchiver": True,
+                    "parameters": {
+                        "barmanObjectName": f"{target}-db",
+                        "serverName": f"{target}-db",
+                    },
+                }
+            ],
+            f"{target}: native backup and WAL archive binding changed",
+        )
+        scheduled = resource(targets, target, "ScheduledBackup", f"{target}-db-daily")[
+            "spec"
+        ]
+        require(
+            scheduled["immediate"] is True
+            and scheduled["cluster"]["name"] == f"{target}-db"
+            and scheduled["method"] == "plugin"
+            and scheduled["pluginConfiguration"]["name"]
+            == "barman-cloud.cloudnative-pg.io",
+            f"{target}: first independent backup must not wait for the daily schedule",
+        )
     for name in ["keycloak-tengri-broker", "keycloak-tengri-bff"]:
         credential = resource(targets, "keycloak", "SealedSecret", name)
         require(
@@ -524,6 +577,21 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
+            "configuration"
+        ].update(endpointURL="https://rook-ceph-rgw.rook-ceph.svc"),
+        lambda data: resource(data, "keycloak", "ObjectStore", "keycloak-db")["spec"][
+            "configuration"
+        ].update(destinationPath="s3://ofz-database-backups/"),
+        lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
+            "configuration"
+        ]["wal"].pop("encryption"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "postgresql"
+        ]["parameters"].update(archive_timeout="1h"),
+        lambda data: resource(data, "keycloak", "ScheduledBackup", "keycloak-db-daily")[
+            "spec"
+        ].update(immediate=False),
         lambda data: container(data, "tengri", "Deployment", "tengri")["env"].append(
             {"name": "TENGRI_GUEST_SIGNING_KEY_FILE", "value": "/tmp/wrong-key"}
         ),

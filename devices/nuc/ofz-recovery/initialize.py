@@ -14,7 +14,16 @@ from pathlib import Path
 
 import urllib3
 from minio import Minio
+from minio.commonconfig import ENABLED, Filter
 from minio.error import S3Error
+from minio.lifecycleconfig import (
+    Expiration,
+    LifecycleConfig,
+    NoncurrentVersionExpiration,
+)
+from minio.lifecycleconfig import (
+    Rule as LifecycleRule,
+)
 from minio.objectlockconfig import ObjectLockConfig
 from minio.retention import COMPLIANCE, Retention
 from minio.sse import SseS3
@@ -29,6 +38,12 @@ from audit_export import (
     credential,
     failure_report,
 )  # noqa: E402
+
+DATABASE_BUCKETS = {
+    "ofz": "ofz-database-backups",
+    "keycloak": "keycloak-database-backups",
+}
+DATABASE_RETENTION_DAYS = 30
 
 
 def write_private(path: Path, value: str, *, exclusive: bool = False) -> None:
@@ -133,12 +148,57 @@ def prepare(directory: Path) -> None:
             "policy_names": ["audit-export"],
         },
     ]
+    database_manifest = directory / "database-writers.json"
+    database_fingerprint = directory / "database-writers.sha256"
+    if not database_manifest.exists():
+        if database_fingerprint.exists():
+            raise ArchiveError("restore the original database backup credentials")
+        persist_once(
+            database_manifest,
+            json.dumps(
+                {
+                    name: {
+                        "access_key": f"{name.upper()}DB{secrets.token_hex(10).upper()}",
+                        "secret_key": secrets.token_hex(32),
+                    }
+                    for name in DATABASE_BUCKETS
+                },
+                sort_keys=True,
+            ),
+        )
+    database_values = credential(str(database_manifest))
+    digest = hashlib.sha256(database_values.encode()).hexdigest()
+    persist_once(database_fingerprint, digest)
+    if credential(str(database_fingerprint)) != digest:
+        raise ArchiveError("database backup credential identity changed")
+    writers = json.loads(database_values)
+    if set(writers) != set(DATABASE_BUCKETS):
+        raise ArchiveError("unsupported database backup credentials")
+    policies = [{"name": "audit-export", "content": json.dumps(policy)}]
+    database_policy = Path(__file__).with_name("database-policy.json").read_text()
+    for name, bucket in DATABASE_BUCKETS.items():
+        keys = writers[name]
+        if set(keys) != {"access_key", "secret_key"} or any(
+            not isinstance(value, str) or not value.isalnum() or len(value) < 20
+            for value in keys.values()
+        ):
+            raise ArchiveError("invalid database backup credentials")
+        identities.append(
+            {
+                "name": f"{name}-database-backup",
+                "credentials": [keys],
+                "policy_names": [name],
+            }
+        )
+        policies.append(
+            {"name": name, "content": database_policy.replace("BACKUP_BUCKET", bucket)}
+        )
     write_private(
         directory / "s3.json",
         json.dumps(
             {
                 "identities": identities,
-                "policies": [{"name": "audit-export", "content": json.dumps(policy)}],
+                "policies": policies,
             },
             sort_keys=True,
         ),
@@ -165,27 +225,47 @@ def client(directory: Path, *, root: bool, local: bool = False) -> Minio:
 
 def configure(directory: Path, storage: Minio | None = None) -> None:
     storage = storage or client(directory, root=True, local=True)
-    if not storage.bucket_exists(BUCKET):
-        storage.make_bucket(BUCKET, object_lock=True)
+    configure_bucket(storage, BUCKET, RETENTION_DAYS)
+    for bucket in DATABASE_BUCKETS.values():
+        configure_bucket(storage, bucket, DATABASE_RETENTION_DAYS)
+        lifecycle = LifecycleConfig(
+            [
+                LifecycleRule(
+                    ENABLED,
+                    rule_filter=Filter(prefix=""),
+                    rule_id="database-retention",
+                    expiration=Expiration(days=40),
+                    noncurrent_version_expiration=NoncurrentVersionExpiration(
+                        noncurrent_days=45
+                    ),
+                )
+            ]
+        )
+        storage.set_bucket_lifecycle(bucket, lifecycle)
+
+
+def configure_bucket(storage: Minio, bucket: str, retention_days: int) -> None:
+    if not storage.bucket_exists(bucket):
+        storage.make_bucket(bucket, object_lock=True)
     try:
-        existing = storage.get_object_lock_config(BUCKET)
+        existing = storage.get_object_lock_config(bucket)
     except S3Error as error:
         if error.code != "ObjectLockConfigurationNotFoundError":
             raise
         existing = ObjectLockConfig(None, None, None)
     if existing.mode is None:
         storage.set_object_lock_config(
-            BUCKET, ObjectLockConfig(COMPLIANCE, RETENTION_DAYS, "Days")
+            bucket, ObjectLockConfig(COMPLIANCE, retention_days, "Days")
         )
     elif (
         existing.mode != COMPLIANCE
         or existing.duration_unit != "Days"
-        or existing.duration < RETENTION_DAYS
+        or existing.duration < retention_days
     ):
         raise ArchiveError("existing archive has an unapproved retention policy")
-    encryption = storage.get_bucket_encryption(BUCKET)
+    encryption = storage.get_bucket_encryption(bucket)
     if encryption is None:
-        storage.set_bucket_encryption(BUCKET, SSEConfig(Rule.new_sse_s3_rule()))
+        storage.set_bucket_encryption(bucket, SSEConfig(Rule.new_sse_s3_rule()))
     elif encryption.rule != Rule.new_sse_s3_rule():
         raise ArchiveError("existing archive has an unapproved encryption policy")
 

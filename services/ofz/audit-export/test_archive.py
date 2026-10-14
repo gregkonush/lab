@@ -57,6 +57,25 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_database_writer_identity_cannot_be_replaced(self):
+        with tempfile.TemporaryDirectory(prefix="ofz-database-writers-") as temporary:
+            directory = Path(temporary)
+            initialize.prepare(directory)
+            manifest = directory / "database-writers.json"
+            original = manifest.read_bytes()
+            initialize.prepare(directory)
+            self.assertEqual(original, manifest.read_bytes())
+            values = json.loads(original)
+            self.assertEqual(set(values), {"ofz", "keycloak"})
+            values["ofz"]["secret_key"] = "00" * 32
+            manifest.write_text(json.dumps(values, sort_keys=True))
+            with self.assertRaisesRegex(archive.ArchiveError, "identity changed"):
+                initialize.prepare(directory)
+            manifest.unlink()
+            with self.assertRaisesRegex(archive.ArchiveError, "original"):
+                initialize.prepare(directory)
+            self.assertFalse(manifest.exists())
+
     def test_recovery_key_is_stable_and_corruption_is_not_replaced(self):
         with tempfile.TemporaryDirectory(prefix="ofz-recovery-key-") as temporary:
             directory = Path(temporary)
@@ -213,7 +232,7 @@ class RealArchive(unittest.TestCase):
                 "-dir=/data",
                 "-ip=127.0.0.1",
                 "-ip.bind=0.0.0.0",
-                "-volume.max=4",
+                "-volume.max=0",
                 "-master.volumeSizeLimitMB=64",
                 "-master.telemetry=false",
                 "-volume.minFreeSpace=1GiB",
@@ -255,8 +274,78 @@ class RealArchive(unittest.TestCase):
                     if time.monotonic() >= deadline:
                         self.fail("isolated S3 server did not become ready")
                     time.sleep(0.2)
+            docker(
+                "exec",
+                name,
+                "/bin/sh",
+                "-ec",
+                "printf 'fs.configure -locationPrefix=/buckets/ -fsync -volumeGrowthCount=1 -apply\\n' | /usr/bin/weed shell -master=127.0.0.1:9333 -filer=127.0.0.1:8888",
+            )
             initialize.configure(credentials, storage=administrator)
             initialize.configure(credentials, storage=administrator)
+            writers = json.loads((credentials / "database-writers.json").read_text())
+            for database, bucket in initialize.DATABASE_BUCKETS.items():
+                writer = Minio(
+                    endpoint,
+                    access_key=writers[database]["access_key"],
+                    secret_key=writers[database]["secret_key"],
+                    secure=False,
+                    region="us-east-1",
+                )
+                config = writer.get_object_lock_config(bucket)
+                self.assertEqual(config.mode, COMPLIANCE)
+                self.assertEqual(config.duration, 30)
+                self.assertEqual(writer.get_bucket_versioning(bucket).status, "Enabled")
+                data = (database + " independent physical backup fixture").encode()
+                written = writer.put_object(
+                    bucket, "wal/test", io.BytesIO(data), len(data)
+                )
+                self.assertTrue(written.version_id)
+                self.assertEqual(
+                    len(list(writer.list_objects(bucket, prefix="wal/"))), 1
+                )
+                response = writer.get_object(
+                    bucket, "wal/test", version_id=written.version_id
+                )
+                try:
+                    self.assertEqual(
+                        response.headers.get("x-amz-server-side-encryption"), "AES256"
+                    )
+                    self.assertEqual(response.read(), data)
+                finally:
+                    response.close()
+                    response.release_conn()
+                for denied_client in (writer, administrator):
+                    initialize.denied(
+                        lambda: denied_client.remove_object(
+                            bucket, "wal/test", version_id=written.version_id
+                        )
+                    )
+                other = next(
+                    value
+                    for value in initialize.DATABASE_BUCKETS.values()
+                    if value != bucket
+                )
+                initialize.denied(
+                    lambda: writer.put_object(
+                        other, "cross-database", io.BytesIO(data), len(data)
+                    )
+                )
+                initialize.denied(
+                    lambda: storage.put_object(
+                        bucket, "audit-writer", io.BytesIO(data), len(data)
+                    )
+                )
+                initialize.denied(
+                    lambda: writer.set_bucket_encryption(
+                        bucket, SSEConfig(Rule.new_sse_s3_rule())
+                    )
+                )
+                lifecycle = administrator.get_bucket_lifecycle(bucket)
+                self.assertEqual(lifecycle.rules[0].expiration.days, 40)
+                self.assertEqual(
+                    lifecycle.rules[0].noncurrent_version_expiration.noncurrent_days, 45
+                )
             docker("exec", name, "/bin/sh", "-ec", "test -s /data/filer.sqlite3")
             administrator.set_object_lock_config(
                 archive.BUCKET, ObjectLockConfig(COMPLIANCE, 90, "Days")
