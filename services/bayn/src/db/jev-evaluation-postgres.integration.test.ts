@@ -9,7 +9,11 @@ import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution
 import { CycleStore, CycleStoreLive } from '../cycle/store'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
+import { IsoDateSchema } from '../schemas'
 import { JevBatchPlanVersion } from '../jev/batch'
+import { JevFailure } from '../jev/contract'
+import { InferenceUsageStatus } from '../inference-costs'
+import { buildInferenceExpensePlan, makeInferenceExpenseQuote } from '../inference-expense'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from '../jev/evidence'
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
@@ -117,6 +121,62 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('retains a zero-cost receipt when the durable claim crosses expiry without dispatch', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* JevEvaluationStore
+        let calls = 0
+        const result = yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
+          Effect.andThen(evaluateJevOnce(request)),
+          Effect.result,
+          Effect.provideService(JevEvaluationStore, {
+            ...store,
+            begin: (value) => store.begin(value).pipe(Effect.tap(() => TestClock.setTime(Date.parse(value.expiresAt)))),
+          }),
+          Effect.provideService(JevClient, {
+            evaluate: () =>
+              Effect.sync(() => {
+                calls += 1
+                return inferenceFixture()
+              }),
+          }),
+          Effect.provide(TestClock.layer()),
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        expect(calls).toBe(0)
+        const recovered = yield* store.begin(request)
+        expect(recovered.status).toBe(JevClaim.Recorded)
+        if (recovered.status !== JevClaim.Recorded) throw new Error('Missing durable undispatched receipt')
+        expect(recovered.receipt.outcome).toEqual({
+          status: JevOutcome.Failed,
+          failure: JevFailure.NotDispatched,
+          httpStatus: null,
+          responseHash: null,
+          rejectedResponse: null,
+        })
+        const quote = Result.getOrThrow(
+          makeInferenceExpenseQuote(
+            {
+              accountId: 'fixture-account',
+              sessionDate: yield* Schema.decodeUnknownEffect(IsoDateSchema)(request.observedAt.slice(0, 10)),
+              asOf: request.expiresAt,
+              requestId: request.requestId,
+              cycleId: request.cycleId,
+              authorityGenerationHash: request.authorityGenerationHash,
+              request,
+              receipt: recovered.receipt,
+              resolution: recovered.resolution,
+            },
+            { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] },
+          ),
+        )
+        expect(quote.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
+        expect(quote.line.estimatedCostPicoUsd).toBe('0')
+        expect(Result.getOrThrow(buildInferenceExpensePlan([quote])).transfers).toHaveLength(0)
+      }),
+    )
   })
 
   test('only one concurrent caller owns inference; later callers recover the exact durable result', async () => {

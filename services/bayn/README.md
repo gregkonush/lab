@@ -700,6 +700,11 @@ silently applied to a generation or window report.
 Inference expenses are distinct from broker cash and execution fees. The read-only operator command reads claimed
 Jev requests across all cycles for one account and exchange-session date, including blocked and no-trade cycles:
 
+When a newly acquired request expires during durable claim persistence, the worker records a `NOT_DISPATCHED`
+receipt before returning the deadline failure. This positive pre-HTTP evidence supplies zero tokens and zero cost
+without a tariff or a TigerBeetle transfer. Missing receipts and dispatched requests without usage remain unknown;
+historical gaps cannot be classified as free from the absence of a provider response.
+
 ```sh
 bayn-inference-cost --session 2026-01-02 --rate-card /private/inference-rates.json
 # An already exported, private evidence cut can be evaluated without network or credential access:
