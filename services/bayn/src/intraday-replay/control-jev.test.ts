@@ -1,3 +1,5 @@
+import { equityMarketProfile } from '../jev/markets'
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
@@ -18,7 +20,7 @@ import { ControlExit, ControlPolicy, ControlStudyFailure } from './control-portf
 import { runControlSession, type ControlMarket } from './control-study'
 
 const fixture = nativeJevFixture()
-const session = fixture.snapshot.manifest.calendar.sessions[0]
+const session = exchangeSessions(fixture.snapshot.manifest.calendar)[0]
 if (session === undefined) throw new Error('Expected fixture calendar')
 const openMs = Date.parse(session.openAt)
 const closeMs = openMs + 60 * 60_000
@@ -93,7 +95,7 @@ const simulate = (
             }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', fixture.protocol.universe)
+      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', equityMarketProfile.universe)
       const report = yield* runControlSession({
         policy: ControlPolicy.RelativeMomentum,
         protocol: fixture.protocol,
@@ -111,7 +113,7 @@ const simulate = (
         decisionLatencyMs: 1000,
         pollIntervalMs: 30_000,
         assumptions: { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
-        eligibleSymbols: new Set(fixture.protocol.candidateSymbols),
+        eligibleSymbols: new Set(equityMarketProfile.candidateSymbols),
         market,
         management: {
           runId,
@@ -144,7 +146,7 @@ test('a control manages its own partial entry, retries its model exit, and charg
   expect(report.orders.filter((order) => order.side === OrderSide.Sell).length).toBe(report.completedEpisodes * 3)
   expect(report.modelCostMicros).toBe(String(requests.length * 5))
   for (const request of requests)
-    expect(request.state).toMatchObject({ task: { decisionPurpose: 'MANAGE' }, position: { quantityShares: 5 } })
+    expect(request.state).toMatchObject({ task: { decisionPurpose: 'MANAGE' }, position: { quantityUnits: 5 } })
   expect(BigInt(report.netPnlAfterKnownCostsMicros ?? '0')).toBe(
     BigInt(report.ledger.netRealizedPnlAfterCostsMicros ?? '0') - 1_000_000n - BigInt(requests.length * 5),
   )

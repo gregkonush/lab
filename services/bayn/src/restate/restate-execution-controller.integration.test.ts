@@ -62,13 +62,24 @@ describeRestate('Real Restate execution deployment activation', () => {
         activate: async () => {
           brokerActivations += 1
         },
-        poll: async (_signal, reservation) => {
+        poll: async () => {
+          const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+          if (failedPollNotBeforeMs > now)
+            return {
+              poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
+              startedAtMs: now,
+              completedAtMs: now,
+            }
           brokerPolls += 1
           if (!brokerReady) {
-            failedPollNotBeforeMs = reservation.interruptedNotBeforeMs
+            failedPollNotBeforeMs = now + 5_000
             throw new Error('Broker observation dependency is temporarily unavailable')
           }
-          return { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
+          return {
+            poll: { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
+            startedAtMs: now,
+            completedAtMs: now,
+          }
         },
       },
     )

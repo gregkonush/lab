@@ -2,7 +2,8 @@ import { Result, Schema } from 'effect'
 
 import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
 import { OrderSide } from '../execution/contracts'
-import { MICROS, notionalMicros } from '../execution-model'
+import { notionalMicros } from '../execution-model'
+import { quantityScale } from '../quantity'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 
@@ -19,14 +20,14 @@ type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity'
 
 export interface IntradayReplayIocCoreOrder {
   readonly side: OrderSide
-  readonly quantityMicros: bigint
+  readonly quantityAtoms: bigint
   readonly limitPriceMicros: bigint
 }
 
 /** Executable quote values selected from one event-time market snapshot. */
 export interface IntradayReplayIocCoreQuote {
   readonly priceMicros: bigint
-  readonly displayedQuantityMicros: bigint
+  readonly displayedQuantityAtoms: bigint
 }
 
 export interface IntradayReplayIocCoreInput {
@@ -39,8 +40,8 @@ export interface IntradayReplayIocCoreInput {
 export type IntradayReplayIocCoreOutcome =
   | {
       readonly status: 'filled'
-      readonly requestedQuantityMicros: bigint
-      readonly filledQuantityMicros: bigint
+      readonly requestedQuantityAtoms: bigint
+      readonly filledQuantityAtoms: bigint
       readonly fillPriceMicros: bigint
       readonly fillNotionalMicros: bigint
       readonly unfilledRemainder: 'none' | 'canceled'
@@ -48,8 +49,8 @@ export type IntradayReplayIocCoreOutcome =
   | {
       readonly status: 'canceled'
       readonly adversePriceMicros: bigint
-      readonly requestedQuantityMicros: bigint
-      readonly filledQuantityMicros: bigint
+      readonly requestedQuantityAtoms: bigint
+      readonly filledQuantityAtoms: bigint
       readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
       readonly unfilledRemainder: 'canceled'
     }
@@ -87,14 +88,14 @@ const simulateExecution = (
   const { order, quote, assumptions, executionModel: model } = input
   if (
     (order.side !== OrderSide.Buy && order.side !== OrderSide.Sell) ||
-    order.quantityMicros <= 0n ||
+    order.quantityAtoms <= 0n ||
     (order.limitPriceMicros === null
       ? order.side !== OrderSide.Sell
-      : order.quantityMicros % MICROS !== 0n || order.limitPriceMicros <= 0n)
+      : order.quantityAtoms % quantityScale !== 0n || order.limitPriceMicros <= 0n)
   ) {
     return Result.fail(invalid('order', order, 'invalid-order'))
   }
-  if (quote.priceMicros <= 0n || quote.displayedQuantityMicros < 0n) {
+  if (quote.priceMicros <= 0n || quote.displayedQuantityAtoms < 0n) {
     return Result.fail(invalid('quote', quote, 'invalid-quote'))
   }
   if (
@@ -107,16 +108,16 @@ const simulateExecution = (
   ) {
     return Result.fail(invalid('assumptions', assumptions, 'invalid-assumptions'))
   }
-  const modelIncrement = modelQuantityIncrement(model.precision.quantityIncrementMicros)
-  const quantityIncrement = order.limitPriceMicros === null ? 1n : modelIncrement
+  const modelIncrement = modelQuantityIncrement(model.precision.quantityIncrementAtoms)
+  const quantityIncrement = order.limitPriceMicros === null ? 1n : quantityScale
   if (
     model.schemaVersion !== 'bayn.execution-model.v5' ||
-    model.venue !== 'alpaca-us-equity' ||
-    model.assetClass !== 'us-equity' ||
+    model.venue !== 'alpaca-cash-spot' ||
+    model.assetClass !== 'cash-spot' ||
     model.order.type !== 'limit' ||
     model.order.timeInForce !== 'ioc' ||
     model.order.extendedHours !== false ||
-    modelIncrement !== MICROS ||
+    modelIncrement !== 1n ||
     quantityIncrement === undefined ||
     model.precision.priceIncrementMicros !== '100'
   ) {
@@ -135,8 +136,8 @@ const simulateExecution = (
     Result.succeed({
       status: 'canceled',
       adversePriceMicros: adversePrice,
-      requestedQuantityMicros: order.quantityMicros,
-      filledQuantityMicros: 0n,
+      requestedQuantityAtoms: order.quantityAtoms,
+      filledQuantityAtoms: 0n,
       reason,
       unfilledRemainder: 'canceled',
     })
@@ -147,28 +148,28 @@ const simulateExecution = (
   ) {
     return cancel('adverse-price-exceeds-limit')
   }
-  const liquidity = (quote.displayedQuantityMicros * BigInt(assumptions.availableLiquidityPpm)) / PPM
+  const liquidity = (quote.displayedQuantityAtoms * BigInt(assumptions.availableLiquidityPpm)) / PPM
   const fillQuantity = (liquidity / quantityIncrement) * quantityIncrement
-  const requestedOrAvailable = fillQuantity < order.quantityMicros ? fillQuantity : order.quantityMicros
-  if (order.limitPriceMicros === null && requestedOrAvailable < order.quantityMicros)
+  const requestedOrAvailable = fillQuantity < order.quantityAtoms ? fillQuantity : order.quantityAtoms
+  if (order.limitPriceMicros === null && requestedOrAvailable < order.quantityAtoms)
     return Result.fail(
-      invalid('quote.displayedQuantityMicros', quote.displayedQuantityMicros, 'insufficient-market-close-liquidity'),
+      invalid('quote.displayedQuantityAtoms', quote.displayedQuantityAtoms, 'insufficient-market-close-liquidity'),
     )
   if (requestedOrAvailable === 0n) {
     return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-whole-share-rounding')
   }
   return notionalMicros(requestedOrAvailable, adversePrice).pipe(
     Result.mapError(() =>
-      invalid('notional', { quantityMicros: requestedOrAvailable, priceMicros: adversePrice }, 'invalid-notional'),
+      invalid('notional', { quantityAtoms: requestedOrAvailable, priceMicros: adversePrice }, 'invalid-notional'),
     ),
     Result.map(
       (fillNotionalMicros): IntradayReplayIocCoreOutcome => ({
         status: 'filled',
-        requestedQuantityMicros: order.quantityMicros,
-        filledQuantityMicros: requestedOrAvailable,
+        requestedQuantityAtoms: order.quantityAtoms,
+        filledQuantityAtoms: requestedOrAvailable,
         fillPriceMicros: adversePrice,
         fillNotionalMicros,
-        unfilledRemainder: requestedOrAvailable < order.quantityMicros ? 'canceled' : 'none',
+        unfilledRemainder: requestedOrAvailable < order.quantityAtoms ? 'canceled' : 'none',
       }),
     ),
   )
@@ -179,10 +180,10 @@ export const simulateIntradayReplayIocCore = (input: IntradayReplayIocCoreInput)
 /** A close-only market sell needs sufficient observed liquidity; a DAY remainder is never invented as an IOC cancel. */
 export const simulateIntradayReplayMarketCloseCore = (
   input: Omit<IntradayReplayIocCoreInput, 'order'> & {
-    readonly quantityMicros: bigint
+    readonly quantityAtoms: bigint
   },
 ) =>
   simulateExecution({
     ...input,
-    order: { side: OrderSide.Sell, quantityMicros: input.quantityMicros, limitPriceMicros: null },
+    order: { side: OrderSide.Sell, quantityAtoms: input.quantityAtoms, limitPriceMicros: null },
   })

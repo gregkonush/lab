@@ -1,3 +1,4 @@
+import { ContinuousMarketHoursSchema } from '../../market-hours'
 import { Schema } from 'effect'
 
 import {
@@ -13,7 +14,7 @@ import {
 import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../intraday/model'
 import { SimulatedSnapshotEvidenceSchema, StreamingSnapshotEvidenceSchema } from './evidence-schema'
 
-export const SnapshotCalendarSchema = Schema.Struct({
+const ExchangeSnapshotCalendarSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
   source: Schema.Literal('alpaca-v2-calendar'),
   requestedRange: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema }),
@@ -23,6 +24,7 @@ export const SnapshotCalendarSchema = Schema.Struct({
   ).check(Schema.isMinLength(1)),
   normalizedResponseHash: Sha256Schema,
 })
+export const SnapshotCalendarSchema = Schema.Union([ExchangeSnapshotCalendarSchema, ContinuousMarketHoursSchema])
 
 const ExecutionLineageSchema = Schema.Struct({
   sourceTopic: StrictNonEmptyStringSchema,
@@ -52,8 +54,13 @@ export const SnapshotManifestFields = {
   candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
   candidateExclusions: Schema.optionalKey(Schema.Array(ExecutionCandidateExclusionSchema).check(Schema.isUnique())),
   purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
-  feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
-  delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
+  feed: Schema.Literals(['iex', 'sip', 'delayed_sip', 'us']),
+  delayClass: Schema.Literals([
+    'real_time_exchange_only',
+    'real_time_consolidated',
+    'delayed_15m_consolidated',
+    'real_time_crypto',
+  ]),
   sourceTopics: Schema.Struct({
     bars: StrictNonEmptyStringSchema,
     quotes: StrictNonEmptyStringSchema,

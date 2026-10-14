@@ -58,15 +58,17 @@ def run(context, batch, output):
                     "--workers",
                     "8",
                 ],
-                stdout=logs,
+                stdout=subprocess.PIPE,
                 stderr=logs,
+                text=True,
                 timeout=3660,
             )
+            logs.write(process.stdout)
         if process.returncode:
             raise RuntimeError(
                 "Purge failed; inspect " + str(output) + " and retry its receipt"
             )
-        return json.loads(output.read_text().strip().splitlines()[-1])
+        return json.loads(process.stdout)
     finally:
         client.command(
             ["-n", "registry", "exec", name, "-c", CONTAINER, "--", "rm", "-f", script]

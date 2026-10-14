@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema, SynchronizedRef } from 'effect'
 
@@ -42,6 +43,7 @@ import {
   causeSummary,
 } from '../broker/alpaca-mutations/model'
 import { MutationOutcome, OrderSide as IntentSide, type Intent } from '../execution/contracts'
+import { quantityFromNumber } from '../quantity'
 import { numberToMicros, notionalMicros, MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
@@ -160,7 +162,7 @@ const consumedQuoteLiquidity = (fills: ReplayBrokerState['ledger']['fills'], key
   fills.reduce(
     (consumed, fill) =>
       quoteLiquidityKey(fill.symbol, fill.side, fill.quoteSource) === key
-        ? consumed + BigInt(fill.quantityMicros)
+        ? consumed + BigInt(fill.quantityAtoms)
         : consumed,
     0n,
   )
@@ -257,13 +259,13 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
-      replayQuoteRejection(quote, symbol, nowMs, config.protocol) === null
+      replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...equityMarketProfile }) === null
     const valuationQuoteUsable = (
       quote: ObservedMarketValue<IntradayQuote> | undefined,
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> => {
-      const rejection = replayQuoteRejection(quote, symbol, nowMs, config.protocol)
+      const rejection = replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...equityMarketProfile })
       return rejection === null || rejection === ReplayQuoteRejection.Stale
     }
     const executeQuote = (
@@ -274,27 +276,26 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       consumedLiquidityMicros = 0n,
     ) =>
       Result.gen(function* () {
-        const displayedQuantityMicros = yield* numberToMicros(
+        const displayedQuantityAtoms = yield* quantityFromNumber(
           side === OrderSide.Buy ? quote.askSize : quote.bidSize,
-          'quote.size',
-        )
-        const budgetMicros = (displayedQuantityMicros * BigInt(config.assumptions.availableLiquidityPpm)) / MICROS
+        ).pipe(Result.mapError((cause) => new ReplayBrokerFailure({ message: 'invalid displayed quantity', cause })))
+        const budgetMicros = (displayedQuantityAtoms * BigInt(config.assumptions.availableLiquidityPpm)) / MICROS
         const remainingMicros = budgetMicros > consumedLiquidityMicros ? budgetMicros - consumedLiquidityMicros : 0n
         const input = {
           quote: {
             priceMicros: yield* numberToMicros(side === OrderSide.Buy ? quote.askPrice : quote.bidPrice, 'quote.price'),
-            displayedQuantityMicros: remainingMicros,
+            displayedQuantityAtoms: remainingMicros,
           },
           executionModel: config.protocol.executionModel,
           assumptions: { ...config.assumptions, availableLiquidityPpm: 1_000_000 },
         }
         return yield* limit === undefined
-          ? simulateIntradayReplayMarketCloseCore({ ...input, quantityMicros: BigInt(quantity) })
+          ? simulateIntradayReplayMarketCloseCore({ ...input, quantityAtoms: BigInt(quantity) })
           : simulateIntradayReplayIocCore({
               ...input,
               order: {
                 side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
-                quantityMicros: BigInt(quantity),
+                quantityAtoms: BigInt(quantity),
                 limitPriceMicros: BigInt(limit),
               },
             })
@@ -305,13 +306,13 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         for (const fill of current.ledger.fills) {
           if (fill.observedAt > closeAt) break
           const order = current.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
-          if (order === undefined || order.quantityMicros === undefined)
+          if (order === undefined || order.quantityAtoms === undefined)
             return yield* new ReplayBrokerFailure({ message: 'Session close has an unknown order' })
           closingLedger = yield* Effect.fromResult(
             applyReplayFill(
               closingLedger,
               fill,
-              order.quantityMicros,
+              order.quantityAtoms,
               config.protocol.executionModel,
               config.assumptions.feeMultiplierPpm,
             ),
@@ -331,7 +332,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           )
             valuationQualified = false
           const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
-          equity += yield* Effect.fromResult(notionalMicros(BigInt(position.quantityMicros), price))
+          equity += yield* Effect.fromResult(notionalMicros(BigInt(position.quantityAtoms), price))
         }
         return { equityMicros: equity.toString(), valuationQualified }
       })
@@ -356,7 +357,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const outcome = yield* Effect.fromResult(
           executeQuote(
             order.side,
-            order.quantityMicros,
+            order.quantityAtoms,
             order.orderType === OrderType.Limit ? order.limitPriceMicros : undefined,
             quote.value,
             priorConsumption,
@@ -364,12 +365,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         )
         if (
           outcome.status !== 'filled' ||
-          outcome.filledQuantityMicros.toString() !== fill.quantityMicros ||
+          outcome.filledQuantityAtoms.toString() !== fill.quantityAtoms ||
           outcome.fillPriceMicros.toString() !== fill.priceMicros ||
           outcome.fillNotionalMicros.toString() !== fill.notionalMicros
         )
           return yield* new ReplayBrokerFailure({ message: 'Restored fill differs from retained quote execution' })
-        consumedLiquidity.set(liquidityKey, priorConsumption + BigInt(fill.quantityMicros))
+        consumedLiquidity.set(liquidityKey, priorConsumption + BigInt(fill.quantityAtoms))
       }
       for (const close of restored.state.sessionCloses) {
         const calendar = yield* Effect.fromResult(
@@ -399,7 +400,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               message: `Replay position mark unavailable for ${position.symbol}`,
             })
           const price = yield* Effect.fromResult(numberToMicros(quote.value.bidPrice, 'mark.bid'))
-          const value = yield* Effect.fromResult(notionalMicros(BigInt(position.quantityMicros), price))
+          const value = yield* Effect.fromResult(notionalMicros(BigInt(position.quantityAtoms), price))
           const positionValue = {
             accountId,
             assetId: metadata.assetId,
@@ -407,11 +408,11 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             exchange: metadata.exchange,
             assetClass: AssetClass.UsEquity,
             side: PositionSide.Long,
-            quantityMicros: position.quantityMicros,
+            quantityAtoms: position.quantityAtoms,
             costBasisMicros: position.costBasisMicros,
             averageEntryPriceMicros: (
-              (BigInt(position.costBasisMicros) * MICROS) /
-              BigInt(position.quantityMicros)
+              (BigInt(position.costBasisMicros) * 1_000_000_000n) /
+              BigInt(position.quantityAtoms)
             ).toString(),
             marketPriceMicros: price.toString(),
             marketValueMicros: value.toString(),
@@ -486,6 +487,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           positions.reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
         return yield* evidence(
           {
+            cryptoStatus: null,
+            nonMarginableBuyingPowerMicros: null,
+
             id: accountId,
             status: AccountStatus.Active,
             currency: 'USD',
@@ -624,7 +628,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       submit: (intent: Intent, closeOnly = false) =>
         Effect.gen(function* () {
           yield* readState
-          const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId, closeOnly))
+          const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId))
           const request = prepared.request
           if (!config.fractionalTrading && orderRequestRequiresFractionalTrading(request))
             return yield* mutationFailure(
@@ -665,8 +669,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             assetId: metadata.assetId,
             symbol: intent.symbol,
             assetClass: AssetClass.UsEquity,
-            quantityMicros: intent.quantityMicros,
-            filledQuantityMicros: '0',
+            quantityAtoms: intent.quantityAtoms,
+            filledQuantityAtoms: '0',
             orderClass: OrderClass.Simple,
             orderType: request.type,
             side: request.side,
@@ -716,7 +720,10 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 session !== undefined && submittedAtMs >= Date.parse(session.openAt) && arrivedAtMs < closeMs
               const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs) : undefined
               const unavailableReason = sessionOpen
-                ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, config.protocol)
+                ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
+                    ...config.protocol,
+                    ...equityMarketProfile,
+                  })
                 : 'outside-regular-session'
               const arrival = {
                 submittedAt: observedAt,
@@ -753,7 +760,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     availableAtMs: quote.availableAtMs,
                   })
                   const consumed = consumedQuoteLiquidity(current.ledger.fills, liquidityKey)
-                  const calculated = executeQuote(request.side, intent.quantityMicros, limit, quote.value, consumed)
+                  const calculated = executeQuote(request.side, intent.quantityAtoms, limit, quote.value, consumed)
                   if (Result.isFailure(calculated))
                     return [
                       Result.fail(
@@ -784,7 +791,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                       symbol: intent.symbol,
                       side: request.side,
                       observedAt: arrivedAt,
-                      quantityMicros: outcome.filledQuantityMicros.toString(),
+                      quantityAtoms: outcome.filledQuantityAtoms.toString(),
                       priceMicros: outcome.fillPriceMicros.toString(),
                       notionalMicros: outcome.fillNotionalMicros.toString(),
                       brokerOrderId,
@@ -796,7 +803,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                         availableAtMs: quote.availableAtMs,
                       },
                     },
-                    intent.quantityMicros,
+                    intent.quantityAtoms,
                     config.protocol.executionModel,
                     config.assumptions.feeMultiplierPpm,
                   )
@@ -861,16 +868,16 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     filledAt: arrivedAt,
                     ...(complete ? {} : { canceledAt: arrivedAt }),
                     status: complete ? OrderStatus.Filled : OrderStatus.Canceled,
-                    filledQuantityMicros: outcome.filledQuantityMicros.toString(),
+                    filledQuantityAtoms: outcome.filledQuantityAtoms.toString(),
                     filledAveragePriceMicros: outcome.fillPriceMicros.toString(),
                   }
                   fills.push({
                     accountId,
                     activityId: `fill::${brokerOrderId}`,
-                    cumulativeQuantityMicros: order.filledQuantityMicros,
-                    leavesQuantityMicros: (BigInt(intent.quantityMicros) - outcome.filledQuantityMicros).toString(),
-                    priceMicros: outcome.fillPriceMicros.toString(),
-                    quantityMicros: order.filledQuantityMicros,
+                    cumulativeQuantityAtoms: order.filledQuantityAtoms,
+                    leavesQuantityAtoms: (BigInt(intent.quantityAtoms) - outcome.filledQuantityAtoms).toString(),
+                    priceAtoms: (outcome.fillPriceMicros * 1000n).toString(),
+                    quantityAtoms: order.filledQuantityAtoms,
                     side: request.side,
                     symbol: intent.symbol,
                     transactionTime: arrivedAt,

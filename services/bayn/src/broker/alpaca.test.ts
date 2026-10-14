@@ -373,6 +373,9 @@ describe('Alpaca paper reads', () => {
       status: 'inactive',
       tradable: false,
       fractionable: false,
+      minimumQuantityAtoms: '1000000000',
+      quantityIncrementAtoms: '1000000000',
+      priceIncrementAtoms: '100000',
       attributes: ['ipo'],
     }
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
@@ -444,6 +447,9 @@ describe('Alpaca paper reads', () => {
       status: AssetStatus.Inactive,
       tradable: false,
       fractionable: false,
+      minimumQuantityAtoms: '1000000000',
+      quantityIncrementAtoms: '1000000000',
+      priceIncrementAtoms: '100000',
       attributes: ['ipo'],
     } as const
     expect(result.value).toEqual({
@@ -928,7 +934,7 @@ describe('Alpaca paper reads', () => {
         exchange: AssetExchange.Nasdaq,
         assetClass: AssetClass.UsEquity,
         side: PositionSide.Long,
-        quantityMicros: '5000000',
+        quantityAtoms: '5000000000',
         averageEntryPriceMicros: '100000000',
         costBasisMicros: '500000000',
         marketPriceMicros: '120000000',
@@ -943,13 +949,13 @@ describe('Alpaca paper reads', () => {
     expect(short.value).toEqual([
       expect.objectContaining({
         side: PositionSide.Short,
-        quantityMicros: '-5000000',
+        quantityAtoms: '-5000000000',
         marketValueMicros: '-600000000',
         unrealizedPnlMicros: '-100000000',
       }),
     ])
 
-    response = [{ ...positionResponse, qty: '0.079145874' }]
+    response = [{ ...positionResponse, qty: '0.0791458741' }]
     const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
     expect(failure).toMatchObject({
       _tag: 'BrokerReadError',
@@ -960,7 +966,7 @@ describe('Alpaca paper reads', () => {
         tag: 'BrokerReadContractFailure',
         reason: 'DECIMAL_PRECISION',
         field: 'position quantity',
-        actual: '0.079145874',
+        actual: '0.0791458741',
       },
     })
     expect(failure.message).toContain('violates the Bayn read contract')
@@ -1024,8 +1030,8 @@ describe('Alpaca paper reads', () => {
         orderType: OrderType.Market,
         side: OrderSide.Buy,
         status: OrderStatus.Accepted,
-        quantityMicros: '5000000',
-        filledQuantityMicros: '0',
+        quantityAtoms: '5000000000',
+        filledQuantityAtoms: '0',
         createdAt: '2021-03-16T18:38:01.942282Z',
       })
     }
@@ -1193,7 +1199,8 @@ describe('Alpaca paper reads', () => {
     const result = await Effect.runPromise(
       withClient(client, (read) => read.feeActivities({ pageSize: 1, direction: SortDirection.Ascending })),
     )
-    expect(requestedUrl?.pathname).toBe('/v2/account/activities/FEE')
+    expect(requestedUrl?.pathname).toBe('/v2/account/activities')
+    expect(requestedUrl?.searchParams.get('activity_types')).toBe('FEE,CFEE')
     expect(result.value).toEqual({
       items: [{ accountId, activityId: raw.id, date: raw.date, netAmountMicros: '-210000' }],
       nextPageToken: raw.id,
@@ -1239,10 +1246,10 @@ describe('Alpaca paper reads', () => {
         {
           accountId,
           activityId: fillResponse.id,
-          cumulativeQuantityMicros: '5000000',
-          leavesQuantityMicros: '0',
-          priceMicros: '120125000',
-          quantityMicros: '5000000',
+          cumulativeQuantityAtoms: '5000000000',
+          leavesQuantityAtoms: '0',
+          priceAtoms: '120125000000',
+          quantityAtoms: '5000000000',
           side: OrderSide.Buy,
           symbol: 'AAPL',
           transactionTime: '2026-07-21T15:34:06.977123Z',

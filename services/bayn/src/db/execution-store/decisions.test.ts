@@ -85,7 +85,7 @@ const positionEvent = (
     schemaVersion: 'bayn.paper-position.v1',
     accountId,
     symbol,
-    quantityMicros: marketValueMicros.startsWith('-') ? '-500000' : '2000000',
+    quantityAtoms: marketValueMicros.startsWith('-') ? '-500000' : '2000000',
     averageEntryPriceMicros: '100000000',
     marketPriceMicros: '100000000',
     marketValueMicros,
@@ -108,20 +108,20 @@ const positionSnapshot = (): PositionSnapshotInput => {
 }
 
 const accountingFill: Fill = {
-  schemaVersion: 'bayn.paper-fill.v1',
+  schemaVersion: 'bayn.fill.v2',
   accountId,
   fillId: 'fill-1',
   brokerOrderId: 'broker-order-1',
   clientOrderId: 'client-order-1',
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  quantityMicros: '1000000',
-  priceMicros: '100000000',
+  quantityAtoms: '1000000000',
+  priceAtoms: '100000000000',
   feeMicros: '0',
   occurredAt,
 }
 
-const preparedResult = prepareAccounting('a'.repeat(64), accountingFill, { quantityMicros: '0', costMicros: '0' }, 7001)
+const preparedResult = prepareAccounting('a'.repeat(64), accountingFill, { quantityAtoms: '0', costMicros: '0' }, 7001)
 if (Result.isFailure(preparedResult)) throw new Error(`accounting fixture failed: ${preparedResult.failure._tag}`)
 const prepared = preparedResult.success
 const receiptPlan = value(planAccountingReceipt(prepared, '1', 7001))

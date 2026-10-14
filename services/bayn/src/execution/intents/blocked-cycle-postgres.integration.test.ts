@@ -1,3 +1,4 @@
+import { orderRequestBody } from '../../broker/alpaca-mutations'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -21,7 +22,7 @@ import {
   makeIntradayCycleWindow,
 } from '../../cycle'
 import { CycleStore, CycleStoreLive } from '../../cycle/store'
-import { Authority, KillState } from '../../execution/contracts'
+import { Authority, KillState, OrderSide, OrderType, TimeInForce } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
@@ -474,7 +475,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           yield* sql`INSERT INTO intents (
           intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
           decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-          quantity_micros, notional_limit_micros, state, state_version, created_at, updated_at
+          quantity_atoms, notional_limit_micros, state, state_version, created_at, updated_at
         ) VALUES (
           ${intentId}, 'bayn.paper-intent.v3', ${executionHash}, NULL, 'intraday-momentum',
           ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
@@ -1135,14 +1136,14 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, cycle_id text, account_id text, policy_hash text,
     strategy_name text, side text, state text, terminal_outcome text, state_version integer,
-    updated_at timestamptz, risk_decision_id text
+    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric
   )`
   yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
   )`
   yield* sql`CREATE TABLE mutation_events (
     event_id text PRIMARY KEY, schema_version text, mutation_id text, intent_id text, sequence integer,
-    operation text, event_type text, request_hash text, consistency_delay_ms integer,
+    operation text, event_type text, request_hash text, request_body jsonb, consistency_delay_ms integer,
     broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz
   )`
   yield* sql`CREATE TABLE orders (intent_id text)`
@@ -1169,7 +1170,8 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   for (const intentId of expiryFixture.intentIds) {
     yield* sql`INSERT INTO intents VALUES (
       ${intentId}, ${expiryFixture.generationHash}, ${expiryFixture.cycleId}, ${accountId}, ${expiryFixture.policyHash},
-      'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId}
+      'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId},
+      ${'b1_' + 'A'.repeat(43)}, 'AAPL', 'MARKET', 'DAY', 1000000000, 100000000
     )`
     yield* sql`INSERT INTO risk_decisions VALUES (
       ${intentId}, ${intentId}, 'APPROVED', ${expiryFixture.createdAt}, ${expiryFixture.expiresAt}
@@ -1205,7 +1207,19 @@ const reserveExpiryIntent = Effect.gen(function* () {
   return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
     MutationOperation.Submit,
     expiryFixture.intentIds[0],
-    '1'.repeat(64),
+    canonicalHashV1(
+      Result.getOrThrow(
+        orderRequestBody({
+          clientOrderId: 'b1_' + 'A'.repeat(43),
+          symbol: 'AAPL',
+          side: OrderSide.Buy,
+          orderType: OrderType.Market,
+          timeInForce: TimeInForce.Day,
+          quantityAtoms: '1000000000',
+          notionalLimitMicros: '100000000',
+        }),
+      ),
+    ),
     1_000,
     expiryFixture.reservedAt,
   )

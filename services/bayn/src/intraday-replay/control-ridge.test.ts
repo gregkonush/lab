@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -66,12 +67,12 @@ const fixture = (
   } = {},
 ) =>
   Effect.gen(function* () {
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy('ridge-control-test', protocol.universe)
+    const risk = yield* loadQuoteBoundExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
     const pollIntervalMs = options.pollIntervalMs ?? 30_000
     const firstDecisionMs = sixBarOpenMs + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs
     const baseInputs: SixBarFixtureInput[] = sixBarFixtureInputs()
       .flatMap((input) => {
-        const symbols = input.symbol === 'SPY' ? ['SPY'] : protocol.candidateSymbols
+        const symbols = input.symbol === 'SPY' ? ['SPY'] : equityMarketProfile.candidateSymbols
         return symbols.map((symbol) => ({
           ...input,
           symbol,
@@ -201,7 +202,7 @@ const fixture = (
       calendar: executionCalendar,
       sessionDate: '2026-09-04',
       observedAtMs: firstDecisionMs,
-      candidates: protocol.candidateSymbols,
+      candidates: equityMarketProfile.candidateSymbols,
     })
     return { input, bound, context, body, source, captured: actualCapture, query, firstDecisionMs }
   })
@@ -217,7 +218,9 @@ test('the pair extracts the same causal features and uses the actual training me
     throw new Error('Expected available synthetic decisions')
   expect(ridge.evidence.selectedSymbol).toBe('AAPL')
   expect(baseline.evidence.selectedSymbol).toBeNull()
-  expect(baseline.evidence.scores).toEqual(protocol.candidateSymbols.map((symbol) => ({ symbol, scoreBps: 0 })))
+  expect(baseline.evidence.scores).toEqual(
+    equityMarketProfile.candidateSymbols.map((symbol) => ({ symbol, scoreBps: 0 })),
+  )
   expect(ridge.evidence.observations).toEqual(baseline.evidence.observations)
   expect(
     ridge.evidence.observations.every(
@@ -242,7 +245,7 @@ test.each([0, -5])('a %d-bps constant preserves candidate-local gaps as exclusio
   expect(decision.evidence.selectedSymbol).toBeNull()
   expect(decision.evidence.exclusions).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
   expect(decision.evidence.scores.map((score) => score.symbol)).toEqual(
-    protocol.candidateSymbols.filter((symbol) => symbol !== 'AAPL'),
+    equityMarketProfile.candidateSymbols.filter((symbol) => symbol !== 'AAPL'),
   )
 })
 
@@ -279,7 +282,9 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'late-bar', 'stale-q
       const decision = Result.getOrThrow(select())
       expect(decision.status).toBe('AVAILABLE')
       if (decision.status !== 'AVAILABLE') throw new Error('Expected candidate-local exclusion')
-      expect(decision.evidence.selectedSymbol).toBe(protocol.candidateSymbols.find((symbol) => symbol !== 'AAPL')!)
+      expect(decision.evidence.selectedSymbol).toBe(
+        equityMarketProfile.candidateSymbols.find((symbol) => symbol !== 'AAPL')!,
+      )
       expect(decision.evidence.exclusions).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
       expect(decision.evidence.scores.some((score) => score.symbol === 'AAPL')).toBeFalse()
       const excluded = decision.evidence.observations.find((observation) => observation.candidateSymbol === 'AAPL')!
@@ -341,7 +346,7 @@ test('evidenced exclusions retain an available cash decision with empty admissib
     expect(decision.evidence.selectedSymbol).toBeNull()
     expect(decision.evidence.scores).toEqual([])
     expect(decision.evidence.observations.map((observation) => observation.status)).toEqual(
-      protocol.candidateSymbols.map(() => SixBarResearchStatus.Excluded),
+      equityMarketProfile.candidateSymbols.map(() => SixBarResearchStatus.Excluded),
     )
   }
 })
@@ -359,7 +364,7 @@ test('candidate gaps can produce evidenced cash only while the benchmark remains
     if (decision.status !== 'AVAILABLE') throw new Error('Expected evidenced candidate gaps')
     expect(decision.evidence.selectedSymbol).toBeNull()
     expect(decision.evidence.scores).toEqual([])
-    expect(decision.evidence.exclusions.map((entry) => entry.symbol)).toEqual([...protocol.candidateSymbols])
+    expect(decision.evidence.exclusions.map((entry) => entry.symbol)).toEqual([...equityMarketProfile.candidateSymbols])
     const lostCut = {
       ...cursor,
       projection: { ...cursor.projection, minimumObservationMs: firstDecisionMs + 1 },
@@ -376,7 +381,7 @@ test.each(['crossed-quote', 'premature-bar', 'nonfinal-bar'] as const)(
         missing: true,
         transformInputs: (inputs) =>
           inputs.map((input) => {
-            if (input.symbol !== protocol.candidateSymbols.at(-1)) return input
+            if (input.symbol !== equityMarketProfile.candidateSymbols.at(-1)) return input
             if (defect === 'crossed-quote' && input.channel === 'quotes') return { ...input, bid: 107, ask: 105 }
             if (defect === 'premature-bar' && input.channel === 'bars')
               return { ...input, ingestedAtMs: input.eventAtMs + 59_999 }
@@ -492,7 +497,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v2',
+              inputDefinition: 'bayn.jev-trading-signal-state.v3',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',
@@ -501,7 +506,7 @@ test.each(['cash', 'filled'] as const)(
             calendar: fullCalendar.slice(1, 3),
             build,
             assumptions,
-            assets: protocol.universe.map((symbol, index) => ({
+            assets: equityMarketProfile.universe.map((symbol, index) => ({
               id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
               symbol,
               class: 'us_equity',
@@ -537,17 +542,17 @@ test.each(['cash', 'filled'] as const)(
             expect(result.completedEpisodes).toBe(1)
             expect(result.ledger.positions).toHaveLength(0)
             expect(
-              result.ledger.fills.map(({ quantityMicros, priceMicros, notionalMicros }) => ({
-                quantityMicros,
+              result.ledger.fills.map(({ quantityAtoms, priceMicros, notionalMicros }) => ({
+                quantityAtoms,
                 priceMicros,
                 notionalMicros,
               })),
             ).toEqual([
-              { quantityMicros: '100000000', priceMicros: '105030000', notionalMicros: '10503000000' },
-              { quantityMicros: '25000000', priceMicros: '104970000', notionalMicros: '2624250000' },
-              { quantityMicros: '25000000', priceMicros: '104970000', notionalMicros: '2624250000' },
-              { quantityMicros: '25000000', priceMicros: '104970000', notionalMicros: '2624250000' },
-              { quantityMicros: '25000000', priceMicros: '104970000', notionalMicros: '2624250000' },
+              { quantityAtoms: '100000000000', priceMicros: '105030000', notionalMicros: '10503000000' },
+              { quantityAtoms: '25000000000', priceMicros: '104970000', notionalMicros: '2624250000' },
+              { quantityAtoms: '25000000000', priceMicros: '104970000', notionalMicros: '2624250000' },
+              { quantityAtoms: '25000000000', priceMicros: '104970000', notionalMicros: '2624250000' },
+              { quantityAtoms: '25000000000', priceMicros: '104970000', notionalMicros: '2624250000' },
             ])
             expect(result.executionFeesMicros).toBe('250000')
             expect(result.closingCapital.cashMicros).toBe('99993750000')
@@ -626,7 +631,7 @@ const simulate = (
       pollIntervalMs: data.context.pollIntervalMs,
       turnoverPolicy: data.context.turnoverPolicy,
       assumptions,
-      eligibleSymbols: new Set(protocol.candidateSymbols),
+      eligibleSymbols: new Set(equityMarketProfile.candidateSymbols),
       market,
       management: null,
       ridge: {
@@ -655,12 +660,12 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   '%s uses one real position and persistent partial exits with finite quote liquidity',
   async (policy) => {
     const { result } = await Effect.runPromise(simulate({ policy }))
-    expect(result.ledger.fills.map((fill) => fill.quantityMicros)).toEqual([
-      '100000000',
-      '25000000',
-      '25000000',
-      '25000000',
-      '25000000',
+    expect(result.ledger.fills.map((fill) => fill.quantityAtoms)).toEqual([
+      '100000000000',
+      '25000000000',
+      '25000000000',
+      '25000000000',
+      '25000000000',
     ])
     expect(result.completedEpisodes).toBe(1)
     expect(result.ledger.positions).toHaveLength(0)
@@ -719,7 +724,9 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   async (policy) => {
     const { result } = await Effect.runPromise(simulate({ policy, exclude: true }))
     expect(result.decisions[0]?.status).toBe('NO_SIGNAL')
-    expect(result.decisions[0]?.exclusions?.map((entry) => entry.symbol)).toEqual([...protocol.candidateSymbols])
+    expect(result.decisions[0]?.exclusions?.map((entry) => entry.symbol)).toEqual([
+      ...equityMarketProfile.candidateSymbols,
+    ])
     expect(
       result.decisions[0]?.exclusions?.every(
         (entry) => 'inputSymbol' in entry && entry.inputSymbol === entry.symbol && entry.evidenceHash.length === 64,
@@ -727,7 +734,7 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
     ).toBeTrue()
     expect(result.simulatedOpportunityAccounting).toMatchObject({
       entrySnapshotsWithCandidateExclusions: 1,
-      excludedCandidateObservationCount: protocol.candidateSymbols.length,
+      excludedCandidateObservationCount: equityMarketProfile.candidateSymbols.length,
     })
     expect(result.ledger.fills).toHaveLength(0)
     expect(result.dataCostMicros).toBe('1000000')
@@ -804,5 +811,7 @@ test('the constant validates source and content without depending on Ridge norma
   const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, bound, RidgeControlPolicy.TrainingMean))
   expect(baseline.status).toBe('AVAILABLE')
   if (baseline.status !== 'AVAILABLE') throw new Error('Expected available constant scores')
-  expect(baseline.evidence.scores).toEqual(protocol.candidateSymbols.map((symbol) => ({ symbol, scoreBps: 5 })))
+  expect(baseline.evidence.scores).toEqual(
+    equityMarketProfile.candidateSymbols.map((symbol) => ({ symbol, scoreBps: 5 })),
+  )
 })

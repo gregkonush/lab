@@ -120,8 +120,8 @@ const makeMutationDataFirst = (
     const submit = Effect.fn('BrokerMutation.submit', {
       attributes: { 'broker.system': 'alpaca', 'broker.operation': MutationOperation.Submit },
     })(
-      function* (input: Intent, closeOnly = false) {
-        const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId, closeOnly))
+      function* (input: Intent) {
+        const prepared = yield* Effect.fromResult(prepareSubmit(input, runtime.expectedAccountId))
         if (!runtime.fractionalTrading && orderRequestRequiresFractionalTrading(prepared.request)) {
           return yield* invalidRequest({
             operation: MutationOperation.Submit,

@@ -40,11 +40,40 @@ grant's database-clock deadline in Ofz. Re-enabling caching requires a fresh exp
 
 The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `ofz migrate` creates the checksum-bound
 control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
+The control DDL and its non-null checksum commit in one transaction. Interrupted initialization leaves neither visible;
+an existing missing, null or different checksum is rejected and never filled from the current binary.
 `ofz migrate-runtime` initializes `tengri_control` as `tengri_migrator`, with the packaged Tengri migration and its
 SHA-256 checksum committed in one transaction. It serializes concurrent attempts and rejects a different owner,
 database or existing checksum. The BFF and controller only verify the result; they cannot initialize their own schema.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
+
+Initial platform setup uses `ofz bootstrap /var/run/ofz/bootstrap/manifest.json`, followed by
+`ofz activate /var/run/ofz/bootstrap/manifest.json`. Both commands require the `ofz_migrator` schema owner in
+`ofz_control`. The protected manifest supplies two distinct canonical numeric GitHub IDs in `administratorGithubIds`
+and distinct canonical UUIDs in `operationId` and `activationOperationId`. Use the approved, independently verified
+account IDs. Keep the same manifest for every uncertain retry; usernames and email addresses are not authority.
+
+Bootstrap requires a fresh, fenced control database. It durably records the approved intent before installing the
+compiled SpiceDB schema and the two Member/Administrator assignments, plus the four exact application workload
+relationships. It commits the SQL identities, immutable audit and original receipt while retaining the fence.
+The existing per-member defaults remain two workspaces, one active workspace and 64 GiB, within the fleet budget.
+The native schema read/write calls follow the [Authzed schema API](https://github.com/authzed/api/blob/main/authzed/api/v1/schema_service.proto).
+The journal records the server's installed schema hash and rejects a changed schema during initialization or activation.
+
+Activation requires acknowledgement of the bootstrap and all prior audit receipts, a healthy archive checkpoint,
+unchanged initial administrator/workload authority and the installed schema. It rechecks archive health after its own
+audit insertion before removing the platform fence. Completed retries return their original receipt and report current
+fence, version, recovery generation and archive health. They cannot re-add an offboarded administrator or undo a later
+recovery fence. Bootstrap markers use a separate namespace from ordinary policy-command UUIDs. Audit identifies the
+actual PostgreSQL owner authority rather than claiming an API SPIFFE caller.
+
+Before running these commands in production, verify old-writer fencing, the reviewed native credential rotation and
+the selected image and target. Keep the Kubernetes workspace-creation fence until the complete coordinated runtime
+and identity cutover passes. Run `bash services/ofz/test-control.sh bootstrap` from the repository root for the real
+CLI/PostgreSQL/SpiceDB qualification. Its explicit synthetic archive acknowledgement is only a fixture; production
+requires the independent exporter and durability proof. Physical promotion fingerprints enumerate all control tables,
+including the bootstrap journal, from a consistent snapshot.
 
 Commands serialize under a dedicated PostgreSQL connection and advisory lock. Durable SQL intent precedes the atomic
 native version/command-marker write; SQL effects, immutable audit, outbox and receipt commit before acknowledgement.
@@ -178,8 +207,8 @@ They are excluded from the active application until coordinated release, identit
 
 `nix build .#ofz-image` builds the API for the native Linux architecture from the locked Cargo dependencies, canonical
 authorization protobuf, policy catalog, and both database migrations. The runtime contains the API and certificate
-roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`, and
-`migrate-runtime`.
+roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`,
+`migrate-runtime`, `bootstrap` and `activate`.
 
 The Ofz workflow first qualifies policy, durable control state, synchronous physical promotion, and real browser
 identity. Its existing Nix image workflow then checks both native architectures. A successful main build publishes the

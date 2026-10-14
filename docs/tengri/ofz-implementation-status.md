@@ -7,18 +7,22 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is [#14923](https://github.com/proompteng/lab/pull/14923), the mandatory protocol-4 contract.
-Its UI dependency, [#14921](https://github.com/proompteng/lab/pull/14921), merged at
-`936489dd651c5896ba35abc47ab1065eb479d49c` after its exact published head passed CI, including both API and frontend
-architectures and all four native Tengri/Nanoagent builds. All three review findings are resolved. The protocol layer
-is rebased onto this merged UI. Work stays on this PR until it merges. Passing image builds do not establish native
-KVM performance or deployed authorization.
+The active source frontier is the owner-only bootstrap/activation implementation on `codex/ofz-bootstrap`.
+Its protocol dependency, [#14923](https://github.com/proompteng/lab/pull/14923), merged at
+`3825ddf2e933bade9a9fb16641ac77c7ccf14fe0` after its exact published head passed every check with no unresolved review
+findings. Its paired main images pass native KVM acceptance on both architectures in run `38491598949`.
 
-Main run `38477121352` fails native KVM acceptance after three successful sleep/resume cycles on both architectures.
-AMD64 times out during the destructive disk-error probe; ARM64 reaches a final identity assertion that still expects
-an obsolete fixture name. The protocol continuation corrects that assertion and proves the login shell is ready before
-destroying its home disk. It retains the EIO assertion, responsiveness checks and resource/deadline limits. Native
-execution of the correction remains required before image publication and activation.
+The native corrections resolve main run `38477121352`'s stale identity assertion and destructive disk-probe ordering.
+Both new receipts confirm three sleep/resume cycles, file and same-shell continuity, initialized Codex, browser
+startup, reported disk EIO and continued responsiveness. The amd64 prepared creation is 700.75 ms and maximum sampled
+resume is 583.73 ms; arm64 is 966.69 ms and 923.18 ms. These are smoke samples, not a p95 creation/resume distribution.
+The 50-cycle run `38501167488` failed on arm64 at the unchanged Neovim first-screen limit: 1115.80 ms exceeds 1000 ms.
+Its source is `c024a1f03b2b7c80cc81a5f2cacda22054b83b5b`, whose runtime, guest, authorization protocol/catalog,
+native workflow and seccomp inputs match the qualified protocol-4 source. Amd64 completed all fifty resume samples
+with a 757.53 ms p95 and 1454.16 ms maximum; its single creation took 629.46 ms. These results do not establish a
+fresh-creation distribution or authenticated frontend performance. Arm64 sustained performance remains unqualified.
+The NUC smoke remains a failure: its 1776.95 ms creation and 1009.11 ms Neovim first screen exceed unchanged limits.
+That fixture stopped before the destructive disk probe, cleaned its resources and restored its previous fixture tag.
 
 The 2026-10-13 live readback uses `galactic-tailscale`. Ofz has three SpiceDB replicas and two Playground replicas,
 with three PostgreSQL Pods. There is no Ofz API Deployment and there are no Tengri MicroVMs. The
@@ -42,7 +46,8 @@ the new VMM/protocol. Fresh workspaces must use the final contract. No legacy au
 | Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b` | Native performance, independent execution fencing and activation        |
 | Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2` | Bounded observers and coordinated activation                            |
 | Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c` | Deployed UI acceptance                                                  |
-| Exact-target protocol 4                                                           | #14923 is the only active PR                                | Current-head CI, native proof and coordinated activation                |
+| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0` | Fifty-sample qualification and coordinated activation                   |
+| Initial administrator bootstrap and activation                                    | Local implementation on `codex/ofz-bootstrap`               | Current-head CI/review, protected inputs, archive and activation        |
 | Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                 |
 
 The verified API factory receipt is main run `38397202365`. Its two-platform index is
@@ -51,6 +56,20 @@ with immutable alias `kargo-sha-844d149ff29dc884290e19241645926d8cee3bda-run-383
 That receipt proves publication of the factory revision, not deployment or completion of later source changes.
 
 ## Current isolated evidence
+
+- The owner-only bootstrap/activation continuation passes eleven Ofz units, Clippy and the actual CLI against real TLS
+  PostgreSQL and SpiceDB. It rejects an API-role caller, existing unapproved control state, changed input/schema and
+  a corrupted stored manifest. DDL and its mandatory checksum are atomic across cancellation; a null checksum is
+  rejected without repair. Interrupted native initialization recovers with its original receipt. Activation remains
+  fenced during archive loss, including loss while its audit insert or final native check is blocked. Completed retries cannot undo later
+  offboarding or a generation-2 recovery fence. Both integrity and final-archive guards have failing regressions when
+  removed. Fixture acknowledgements are explicitly synthetic; independent archive installation remains required.
+- The final atomic-migration source passes the full real browser identity fixture with 81 assertions in 78.43 seconds.
+- The continuation's NUC control/promotion proof passes 55 commands and 174 immutable receipts. Its synchronous
+  physical promotion recovers unchanged clients in 3.28 seconds and preserves the unexpired consumed nonce, tickets,
+  previews and current policy. The fingerprint enumerates every control table from one snapshot, including the new
+  bootstrap journal, with a minimum of nineteen tables. A local Docker attempt failed during initial TLS pool creation;
+  the corresponding NUC proof passes without increasing production timeouts.
 
 - Signed admission passes 142 macOS runtime tests, three CRD tests, eleven signed contracts and Clippy. Go race/vet,
   native Linux guest checks, deterministic cross-language vectors and real Rust/Go RPC/SPIFFE interoperability pass.
@@ -113,7 +132,8 @@ That receipt proves publication of the factory revision, not deployment or compl
 - [ ] Deliver the reviewed connector catalog, target/credential controls, destination validation and response budgets.
 - [ ] Complete IdP offboarding, copied-credential rotation and clean-environment recovery for quarantined homes.
 - [ ] Install independent immutable audit, database/home backups and restore on the approved NUC destination.
-- [ ] Prepare protected bootstrap inputs for the two approved custodians and complete their real passkey enrollment.
+- [ ] Publish and qualify the owner-only bootstrap/activation commands; install the protected approved input and
+      complete both custodians' real passkey enrollment.
 - [ ] Enroll API/broker delivery, supply required credentials and activate the reviewed final contract through Kargo/Argo.
 - [ ] Verify exact commits, images, schema and configuration; remove the creation fence only after cutover gates pass.
 - [ ] Prove fresh-workspace product behavior, every service's allow/deny/revocation/failure matrix, independent restore,

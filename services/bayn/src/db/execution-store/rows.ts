@@ -48,14 +48,14 @@ export const CompletedAccountingRow = Schema.Struct({
   ...AccountingTransactionRowSchema.fields,
   source_event_id: NonEmptyString,
   event_content_hash: Sha256,
-  prior_quantity_micros: Schema.String,
+  prior_quantity_atoms: Schema.String,
   prior_cost_micros: Schema.String,
 })
 export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
 
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
-  Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String }),
+  Schema.Struct({ quantity_atoms: Schema.String, cost_micros: Schema.String }),
 ])
 export const UnresolvedPredecessorRow = Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })])
 export const AccountBaselineRow = Schema.Tuple([Schema.Struct({ exists: Schema.Boolean })])

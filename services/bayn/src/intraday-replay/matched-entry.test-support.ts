@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { Effect, Schema } from 'effect'
 import { CycleState } from '../cycle/model'
 import { makeInitialCycle } from '../cycle/store/decisions'
@@ -17,7 +18,9 @@ import {
 } from '../target-planner'
 
 export const matchedCommittedDecisionFixture = (
-  native: ReturnType<typeof nativeJevFixture>,
+  native: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {
+    readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
+  },
   evidence: ReturnType<typeof nativeJevDecisionEvidence>,
   allocationCapitalMicros = '1',
 ) =>
@@ -31,7 +34,7 @@ export const matchedCommittedDecisionFixture = (
       schemaVersion: 'bayn.execution-risk-policy.v3',
       accountId: broker.account.accountId,
       brokerMode: BrokerMode.Execution,
-      allowedSymbols: native.protocol.candidateSymbols,
+      allowedSymbols: equityMarketProfile.candidateSymbols,
       allowedOrderTypes: [OrderType.Limit],
       allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
       maxOrderNotionalMicros: '100000000000',
@@ -71,7 +74,7 @@ export const matchedCommittedDecisionFixture = (
       targetWeights: compiled.planningTargetWeights,
       referencePrices: { ...prices, contentHash: canonicalHashV1(prices) },
       brokerState: broker,
-      precision: { ...native.protocol.executionModel.precision, quantityIncrementMicros: '1000000' },
+      precision: { ...native.protocol.executionModel.precision, quantityIncrementAtoms: '1' },
       allocationCapitalMicros,
       executionTerms: {
         orderType: OrderType.Limit,
@@ -79,8 +82,8 @@ export const matchedCommittedDecisionFixture = (
         priceReference: 'verified-adverse-quote-boundary' as const,
         snapshotId: market.snapshotId,
         snapshotContentHash: market.contentHash,
-        maximumBuyQuantityMicros: compiled.maximumBuyQuantityMicros,
-        maximumSellQuantityMicros: compiled.maximumSellQuantityMicros,
+        maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
+        maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
       },
       maximumInputAgeMs: 120_000,
       submissionCutoffAt: cycle.window.submissionCutoffAt,

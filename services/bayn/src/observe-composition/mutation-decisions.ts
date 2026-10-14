@@ -1,11 +1,6 @@
 import { Result } from 'effect'
 
-import {
-  MutationOperation,
-  compatibleOrderRequestBody,
-  orderPriceBoundaryMicros,
-  orderRequestNotionalMicros,
-} from '../broker/alpaca-mutations'
+import { MutationOperation, recordedOrderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
 import { CycleTerminalReason } from '../cycle'
 import type { CycleCompletionWaitReason, CycleWaitingDetails } from '../cycle/runner/readiness'
 import {
@@ -25,14 +20,14 @@ import { MutationEventType, type MutationEvent } from '../execution/mutations'
 import type { PlannedTargetQuantity } from '../target-planner'
 import { Pipeable } from '../pipeable'
 
-const quantityScale = 1_000_000n
+const quantityScale = 1_000_000_000n
 
-export const countOpenPositions = (positions: readonly Pick<Position, 'quantityMicros'>[]): number =>
-  positions.filter((position) => BigInt(position.quantityMicros) !== 0n).length
+export const countOpenPositions = (positions: readonly Pick<Position, 'quantityAtoms'>[]): number =>
+  positions.filter((position) => BigInt(position.quantityAtoms) !== 0n).length
 
 export interface ExecutionCycleFillInput {
   readonly intents: readonly Pick<Intent, 'intentId' | 'state' | 'terminalOutcome'>[]
-  readonly orders?: readonly Pick<Order, 'intentId' | 'filledQuantityMicros'>[]
+  readonly orders?: readonly Pick<Order, 'intentId' | 'filledQuantityAtoms'>[]
 }
 
 export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): boolean => {
@@ -44,7 +39,7 @@ export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): b
     ) ||
     orders.some(
       (order) =>
-        order.intentId !== undefined && intentIds.has(order.intentId) && BigInt(order.filledQuantityMicros) > 0n,
+        order.intentId !== undefined && intentIds.has(order.intentId) && BigInt(order.filledQuantityAtoms) > 0n,
     )
   )
 }
@@ -59,7 +54,7 @@ export interface ExecutionIntentTerminalDispositionInput {
     | 'clientOrderId'
     | 'intentId'
     | 'orderType'
-    | 'quantityMicros'
+    | 'quantityAtoms'
     | 'side'
     | 'state'
     | 'symbol'
@@ -72,10 +67,10 @@ export interface ExecutionIntentTerminalDispositionInput {
     | 'accountId'
     | 'brokerOrderId'
     | 'clientOrderId'
-    | 'filledQuantityMicros'
+    | 'filledQuantityAtoms'
     | 'intentId'
     | 'orderType'
-    | 'quantityMicros'
+    | 'quantityAtoms'
     | 'side'
     | 'status'
     | 'symbol'
@@ -107,13 +102,13 @@ export const decideExecutionIntentTerminalDisposition = (
       order.side === input.intent.side &&
       order.orderType === input.intent.orderType &&
       order.timeInForce === input.intent.timeInForce &&
-      order.quantityMicros === input.intent.quantityMicros,
+      order.quantityAtoms === input.intent.quantityAtoms,
   )
   const order = matchingOrders.length === 1 ? matchingOrders[0] : undefined
   if (order?.status !== OrderStatus.Canceled) return 'UNSUCCESSFUL'
-  const filledQuantity = BigInt(order.filledQuantityMicros)
+  const filledQuantity = BigInt(order.filledQuantityAtoms)
   if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_IOC'
-  return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityMicros)
+  return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityAtoms)
     ? 'PARTIAL_FILL_IOC'
     : 'UNSUCCESSFUL'
 }
@@ -143,7 +138,7 @@ const projectMutationPosition = (
   observedAt: string,
 ): readonly Position[] => {
   const retained = positions.filter((position) => position.symbol !== target.symbol)
-  const quantity = BigInt(target.targetQuantityMicros)
+  const quantity = BigInt(target.targetQuantityAtoms)
   if (quantity === 0n) return retained
   const previous = positions.find((position) => position.symbol === target.symbol)
   const referencePrice = BigInt(target.referencePriceMicros)
@@ -152,7 +147,7 @@ const projectMutationPosition = (
     schemaVersion: legacyPositionSchemaVersion,
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
-    quantityMicros: target.targetQuantityMicros,
+    quantityAtoms: target.targetQuantityAtoms,
     averageEntryPriceMicros: averageEntryPrice.toString(),
     marketPriceMicros: target.referencePriceMicros,
     marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
@@ -169,8 +164,8 @@ const projectWorstCasePendingMutationPositionDataFirst = (
   observedAt: string,
 ): readonly Position[] => {
   const current = positions.find((position) => position.symbol === target.symbol)
-  const currentQuantity = current === undefined ? 0n : BigInt(current.quantityMicros)
-  const targetQuantity = BigInt(target.targetQuantityMicros)
+  const currentQuantity = current === undefined ? 0n : BigInt(current.quantityAtoms)
+  const targetQuantity = BigInt(target.targetQuantityAtoms)
   return targetQuantity <= currentQuantity
     ? positions
     : projectMutationPosition(positions, target, accountId, observedAt)
@@ -211,7 +206,7 @@ const decidePreparedMutationIntentDataFirst = (
           message: 'accepted nonterminal submit lacks a durable broker order identity',
         })
       }
-      const representation = compatibleOrderRequestBody(intent, latest.requestHash)
+      const representation = recordedOrderRequestBody(intent, latest.requestHash)
       if (Result.isFailure(representation)) {
         return Result.fail({
           _tag: 'PreparedMutationIntentDecisionFailure',
@@ -221,19 +216,7 @@ const decidePreparedMutationIntentDataFirst = (
         })
       }
       const request = representation.success
-      const requestNotionalMicros = orderRequestNotionalMicros(request)
-      if ('notional' in request && requestNotionalMicros === undefined) {
-        return Result.fail({
-          _tag: 'PreparedMutationIntentDecisionFailure',
-          intentId: intent.intentId,
-          eventType: latest.eventType,
-          message: 'accepted submit has an invalid immutable notional representation',
-        })
-      }
-      const orderRepresentation =
-        requestNotionalMicros === undefined
-          ? { quantityMicros: intent.quantityMicros }
-          : { notionalMicros: requestNotionalMicros }
+      const orderRepresentation = { quantityAtoms: intent.quantityAtoms }
       const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
       if (Result.isFailure(limitPrice)) {
         return Result.fail({
@@ -256,7 +239,7 @@ const decidePreparedMutationIntentDataFirst = (
           orderType: 'limit_price' in request ? OrderType.Limit : OrderType.Market,
           timeInForce: intent.timeInForce,
           ...orderRepresentation,
-          filledQuantityMicros: '0',
+          filledQuantityAtoms: '0',
           ...(limitPrice.success === undefined ? {} : { limitPriceMicros: limitPrice.success.toString() }),
           status: OrderStatus.New,
           observedAt: latest.occurredAt,
@@ -304,7 +287,7 @@ const pendingOrderIdentityMatches = (expected: Order, observed: Order): boolean 
   observed.side === expected.side &&
   observed.orderType === expected.orderType &&
   observed.timeInForce === expected.timeInForce &&
-  observed.quantityMicros === expected.quantityMicros &&
+  observed.quantityAtoms === expected.quantityAtoms &&
   observed.notionalMicros === expected.notionalMicros &&
   observed.limitPriceMicros === expected.limitPriceMicros
 
