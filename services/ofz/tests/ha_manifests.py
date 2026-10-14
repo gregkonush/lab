@@ -472,6 +472,13 @@ def validate(targets):
         )
         cluster = resource(targets, target, "Cluster", f"{target}-db")["spec"]
         require(
+            resource(targets, target, "Cluster", f"{target}-db")["metadata"]
+            .get("annotations", {})
+            .get("argocd.argoproj.io/sync-wave")
+            == "-8",
+            f"{target}: database plugin must be installed before the immediate backup wave",
+        )
+        require(
             cluster["postgresql"]["parameters"]["archive_timeout"] == "60s"
             and cluster["plugins"]
             == [
@@ -577,6 +584,9 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["metadata"][
+            "annotations"
+        ].pop("argocd.argoproj.io/sync-wave"),
         lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
             "configuration"
         ].update(endpointURL="https://rook-ceph-rgw.rook-ceph.svc"),
