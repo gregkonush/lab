@@ -46,6 +46,15 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             .any(|line| line == "CapEff:\t0000000000000000"),
         "fixture retained capabilities"
     );
+    let cpu_max = fs::read_to_string("/sys/fs/cgroup/cpu.max").await?;
+    let (quota, period) = cpu_max
+        .trim()
+        .split_once(' ')
+        .context("invalid CPU quota")?;
+    ensure!(
+        quota.parse::<u64>()? * 1000 == period.parse::<u64>()? * u64::from(crate::crd::CPU_MILLIS),
+        "native qualification requires the production four-CPU quota"
+    );
     let samples: usize = std::env::var("TENGRI_KVM_SAMPLES")
         .context("set the explicit sample count")?
         .parse()?;
@@ -395,6 +404,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
         "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
+        "cpuMax":cpu_max.trim(),
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
         "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
