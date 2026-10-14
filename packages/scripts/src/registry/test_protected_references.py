@@ -13,9 +13,16 @@ class ProtectedReferencesTest(unittest.TestCase):
         self.fail_resource = None
         self.registry = "registry.ide-newton.ts.net/lab/"
         self.idle = self.registry + "anypi:0123456789@sha256:" + "a" * 64
+        self.pending = self.registry + "runner:0123456789@sha256:" + "d" * 64
         self.objects = {
             "agentproviders.agents.proompteng.ai": [
                 {"kind": "AgentProvider", "spec": {"workload": {"image": self.idle}}}
+            ],
+            "agentruns.agents.proompteng.ai": [
+                {"kind": "AgentRun", "spec": {"workload": {"image": self.pending}}}
+            ],
+            "tools.tools.proompteng.ai": [
+                {"kind": "Tool", "spec": {"image": self.registry + "tool:retained"}}
             ],
             "workflowtemplates.argoproj.io": [
                 {
@@ -99,6 +106,16 @@ class ProtectedReferencesTest(unittest.TestCase):
             result = protection.references("fixture")
         self.assertIn(self.idle, result)
         self.assertIn(self.registry + "running:latest", result)
+
+    def test_pending_agentrun_image_override_is_protected_without_a_pod_or_job(self):
+        with patch.object(protection.subprocess, "check_output", side_effect=self.read):
+            result = protection.references("fixture")
+        self.assertIn(self.pending, result)
+
+    def test_idle_tool_image_is_protected_without_a_pod_or_job(self):
+        with patch.object(protection.subprocess, "check_output", side_effect=self.read):
+            result = protection.references("fixture")
+        self.assertIn(self.registry + "tool:retained", result)
 
     def test_templates_scale_to_zero_catalogs_and_kargo_in_other_namespaces_are_protected(
         self,
