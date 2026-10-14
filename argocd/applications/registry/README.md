@@ -49,6 +49,8 @@ If collection reaches its deadline after writing a durable receipt, the controll
 restores uploads, releases its hold and purges the partial batch online. Completion
 reports `collectionTimedOut: true`. A missing or invalid receipt fails the run.
 Restoration allows five minutes for the registry's existing startup probes.
+Online preparation allows 45 minutes for cold filesystem metadata scans. The Job
+keeps its two-hour deadline and allows seven minutes for shutdown recovery.
 
 Protection reads only the workload and release resources named in
 `packages/scripts/src/registry/protected_resources.json`. RBAC grants list access
