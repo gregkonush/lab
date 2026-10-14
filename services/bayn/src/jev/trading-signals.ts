@@ -9,7 +9,7 @@ import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
-import { usesCandidateWindowTrade } from '../market-data/intraday/model'
+import { usesWindowTradeEvidence } from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
@@ -53,7 +53,7 @@ export const jevStalePricingSymbols = (snapshot: VerifiedStrategyMarketSnapshot)
     if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) return false
     const quote = snapshot.latestQuotes[symbol]
     const trade = latestSignalTrade(snapshot, symbol)
-    const pricingEvidence = usesCandidateWindowTrade(snapshot.manifest, symbol) ? [quote] : [quote, trade]
+    const pricingEvidence = usesWindowTradeEvidence(snapshot.manifest, symbol) ? [quote] : [quote, trade]
     return pricingEvidence.some(
       (entry) => entry !== undefined && pricingAgeMs(snapshot, entry.eventAt) > snapshot.manifest.maximumQuoteAgeMs,
     )
@@ -77,7 +77,7 @@ const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
       return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
     const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
     const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
-    const pricingAges = usesCandidateWindowTrade(manifest, symbol) ? [quoteAgeMs] : [quoteAgeMs, tradeAgeMs]
+    const pricingAges = usesWindowTradeEvidence(manifest, symbol) ? [quoteAgeMs] : [quoteAgeMs, tradeAgeMs]
     if (tradeAgeMs < 0 || pricingAges.some((age) => age < 0 || age > manifest.maximumQuoteAgeMs))
       return yield* unavailable('Jev signal pricing evidence is stale or future dated')
     const technical = manifest.streaming.technical?.features.find((entry) => entry.value.material.symbol === symbol)
@@ -319,7 +319,7 @@ const requestFromSnapshot = (
           prices: 'USD per unit',
           volume: continuous ? 'base asset units on Alpaca crypto US' : 'shares on the IEX feed',
           quoteSize: 'raw provider size units; not consolidated liquidity',
-          ...(usesCandidateWindowTrade(snapshot.manifest, symbol)
+          ...(usesWindowTradeEvidence(snapshot.manifest, symbol)
             ? { latestTrade: 'last actual trade since lookback start; ageMs is contextual, not an executable price' }
             : {}),
           returns: 'basis points, 100 bps = 1 percent',

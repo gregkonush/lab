@@ -2,8 +2,9 @@
 
 ## Isolated Alpha-R1 research
 
-`research-worker.yaml` runs only `BaynResearchRun`, with one inference in flight and a separate two-connection
-PostgreSQL pool. It has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
+`research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
+inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
+The worker has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
 existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads. Research rolls
 out after execution activation and the public service, so its initial grants cannot delay their rollout.
 Recovery pauses only the research worker through GitOps; it does not change trading authority.
@@ -333,9 +334,9 @@ egress and its token-authenticated deployment activation call is made only by th
 Equities and `BTC/USD`, `ETH/USD`, `SOL/USD` use one account controller, planner, intent store, mutation coordinator,
 broker adapter and accounting pipeline. Market profiles select the recorded producer contract and instrument rules.
 The crypto profile consumes `bayn.market-data.crypto.v1` and `bayn.market-data.crypto.features.v1` continuously,
-including weekends and UTC midnight. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
+including weekends and UTC midnight. Both crypto candidates and benchmarks require fresh executable quotes and actual trades within the verified lookback window; the retained trade age remains contextual evidence. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
 holding, and three minutes of close recovery. Finished cycles rearm against the next admitted market window;
-the account risk day remains America/New_York for both markets.
+the account risk day remains America/New_York for both markets. An unused continuous lease that expires without snapshot or decision evidence can rearm after its deadline and cooldown under the same approved account, strategy and execution policy. Each successor repeats fresh data, reconciliation and risk admission.
 
 Migration 97 changes all current quantities to billionth-unit atoms and executed prices to billionth-dollar atoms.
 USD ledgers remain in millionths of a dollar. It archives the original immutable records and hashes, preserves
@@ -454,3 +455,19 @@ current with its scheduled tick sequence advancing; and the unrelated `Greeter` 
 The one-sync tombstone is no longer desired state. This cleanup removes its manifest so Argo naturally prunes the
 temporary deny-all `bayn-restate-retirement-hook-gc` NetworkPolicy. Do not recreate the tombstone or the destructive
 retirement hook unless a new independently reviewed recovery procedure explicitly requires it.
+
+
+## Restate public information collection
+
+The existing `bayn-research` RestateDeployment hosts independent SEC filings and macro-calendar virtual objects.
+`BAYN_PUBLIC_INFORMATION_ENABLED=true` starts their signed asynchronous activations after endpoint registration.
+No additional Kubernetes Job or CronJob is involved. The trading worker and its readiness remain independent.
+
+The prepared worker mounts the canonical reflected `bayn-research-captures` OBC credential and generated bucket name.
+This is an additional credential destination and needs approval under the repository scope rule before rollout.
+The existing bucket-owner permissions remain unchanged; application code uploads immutable content-derived keys.
+Only the research worker receives RGW egress. Its public HTTPS requests use the existing proxy with the SEC, BLS and
+Federal Reserve host allowlist; credentials never pass through that client. Its internal Restate egress only submits
+public-job activations. Verify the OBC ownership/private ACL and exact synthetic object SHA-256 readback before live
+collection, then inspect source-keyed Restate status, artifact readback and source metrics. A source failure cannot
+fail the trading endpoint or delay a protective closure.

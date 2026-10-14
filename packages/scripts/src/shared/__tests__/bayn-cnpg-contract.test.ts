@@ -360,9 +360,25 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
     from: [
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn' } } },
       { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-execution-controller' } } },
+      { podSelector: { matchLabels: { 'app.kubernetes.io/name': 'bayn-research' } } },
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
+  const researchPolicy = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/research-networkpolicy.yaml'))
+    .map((document) => document.toJSON())
+    .find((policy) => policy.metadata.name === 'bayn-research')
+  expect(researchPolicy.spec.egress).toContainEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'rook-ceph' } },
+        podSelector: { matchLabels: { app: 'rook-ceph-rgw', rook_cluster: 'rook-ceph' } },
+      },
+    ],
+    ports: [{ port: 8080, protocol: 'TCP' }],
+  })
+  expect(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml')).toContain(
+    'rgw_frontends: "beast port=8080 tcp_nodelay=1"',
+  )
   expect(alloy).toContain('label = "cnpg.io/cluster"')
   expect(alloy).toContain('job_name        = "cnpg-postgres"')
 })
