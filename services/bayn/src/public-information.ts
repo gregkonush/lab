@@ -159,6 +159,13 @@ export const collectPublicInformation = (
           const identity = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
             Effect.mapError(() => new PublicInformationError({ stage: 'parse', message: 'SEC source is not JSON' })),
           )
+          if (url === tickerUrl)
+            yield* Schema.decodeUnknownEffect(tickerRows)(identity).pipe(
+              Effect.mapError(
+                () =>
+                  new PublicInformationError({ stage: 'ticker-mapping', message: 'SEC ticker mapping is malformed' }),
+              ),
+            )
           if (expectedCik !== undefined) {
             const company = yield* Schema.decodeUnknownEffect(companyIdentity)(identity).pipe(
               Effect.mapError(

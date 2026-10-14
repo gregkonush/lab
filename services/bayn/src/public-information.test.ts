@@ -141,6 +141,33 @@ describe('independent public information collection', () => {
     expect(rejected.failures[0]?.stage).toBe('parse')
     expect(corrupt.writes).toHaveLength(1)
   })
+  test('a malformed ticker mapping preserves the last good artifact before any upload', async () => {
+    const first = await Effect.runPromise(
+      make({
+        http: (url) =>
+          new Response(
+            JSON.stringify(
+              url.endsWith('company_tickers.json') ? { '0': { ticker: 'AAPL', cik_str: 320193 } } : { cik: 320193 },
+            ),
+          ),
+      }).collect(PublicInformationSource.Filings),
+    )
+    for (const invalid of [
+      { '0': { ticker: 'AAPL' } },
+      { '0': { ticker: 'AAPL', cik_str: 'invalid' } },
+      'mapping-not-object',
+    ]) {
+      const failed = make({ http: () => new Response(JSON.stringify(invalid)) })
+      const result = await Effect.runPromise(failed.collect(PublicInformationSource.Filings, first))
+      expect(result.failures).toEqual([
+        { url: 'https://www.sec.gov/files/company_tickers.json', stage: 'ticker-mapping', status: null },
+      ])
+      expect(result.artifacts).toEqual(first.artifacts)
+      expect(result.issuerCiks).toEqual(first.issuerCiks)
+      expect(failed.writes).toEqual([])
+      expect(failed.requests).toHaveLength(1)
+    }
+  })
   test('a canceled collection stops its HTTP work without producing a success artifact', async () => {
     let canceled = 0
     const h = make()
