@@ -69,7 +69,24 @@ export const evaluateJevOnce = (input: unknown) =>
     } else {
       const now = yield* Clock.currentTimeMillis
       if (now >= Date.parse(request.expiresAt) || now < started) {
-        if (now >= Date.parse(request.expiresAt)) yield* store.abandon(request, utcInstantFromEpochMillis(now))
+        if (now >= Date.parse(request.expiresAt)) {
+          const notDispatched = yield* Effect.fromResult(
+            makeJevEvaluationReceipt(request, {
+              schemaVersion: 'bayn.jev-evaluation-receipt.v1',
+              requestId: request.requestId,
+              startedAt: utcInstantFromEpochMillis(started),
+              completedAt: utcInstantFromEpochMillis(now),
+              outcome: {
+                status: JevOutcome.Failed,
+                failure: JevFailure.NotDispatched,
+                httpStatus: null,
+                responseHash: null,
+                rejectedResponse: null,
+              },
+            }),
+          )
+          yield* store.record(request, notDispatched)
+        }
         return yield* new JevEvidenceError({ message: 'Jev request expired or its clock regressed during persistence' })
       }
       const client = yield* JevClient
