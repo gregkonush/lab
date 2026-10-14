@@ -43,7 +43,7 @@ spec:
                   app.kubernetes.io/name: ofz-audit-export
       containers:
         - name: ofz-audit-export
-          image: registry.ide-newton.ts.net/lab/ofz
+          image: registry.ide-newton.ts.net/lab/ofz:unpromoted
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: '1'

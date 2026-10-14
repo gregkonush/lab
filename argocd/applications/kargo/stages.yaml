@@ -2399,7 +2399,7 @@ spec:
           config:
             path: ./out/argocd/applications/ofz
             images:
-              - image: registry.ide-newton.ts.net/lab/ofz
+              - image: ${{ vars.imageRepo }}
                 digest: ${{ imageFrom(vars.imageRepo).Digest }}
         - uses: yaml-update
           config:
