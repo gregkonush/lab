@@ -9,7 +9,7 @@ import { CycleState, type AutonomousCycle } from '../model'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
 import { CycleStore, type CycleDecisionBindingEvidence } from '../store'
 import { isTerminalCycleState } from '../transitions'
-import { canRearmUnboundPreSubmissionCycle } from './calendar-decisions'
+import { canRearmUnusedCycle } from './calendar-decisions'
 import {
   calendarQueryFailureError,
   finishRecoveryResult,
@@ -126,7 +126,7 @@ export const discoverAutonomousCyclePass = <R>(
         ),
       )
       recoveredBlockedCycle = Option.isNone(prior)
-        ? canRearmUnboundPreSubmissionCycle(existing.value, candidate, hours, executionSession)
+        ? canRearmUnusedCycle(existing.value, candidate, hours, executionSession, observedAt)
         : prior.value.mode === Authority.Execution &&
           prior.value.contentHash === existing.value.bindings.decisionHash &&
           prior.value.bindings.authorityGenerationHash !== context.authorityGenerationHash
@@ -290,9 +290,32 @@ const recoverCycle = <R>(
                   Effect.flatMap((bindObservedAt) =>
                     pipe(
                       CycleStore,
-                      Effect.flatMap((store) =>
-                        store.bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence),
-                      ),
+                      Effect.flatMap((store) => {
+                        const binding = store.bindDecision(
+                          selection.cycle.identity.cycleId,
+                          document,
+                          bindObservedAt,
+                          evidence,
+                        )
+                        const target = 'strategyDecision' in document ? document.strategyDecision : undefined
+                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v1') return binding
+                        const timingAttributes = {
+                          'bayn.entry_timing.decision_hash': document.contentHash,
+                          'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,
+                          'bayn.entry_timing.batch_completed_at': target.evidence.batchResult.completedAt,
+                        }
+                        return binding.pipe(
+                          Effect.tap((receipt) =>
+                            Effect.annotateCurrentSpan({
+                              'bayn.entry_timing.binding_changed': receipt.changed,
+                              'bayn.entry_timing.binding_accepted':
+                                receipt.cycle.bindings.decisionHash === document.contentHash,
+                            }),
+                          ),
+                          Effect.annotateSpans(timingAttributes),
+                          Effect.withSpan('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
+                        )
+                      }),
                       Effect.mapError((cause) =>
                         runnerError({
                           operation: 'recover-cycle',

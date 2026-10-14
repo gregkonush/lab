@@ -1,8 +1,11 @@
 import { expect, test } from 'bun:test'
+import { jevRequestForSnapshot } from '../../jev/native.test-support'
+import { jevStalePricingSymbols } from '../../jev/trading-signals'
 import { Result } from 'effect'
 
 import { cryptoMarketFixture } from '../../testing/crypto-market-fixture'
 import { reproduceStreamingSnapshot } from './replay'
+import { latestQuotes } from '../intraday/verification'
 
 test('native candidate and benchmark features reproduce a Sunday snapshot crossing midnight through the shared projection', () => {
   const { snapshot, rows, fixtures, cut } = cryptoMarketFixture()
@@ -30,3 +33,38 @@ test('crypto replay rejects a normalized price substituted beneath an unchanged 
   }
   expect(Result.isFailure(reproduceStreamingSnapshot(snapshot.manifest, changed))).toBe(true)
 })
+
+for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
+  test(`${symbol} rejects a stale benchmark quote while the candidate quote remains fresh`, () => {
+    expect(() => cryptoMarketFixture(symbol, { benchmarkQuoteLagMs: 9001 })).toThrow()
+    const { query, snapshot, rows } = cryptoMarketFixture(symbol, { benchmarkQuoteLagMs: 9000, tradeLagMs: 60_000 })
+    expect(jevStalePricingSymbols(snapshot)).toEqual([])
+    expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
+    const { candidateSymbols: _candidates, ...requiredQuery } = query
+    const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
+    const staleQuotes = snapshot.quotes.map((quote) =>
+      quote.symbol === benchmark
+        ? { ...quote, eventAt: new Date(Date.parse(query.observedAt) - 10_001).toISOString() }
+        : quote,
+    )
+    expect(latestQuotes(requiredQuery, staleQuotes, snapshot.trades)).toMatchObject({
+      _tag: 'Failure',
+      failure: { reason: 'freshness', facts: { symbol: benchmark } },
+    })
+  })
+
+  test(`${symbol} admits fresh quotes and actual window trades for both continuous candidate and benchmark`, () => {
+    const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
+    expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).toThrow()
+    const { snapshot, rows } = cryptoMarketFixture(symbol, { tradeLagMs: 60_000 })
+    expect(jevStalePricingSymbols(snapshot)).toEqual([])
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, symbol)).body).state
+    expect(state.candidate.quote.ageMs).toBe(1000)
+    expect(state.candidate.latestTrade.ageMs).toBe(61000)
+    expect(state.benchmark.latestTrade.ageMs).toBe(61000)
+    expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
+    expect(() => cryptoMarketFixture(symbol, { tradeLagMs: 31 * 60_000 })).toThrow()
+    expect(() => cryptoMarketFixture(symbol, { quoteLagMs: 10_001 })).toThrow()
+    expect(() => cryptoMarketFixture(symbol, { tradeLagMs: -10_000 })).toThrow()
+  })
+}

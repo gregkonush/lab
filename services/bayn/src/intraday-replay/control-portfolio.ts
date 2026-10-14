@@ -14,7 +14,7 @@ import {
 import { MICROS, numberToMicros } from '../execution-model'
 import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
-import { usesCandidateWindowTrade, type IntradayQuote } from '../market-data/intraday/model'
+import { usesWindowTradeEvidence, type IntradayQuote } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
@@ -137,7 +137,7 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
         if (rolling === undefined || quote === undefined || trade === undefined)
           return yield* Result.fail(new ControlStudyFailure({ message: `Missing control signal for ${symbol}` }))
         const now = intradayInstantNanos(snapshot.manifest.observedAt)
-        const pricingTimes = usesCandidateWindowTrade(snapshot.manifest, symbol)
+        const pricingTimes = usesWindowTradeEvidence(snapshot.manifest, symbol)
           ? [quote.eventAt]
           : [quote.eventAt, trade.eventAt]
         const fresh =

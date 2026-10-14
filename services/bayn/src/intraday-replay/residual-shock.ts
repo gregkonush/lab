@@ -4,7 +4,7 @@ import { Data, Result } from 'effect'
 
 import { numberToMicros } from '../execution-model'
 import type { JevProtocol } from '../jev/protocol'
-import { usesCandidateWindowTrade, type IntradayBar } from '../market-data/intraday/model'
+import { usesWindowTradeEvidence, type IntradayBar } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -181,7 +181,7 @@ export const selectResidualShock = (snapshot: StrategyMarketSnapshot, _protocol:
           return yield* Result.fail(
             new ResidualShockFailure({ message: `Residual shock pricing evidence is invalid for ${symbol}` }),
           )
-        const times = usesCandidateWindowTrade(snapshot.manifest, symbol)
+        const times = usesWindowTradeEvidence(snapshot.manifest, symbol)
           ? [quote.eventAt]
           : [quote.eventAt, trade.eventAt]
         return (
