@@ -42,8 +42,9 @@ spec:
   customConfigs:
     maxmemory: 512mb
     maxmemory-policy: noeviction
-    appendonly: "yes"
-    appendfsync: everysec
+    appendonly: "no"
+    save: '""'
+    repl-diskless-sync: "yes"
     tcp-keepalive: "300"
   exporter:
     resources:

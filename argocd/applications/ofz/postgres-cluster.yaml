@@ -129,6 +129,7 @@ spec:
       number: 1
       dataDurability: required
     parameters:
+      archive_timeout: 60s
       track_commit_timestamp: "on"
       max_connections: "200"
       password_encryption: scram-sha-256
