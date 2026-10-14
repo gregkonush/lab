@@ -74,7 +74,9 @@ jobs:
       - uses: imjasonh/setup-crane@v0.4
       - uses: sigstore/cosign-installer@v3.10.0
       - name: Verify immutable input and build catalog
-        run: devices/galactic/releases/catalog.sh build out/catalog
+        run: |
+          python3 -m unittest discover -s devices/galactic/releases/tests -v
+          devices/galactic/releases/catalog.sh build out/catalog
       - name: Upload catalog receipt
         uses: actions/upload-artifact@v4
         with:
