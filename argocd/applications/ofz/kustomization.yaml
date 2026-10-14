@@ -4,7 +4,7 @@ namespace: ofz
 commonAnnotations:
   delivery.proompteng.ai/source-revision: 2ad3b50412db8b0d4d0ba4896ca072faf9599b61
   delivery.proompteng.ai/image-digest: sha256:19e448288b6c11cc499c2ab85c75f3b268b5b57ec96c7214db63a5d415609511
-  delivery.proompteng.ai/github-run-id: 3.8550681162e+10
+  delivery.proompteng.ai/github-run-id: "38550681162"
 resources:
 - control-plane
 - postgres-backups.yaml
