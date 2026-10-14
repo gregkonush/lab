@@ -15,7 +15,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [ofz-db-ca]
+    resourceNames: [ofz-db-public-ca]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -38,7 +38,7 @@ kind: ClusterSecretStore
 metadata:
   name: ofz-database-ca
   annotations:
-    argocd.argoproj.io/sync-wave: "-7"
+    argocd.argoproj.io/sync-wave: "-6"
 spec:
   conditions:
     - namespaces: [tengri, proompteng]
