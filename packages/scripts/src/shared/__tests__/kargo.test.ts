@@ -228,43 +228,10 @@ const expected = {
     ],
   },
   bayn: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('bayn')],
     apps: ['bayn'],
-    includePaths: [
-      'services/bayn',
-      'packages/scripts/src/bayn',
-      'nix/images/bayn.nix',
-      'nix/images/bayn-runtime-root.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'nix/packages.nix',
-      'nix/cache-push.sh',
-      'nix/ci-nix-oci-summary.sh',
-      'nix/ci-run-timed.sh',
-      'nix/oci-inspect-archive.sh',
-      'nix/oci-push.sh',
-      'nix/verify-bayn-image-command.sh',
-      'nix/verify-bayn-image-command.test.sh',
-      'packages/scripts/src/shared/oci.ts',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'glob:**/package.json',
-      '.npmrc',
-      'bunfig.toml',
-      'patches',
-      'tsconfig.base.json',
-      '.github/actions/setup-nix-toolchain',
-      'glob:.github/workflows/bayn-*.yml',
-      '.github/workflows/common-monorepo.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      'argocd/applications/bayn',
-      'argocd/applications/kargo',
-      'argocd/applicationsets/product.yaml',
-    ],
+    includePaths: [],
   },
   proompteng: {
     creationCriteria: 'single',
@@ -1130,7 +1097,9 @@ describe('Kargo direct-push GitOps contract', () => {
                 ? '45m0s'
                 : stageName === 'bayn-model'
                   ? '4h0m0s'
-                  : '20m0s',
+                  : stageName === 'bayn'
+                    ? '30m0s'
+                    : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
