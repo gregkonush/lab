@@ -1,5 +1,6 @@
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
+import { ValkeyCacheLive } from '../valkey-cache'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 import { createServer } from 'node:http2'
 
@@ -126,6 +127,10 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.effectDiscard(
       restateExecutionServerProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-controller' })),
-    ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')), Layer.launch),
+    ).pipe(
+      Layer.provide(ValkeyCacheLive),
+      Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.launch,
+    ),
   )
 }

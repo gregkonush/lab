@@ -159,24 +159,24 @@ export const executionMutationSubmissionAllowed = (input: {
 
 export const blockedEntryRequiresCloseOnlyContainment = (
   targetPlan: Pick<ExecutionDecisionDocument['targetPlan'], 'status' | 'reason'>,
-  positions: readonly { readonly symbol: string; readonly quantityMicros: string }[],
+  positions: readonly { readonly symbol: string; readonly quantityAtoms: string }[],
   universe: readonly string[],
 ): boolean => {
   if (targetPlan.status !== TargetPlanStatus.Blocked) return false
   const universeSet = new Set(universe)
   switch (targetPlan.reason) {
     case TargetPlanReason.ShortPositionNotAllowed:
-      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) < 0n)
+      return positions.some(({ symbol, quantityAtoms }) => universeSet.has(symbol) && BigInt(quantityAtoms) < 0n)
     case TargetPlanReason.InputMismatch:
       return positions.some(
-        ({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) % 1_000_000n !== 0n,
+        ({ symbol, quantityAtoms }) => universeSet.has(symbol) && BigInt(quantityAtoms) % 1_000_000_000n !== 0n,
       )
     case TargetPlanReason.IdentityMismatch:
-      return positions.some(({ symbol, quantityMicros }) => !universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
+      return positions.some(({ symbol, quantityAtoms }) => !universeSet.has(symbol) && BigInt(quantityAtoms) !== 0n)
     case TargetPlanReason.InsufficientBuyLiquidity:
-      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) !== 0n)
+      return positions.some(({ symbol, quantityAtoms }) => universeSet.has(symbol) && BigInt(quantityAtoms) !== 0n)
     case TargetPlanReason.InsufficientSellLiquidity:
-      return positions.some(({ symbol, quantityMicros }) => universeSet.has(symbol) && BigInt(quantityMicros) > 0n)
+      return positions.some(({ symbol, quantityAtoms }) => universeSet.has(symbol) && BigInt(quantityAtoms) > 0n)
     default:
       return false
   }
@@ -330,7 +330,7 @@ const isExecutionCycleReconciled = (facts: {
     readonly metrics: { readonly accountingExact: boolean }
   }
   readonly brokerState: {
-    readonly positions: readonly { readonly quantityMicros: string }[]
+    readonly positions: readonly { readonly quantityAtoms: string }[]
     readonly orders: readonly { readonly status: OrderStatus }[]
     readonly unknownOrderCount: number
   }

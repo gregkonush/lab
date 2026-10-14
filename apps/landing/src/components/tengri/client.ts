@@ -261,7 +261,6 @@ function requestFailure(payload: unknown, status: number) {
     ((status === 404 && record.code === 'conversation_not_found') ||
       (status === 409 && record.code === 'file_conflict') ||
       (status === 409 && record.code === 'lifecycle_superseded') ||
-      (status === 412 && record.code === 'model_selection_unavailable') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined

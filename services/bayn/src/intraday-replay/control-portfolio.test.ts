@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
@@ -41,7 +42,7 @@ const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
 const order = (side: OrderSide, atMs = at, shares = 10n) => ({
   symbol: 'AAPL',
   side,
-  quantityMicros: shares * 1_000_000n,
+  quantityAtoms: shares * 1_000_000_000n,
   protocol: fixture.protocol,
   assumptions,
   decisionAtMs: atMs,
@@ -53,7 +54,7 @@ const flat = () => Result.getOrThrow(createControlPortfolio('100000000000'))
 
 test('fixed principal sizing retains one budget across different equity and includes adverse price and cash fees', async () => {
   const policy = await Effect.runPromise(
-    loadQuoteBoundExecutionRiskPolicy('fixed-budget-test', fixture.protocol.universe),
+    loadQuoteBoundExecutionRiskPolicy('fixed-budget-test', equityMarketProfile.universe),
   )
   const quantities = []
   for (const cashMicros of ['100000000000', '200000000000', '50000000000']) {
@@ -73,7 +74,7 @@ test('fixed principal sizing retains one budget across different equity and incl
       ),
     )
   }
-  expect(quantities).toEqual([199_000_000n, 199_000_000n, 99_000_000n])
+  expect(quantities).toEqual([199_000_000_000n, 199_000_000_000n, 99_000_000_000n])
   const limited = Result.getOrThrow(
     controlEntryQuantity({
       portfolio: Result.getOrThrow(createControlPortfolio('100000000')),
@@ -132,7 +133,7 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
 
 test('the explicit reserve experiment lowers late entry size while the legacy/default path is unchanged', async () => {
   const policy = await Effect.runPromise(
-    loadQuoteBoundExecutionRiskPolicy('control-fixture', fixture.protocol.universe),
+    loadQuoteBoundExecutionRiskPolicy('control-fixture', equityMarketProfile.universe),
   )
   const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
   const input = {
@@ -155,7 +156,7 @@ test('the explicit reserve experiment lowers late entry size while the legacy/de
   expect(legacy).toBe(explicit)
   expect(reserved).toBeGreaterThan(0n)
   expect(reserved).toBeLessThan(legacy)
-  expect(reserved * 100n * 2n).toBeLessThanOrEqual(21_000_000_000n)
+  expect((reserved * 100n * 2n) / 1000n).toBeLessThanOrEqual(21_000_000_000n)
 })
 const entry = () => Result.getOrThrow(applyControlOrder(flat(), order(OrderSide.Buy))).portfolio
 const exiting = () =>
@@ -190,7 +191,7 @@ test('partial entry and exit preserve inventory, original basis, trigger and one
   const partialEntry = Result.getOrThrow(
     applyControlOrder(flat(), { ...buy, arrivalQuote: quote(at + 100, { askSize: 4 }) }),
   ).portfolio
-  expect(partialEntry.ledger.positions[0]?.quantityMicros).toBe('4000000')
+  expect(partialEntry.ledger.positions[0]?.quantityAtoms).toBe('4000000000')
   const triggered = Result.getOrThrow(
     triggerControlExit({
       portfolio: partialEntry,
@@ -207,11 +208,11 @@ test('partial entry and exit preserve inventory, original basis, trigger and one
   ).portfolio
   expect(partialExit.episodes).toHaveLength(0)
   expect(partialExit.inventory).toEqual(triggered.inventory)
-  expect(partialExit.ledger.positions[0]?.quantityMicros).toBe('3000000')
+  expect(partialExit.ledger.positions[0]?.quantityAtoms).toBe('3000000000')
   const closed = Result.getOrThrow(applyControlOrder(partialExit, order(OrderSide.Sell, at + 2000, 3n))).portfolio
   expect(closed.episodes).toHaveLength(1)
   expect(closed.episodes[0]?.reason).toBe(ControlExit.SessionClose)
-  expect(closed.ledger.fills.map((fill) => fill.quantityMicros)).toEqual(['4000000', '1000000', '3000000'])
+  expect(closed.ledger.fills.map((fill) => fill.quantityAtoms)).toEqual(['4000000000', '1000000000', '3000000000'])
 })
 
 test('canceled and missing-price exits remain pending until actual remaining shares fill', () => {
@@ -234,18 +235,18 @@ test('exit retries cannot replenish an unchanged quote liquidity budget', () => 
     const sell = order(
       OrderSide.Sell,
       at + 1_000_000 + attempt * 500,
-      BigInt(portfolio.ledger.positions[0]?.quantityMicros ?? '0') / 1_000_000n,
+      BigInt(portfolio.ledger.positions[0]?.quantityAtoms ?? '0') / 1_000_000n,
     )
     portfolio = Result.getOrThrow(applyControlOrder(portfolio, { ...sell, arrivalQuote: retained })).portfolio
   }
   expect(portfolio.ledger.fills.filter((fill) => fill.side === 'sell')).toHaveLength(1)
-  expect(portfolio.ledger.positions[0]?.quantityMicros).toBe('9000000')
+  expect(portfolio.ledger.positions[0]?.quantityAtoms).toBe('9000000000')
   expect(portfolio.episodes).toHaveLength(0)
   const nextQuote = quote(at + 1_005_100, { bidSize: 1 })
   portfolio = Result.getOrThrow(
     applyControlOrder(portfolio, { ...order(OrderSide.Sell, at + 1_005_000, 9n), arrivalQuote: nextQuote }),
   ).portfolio
-  expect(portfolio.ledger.positions[0]?.quantityMicros).toBe('8000000')
+  expect(portfolio.ledger.positions[0]?.quantityAtoms).toBe('8000000000')
 })
 
 test('quote budgets preserve unspent liquidity and remain independent between counterfactual portfolios', () => {
@@ -260,9 +261,9 @@ test('quote budgets preserve unspent liquidity and remain independent between co
   const again = Result.getOrThrow(
     applyControlOrder(once, { ...first, decisionAtMs: at + 1_000_500, arrivalAtMs: at + 1_000_600 }),
   ).portfolio
-  expect(again.ledger.positions[0]?.quantityMicros).toBe('9000000')
+  expect(again.ledger.positions[0]?.quantityAtoms).toBe('9000000000')
   const independent = Result.getOrThrow(applyControlOrder(original, first)).portfolio
-  expect(independent.ledger.positions[0]?.quantityMicros).toBe('9000000')
+  expect(independent.ledger.positions[0]?.quantityAtoms).toBe('9000000000')
 
   const larger = quote(at + 1_000_100, { bidSize: 10 })
   const partial = Result.getOrThrow(
@@ -362,7 +363,7 @@ test('residual shock target starts at first partial fill and follows protective 
 })
 
 test('entry sizing obeys order and daily turnover bounds including the adverse limit and fees', async () => {
-  const risk = await Effect.runPromise(loadQuoteBoundExecutionRiskPolicy('control-test', fixture.protocol.universe))
+  const risk = await Effect.runPromise(loadQuoteBoundExecutionRiskPolicy('control-test', equityMarketProfile.universe))
   const size = (portfolio = flat(), policy = risk, targetWeight = 0.2) =>
     Result.getOrThrow(
       controlEntryQuantity({
@@ -376,10 +377,10 @@ test('entry sizing obeys order and daily turnover bounds including the adverse l
         feeMultiplierPpm: 1_000_000,
       }),
     )
-  expect(size()).toBe(200_000_000n)
+  expect(size()).toBe(200_000_000_000n)
   expect(size({ ...flat(), tradedNotionalMicros: 199_950_000_000n })).toBe(0n)
-  expect(size({ ...flat(), tradedNotionalMicros: 199_000_000_000n })).toBe(9_000_000n)
-  expect(size(flat(), { ...risk, maxOrderNotionalMicros: '1000000000' })).toBe(9_000_000n)
+  expect(size({ ...flat(), tradedNotionalMicros: 199_000_000_000n })).toBe(9_000_000_000n)
+  expect(size(flat(), { ...risk, maxOrderNotionalMicros: '1000000000' })).toBe(9_000_000_000n)
   const cashBoundary = Result.getOrThrow(createControlPortfolio('100100000'))
   expect(size(cashBoundary, risk, 1)).toBe(0n)
   expect(

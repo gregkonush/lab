@@ -3,8 +3,9 @@ kind: Kustomization
 namespace: bayn
 resources:
   - tls.yaml
+  - auth-secret-metadata.yaml
   - auth-sealedsecret.yaml
-  - cluster.yaml
+  - valkey.yaml
   - user.yaml
   - connection.yaml
   - networkpolicy.yaml

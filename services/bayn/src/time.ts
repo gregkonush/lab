@@ -35,3 +35,11 @@ export const addUtcDays = Pipeable.dual(2, addUtcDaysDataFirst)
 export const currentUtcInstant = Clock.currentTimeMillis.pipe(Effect.map(utcInstantFromEpochMillis))
 
 export const currentUtcDate = Clock.currentTimeMillis.pipe(Effect.map(utcDateFromEpochMillis))
+
+const accountDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+export const accountTradingDate = (observedAt: string): string => accountDateFormatter.format(new Date(observedAt))

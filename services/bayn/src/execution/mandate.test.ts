@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { defaultExecutionModel, desiredQuantityMicros, notionalMicros } from '../execution-model'
+import { defaultExecutionModel, desiredQuantityAtoms, notionalMicros } from '../execution-model'
 import { reconciliationIncompleteRestrictionReason } from './authority'
 import {
   decideExecutionMandateAuthority,
@@ -97,12 +97,12 @@ describe('executionMandateAllocationCapitalMicros', () => {
     const scalable = Result.getOrThrow(
       executionMandateAllocationCapitalMicros({
         ...common,
-        positions: [{ symbol: 'SPY', quantityMicros: '1000000' }],
+        positions: [{ symbol: 'SPY', quantityAtoms: '1000000000' }],
       }),
     )
     const rejected = executionMandateAllocationCapitalMicros({
       ...common,
-      positions: [{ symbol: 'SPY', quantityMicros: '10000000' }],
+      positions: [{ symbol: 'SPY', quantityAtoms: '10000000000' }],
     })
 
     expect(scalable).toBe(150_000_000n)
@@ -152,8 +152,8 @@ describe('executionMandateAllocationCapitalMicros', () => {
       }),
     )
     const quantity = Result.getOrThrow(
-      desiredQuantityMicros(capital, weight, 1_000_000n, {
-        precision: { ...defaultExecutionModel.precision, quantityIncrementMicros: '1' },
+      desiredQuantityAtoms(capital, weight, 1_000_000n, {
+        precision: { ...defaultExecutionModel.precision, quantityIncrementAtoms: '1000' },
       }),
     )
     expect(Result.getOrThrow(notionalMicros(quantity, 1_000_000n))).toBeLessThanOrEqual(20_000_000_000n)

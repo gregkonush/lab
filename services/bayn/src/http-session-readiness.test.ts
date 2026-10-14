@@ -1,3 +1,4 @@
+import { isCryptoMarketFeature } from './market-data/features/crypto-contract'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -250,13 +251,16 @@ test.each([
   if (scenario === 'mismatched feature')
     features.set(
       symbol,
-      (features.get(symbol) ?? []).map((receipt) => ({
-        ...receipt,
-        value: {
-          ...receipt.value,
-          material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
-        },
-      })),
+      (features.get(symbol) ?? []).map((receipt) => {
+        if (isCryptoMarketFeature(receipt.value)) throw new Error('expected equity fixture')
+        return {
+          ...receipt,
+          value: {
+            ...receipt.value,
+            material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
+          },
+        }
+      }),
     )
   if (scenario === 'late feature')
     features.set(

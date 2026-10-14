@@ -1,13 +1,17 @@
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult, type LedgerPlan } from '../ledger-plan'
-import { IsoDateSchema, Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
-import { brokerFeeLedgerPlan } from './domain'
+import { PositiveMicrosSchema, UnsignedMicrosSchema } from '../execution/contracts'
+import { SymbolSchema, IsoDateSchema, Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
+import { brokerFeeLedgerPlan, coinFeeLedgerPlan } from './domain'
 
 export const BrokerFeeSchema = Schema.Struct({
   accountId: StrictNonEmptyStringSchema,
   activityId: StrictNonEmptyStringSchema,
   date: IsoDateSchema,
+  coinDebit: Schema.optionalKey(
+    Schema.Struct({ symbol: SymbolSchema, quantityAtoms: PositiveMicrosSchema, priceAtoms: PositiveMicrosSchema }),
+  ),
   netAmountMicros: Schema.String.check(Schema.isPattern(/^(?:0|-?[1-9][0-9]*)$/)),
 })
 export const FeeReadEvidenceSchema = Schema.Struct({
@@ -18,6 +22,7 @@ export const FeeReadEvidenceSchema = Schema.Struct({
 })
 export const StoredFeeSchema = Schema.Struct({
   data: BrokerFeeSchema,
+  coin_cost_basis_micros: Schema.NullOr(UnsignedMicrosSchema),
   read_evidence: FeeReadEvidenceSchema,
   content_hash: Sha256Schema,
   ledger_plan_hash: Sha256Schema,
@@ -34,12 +39,29 @@ export const verifyBrokerFeeRecord = (
   identity: { readonly clusterId: bigint; readonly ledger: number },
 ): Result.Result<LedgerPlan, BrokerFeeEvidenceError> =>
   Result.gen(function* () {
-    const plan = brokerFeeLedgerPlan(
-      record.data.accountId,
-      record.data.activityId,
-      record.data.netAmountMicros,
-      identity.ledger,
+    const coin = record.data.coinDebit
+    if (
+      (coin === undefined) !== (record.coin_cost_basis_micros === null) ||
+      (coin !== undefined && record.data.netAmountMicros !== '0')
     )
+      return yield* Result.fail(
+        new BrokerFeeEvidenceError({ message: 'broker fee asset and inventory cost do not agree' }),
+      )
+    const plan =
+      coin === undefined
+        ? brokerFeeLedgerPlan(
+            record.data.accountId,
+            record.data.activityId,
+            record.data.netAmountMicros,
+            identity.ledger,
+          )
+        : coinFeeLedgerPlan(
+            record.data.accountId,
+            record.data.activityId,
+            coin.symbol,
+            record.coin_cost_basis_micros ?? '0',
+            identity.ledger,
+          )
     const contentHash = yield* canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...record.data }).pipe(
       Result.mapError(() => new BrokerFeeEvidenceError({ message: 'broker fee content cannot be hashed' })),
     )

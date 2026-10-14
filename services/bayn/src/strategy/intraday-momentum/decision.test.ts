@@ -527,7 +527,7 @@ describe('intraday momentum strategy', () => {
           trades: 'torghut.trades.experimental.v1',
         },
       }),
-    ).toThrow('identity-or-availability')
+    ).toThrow('Required rolling feature is unavailable')
   })
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {

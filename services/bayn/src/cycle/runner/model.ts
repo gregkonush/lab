@@ -28,7 +28,7 @@ export interface CycleRunContext<R = never> {
     cycle: AutonomousCycle,
     reconciliationCompleted?: Effect.Effect<void>,
   ) => Effect.Effect<CycleDecisionDocument, CycleDecisionBuildError, R>
-  readonly buildDecisionEvidence?: (
+  readonly buildDecisionEvidence: (
     document: CycleDecisionDocument,
   ) => Effect.Effect<CycleDecisionBindingEvidence, CycleDecisionBuildError, R>
 }

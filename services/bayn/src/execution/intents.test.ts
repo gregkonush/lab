@@ -49,7 +49,7 @@ const input: IntentPlan = {
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   notionalLimitMicros: '200000000',
   createdAt: '2026-07-22T10:00:00.000Z',
 }
@@ -69,18 +69,18 @@ const riskState = (generationHash = hash('a'), maximum = Authority.Execution) =>
 const paperIntent: Intent = {
   schemaVersion: 'bayn.paper-intent.v3',
   authorityGenerationHash: hash('a'),
-  intentId: '6f3b7a528607ed8804f55c5fe23a0c47a4d6f72abf2bb9a41a69d93368d9c8ac',
+  intentId: '132e27353b062538eb5da13a4d6f05b604b3ecdfac499517dd62c7e335fd517c',
   strategyName: input.strategyName,
   cycleId: input.cycleId,
   decisionHash: input.decisionHash,
   policyHash: input.policyHash,
   accountId: input.accountId,
-  clientOrderId: 'b1_bzt6UoYH7YgE9Vxf4joMR6TW9yq_K7mkGmnZM2jZyKw',
+  clientOrderId: 'b1_Ey4nNTsGJTjrXaE6TW8FtgSz7N-sSZUX3WLH4zX9UXw',
   symbol: input.symbol,
   side: input.side,
   orderType: input.orderType,
   timeInForce: input.timeInForce,
-  quantityMicros: input.quantityMicros,
+  quantityAtoms: input.quantityAtoms,
   notionalLimitMicros: input.notionalLimitMicros,
   state: IntentState.Planned,
   createdAt: input.createdAt,
@@ -88,7 +88,7 @@ const paperIntent: Intent = {
 
 const approvedDecision: RiskDecision = {
   schemaVersion: 'bayn.paper-risk-decision.v1',
-  decisionId: 'dfb3ec0a5fda18eb05a9869870039f694c18d3639907963ef26e5a9cafcd50cd',
+  decisionId: 'e37f88b6623adee960cab7caa21d06162445519b27f863cfd501cae65133ad3d',
   inputHash: hash('d'),
   intentId: paperIntent.intentId,
   policyHash: paperIntent.policyHash,
@@ -147,7 +147,7 @@ const storedRow = {
   side: paperIntent.side,
   order_type: paperIntent.orderType,
   time_in_force: paperIntent.timeInForce,
-  quantity_micros: paperIntent.quantityMicros,
+  quantity_atoms: paperIntent.quantityAtoms,
   notional_limit_micros: paperIntent.notionalLimitMicros,
   replan_generation_hash: null,
   state: IntentState.Approved,
@@ -188,7 +188,7 @@ describe('deterministic execution intents', () => {
       { ...input, side: OrderSide.Sell },
       { ...input, orderType: OrderType.Limit },
       { ...input, timeInForce: TimeInForce.GoodUntilCanceled },
-      { ...input, quantityMicros: '2000000' },
+      { ...input, quantityAtoms: '2000000000' },
       { ...input, notionalLimitMicros: '300000000' },
     ]
     const planned = await Effect.runPromise(Effect.forEach(variants, plan))
@@ -215,7 +215,7 @@ describe('deterministic execution intents', () => {
 
   test('rejects malformed plans before deriving an identity', async () => {
     const result = await Effect.runPromiseExit(
-      plan({ ...input, cycleId: 'not-a-hash', quantityMicros: '0', extra: true }),
+      plan({ ...input, cycleId: 'not-a-hash', quantityAtoms: '0', extra: true }),
     )
 
     expect(Exit.isFailure(result)).toBe(true)
@@ -287,10 +287,10 @@ describe('pure intent commit decisions', () => {
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isSuccess(result)) {
       expect(result.success).toEqual({ _tag: 'PreparedCommit', intent: paperIntent, decision: approvedDecision })
-      expect(result.success.intent.intentId).toBe('6f3b7a528607ed8804f55c5fe23a0c47a4d6f72abf2bb9a41a69d93368d9c8ac')
-      expect(result.success.intent.clientOrderId).toBe('b1_bzt6UoYH7YgE9Vxf4joMR6TW9yq_K7mkGmnZM2jZyKw')
+      expect(result.success.intent.intentId).toBe('132e27353b062538eb5da13a4d6f05b604b3ecdfac499517dd62c7e335fd517c')
+      expect(result.success.intent.clientOrderId).toBe('b1_Ey4nNTsGJTjrXaE6TW8FtgSz7N-sSZUX3WLH4zX9UXw')
       expect(result.success.decision.decisionId).toBe(
-        'dfb3ec0a5fda18eb05a9869870039f694c18d3639907963ef26e5a9cafcd50cd',
+        'e37f88b6623adee960cab7caa21d06162445519b27f863cfd501cae65133ad3d',
       )
     }
   })
@@ -314,7 +314,7 @@ describe('pure intent commit decisions', () => {
 
     expect(golden).toMatchObject({
       _tag: 'Success',
-      success: 'bbfe217b000266231ce1c29b8e3d447ad0e60903d287ee3e40a33aa964394fac',
+      success: '60c4fe9c0fefd765c05fe9f2333232b37f645559dba41d61a0dbbb20cd3287c8',
     })
     expect(Result.isFailure(invalid)).toBe(true)
     if (Result.isFailure(invalid)) {

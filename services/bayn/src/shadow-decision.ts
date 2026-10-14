@@ -1,3 +1,6 @@
+import { canonicalHashV1Result } from './hash'
+
+import { makeBoundExecutionCalendar } from './cycle/construction'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { isSnapshotExecutionMarketDataBinding } from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
@@ -8,7 +11,6 @@ import {
   cycleAuthoritySessionDate,
   isIntradayAutonomousCycle,
   isLegacyAutonomousCycle,
-  makeExecutionCalendarObservation,
   type AutonomousCycle,
 } from './cycle'
 import {
@@ -19,7 +21,6 @@ import {
   type IntentPlan,
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
-import { canonicalHashV1Result } from './hash'
 import { withObservedStage } from './telemetry'
 import type { PersistedIntradaySnapshotRows } from './market-data'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
@@ -184,7 +185,7 @@ const decodeExecutionMarketDataBindingResult = Schema.decodeUnknownResult(
 const decodeIntentPlanResult = Schema.decodeUnknownResult(IntentPlanSchema, strictParseOptions)
 const decodeCumulativeStateResult = Schema.decodeUnknownResult(StateSchema, strictParseOptions)
 
-const QUANTITY_SCALE = 1_000_000n
+const QUANTITY_SCALE = 1_000_000_000n
 // Every micros value consumed by the pure reducer is schema-decoded before reaching these arithmetic helpers.
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const divideAwayFromZero = (numerator: bigint): bigint => {
@@ -205,7 +206,7 @@ const projectTargetPosition = (
   observedAt: string,
 ): readonly Position[] => {
   const retained = positions.filter((position) => position.symbol !== target.symbol)
-  const quantity = BigInt(target.targetQuantityMicros)
+  const quantity = BigInt(target.targetQuantityAtoms)
   if (quantity === 0n) return retained
 
   const previous = positions.find((position) => position.symbol === target.symbol)
@@ -215,7 +216,7 @@ const projectTargetPosition = (
     schemaVersion: legacyPositionSchemaVersion,
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
-    quantityMicros: target.targetQuantityMicros,
+    quantityAtoms: target.targetQuantityAtoms,
     averageEntryPriceMicros: averageEntryPrice.toString(),
     marketPriceMicros: target.referencePriceMicros,
     marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
@@ -226,7 +227,7 @@ const projectTargetPosition = (
 }
 
 const revaluePositionAtReferencePrice = (position: Position, referencePriceMicros: string): Position => {
-  const quantity = BigInt(position.quantityMicros)
+  const quantity = BigInt(position.quantityAtoms)
   const referencePrice = BigInt(referencePriceMicros)
   const averageEntryPrice = BigInt(position.averageEntryPriceMicros)
   return {
@@ -341,30 +342,19 @@ const validateBindings = (
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
   const executionMarketData = input.executionMarketData
-  const decisionCalendarSession = decisionMarketData?.calendar.sessions.find(
-    ({ date }) => date === cycle.identity.executionSessionDate,
-  )
   const decisionCalendar =
-    decisionMarketData === undefined || decisionCalendarSession === undefined
-      ? undefined
-      : makeExecutionCalendarObservation({
-          schemaVersion: decisionMarketData.calendar.schemaVersion,
-          source: decisionMarketData.calendar.source,
-          ...decisionCalendarSession,
-        })
-  const executionCalendarSession = executionMarketData?.calendar.sessions.find(
-    ({ date }) => date === cycle.identity.executionSessionDate,
-  )
+    decisionMarketData === undefined ? undefined : makeBoundExecutionCalendar(decisionMarketData.calendar, cycle.window)
   const executionCalendar =
-    executionMarketData === undefined || executionCalendarSession === undefined
+    executionMarketData === undefined
       ? undefined
-      : makeExecutionCalendarObservation({
-          schemaVersion: executionMarketData.calendar.schemaVersion,
-          source: executionMarketData.calendar.source,
-          ...executionCalendarSession,
-        })
-  if (intradayEntry && decision.calendarHash !== cycle.window.executionCalendarHash) {
-    return Result.fail(error('binding', 'intraday decision calendar must match the immutable cycle execution calendar'))
+      : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
+  if (intradayEntry) {
+    const expected =
+      decision.schemaVersion === 'bayn.jev-entry-target.v1' && decisionMarketData !== undefined
+        ? canonicalHashV1Result(decisionMarketData.calendar)
+        : Result.succeed(cycle.window.executionCalendarHash)
+    if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
+      return Result.fail(error('binding', 'entry decision market hours differ from its bound source'))
   }
   if (intradayEntry && decisionMarketData?.purpose !== undefined) {
     return Result.fail(error('binding', 'intraday entry decision requires bar-and-trade market-data evidence'))
@@ -407,8 +397,8 @@ const validateBindings = (
   if (executionMarketData?.schemaVersion === reconciledPositionLiquidationBindingSchemaVersion) {
     const positions = plannerInput.brokerState.positions
       .filter(
-        ({ symbol, quantityMicros }) =>
-          isFlatExecutionTarget(decision) && decision.symbols.includes(symbol) && BigInt(quantityMicros) !== 0n,
+        ({ symbol, quantityAtoms }) =>
+          isFlatExecutionTarget(decision) && decision.symbols.includes(symbol) && BigInt(quantityAtoms) !== 0n,
       )
       .toSorted((left, right) => left.symbol.localeCompare(right.symbol))
     const bindingMatchesReconciliation =
@@ -421,7 +411,7 @@ const validateBindings = (
         return (
           expected !== undefined &&
           position.symbol === expected.symbol &&
-          position.quantityMicros === expected.quantityMicros &&
+          position.quantityAtoms === expected.quantityAtoms &&
           position.marketPriceMicros === expected.marketPriceMicros &&
           position.observedAt === expected.observedAt
         )
@@ -467,7 +457,7 @@ const validateBindings = (
           plannerInput.brokerState.positions
             .filter(
               (position) =>
-                BigInt(position.quantityMicros) !== 0n &&
+                BigInt(position.quantityAtoms) !== 0n &&
                 isSnapshotExecutionMarketDataBinding(executionMarketData) &&
                 executionMarketData.universe.includes(position.symbol),
             )
@@ -544,21 +534,8 @@ const validateRiskState = (
   ) {
     return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
-  if (
-    state.executionSession.schemaVersion === 'bayn.execution-session-binding.v1' ||
-    state.executionSession.schemaVersion === 'bayn.execution-session-binding.v2'
-  ) {
-    if (
-      !isLegacyAutonomousCycle(cycle) ||
-      state.executionSession.signal.sessionDate !== cycle.identity.signalSessionDate ||
-      state.executionSession.signal.finalizedAt !== snapshot.finalizedAt ||
-      state.executionSession.signal.contentHash !== snapshot.contentHash
-    ) {
-      return Result.fail(error('binding', 'shadow risk signal binding must match the finalized cycle snapshot'))
-    }
-  } else if (!isIntradayAutonomousCycle(cycle) || input.executionMarketData === undefined) {
-    return Result.fail(error('binding', 'shadow risk intraday binding must match the verified execution snapshot'))
-  }
+  if (!isIntradayAutonomousCycle(cycle) || input.executionMarketData === undefined)
+    return Result.fail(error('binding', 'execution binding requires the verified current market snapshot'))
   if (
     state.executionSession.executionSession.date !== cycle.identity.executionSessionDate ||
     state.executionSession.executionSession.openAt !== cycle.window.executionOpenAt ||
@@ -641,7 +618,7 @@ const makeRiskIntent = (
       side: decoded.side,
       orderType: decoded.orderType,
       timeInForce: decoded.timeInForce,
-      quantityMicros: decoded.quantityMicros,
+      quantityAtoms: decoded.quantityAtoms,
       notionalLimitMicros: decoded.notionalLimitMicros,
       ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
         ? {}

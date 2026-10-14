@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
@@ -22,6 +23,68 @@ import { backtestSourcePartitions, type BacktestSourceManifest } from './source'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { matchedCommittedDecisionFixture } from './matched-entry.test-support'
 import { SignalStudyFailure } from './signal-study'
+import { CycleState } from '../cycle/model'
+import { JevPurpose } from '../jev/portfolio'
+
+const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input.inventory[0]?.sessionDate ?? '') => {
+  const batch = data.input.study.batches[0]
+  if (batch === undefined) throw new Error('Missing synthetic batch')
+  const batches =
+    sessionDate === batch.observation.manifest.sessionDate
+      ? [
+          {
+            batchId: batch.batchPlan.batchId,
+            cycleId: batch.batchPlan.cycleId,
+            observationHash: batch.batchPlan.observationHash,
+            purpose: JevPurpose.Entry,
+            resultHash: batch.batchResult.resultHash,
+          },
+        ]
+      : []
+  const cycles = [
+    ...(batches.length === 0
+      ? []
+      : [
+          {
+            cycleId: batch.batchPlan.cycleId,
+            protocolHash: data.registration.protocolHash,
+            state: CycleState.Completed,
+            decisionHash: null,
+          },
+        ]),
+    {
+      cycleId: '0'.repeat(64),
+      protocolHash: data.registration.protocolHash,
+      state: CycleState.Blocked,
+      decisionHash: null,
+    },
+  ].sort((a, b) => a.cycleId.localeCompare(b.cycleId))
+  const receipt = {
+    schemaVersion: 'bayn.jev-study-export.v1',
+    accountBindingHash: canonicalHashV1({
+      schemaVersion: 'bayn.jev-study-account.v1',
+      accountId: batch.observation.portfolio.brokerState.account.accountId,
+    }),
+    sessionDate,
+    asOf: '2026-09-12T00:00:00.000Z',
+    cycleCount: cycles.length,
+    batchCount: batches.length,
+    entryBatchCount: batches.length,
+    managementBatchCount: 0,
+    pendingResultCount: 0,
+    sourceCoverage: 'RECORDED_OBSERVATIONS_ONLY',
+    qualification: 'UNQUALIFIED',
+    controllerCoverage: 'UNKNOWN',
+    bytes: 1000,
+    dataSha256: 'f'.repeat(64),
+  }
+  return {
+    schemaVersion: 'bayn.jev-study-inventory.v1',
+    receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+    cycles,
+    batches,
+  }
+}
 
 const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => {
   const base = nativeJevFixture()
@@ -49,7 +112,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const evidence = { ...retained, batchPlan, batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt) }
@@ -109,10 +172,10 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     origin: 'Synthetic native matched test capture',
     positions: [...positions.values()].sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition),
     universe: {
-      universeId: base.protocol.universeId,
-      universeSymbolHash: base.protocol.universeSymbolHash,
-      symbols: base.protocol.universe,
-      topics: { ...base.protocol.sourceTopics, features: 'torghut.market-features.v1' },
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      symbols: equityMarketProfile.universe,
+      topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
     },
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1',
@@ -237,7 +300,10 @@ test.each(
       const arrivals = `${directory}/arrivals.gz`
       yield* fs.writeFile(arrivals, gzipSync(data.body))
       const path = `${directory}/evidence.bin`
-      const bytes = new Uint8Array([0, 255, 192, 128, 10])
+      const bytes =
+        gate === 'inventory'
+          ? new TextEncoder().encode(JSON.stringify(inventoryFor(data)))
+          : new Uint8Array([0, 255, 192, 128, 10])
       const evidenceHash = sha256(bytes)
       if (state !== 'missing')
         yield* fs.writeFile(path, state === 'changed' ? new Uint8Array([0, 255, 192, 128, 11]) : bytes)
@@ -275,6 +341,222 @@ test.each(
           })
         }
       }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test.each([
+  'arbitrary',
+  'unsupported',
+  'duplicate',
+  'edited',
+  'omitted',
+  'purpose',
+  'pending',
+  'foreign',
+  'protocol',
+  'pending-cycle',
+  'active-cycle',
+  'early',
+  'complete',
+] as const)('matched inventory semantics fail closed for %s evidence', async (scenario) => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const data = fixture()
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.gz`
+      yield* fs.writeFile(arrivals, gzipSync(data.body))
+      const retained = inventoryFor(data)
+      let cycles =
+        scenario === 'protocol'
+          ? retained.cycles.map((cycle) =>
+              cycle.cycleId === '0'.repeat(64) ? { ...cycle, protocolHash: '0'.repeat(64) } : cycle,
+            )
+          : retained.cycles
+      if (scenario === 'pending-cycle' || scenario === 'active-cycle')
+        cycles = cycles.map((cycle) =>
+          cycle.cycleId === '0'.repeat(64)
+            ? { ...cycle, state: scenario === 'pending-cycle' ? CycleState.Pending : CycleState.Active }
+            : cycle,
+        )
+      let batchRows = retained.batches
+      if (scenario === 'duplicate') batchRows = [...batchRows, ...batchRows]
+      if (scenario === 'edited') batchRows = batchRows.map((batch) => ({ ...batch, batchId: '1'.repeat(64) }))
+      if (scenario === 'omitted') batchRows = []
+      if (scenario === 'purpose') batchRows = batchRows.map((batch) => ({ ...batch, purpose: JevPurpose.Manage }))
+      const { receiptHash: _hash, ...oldReceipt } = retained.receipt
+      const receipt = {
+        ...oldReceipt,
+        batchCount: batchRows.length,
+        entryBatchCount: batchRows.filter((batch) => batch.purpose === JevPurpose.Entry).length,
+        managementBatchCount: batchRows.filter((batch) => batch.purpose === JevPurpose.Manage).length,
+        pendingResultCount: scenario === 'pending' ? batchRows.length : 0,
+        accountBindingHash: scenario === 'foreign' ? '0'.repeat(64) : oldReceipt.accountBindingHash,
+        asOf: scenario === 'early' ? '2026-09-04T13:30:00.000Z' : oldReceipt.asOf,
+      }
+      const bytes = JSON.stringify(
+        scenario === 'arbitrary'
+          ? { arbitrary: true }
+          : {
+              ...retained,
+              cycles,
+              schemaVersion: scenario === 'unsupported' ? 'bayn.jev-study-inventory.v0' : retained.schemaVersion,
+              receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+              batches: scenario === 'pending' ? batchRows.map((batch) => ({ ...batch, resultHash: null })) : batchRows,
+            },
+      )
+      const evidenceHash = sha256(bytes)
+      const path = `${directory}/inventory.json`
+      yield* fs.writeFileString(path, bytes)
+      const input = {
+        ...data.input,
+        witnesses: [{ path, sha256: evidenceHash }],
+        inventory: data.input.inventory.map((value, index) =>
+          index === 0
+            ? {
+                ...value,
+                evidenceHash,
+                entryBatchIds: [
+                  ...new Set(
+                    batchRows.filter((batch) => batch.purpose === JevPurpose.Entry).map((batch) => batch.batchId),
+                  ),
+                ],
+              }
+            : value,
+        ),
+      }
+      const result = yield* Effect.result(runMatchedEntryStudy(input, data.registration, arrivals, data.receipt))
+      if (['arbitrary', 'unsupported', 'duplicate', 'foreign'].includes(scenario)) {
+        expect(Result.isFailure(result)).toBeTrue()
+      } else {
+        const report = Result.getOrThrow(result)
+        expect(report.inventories).toHaveLength(1)
+        expect(report.inventories[0]?.cycles).toEqual(cycles)
+        if (scenario === 'early')
+          expect(report.summary.completenessProblems).toContain('inventory-cut-before-session-close:2026-09-04')
+        else if (scenario === 'protocol')
+          expect(report.summary.completenessProblems).toContain('native-inventory-protocol-mismatch:2026-09-04')
+        else if (scenario === 'pending-cycle' || scenario === 'active-cycle')
+          expect(report.summary.completenessProblems).toContain('nonterminal-inventory-cycle:2026-09-04')
+        else if (scenario !== 'complete')
+          expect(report.summary.completenessProblems).toContain('native-inventory-batch-mismatch:2026-09-04')
+        else expect(report.summary.completenessProblems).not.toContain('native-inventory-batch-mismatch:2026-09-04')
+        expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('all scheduled native inventories retain zero-batch sessions without filling other evidence gaps', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const data = fixture()
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.gz`
+      yield* fs.writeFile(arrivals, gzipSync(data.body))
+      const witnesses = []
+      const inventory = []
+      for (const scope of data.input.inventory) {
+        const bytes = JSON.stringify(inventoryFor(data, scope.sessionDate))
+        const evidenceHash = sha256(bytes)
+        const path = `${directory}/${scope.sessionDate}.json`
+        yield* fs.writeFileString(path, bytes)
+        witnesses.push({ path, sha256: evidenceHash })
+        inventory.push({ ...scope, evidenceHash })
+      }
+      const report = yield* runMatchedEntryStudy(
+        { ...data.input, witnesses, inventory },
+        data.registration,
+        arrivals,
+        data.receipt,
+      )
+      expect(report.inventories).toHaveLength(5)
+      expect(
+        report.inventories
+          .slice(1)
+          .every(
+            (entry) =>
+              entry.batches.length === 0 && entry.cycles.length === 1 && entry.cycles[0]?.decisionHash === null,
+          ),
+      ).toBeTrue()
+      expect(report.summary.completenessProblems.some((problem) => problem.includes('inventory'))).toBeFalse()
+      expect(report.summary.completenessProblems).toContain(`missing-entry-timing:${data.evidence.batchPlan.batchId}`)
+      expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test('native inventories round-trip pending entry and management batches with no-batch cycles', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const data = fixture()
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const arrivals = `${directory}/arrivals.gz`
+      yield* fs.writeFile(arrivals, gzipSync(data.body))
+      const { decidedAt: _at, ...management } = nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold')
+      const retained = inventoryFor(data)
+      const batchRows = [
+        ...retained.batches.map((batch) => ({ ...batch, resultHash: null })),
+        {
+          batchId: management.batchPlan.batchId,
+          cycleId: management.batchPlan.cycleId,
+          observationHash: management.batchPlan.observationHash,
+          purpose: JevPurpose.Manage,
+          resultHash: null,
+        },
+      ].sort((a, b) => a.batchId.localeCompare(b.batchId))
+      const cycles = [...retained.cycles]
+      if (!cycles.some((cycle) => cycle.cycleId === management.batchPlan.cycleId))
+        cycles.push({
+          cycleId: management.batchPlan.cycleId,
+          protocolHash: data.registration.protocolHash,
+          state: CycleState.Completed,
+          decisionHash: null,
+        })
+      cycles.sort((a, b) => a.cycleId.localeCompare(b.cycleId))
+      const { receiptHash: _hash, ...original } = retained.receipt
+      const receipt = {
+        ...original,
+        cycleCount: cycles.length,
+        batchCount: 2,
+        managementBatchCount: 1,
+        pendingResultCount: 2,
+      }
+      const bytes = JSON.stringify({
+        ...retained,
+        cycles,
+        batches: batchRows,
+        receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+      })
+      const evidenceHash = sha256(bytes)
+      const path = `${directory}/inventory.json`
+      yield* fs.writeFileString(path, bytes)
+      const input = {
+        ...data.input,
+        study: {
+          ...data.input.study,
+          batches: [...data.input.study.batches, management].map((batch) => ({ ...batch, batchResult: null })),
+        },
+        inventory: data.input.inventory.map((scope, index) => (index === 0 ? { ...scope, evidenceHash } : scope)),
+        witnesses: [{ path, sha256: evidenceHash }],
+      }
+      const report = yield* runMatchedEntryStudy(input, data.registration, arrivals, data.receipt)
+      expect(report.inventories[0]?.batches).toEqual(batchRows)
+      expect(report.inventories[0]?.cycles).toEqual(cycles)
+      expect(report.summary.completenessProblems).not.toContain('native-inventory-batch-mismatch:2026-09-04')
+      expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
+      const empty = yield* Effect.result(
+        runMatchedEntryStudy(
+          { ...input, study: { ...input.study, batches: [] } },
+          data.registration,
+          arrivals,
+          data.receipt,
+        ),
+      )
+      expect(Result.isFailure(empty)).toBeTrue()
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 })
@@ -492,7 +774,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v3')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v4')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')

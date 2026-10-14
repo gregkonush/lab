@@ -36,7 +36,7 @@ export const replayQuoteRejection = (
     quote.value.symbol !== symbol ||
     quote.value.feed !== protocol.feed ||
     quote.value.delayClass !== protocol.delayClass ||
-    quote.value.marketSession !== 'regular'
+    quote.value.marketSession !== (protocol.feed === 'us' ? 'continuous' : 'regular')
   )
     return ReplayQuoteRejection.Identity
   if (
@@ -78,7 +78,7 @@ export const ReplayOrderExecutionSchema = Schema.Struct({
   outcome: Schema.Union([
     Schema.Struct({
       status: Schema.Literal('filled'),
-      filledQuantityMicros: UnsignedMicrosSchema,
+      filledQuantityAtoms: UnsignedMicrosSchema,
       fillPriceMicros: UnsignedMicrosSchema,
       fillNotionalMicros: UnsignedMicrosSchema,
       unfilledRemainder: Schema.Literals(['none', 'canceled']),
@@ -161,7 +161,7 @@ export const makeReplayOrderExecution = (input: {
             }
           : {
               status: 'filled',
-              filledQuantityMicros: outcome.filledQuantityMicros.toString(),
+              filledQuantityAtoms: outcome.filledQuantityAtoms.toString(),
               fillPriceMicros: outcome.fillPriceMicros.toString(),
               fillNotionalMicros: outcome.fillNotionalMicros.toString(),
               unfilledRemainder: outcome.unfilledRemainder,

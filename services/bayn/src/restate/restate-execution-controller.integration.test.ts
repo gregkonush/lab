@@ -62,13 +62,24 @@ describeRestate('Real Restate execution deployment activation', () => {
         activate: async () => {
           brokerActivations += 1
         },
-        poll: async (_signal, reservation) => {
+        poll: async () => {
+          const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+          if (failedPollNotBeforeMs > now)
+            return {
+              poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
+              startedAtMs: now,
+              completedAtMs: now,
+            }
           brokerPolls += 1
           if (!brokerReady) {
-            failedPollNotBeforeMs = reservation.interruptedNotBeforeMs
+            failedPollNotBeforeMs = now + 5_000
             throw new Error('Broker observation dependency is temporarily unavailable')
           }
-          return { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
+          return {
+            poll: { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
+            startedAtMs: now,
+            completedAtMs: now,
+          }
         },
       },
     )
@@ -234,7 +245,12 @@ describeRestate('Real Restate execution deployment activation', () => {
               const response = await fetch(`${admin}/query`, {
                 method: 'POST',
                 body: JSON.stringify({
-                  query: `SELECT COUNT(*) AS journal_entries FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
+                  query: `SELECT COUNT(*) AS journal_entries,
+                    (SELECT COUNT(*) FROM sys_journal WHERE entry_type = 'Command: GetLazyState'
+                      AND id IN (SELECT id FROM sys_invocation
+                        WHERE target_service_name = 'BaynExecutionController'
+                          AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick')) AS lazy_tick_state_reads
+                    FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
                 }),
                 headers: { 'content-type': 'application/json', accept: 'application/json' },
                 signal,
@@ -244,7 +260,7 @@ describeRestate('Real Restate execution deployment activation', () => {
             },
             catch: (cause) => cause,
           })
-          expect(journal).toMatchObject({ rows: [{ journal_entries: 0 }] })
+          expect(journal).toMatchObject({ rows: [{ journal_entries: 0, lazy_tick_state_reads: 0 }] })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
           expect(

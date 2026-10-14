@@ -57,6 +57,20 @@ Quote size units, source timing and executable capacity need separate evidence; 
 | `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                                                                                                                                                                       |
 | `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                                                                                                                                                                |
 
+An inventory's `evidenceHash` pins the raw bytes of `inventory.json` from the existing
+[native session export](study-evidence-export.md). The command decodes `bayn.jev-study-inventory.v1`, verifies its
+embedded export receipt, and binds account, session and inline entry IDs. Every supplied entry and management batch
+must match its batch, cycle, observation, purpose and nullable result hash. Duplicate or malformed inventories fail;
+omitted batches, changed results and cuts taken before the registered session close make all headline means
+unavailable. Reports retain the complete witnessed cycles and batches, including no-batch and pending cycles.
+Every retained cycle must bind the registered protocol, including blocked and no-batch cycles. A foreign protocol
+keeps that cycle visible and makes the study incomplete even when all supplied batch protocols match.
+Pending or active cycles also make the study incomplete, even after session close: later recovery can still append
+their batches or results. Preserve that cut and take a new export after the cycles become terminal.
+Independent review must still establish that the witness is the complete native export; a self-consistent JSON hash
+does not prove that provenance. Missing historical witnesses remain `null` and incomplete. Do not manufacture them
+from a selected subset, reuse another session's witness or relabel an old report.
+
 Use the native inference-cost report with request/receipt/resolution coverage and effective-dated tariffs.
 Allocate every entry call, including abstentions, failures and unselected symbols. Missing/unpriced calls remain
 unknown: an unpriced known subtotal of zero is not zero expense. Carry missing coverage in `unresolvedCount`.
@@ -82,13 +96,29 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v3` and `bayn.matched-entry-study.v3`. Input is v2;
+Definition and report are `bayn.matched-entry-definition.v4` and `bayn.matched-entry-study.v4`. Input is v2;
 registration remains v1 with the new definition hash. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
 The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that
 path is unavailable. The [market-data archive boundary](market-data-archive.md) keeps its replacement outside trading;
 an independent Kafka archive cannot reconstruct the trading worker's original arrival or decision-commit clocks.
+
+The native `bayn.jev.batch-plan` trace span now carries `bayn.entry_timing.batch_id`, `observation_hash`,
+`snapshot_hash`, and the worker's actual `input_available_at`. For momentum-first entry batch v4 only, it also carries
+`deterministic_selected_at`, observed after the existing ranking and batch construction finish and before inference
+admission. This includes the actual observation-persistence delay; it is not a hypothetical earlier computation.
+The selected control symbol must be reproduced from the same retained snapshot with `jevMomentumEntryCandidates`.
+No extra ranking, database write, archive upload, or research RPC is added to execution.
+
+The native `bayn.jev.entry-decision-binding` span identifies the decision and exact batch completion. Its PostgreSQL
+children inherit those identities. An independent timing exporter must use the successful writer-fence
+`bayn.postgres.commit` span's end time as acknowledged commitment, require `binding_changed=true` and
+`binding_accepted=true` on the enclosing binding span, and verify the retained native decision document. Replays,
+failed or interrupted commits, missing spans, and conflicting clocks provide no witness. The trace resource must
+identify the exact registered source revision. Trace export remains asynchronous and does not gate trading or
+protective closures. Retain original trace bytes and independent capture/review seals; these annotations alone do
+not supply a complete Kafka source archive or qualify a strategy comparison.
 
 Each timing witness must point to a retained, independently verified private `bayn.jev-entry-timing.v1` file.
 The study command reads and hashes that file, checks source revision, batch, observation

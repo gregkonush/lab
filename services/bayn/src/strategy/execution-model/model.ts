@@ -26,7 +26,7 @@ export const defaultExecutionModel: Extract<ExecutionModel, { readonly schemaVer
     submissionCutoffLeadMinutes: 15,
   },
   precision: {
-    quantityIncrementMicros: '1',
+    quantityIncrementAtoms: '1000',
     priceIncrementMicros: '100',
     minimumBuyNotionalMicros: '1000000',
   },
@@ -112,7 +112,7 @@ export type ExecutionModelFailure =
   | {
       readonly _tag: 'InvalidFillTerms'
       readonly side: 'buy' | 'sell'
-      readonly quantityMicros: bigint
+      readonly quantityAtoms: bigint
       readonly referencePriceMicros: bigint
       readonly costMultiplierMicros: bigint
       readonly reason: 'invalid-quantity-or-price' | 'invalid-cost-multiplier' | 'costs-consume-reference-price'
@@ -141,13 +141,13 @@ export type ExecutionModelFailure =
   | {
       readonly _tag: 'InvalidSaleCostBasis'
       readonly positionCostBasisMicros: bigint
-      readonly soldQuantityMicros: bigint
-      readonly positionQuantityMicros: bigint
+      readonly soldQuantityAtoms: bigint
+      readonly positionQuantityAtoms: bigint
       readonly reason: 'invalid-position' | 'quantity-exceeds-position'
     }
   | {
       readonly _tag: 'InvalidQuantityScale'
-      readonly quantityMicros: bigint
+      readonly quantityAtoms: bigint
       readonly scalePpm: bigint
       readonly minimumScalePpm: 0n
       readonly maximumScalePpm: 1_000_000n

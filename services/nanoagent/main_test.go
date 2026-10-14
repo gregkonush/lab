@@ -347,7 +347,7 @@ func TestBeginShutdownClosesStreamingSubscriptions(t *testing.T) {
 
 func TestNewAPIServerStartsCodexInConfiguredWorkspace(t *testing.T) {
 	root := t.TempDir()
-	server, err := newAPIServer(apiConfig{
+	server, err := newAPIServer(apiConfig{guestAuthorization: fixtureGuestAuthorization(t),
 		bootstrapToken: "test-bootstrap-token",
 		codexBinary:    "/usr/bin/false",
 		startCodex:     true,
@@ -369,7 +369,7 @@ func TestNewAPIServerStartsCodexInConfiguredWorkspace(t *testing.T) {
 func testAPIServer(t *testing.T) *apiServer {
 	t.Helper()
 	root := t.TempDir()
-	server, err := newAPIServer(apiConfig{
+	server, err := newAPIServer(apiConfig{guestAuthorization: fixtureGuestAuthorization(t),
 		bootstrapToken: "test-bootstrap-token",
 		codexBinary:    "/usr/bin/false",
 		homeRoot:       root,

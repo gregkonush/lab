@@ -802,7 +802,7 @@ export const makeBaynExecutionController = (
     },
     options: {
       ingressPrivate: false,
-      enableLazyState: true,
+      enableLazyState: false,
       hooks: [...hooks],
       ...executionControllerHandlerTimeouts(config.operationTimeoutMs),
     },
