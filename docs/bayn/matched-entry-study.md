@@ -63,6 +63,8 @@ embedded export receipt, and binds account, session and inline entry IDs. Every 
 must match its batch, cycle, observation, purpose and nullable result hash. Duplicate or malformed inventories fail;
 omitted batches, changed results and cuts taken before the registered session close make all headline means
 unavailable. Reports retain the complete witnessed cycles and batches, including no-batch and pending cycles.
+Every retained cycle must bind the registered protocol, including blocked and no-batch cycles. A foreign protocol
+keeps that cycle visible and makes the study incomplete even when all supplied batch protocols match.
 Independent review must still establish that the witness is the complete native export; a self-consistent JSON hash
 does not prove that provenance. Missing historical witnesses remain `null` and incomplete. Do not manufacture them
 from a selected subset, reuse another session's witness or relabel an old report.

@@ -520,6 +520,8 @@ export const runMatchedEntryStudy = (
             message: 'Inventory witness differs from its account, session or claimed entries',
           })
         verifiedInventories.push(retained)
+        if (retained.cycles.some((cycle) => cycle.protocolHash !== registration.protocolHash))
+          problems.push(`native-inventory-protocol-mismatch:${inventory.sessionDate}`)
         const actualBatches = batches
           .filter((batch) => batch.snapshot.manifest.sessionDate === inventory.sessionDate)
           .map((batch) => ({
