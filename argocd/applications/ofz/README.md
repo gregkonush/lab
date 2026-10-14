@@ -11,7 +11,7 @@ The API begins fenced. Publishing this configuration does not establish a comple
 | --- | --- |
 | SpiceDB | Three replicas of upstream `v1.56.2`, pinned to its multi-architecture image digest |
 | PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 20 GiB per instance |
-| Backups | Barman Cloud plugin, continuous WAL archiving, daily base backup at 10:30 UTC, 14-day retention |
+| Backups | Barman Cloud plugin, WAL archived within 60 seconds, daily base backup at 10:30 UTC, 35-day recovery window on independent NUC |
 | Playground | Two replicas of upstream `v0.3.1`, pinned to its multi-architecture image digest |
 | Authorization API | Two replicas, exact SPIFFE mTLS, SQL-backed sessions and policy commands |
 | Audit exporter | Two replicas with one SQL lease, COMPLIANCE archive on independent NUC |
@@ -34,19 +34,20 @@ CNPG generates `ofz-db-app`. The SpiceDB operator reads its `uri` key directly. 
 verify PostgreSQL's TLS certificate with `ofz-db-ca`. `track_commit_timestamp=on` enables the SpiceDB Watch API.
 
 `ofz-spicedb-key` contains the API preshared key. Its namespace-bound SealedSecret is committed here. The preshared key
-grants access to the whole SpiceDB API; distribute it only to trusted backend services. The API uses plaintext
+grants access to the whole SpiceDB API; only the Ofz API and owner bootstrap jobs receive it. The native API uses plaintext
 transport inside the cluster and has no ingress route. Browser access uses Tailscale HTTPS and requires tailnet access.
 The Tailscale operator provisions the private DNS name and certificate without a separate Pi-hole entry.
 
-The database, its inherited resources, the backup ObjectStore, and the bucket claim are retained during Argo pruning
-or Application deletion. Ceph provides both database storage and the backup bucket. These backups do not protect
-against loss of the entire Ceph cluster.
+The database, its inherited resources and backup ObjectStore are retained during Argo pruning or Application deletion.
+Ceph provides database storage. Physical base backups and WAL use the independent `ofz-database-backups` bucket on
+NUC through verified private HTTPS, AES256 and a separate namespace-scoped writer. Thirty-day COMPLIANCE retention
+protects immutable versions. The historical Ceph bucket claim remains protected and is excluded from active source.
 
 Tengri consumes the typed Ofz API. The final schema is maintained in
 [`services/ofz/schema.zed`](../../../services/ofz/schema.zed); controllers and BFFs hold no native SpiceDB key.
 The [control-plane runbook](control-plane/README.md) describes managed roles, checksum-bound migration hooks,
-archive credentials and fenced bootstrap. The independent NUC archive is installed and verified separately from
-cluster-local Ceph backups. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
+archive credentials and fenced bootstrap. The [independent NUC recovery store](../../../devices/nuc/ofz-recovery/README.md)
+holds both the audit archive and separate database buckets. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
 and `tengri_control` databases. Application roles have distinct schema/table permissions.
 
 ## Validate before deployment
@@ -66,8 +67,9 @@ and Tailscale operator must be available before the first reconciliation.
 ## Verify the deployed service
 
 After an authorized rollout, check the exact Argo revision, running image digests, three database instances, three
-SpiceDB replicas, two Playground replicas, and the completed initial backup. The sync waves create the bucket and
-credentials before PostgreSQL, then let the SpiceDB operator migrate the datastore and start the service.
+SpiceDB replicas, two Playground replicas, and the completed initial backup. Initialize the independent NUC buckets
+before reconciliation. The sync waves install writer credentials before PostgreSQL, then let the SpiceDB operator
+migrate the datastore and start the service. Verify an isolated physical restore before the Tengri identity cutover.
 
 ```bash
 kubectl --context galactic-tailscale -n argocd get application ofz

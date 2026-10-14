@@ -405,6 +405,37 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     await runtime?.dispose()
   })
 
+  test('close intent classification is restricted to the persisted intent and its owning cycle', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* ExecutionCycleClosureStore
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE intents (intent_id text PRIMARY KEY, cycle_id text NOT NULL) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_closures
+              (cycle_id text PRIMARY KEY, document jsonb NOT NULL) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_close_replans
+              (cycle_id text NOT NULL, document jsonb NOT NULL) ON COMMIT DROP`
+            yield* sql`INSERT INTO intents (intent_id, cycle_id) VALUES
+              ('entry', 'active'), ('close', 'active'), ('replan', 'active'), ('unrelated', 'other')`
+            yield* sql`INSERT INTO autonomous_cycle_paper_closures (cycle_id, document) VALUES
+              ('active', '{"document":{"orderedIntentIds":["close"]}}'),
+              ('retained', '{"document":{"orderedIntentIds":["entry","unrelated","unpersisted"]}}')`
+            yield* sql`INSERT INTO autonomous_cycle_paper_close_replans (cycle_id, document) VALUES
+              ('active', '{"document":{"orderedIntentIds":["replan"]}}')`
+
+            expect(yield* store.containsIntent('entry')).toBe(false)
+            expect(yield* store.containsIntent('close')).toBe(true)
+            expect(yield* store.containsIntent('replan')).toBe(true)
+            expect(yield* store.containsIntent('unrelated')).toBe(false)
+            expect(yield* store.containsIntent('unpersisted')).toBe(false)
+          }),
+        )
+      }),
+    )
+  })
+
   for (const purpose of [JevPurpose.Manage, JevPurpose.Entry]) {
     const prepareSingleRequestBatch = purpose === JevPurpose.Manage ? prepareManagementBatch : prepareSingleEntryBatch()
 
