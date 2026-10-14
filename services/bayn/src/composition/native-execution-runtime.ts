@@ -13,6 +13,7 @@ import {
   Result,
   Scope,
   ScopedRef,
+  type Tracer,
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
@@ -44,7 +45,7 @@ import {
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
-import { currentOpenTelemetryLogAnnotations } from '../restate/restate-telemetry'
+import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
@@ -480,11 +481,13 @@ export const makeNativeExecutionRuntimeAdapter = (
   runner: ExecutionEffectRunner,
   planHash: string,
 ): NativeExecutionRuntime => ({
-  advance: (command, signal) =>
-    runner.runPromise(
-      driver.pipe(Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore, planHash))),
-      { signal },
-    ),
+  advance: (command, signal) => {
+    const parent = currentOpenTelemetryParentSpan()
+    const advance = driver.pipe(
+      Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore, planHash)),
+    )
+    return runner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), { signal })
+  },
   log: (level, message, annotations) => runner.runPromise(logEffect(level, message, annotations)),
   projectState: (controllerKey, state, signal) =>
     runner.runPromise(projectExecutionControllerState(controllerKey, state, statusStore), { signal }),
@@ -557,17 +560,22 @@ const runManagedNativeExecutionAdvance = <R, E>(
   command: AdvanceExecutionCommand,
   signal: AbortSignal,
   planHash: string,
-): Promise<ExecutionAdvanceStepResult> =>
-  executionRunner.runPromise(
-    Effect.all({ driverSlot: PublishedExecutionCycleDriver, statusStore: ExecutionControllerStatusStore }).pipe(
-      Effect.flatMap(({ driverSlot, statusStore }) =>
-        readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
-          Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
-        ),
+  parent: Tracer.ExternalSpan | undefined,
+): Promise<ExecutionAdvanceStepResult> => {
+  const advance = Effect.all({
+    driverSlot: PublishedExecutionCycleDriver,
+    statusStore: ExecutionControllerStatusStore,
+  }).pipe(
+    Effect.flatMap(({ driverSlot, statusStore }) =>
+      readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
+        Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
       ),
     ),
-    { signal },
   )
+  return executionRunner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), {
+    signal,
+  })
+}
 
 const runManagedControllerStateProjection = <R, E>(
   projectionRunner: NativeExecutionProjectionRuntime<R, E>,
@@ -587,7 +595,8 @@ export const makeManagedNativeExecutionRuntimeAdapter = <R, E>(
   logRunner: ExecutionEffectRunner,
   planHash: string,
 ): NativeExecutionRuntime => ({
-  advance: (command, signal) => runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash),
+  advance: (command, signal) =>
+    runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, currentOpenTelemetryParentSpan()),
   log: (level, message, annotations) => logRunner.runPromise(logEffect(level, message, annotations)),
   projectState: (controllerKey, state, signal) =>
     runManagedControllerStateProjection(executionRunner, controllerKey, state, signal),
@@ -652,12 +661,13 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
 
   return {
     advance: (command, signal) => {
+      const parent = currentOpenTelemetryParentSpan()
       const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
       return executionRunner
         .runPromise(Effect.void, { signal })
         .catch(replaceFailedRuntime)
         .then(() =>
-          runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash).catch((cause: unknown) =>
+          runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, parent).catch((cause: unknown) =>
             cause instanceof NativeExecutionRuntimeError && cause.operation === 'initialize'
               ? replaceFailedRuntime(cause)
               : Promise.reject(cause),

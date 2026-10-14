@@ -56,7 +56,12 @@ export const summarizeForwardInferenceExpenses = (
       sessionDate: evidence.sessionDate,
       authorityGenerationHash: authorityGenerationHash ?? null,
       knownEstimatedCostPicoUsd: known.toString(),
-      ...coverage,
+      sourceAsOf: coverage.sourceAsOf,
+      claimedRequestCount: coverage.claimedRequestCount,
+      missingQuoteCount: coverage.missingQuoteCount,
+      unverifiedRequestCount: coverage.unverifiedRequestCount,
+      gapRequestCount: coverage.gapRequestCount,
+      completeMeteredCoverage: coverage.completeMeteredCoverage,
       invoiceReconciled: false,
     } satisfies Omit<ForwardInferenceExpenseSession, 'exactSessionLedger'>
   })

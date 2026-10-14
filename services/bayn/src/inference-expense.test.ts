@@ -9,6 +9,7 @@ import {
   buildInferenceExpensePlan,
   decodeInferenceExpenseQuote,
   inferenceExpenseLedger,
+  InferenceExpenseCoverageIssue,
   makeInferenceExpenseQuote,
   verifyInferenceExpenseCoverage,
   verifyInferenceExpenseQuote,
@@ -143,6 +144,45 @@ describe('inference expense quote and deterministic plan', () => {
         ]),
       ),
     ).toBe(true)
+  })
+
+  test('identifies each coverage gap without exposing account identity or request payloads', () => {
+    const source = expenseSourceFixture({ missing: true })
+    const { accountId, sessionDate, asOf, ...request } = source
+    const gap = quote({ missing: true })
+    const evidence = {
+      schemaVersion: 'bayn.inference-cost-evidence.v1' as const,
+      accountBindingHash: gap.accountBindingHash,
+      sessionDate,
+      asOf,
+      requests: [request],
+    }
+    const missing = Result.getOrThrow(verifyInferenceExpenseCoverage(evidence, accountId, []))
+    expect(missing.requestsWithCoverageIssues).toEqual([
+      {
+        requestId: gap.line.requestId,
+        model: gap.line.model,
+        purpose: gap.line.purpose,
+        usageStatus: InferenceUsageStatus.Unknown,
+        receiptHash: null,
+        resolutionHash: gap.line.resolutionHash,
+        issues: [InferenceExpenseCoverageIssue.MissingQuote],
+      },
+    ])
+    const unverified = Result.getOrThrow(
+      verifyInferenceExpenseCoverage(evidence, accountId, [{ quote: gap, verifiedAt: null }]),
+    )
+    expect(unverified.requestsWithCoverageIssues[0]?.issues).toEqual([
+      InferenceExpenseCoverageIssue.UnverifiedLedger,
+      InferenceExpenseCoverageIssue.UnknownUsage,
+    ])
+    const verified = Result.getOrThrow(
+      verifyInferenceExpenseCoverage(evidence, accountId, [{ quote: gap, verifiedAt: asOf }]),
+    )
+    expect(verified.requestsWithCoverageIssues[0]?.issues).toEqual([InferenceExpenseCoverageIssue.UnknownUsage])
+    expect(verified.completeMeteredCoverage).toBe(false)
+    expect(JSON.stringify(verified.requestsWithCoverageIssues)).not.toContain(accountId)
+    expect(JSON.stringify(verified.requestsWithCoverageIssues)).not.toContain('requestHash')
   })
 
   test('keeps a retained gap incomplete and verifies a later receipt against its original graph', () => {

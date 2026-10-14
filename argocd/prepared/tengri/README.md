@@ -11,9 +11,15 @@ Secrets are `tengri-internal-request-key` (`TENGRI_INTERNAL_HMAC_SECRET`), `teng
 only their required endpoints. The BFF receives the same request key through its own namespace-local Secret.
 
 Two controller replicas run on distinct hosts. Only the fenced reconciliation leader manages slots. The namespace
-budget covers six slot Pods, two controllers, one rolling surge, seven Leases and ten Secrets. Limits allow 30 CPU and
+budget covers six slot Pods, two controllers, one rolling surge, seven Leases and twelve Secrets. Limits allow 30 CPU and
 57 GiB; requests retain 26 CPU and 56 GiB. The prepared render uses the active generated CRD directly.
 
 Existing workspaces and homes were deleted with explicit authorization on 2026-10-13. No retained-data import or
 migration rehearsal is needed. Keep the `tengri-ofz-cutover` creation fence until the new authority is deployed,
 then remove its policy and binding and verify fresh workspace creation. Images remain owned by Kargo.
+
+Supply `tengri-guest-signing` with a private 32-byte Ed25519 seed in `key`, and `tengri-guest-verification` with only
+its 32-byte public key in `key`. Both require the same canonical positive `recovery-generation`, matching Ofz's current
+generation. Only controllers mount the seed. Supervisors and runners mount the public bundle; guest init stages its
+key and generation as root-owned files before serving. Recovery rotates the key and advances the installed generation
+before any restored writer is admitted. These required references have no development default or legacy bypass.

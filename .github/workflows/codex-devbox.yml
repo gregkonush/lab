@@ -114,6 +114,28 @@ jobs:
             cd services/nanoagent
             GOWORK=off go test ./...
           '
+      - name: Exercise systemd preparation recovery
+        shell: bash
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fixture="$(docker run --detach --rm --privileged --cgroupns private \
+            --tmpfs /run --tmpfs /run/lock --entrypoint /sbin/init \
+            "$IMAGE" --unit=basic.target)"
+          trap 'docker rm --force "$fixture" >/dev/null 2>&1 || true' EXIT
+          for _ in {1..50}; do
+            if docker exec "$fixture" systemctl is-active --quiet basic.target; then
+              break
+            fi
+            sleep 0.2
+          done
+          docker exec "$fixture" /bin/bash -c '
+            set -euo pipefail
+            test "$(cat /proc/1/comm)" = systemd
+            systemctl is-active --quiet basic.target
+            python3 -m unittest discover -s /opt/lab-seed/services/devbox/tests -p test_prepare_restart.py -v
+          '
       - name: Publish validated preparation image
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:

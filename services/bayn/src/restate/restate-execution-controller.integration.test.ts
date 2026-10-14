@@ -234,7 +234,12 @@ describeRestate('Real Restate execution deployment activation', () => {
               const response = await fetch(`${admin}/query`, {
                 method: 'POST',
                 body: JSON.stringify({
-                  query: `SELECT COUNT(*) AS journal_entries FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
+                  query: `SELECT COUNT(*) AS journal_entries,
+                    (SELECT COUNT(*) FROM sys_journal WHERE entry_type = 'Command: GetLazyState'
+                      AND id IN (SELECT id FROM sys_invocation
+                        WHERE target_service_name = 'BaynExecutionController'
+                          AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick')) AS lazy_tick_state_reads
+                    FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
                 }),
                 headers: { 'content-type': 'application/json', accept: 'application/json' },
                 signal,
@@ -244,7 +249,7 @@ describeRestate('Real Restate execution deployment activation', () => {
             },
             catch: (cause) => cause,
           })
-          expect(journal).toMatchObject({ rows: [{ journal_entries: 0 }] })
+          expect(journal).toMatchObject({ rows: [{ journal_entries: 0, lazy_tick_state_reads: 0 }] })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
           expect(
