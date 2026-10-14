@@ -167,7 +167,7 @@ impl GuestAdmission {
             body: &opening.body,
         })?;
         ensure!(
-            opening.context.scope.is_none()
+            opening.context.observation.is_none()
                 || opening.context.action == GuestAction::WorkspaceMetadataRead,
             "bounded guest content handlers are not available"
         );
@@ -185,7 +185,7 @@ impl GuestAdmission {
             .map_err(|_| tonic::Status::permission_denied("invalid signed guest admission"))?;
         let nonce_hash = Sha256::digest(
             [
-                b"tengri-supervisor-guest-v3\0".as_slice(),
+                b"tengri-supervisor-guest-v4\0".as_slice(),
                 opening.context.nonce.as_bytes(),
             ]
             .concat(),
@@ -379,7 +379,7 @@ mod tests {
             issued_at_unix_ms: now,
             deadline_unix_ms: now + 2000,
             nonce: Uuid::new_v4().to_string(),
-            scope: None,
+            observation: None,
         };
         let signer = GuestSigner::from_seed(&std::array::from_fn::<_, 32, _>(|i| i as u8)).unwrap();
         let proof = signer.sign(&context, now).unwrap();

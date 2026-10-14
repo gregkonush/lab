@@ -35,6 +35,21 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
+## Optional Valkey client
+
+The scoped `ValkeyCache` service provides namespaced reads, bounded-TTL writes and
+deletion over authenticated TLS. Bayn's API and execution worker receive the
+existing connection ConfigMap, password Secret and client certificate mount.
+Configuration, TLS material and the connection are acquired only on the first
+valid cache operation. Missing cache artifacts do not fail layer construction;
+existing execution paths do not read Valkey.
+
+After building, `bun run valkey:verify` runs synthetic miss, write/read, deletion
+and expiry checks and exits after closing the client. See the
+[caching plan](../../docs/bayn/valkey-caching-plan.md) for candidate read paths,
+correctness rules, measurement gates and the client contract. Cache availability
+never grants trading or accounting authority.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
@@ -1027,6 +1042,15 @@ query, socket and trading deadlines remain unchanged. The additive indexes and c
 rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
 The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
+
+The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
+LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint
+interval spread checkpoint work; the existing five-minute archive timeout still bounds idle WAL archival.
+These settings retain fsync, full-page writes and the synchronous standby requirement. Buffer changes require
+the existing CNPG rolling restart and switchover, so deploy them while the account is flat outside the regular session.
+Compare WAL buffer-full events, WAL bytes, PostgreSQL 18 I/O counters, replica flush lag and native Bayn latency
+before and after rollout. A configuration revert through GitOps restores the previous settings without deleting
+evidence or changing replication. Compression and larger buffers alone do not establish a faster closure path.
 
 ## Replay and backtesting
 

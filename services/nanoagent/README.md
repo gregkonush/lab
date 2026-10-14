@@ -1,12 +1,17 @@
 # Nanoagent guest API
 
-`internal/guestauth` implements the mandatory protocol 3 signature contract for the Ofz migration. Its admission helper
+`internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
-proofs require an explicit scope and cannot carry control actions. Workload proofs permit only an exact metadata probe
-or terminal cleanup. The shared public test vectors are generated together into the Tengri fixture and
-`internal/guestauth/testdata/ofz-guest-request-v3.json`. Go embeds its copy in the test binary so standalone Docker
+proofs require an explicit observation budget and cannot carry control actions. Workload proofs permit only an exact
+metadata probe or terminal cleanup. The shared public test vectors are generated together into the Tengri fixture and
+`internal/guestauth/testdata/ofz-guest-request-v4.json`. Go embeds its copy in the test binary so standalone Docker
 builds and isolated test execution do not require a sibling source directory. CI verifies both generated copies.
 These public deterministic keys must never provide deployment keys.
+
+Ofz checks the complete approved policy on each call. The signed proof delegates one exact action, method, target and
+body with only that request's byte/item budget; it does not copy file roots or unrelated conversation/terminal IDs into
+the guest. The 16 KiB decoded-context limit covers JSON escaping of a maximum 4096-byte target. Protocol 3 and its
+signing domain are rejected. Controller, supervisor and guest must migrate together.
 
 The RPC receiver requires a signed proof for every unary request and every stream opening message. It checks the
 canonical protobuf bytes, action, target, exactly one copy of each claim header, and the runtime published by guest

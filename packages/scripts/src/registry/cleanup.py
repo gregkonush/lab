@@ -450,14 +450,17 @@ class Store:
         # Rename preserves allocated blocks. Their slow physical release happens after writes reopen.
         with ThreadPoolExecutor(max_workers=min(self.workers, 16)) as pool:
             sizes = list(pool.map(move, rows))
+        quarantined_blobs = sum(size is not None for size in sizes)
         return {
             "deletedTags": deleted_tags,
             "quarantineId": quarantine_id,
-            "quarantinedBlobs": sum(size is not None for size in sizes),
+            "quarantinedBlobs": quarantined_blobs,
             "quarantinedBytes": sum(size for size in sizes if size is not None),
+            "collectionTimedOut": deleted_tags < len(deletes)
+            or quarantined_blobs < len(rows),
             "remainingCandidates": len(plan["blobs"])
             - already_missing
-            - sum(size is not None for size in sizes),
+            - quarantined_blobs,
         }
 
     def purge(self, quarantine_id):

@@ -25,11 +25,14 @@ ceiling, helper deletion and upload-restoration checks also apply to scheduled r
 Interrupted collections retain their receipt for the next run after writes are restored;
 an unresolved maintenance hold requires operator recovery.
 
-The Job has no registry PVC mount. Its service account can list protected workloads
-and the explicitly listed served CRD groups, use registry Pod exec, manage the
-collector Pod and patch only the named registry Deployment and Application.
-It cannot read Kubernetes Secrets. Add newly served CRD groups to
-`cleanup-rbac.yaml` through review; missing discovery permissions fail the run.
+The Job has no registry PVC mount. Its service account can list only the image-owning
+workload and release resources in `packages/scripts/src/registry/protected_resources.json`.
+The ClusterRole has no wildcard resources, CRD discovery or write access. Namespaced
+Roles permit registry Pod exec, collector Pod management and patching only the named
+registry Deployment and the `argocd/registry` Application. It cannot read Kubernetes
+Secrets or Valkey resources. Installing an unrelated CRD does not change cleanup access.
+Before introducing a new private-image owner, add its resource to the protection
+contract and the matching list-only RBAC rule. Tests require the rules to match.
 Missing retained manifests or blobs also fail preparation before uploads are stopped.
 Resolve a stale reference at its owning resource rather than bypassing protection.
 
@@ -57,13 +60,12 @@ python3 packages/scripts/src/registry/prepare.py \
   --references /tmp/registry-references.json
 ```
 
-The runner snapshots built-in workloads and every served custom resource type,
-including cluster-scoped resources and all namespaces. This protects idle
-AgentProviders, workflow templates, scale-to-zero services, image catalogs and
-retained Kargo artifacts even when they have no Pod or Job. A discovery or list
-failure aborts preparation; an incomplete snapshot cannot authorize deletion.
-Raw cluster objects are not saved. CRDs with no served version cannot be queried
-and are excluded.
+The runner snapshots the configured image owners across namespaces. This includes
+built-in workloads, idle AgentProviders, workflow templates, scale-to-zero services,
+image catalogs and retained Kargo artifacts even when they have no Pod or Job.
+Every configured read is required; a denied or unavailable source aborts preparation
+before collection. Raw cluster objects are not saved. Unrelated custom resources
+are outside the protection contract and are never queried.
 
 The maintenance container reads the existing claim through a read-only mount. The runner verifies
 transferred input hashes, saves the plan locally and removes its temporary inputs.
@@ -114,10 +116,14 @@ revision/layer links can remain; they do not retain the removed blob payloads.
 The collection deadline includes read-only rollout and frozen validation. On
 completion, failure or timeout, the controller deletes its helper and confirms
 deletion **before** restoring uploads and removing its owned Argo hold. Deployment
-restoration has a separate readiness timeout. If helper deletion cannot be
+restoration has a separate five-minute readiness timeout. If helper deletion cannot be
 confirmed, it leaves writes disabled and the hold intact. Never infer process
 exit from an exec disconnect. A timeout can leave a partial quarantine batch;
-its receipt remains valid for online deletion.
+its receipt remains valid for online deletion. After a collector deadline, the
+controller first confirms helper deletion and complete upload restoration, then
+checks its own durable receipt. A valid receipt permits online purge of the partial
+batch with `collectionTimedOut: true` in the completion log. A missing or invalid
+receipt still fails the run; failed validation never authorizes deletion.
 
 The result records the quarantine identifier and moved bytes. The controller
 checks the PVC UID/PV is unchanged. Verify a completed push and a full retained-image
