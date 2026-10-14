@@ -987,6 +987,39 @@ describe('Alpaca paper reads', () => {
     })
   })
 
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+    test(`reads the compact ${symbol} position after a native coin fill`, async () => {
+      const response = [
+        {
+          ...positionResponse,
+          symbol: symbol.replace('/', ''),
+          exchange: 'CRYPTO',
+          asset_class: 'crypto',
+          qty: '0.032967375',
+          avg_entry_price: '2425.31',
+          cost_basis: '79.956104',
+          market_value: '79.45467',
+          unrealized_pl: '-0.501434',
+          current_price: '2410.1',
+        },
+      ]
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.positions))
+      expect(result.evidence.contentHash).toBe(canonicalHashV1(response))
+      expect(result.value).toEqual([
+        expect.objectContaining({
+          symbol,
+          assetClass: AssetClass.Crypto,
+          quantityAtoms: '32967375',
+          averageEntryPriceMicros: '2425310000',
+          costBasisMicros: '79956104',
+          marketValueMicros: '79454670',
+          unrealizedPnlMicros: '-501434',
+        }),
+      ])
+    })
+  }
+
   test('reads order collections and deterministic order lookups with GET only', async () => {
     const requests: Array<{ method: string; url: URL }> = []
     const client = HttpClient.make((request, url) => {

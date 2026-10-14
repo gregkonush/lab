@@ -17,7 +17,12 @@ An unused native admission retains its expiry classification at the equity cutof
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
 evidence and cooldown guards before acquiring a successor.
 
-Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros. Migration 97
+Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Alpaca response decoding converts compact crypto pair identifiers such as `ETHUSD` to the canonical `ETH/USD`
+symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
+outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
+
+Migration 97
 requires flat, settled inventory and complete accounting, archives the original projections and preserves existing
 ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
 published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).

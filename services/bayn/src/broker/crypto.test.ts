@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { prepareAccounting, rebuildAccountingLedger } from '../accounting/domain'
 import { OrderSide as DomainSide } from '../execution/contracts'
+import { InstrumentSymbolSchema } from '../instruments'
 import { normalizeFeeActivitiesResult, normalizeFillActivityResult } from './alpaca/normalizers'
 import { FillActivityResponseSchema, FeeActivityResponseSchema } from './alpaca/model'
 
@@ -19,7 +20,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         qty: '0.031234567',
         price: '103.123456789',
         side: 'buy',
-        symbol,
+        symbol: symbol.replace('/', ''),
         transaction_time: '2026-10-11T00:01:03.000000001Z',
         order_id: orderId,
         type: 'fill',
@@ -27,6 +28,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
       }),
     )
     const normalized = Result.getOrThrow(normalizeFillActivityResult(raw, accountId))
+    expect(normalized.symbol).toBe(symbol)
+    expect(Schema.is(InstrumentSymbolSchema)(symbol.replace('/', ''))).toBe(false)
     expect(normalized.quantityAtoms).toBe('31234567')
     expect(normalized.priceAtoms).toBe('103123456789')
     const fill = {
