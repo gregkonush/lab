@@ -1933,7 +1933,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1957,7 +1957,7 @@ spec:
             path: ./out/argocd/applications/bayn/deployment.yaml
             updates:
               - key: spec.template.spec.containers.0.env.0.value
-                value: ${{ commitFrom(vars.gitRepo).ID }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
               - key: spec.template.spec.containers.0.env.5.value
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
         - uses: yaml-update
@@ -1965,7 +1965,7 @@ spec:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
             updates:
               - key: spec.template.spec.containers.0.env.0.value
-                value: ${{ commitFrom(vars.gitRepo).ID }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
               - key: spec.template.spec.containers.0.env.2.value
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
               - key: spec.template.spec.containers.0.image
@@ -1975,7 +1975,7 @@ spec:
             path: ./out/argocd/applications/bayn/execution-activation.yaml
             updates:
               - key: spec.template.spec.containers.0.env.1.value
-                value: ${{ commitFrom(vars.gitRepo).ID }}
+                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
               - key: spec.template.spec.containers.0.env.3.value
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
               - key: spec.template.spec.containers.0.env.0.value
@@ -1983,11 +1983,11 @@ spec:
               - key: spec.template.spec.containers.0.image
                 value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
               - key: metadata.name
-                value: bayn-execution-activate-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: bayn-execution-activate-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
               - key: metadata.labels.app\.kubernetes\.io/version
-                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
               - key: spec.template.metadata.labels.app\.kubernetes\.io/version
-                value: sha-${{ commitFrom(vars.gitRepo).ID[0:12] }}
+                value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
         - uses: git-commit
           as: commit
           config:
@@ -1995,7 +1995,7 @@ spec:
             message: |
               kargo(bayn): promote ${{ ctx.targetFreight.name }}
 
-              Source commit: ${{ commitFrom(vars.gitRepo).ID }}
+              Source commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
         - uses: git-push
           as: push
           retry:
@@ -2007,7 +2007,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m0s
+            timeout: 30m0s
             errorThreshold: 3
           config:
             apps:
