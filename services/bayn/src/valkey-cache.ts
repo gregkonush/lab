@@ -1,8 +1,37 @@
+import { isNativeError } from 'node:util/types'
 import { NodeRedis, NodeServices } from '@effect/platform-node'
 import { Config, Context, Data, Effect, FileSystem, Layer, Option, Redacted, Schema, Semaphore } from 'effect'
+import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
+
+export enum ValkeyFailureCategory {
+  ReplicaAcknowledgement = 'replica_acknowledgement',
+  OperationDeadline = 'operation_deadline',
+  NativeTimeout = 'native_timeout',
+  Transport = 'transport',
+  CommandFailed = 'command_failed',
+}
+
+class ReplicaAcknowledgementError extends Error {}
+
+const commandFailureCategory = (cause: unknown): ValkeyFailureCategory => {
+  // Native identity avoids reading messages, accessors or hostile prototype chains.
+  if (!isNativeError(cause)) return ValkeyFailureCategory.CommandFailed
+  const prototype = Object.getPrototypeOf(cause)
+  if (prototype === ReplicaAcknowledgementError.prototype) return ValkeyFailureCategory.ReplicaAcknowledgement
+  if (
+    prototype === TimeoutError.prototype ||
+    prototype === ConnectionTimeoutError.prototype ||
+    prototype === SocketTimeoutError.prototype
+  )
+    return ValkeyFailureCategory.NativeTimeout
+  if (prototype === SocketClosedUnexpectedlyError.prototype) return ValkeyFailureCategory.Transport
+  return ValkeyFailureCategory.CommandFailed
+}
 
 export class ValkeyCacheError extends Data.TaggedError('ValkeyCacheError')<{
   readonly operation: string
+  readonly category?: ValkeyFailureCategory
+  readonly causeCategory?: ValkeyFailureCategory
   readonly message: string
   readonly cause?: unknown
 }> {}
@@ -61,7 +90,13 @@ export const makeValkeyCache = Effect.gen(function* () {
             if (!client.isOpen) await client.connect()
             return run(signal)
           },
-          catch: (cause) => new ValkeyCacheError({ operation, message: 'Valkey command failed', cause }),
+          catch: (cause) =>
+            new ValkeyCacheError({
+              operation,
+              category: commandFailureCategory(cause),
+              message: 'Valkey command failed',
+              cause,
+            }),
         }).pipe(
           Effect.onInterrupt(() => destroy),
           Effect.tapError(() => destroy),
@@ -70,14 +105,18 @@ export const makeValkeyCache = Effect.gen(function* () {
       .pipe(
         Effect.timeoutOrElse({
           duration: '1 second',
-          orElse: () =>
-            Effect.fail(
+          orElse: () => {
+            const cause = deadlineCause?.()
+            return Effect.fail(
               new ValkeyCacheError({
                 operation,
+                category: ValkeyFailureCategory.OperationDeadline,
+                ...(cause === undefined ? {} : { causeCategory: commandFailureCategory(cause) }),
                 message: 'Valkey command exceeded its deadline',
-                cause: deadlineCause?.(),
+                cause,
               }),
-            ),
+            )
+          },
         }),
         Effect.withSpan(`bayn.valkey.${operation}`),
       )
@@ -110,7 +149,9 @@ export const makeValkeyCache = Effect.gen(function* () {
               const connection = client.withAbortSignal(signal)
               await connection.set(key, value, { PX: ttlMs })
               while ((await connection.wait(1, 250)) < 1) {
-                acknowledgementFailure ??= new Error('Valkey replica did not acknowledge publication')
+                acknowledgementFailure ??= new ReplicaAcknowledgementError(
+                  'Valkey replica did not acknowledge publication',
+                )
                 signal.throwIfAborted()
               }
             },

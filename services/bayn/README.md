@@ -71,6 +71,14 @@ one-second command budget, without repeating `SET`. Missing acknowledgement at t
 deadline cancels the outstanding work and fails publication. A deadline after a
 negative acknowledgement retains that replication failure as its cause.
 
+Publication-failure logs report only allowlisted dependency, operation, failure-category
+and cause-category fields. An operation deadline remains distinct from a previously
+observed missing replica acknowledgement; the latter does not identify a later stall's cause.
+Verified native timeout/socket-close errors have their own categories. Other command
+failures use `command_failed`; unrecognized publication metadata uses `unknown`.
+Raw causes stay attached internally and are not included in this publication log.
+This does not change the native NodeRedis dependency's separate logging behavior.
+
 The broker observation owner publishes an immutable full snapshot and compact
 state in Valkey. PostgreSQL `broker_observations` stores their content hashes and
 the generation, quota and mutation fences. Migration 98 removes its JSONB payload.
