@@ -677,8 +677,7 @@ export const normalizeFeeActivitiesResult = (
           return yield* Result.fail(
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),
           )
-        const aliases: Readonly<Record<string, string>> = { BTCUSD: 'BTC/USD', ETHUSD: 'ETH/USD', SOLUSD: 'SOL/USD' }
-        const symbol = aliases[activity.symbol] ?? activity.symbol
+        const symbol = activity.symbol
         if (!['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(symbol))
           return yield* Result.fail(
             contractFailure({ reason: 'ASSET_BINDING', message: 'coin fee has an unsupported instrument' }),
