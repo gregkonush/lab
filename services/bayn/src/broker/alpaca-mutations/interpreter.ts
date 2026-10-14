@@ -24,6 +24,7 @@ import {
 } from './model'
 import { withObservedStage } from '../../telemetry'
 import { Pipeable } from '../../pipeable'
+import { SubmissionDenialReason } from '../../execution/submission-denial'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
 
@@ -126,6 +127,7 @@ const makeMutationDataFirst = (
           return yield* invalidRequest({
             operation: MutationOperation.Submit,
             message: 'order requires fractional trading but the broker account configuration disables it',
+            denialReason: SubmissionDenialReason.FractionalTradingDisabled,
           })
         }
         const request = yield* HttpClientRequest.bodyJson(
@@ -136,7 +138,12 @@ const makeMutationDataFirst = (
           prepared.request,
         ).pipe(
           Effect.mapError((cause) =>
-            invalidRequest({ operation: MutationOperation.Submit, message: 'order request cannot be encoded', cause }),
+            invalidRequest({
+              operation: MutationOperation.Submit,
+              message: 'order request cannot be encoded',
+              cause,
+              denialReason: SubmissionDenialReason.RequestEncoding,
+            }),
           ),
         )
         return yield* withDeadline(

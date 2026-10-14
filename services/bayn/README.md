@@ -56,6 +56,15 @@ adds the `bayn:` namespace, bounded values and expiry, command cancellation and
 replica acknowledgement. Scope exit destroys outstanding socket work before the
 native binding closes its client.
 
+Each command owns that connection through reconnect, its request, and cancellation;
+`SET` and its replica `WAIT` stay together. Queued commands retain the one-second
+deadline, and interrupting a queued caller does not close an active caller's socket.
+Reconnect happens on the next command rather than in a competing background retry.
+Replica acknowledgement uses 250 ms waits on the owned connection for the remaining
+one-second command budget, without repeating `SET`. Missing acknowledgement at that
+deadline cancels the outstanding work and fails publication. A deadline after a
+negative acknowledgement retains that replication failure as its cause.
+
 The broker observation owner publishes an immutable full snapshot and compact
 state in Valkey. PostgreSQL `broker_observations` stores their content hashes and
 the generation, quota and mutation fences. Migration 98 removes its JSONB payload.
@@ -213,6 +222,13 @@ Untouched expired entry approvals can retire under restricted submission authori
 A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
 with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
 Close documents retain their existing residual-replanning and hard-deadline failure behavior.
+
+A known pre-transmission rejection records a bounded `denialReason` on its `SUBMIT_DENIED` event. Expired risk or
+submission windows, stale or consumed broker state, changed authority, and known sizing failures retain distinct
+reasons without storing exception messages or request payloads. The reason is hashed with the event and committed
+atomically with the terminal intent transition. Exact retries retain that first reason; conflicting retries fail.
+Historical events without a reason remain unchanged and readable, and unrecognized failures remain explicitly
+`UNCLASSIFIED_INVALID_REQUEST`. A local denial is not broker rejection evidence and cannot permit another submission.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -488,6 +504,8 @@ cutoff and fresh decision/risk gates still apply; other restrictions and changed
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
 order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+Cycle runners require an explicit decision-evidence verifier before durable binding. The verifier checks canonical
+market-data references and owns any legitimate empty evidence; omitting it cannot bypass verification.
 Each new entry risk decision retains its pricing quote event time and the snapshot's maximum quote age. Approval
 expires at that event-time deadline or an earlier broker, intent, or session deadline. The final submit transaction
 rechecks the persisted expiry after writer/grant locks and broker reads, so retries or worker restarts cannot extend
@@ -1431,7 +1449,9 @@ the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev
 existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
 bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
 polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
-sent to Restate. The research worker submits these activations asynchronously after listening and registration.
+sent to Restate. The research worker submits these activations asynchronously after listening. Before each submission,
+it checks the control endpoint's deployed source revision through ingress and retries until it matches. This prevents
+an accepted send from binding a new activation to an old deployment while the operator is registering the new endpoint.
 Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
 
 The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job

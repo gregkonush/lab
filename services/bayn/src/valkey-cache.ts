@@ -1,5 +1,5 @@
 import { NodeRedis, NodeServices } from '@effect/platform-node'
-import { Config, Context, Data, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect'
+import { Config, Context, Data, Effect, FileSystem, Layer, Option, Redacted, Schema, Semaphore } from 'effect'
 
 export class ValkeyCacheError extends Data.TaggedError('ValkeyCacheError')<{
   readonly operation: string
@@ -43,27 +43,44 @@ type ValkeyClientOptions = NonNullable<Parameters<typeof NodeRedis.layer>[0]>
 
 export const makeValkeyCache = Effect.gen(function* () {
   const { client } = yield* NodeRedis.NodeRedis
+  const commands = yield* Semaphore.make(1)
   const destroy = Effect.sync(() => {
     if (client.isOpen) client.destroy()
   })
   // Native close waits for replies; cache scope exit and cancellation must abort stalled sockets.
   yield* Effect.addFinalizer(() => destroy)
-  const command = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
-    Effect.tryPromise({
-      try: async (signal) => {
-        if (!client.isOpen) await client.connect()
-        return run(signal)
-      },
-      catch: (cause) => new ValkeyCacheError({ operation, message: 'Valkey command failed', cause }),
-    }).pipe(
-      Effect.onInterrupt(() => destroy),
-      Effect.tapError(() => destroy),
-      Effect.timeoutOrElse({
-        duration: '1 second',
-        orElse: () => Effect.fail(new ValkeyCacheError({ operation, message: 'Valkey command exceeded its deadline' })),
-      }),
-      Effect.withSpan(`bayn.valkey.${operation}`),
-    )
+  const command = <A>(
+    operation: string,
+    run: (signal: AbortSignal) => Promise<A>,
+    deadlineCause?: () => Error | undefined,
+  ) =>
+    commands
+      .withPermit(
+        Effect.tryPromise({
+          try: async (signal) => {
+            if (!client.isOpen) await client.connect()
+            return run(signal)
+          },
+          catch: (cause) => new ValkeyCacheError({ operation, message: 'Valkey command failed', cause }),
+        }).pipe(
+          Effect.onInterrupt(() => destroy),
+          Effect.tapError(() => destroy),
+        ),
+      )
+      .pipe(
+        Effect.timeoutOrElse({
+          duration: '1 second',
+          orElse: () =>
+            Effect.fail(
+              new ValkeyCacheError({
+                operation,
+                message: 'Valkey command exceeded its deadline',
+                cause: deadlineCause?.(),
+              }),
+            ),
+        }),
+        Effect.withSpan(`bayn.valkey.${operation}`),
+      )
 
   const key = (operation: string, input: string) =>
     Schema.decodeUnknownEffect(ValkeyKey)(input).pipe(
@@ -85,14 +102,21 @@ export const makeValkeyCache = Effect.gen(function* () {
               message: 'Cache writes require a bayn: key, bounded value and TTL of 1–300000 ms',
             }),
         ),
-        Effect.flatMap(({ key, value, ttlMs }) =>
-          command('put', async (signal) => {
-            const connection = client.withAbortSignal(signal)
-            await connection.set(key, value, { PX: ttlMs })
-            const replicas = await connection.wait(1, 250)
-            if (replicas < 1) throw new Error('Valkey replica did not acknowledge publication')
-          }),
-        ),
+        Effect.flatMap(({ key, value, ttlMs }) => {
+          let acknowledgementFailure: Error | undefined
+          return command(
+            'put',
+            async (signal) => {
+              const connection = client.withAbortSignal(signal)
+              await connection.set(key, value, { PX: ttlMs })
+              while ((await connection.wait(1, 250)) < 1) {
+                acknowledgementFailure ??= new Error('Valkey replica did not acknowledge publication')
+                signal.throwIfAborted()
+              }
+            },
+            () => acknowledgementFailure,
+          )
+        }),
         Effect.asVoid,
       ),
     remove: (input) =>
@@ -140,6 +164,7 @@ const clientOptions = Effect.gen(function* () {
       cert,
       key,
       connectTimeout: 1000,
+      reconnectStrategy: false,
       socketTimeout: 2_000,
     },
   } satisfies ValkeyClientOptions

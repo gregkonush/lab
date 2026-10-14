@@ -7,7 +7,7 @@ import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { CycleState, type AutonomousCycle } from '../model'
 import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
-import { CycleStore, type CycleDecisionBindingEvidence } from '../store'
+import { CycleStore } from '../store'
 import { isTerminalCycleState } from '../transitions'
 import { canRearmUnusedCycle } from './calendar-decisions'
 import {
@@ -275,7 +275,7 @@ const recoverCycle = <R>(
                   }),
                 ),
           onSuccess: (document) =>
-            (context.buildDecisionEvidence?.(document) ?? Effect.succeed<CycleDecisionBindingEvidence>({})).pipe(
+            context.buildDecisionEvidence(document).pipe(
               Effect.mapError((cause) =>
                 runnerError({
                   operation: 'build-decision',
