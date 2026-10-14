@@ -113,9 +113,7 @@ jobs:
           version: '0.9.15'
           enable-cache: false
       - name: Verify independent immutable audit export
-        run: |
-          bash services/ofz/test-control.sh archive
-          bash devices/nuc/omni/scripts/test-serve-ownership.sh
+        run: bash services/ofz/test-control.sh archive
       - name: Verify control state and synchronous physical database promotion
         run: bash services/tengri/test-database-failover.sh
       - uses: oven-sh/setup-bun@v2

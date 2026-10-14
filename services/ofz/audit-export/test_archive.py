@@ -548,6 +548,36 @@ class RealArchive(unittest.TestCase):
                 retention=Retention(COMPLIANCE, protected_until),
             )
             self.assertEqual(exporter.tick(), 1)
+            sequence = append(connect("ofz_api"), "receipt-after-clock-snapshot")
+            newer_receipt = database.execute(
+                "SELECT sequence,receipt,encode(target_hash,'hex') AS target_hash,created_at_ms FROM ofz.audit WHERE sequence=%s",
+                (sequence,),
+            ).fetchone()
+            deadline_receipt = exporter.store(
+                [newer_receipt], newer_receipt["created_at_ms"] - 2000
+            )
+            required_until = datetime.fromtimestamp(
+                newer_receipt["created_at_ms"] / 1000, UTC
+            ) + timedelta(days=90)
+            self.assertGreaterEqual(
+                datetime.fromisoformat(deadline_receipt.retained_until), required_until
+            )
+            self.assertEqual(exporter.tick(), 1)
+            original_budget = archive.MAX_BATCH_BYTES
+            try:
+                archive.MAX_BATCH_BYTES = 3000
+                for index in range(6):
+                    append(connect("ofz_api"), f"bounded-batch-{index}-" + "x" * 900)
+                counts = []
+                while database.execute(
+                    "SELECT count(*) AS pending FROM ofz.audit_outbox WHERE acknowledged_at_ms IS NULL"
+                ).fetchone()["pending"]:
+                    counts.append(exporter.tick())
+                self.assertEqual(sum(counts), 6)
+                self.assertGreater(len(counts), 1)
+                self.assertTrue(all(count > 0 for count in counts))
+            finally:
+                archive.MAX_BATCH_BYTES = original_budget
             print(
                 "PASS: independent versioned compliance archive; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
             )

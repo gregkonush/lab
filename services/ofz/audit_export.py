@@ -59,6 +59,12 @@ def credential(path: str) -> str:
     return value
 
 
+def encode_batch(rows: list[dict]) -> bytes:
+    return json.dumps(
+        {"schemaVersion": 1, "records": rows}, sort_keys=True, separators=(",", ":")
+    ).encode()
+
+
 @dataclass(frozen=True)
 class Receipt:
     key: str
@@ -141,9 +147,7 @@ class Exporter:
             raise ArchiveError("independent object readback mismatch")
 
     def store(self, rows: list[dict], now_ms: int) -> Receipt:
-        data = json.dumps(
-            {"schemaVersion": 1, "records": rows}, sort_keys=True, separators=(",", ":")
-        ).encode()
+        data = encode_batch(rows)
         if len(data) > MAX_BATCH_BYTES:
             raise ArchiveError("audit batch exceeds its byte budget")
         digest = hashlib.sha256(data).hexdigest()
@@ -154,6 +158,7 @@ class Exporter:
         required = datetime.fromtimestamp(
             (max(row["created_at_ms"] for row in rows) + 999) // 1000, UTC
         ) + timedelta(days=RETENTION_DAYS)
+        minimum = max(minimum, required)
         try:
             existing = self.storage.stat_object(BUCKET, key)
             version = existing.version_id
@@ -234,6 +239,10 @@ class Exporter:
             return 0
         if any(not row.pop("has_outbox") for row in rows):
             raise ArchiveError("audit receipt lacks its durable outbox entry")
+        while len(encode_batch(rows)) > MAX_BATCH_BYTES:
+            if len(rows) == 1:
+                raise ArchiveError("audit receipt exceeds its byte budget")
+            rows = rows[: len(rows) // 2]
         receipt = self.store(rows, state["now_ms"])
         sequences = [row["sequence"] for row in rows]
         with self.database.transaction():

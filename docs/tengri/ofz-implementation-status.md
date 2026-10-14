@@ -41,21 +41,21 @@ the new VMM/protocol. Fresh workspaces must use the final contract. No legacy au
 
 ## Service delivery
 
-| Service or contract                                                               | Source delivery                                             | Remaining release boundary                                              |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                               | Bootstrap, independent exporter, delivery enrollment and API activation |
-| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                    | Coordinated activation and fresh-workspace browser proof                |
-| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                               | Live host loss and three-node CNPG qualification                        |
-| Physical database promotion                                                       | #14910 merged                                               | Native CNPG and independent restore                                     |
-| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727` | Coordinated runtime/guest activation                                    |
-| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda` | Warehouse/Stage enrollment and API deployment                           |
-| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b` | Native performance, independent execution fencing and activation        |
-| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2` | Bounded observers and coordinated activation                            |
-| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c` | Deployed UI acceptance                                                  |
-| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0` | Fifty-sample qualification and coordinated activation                   |
-| Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                    | Protected inputs, independent archive and production activation         |
-| Independent immutable audit archive                                               | Local implementation on `codex/ofz-audit-export`            | CI/review, image publication, NUC and Kubernetes rollout                |
-| Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                 |
+| Service or contract                                                               | Source delivery                                                          | Remaining release boundary                                              |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                                            | Bootstrap, independent exporter, delivery enrollment and API activation |
+| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                                 | Coordinated activation and fresh-workspace browser proof                |
+| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                                            | Live host loss and three-node CNPG qualification                        |
+| Physical database promotion                                                       | #14910 merged                                                            | Native CNPG and independent restore                                     |
+| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727`              | Coordinated runtime/guest activation                                    |
+| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda`              | Warehouse/Stage enrollment and API deployment                           |
+| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b`              | Native performance, independent execution fencing and activation        |
+| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2`              | Bounded observers and coordinated activation                            |
+| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c`              | Deployed UI acceptance                                                  |
+| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0`              | Fifty-sample qualification and coordinated activation                   |
+| Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                                 | Protected inputs, independent archive and production activation         |
+| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), under validation | CI/review, image publication, NUC and Kubernetes rollout                |
+| Bounded file observers                                                            | Local implementation, unpublished                                        | Finish controller/BFF wiring and full scoped acceptance                 |
 
 The latest verified API factory receipt is main run `38509363935`. Its two-platform index is
 `registry.ide-newton.ts.net/lab/ofz@sha256:0a78811e79504c645c3a5f39f8a1da4ffeae050adf724bd6d4c5c8874f396a3b`,
@@ -64,11 +64,13 @@ That receipt proves publication of the factory revision, not deployment or compl
 
 ## Current isolated evidence
 
-- The new archive fixture passes against real TLS PostgreSQL, the owner CLI and versioned S3 in 24.33 seconds.
+- The new archive fixture passes against real TLS PostgreSQL, the owner CLI and versioned S3 in 24.50 seconds.
   It uses the production credential generator and writer policy, and SQLite WAL/FULL with synchronized object writes.
   Archive acknowledgement gates real bootstrap activation. It proves interrupted upload recovery, out-of-order
   audit commits, writer/root version-deletion denial, retention-shortening denial and process-crash readback using the
   same disks and client endpoint. Corrupt payloads, short retention, weak defaults and archive loss immediately invalidate health without acknowledging pending rows.
+  Receipt timestamps newer than the clock snapshot retain a full ninety days; oversized aggregate batches split
+  without dropping or acknowledging omitted receipts. Both defects reproduce before their corrections.
   These are isolated proofs; the NUC service and Kubernetes exporter have not been activated.
 
 - The surplus-platform-authority regression fails before the correction. The corrected real bootstrap fixture rejects
