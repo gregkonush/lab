@@ -872,6 +872,21 @@ export const latestQuotes = (
         ),
       )
     }
+    if (
+      usesWindowTradeEvidence(request, symbol) &&
+      request.candidateSymbols?.includes(symbol) !== true &&
+      intradayAgeNanos(request.observedAt, quote.eventAt) > millisecondsAsNanos(request.maximumQuoteAgeMs)
+    ) {
+      return Result.fail(
+        failure('freshness', 'intraday quote exceeds the decision-time freshness bound', {
+          symbol,
+          sourceTopic: quote.sourceTopic,
+          eventAt: quote.eventAt,
+          observedAt: request.observedAt,
+          maximumQuoteAgeMs: request.maximumQuoteAgeMs,
+        }),
+      )
+    }
     for (const evidence of request.purpose === undefined ? [quote, trade] : [quote]) {
       if (evidence === undefined) continue
       const availabilityDelay = intradayAgeNanos(evidence.ingestedAt, evidence.eventAt)
