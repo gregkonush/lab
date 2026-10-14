@@ -19,7 +19,7 @@ Restoring host readiness did not restore all applications. Two Mimir volumes rep
 The private registry had RBD mount timeouts. Kafka had unavailable partitions despite several ready Pods.
 Bayn had an unfinished GitOps deployment with old containers still requiring a removed secret key.
 
-## Impact and evidence boundaries
+## Impact summary
 
 - Turin was drained and remained cordoned until host, disk, storage, GPU validation, and four Kata runtime checks passed.
 - Turin's interruption removed three of six Ceph OSDs and one of three monitors. Altra also rebooted while Turin
@@ -75,7 +75,7 @@ All timestamps below are UTC on October 14. Pacific daylight time is seven hours
 | By 11:18       | Torghut Kargo promotion succeeded; both Flink jobs reported `RUNNING`; Sealed Secrets web had one Ready replica.    |
 | By 11:27       | Both Flink jobs had fresh completed checkpoints; Bayn controllers reported fresh crypto projections with zero lag.  |
 
-## Confirmed failure mechanisms
+## Root cause
 
 ### Missing Ceph metadata device
 
@@ -217,7 +217,79 @@ Sealed Secrets web repeatedly failed with `Exec format error` after placement on
 image's ARM64 descriptor and config contained an amd64 executable: ELF `e_machine` was 62. Restricting that web
 Deployment to amd64 restored it. The Sealed Secrets controller, keys, and sealed credentials were unchanged.
 
-## Maintenance mistakes
+## Five Whys
+
+The failure paths diverge. The chains below stop where evidence ends or where a changeable system cause is reached;
+unknown hardware or reboot causes are not filled in with assumptions.
+
+### Host startup and shared availability
+
+1. Trading dependencies, private image delivery, and other services were unavailable because physical Turin did not
+   return its storage and workload capacity after maintenance; Altra's overlapping reboot also interrupted the peer.
+2. Turin did not return that capacity because `/var` was not mounted, so CRI, kubelet, and Tailscale could not start.
+3. The mount did not complete because the XFS project-quota recount blocked in the quota-flush path.
+4. A recount occurred because the configured Talos growth path temporarily mounts without quota accounting and forces
+   a recount on the final mount, as the existing October 10 investigation had documented.
+5. The known risk reached maintenance because preflight did not require that documented growth/mount condition to be
+   resolved and verified on Turin. Configuration readback and the known boot-risk check were not an enforced gate.
+
+Action: the Turin-specific `grow: false` change is committed and verified in active and persistent configuration.
+Future maintenance must verify that readback and use the existing boot runbook before interruption. The kernel's
+underlying quota-flush stall remains unproven, and the prevention change still needs a future authorized boot test.
+
+### Missing NVMe enumeration
+
+1. Turin's three OSDs could not start after the first reboot because their common Kingston DB/WAL device was absent.
+2. The device was absent from native enumeration after that boot and returned after a chassis power cycle.
+3. The retained evidence does not isolate a PCIe, controller, firmware, power, or physical-device cause. The chain stops
+   at that uncertainty; the power cycle is an observed recovery action, not a hardware diagnosis.
+
+Action: retain serial-based inventory and collect PCIe/controller reset evidence during the next authorized
+investigation. Do not recreate OSDs or replace data merely because a device number or serial disappears from one boot.
+Altra's separately observed reboot is not attributed to this NVMe failure or to the quota mechanism.
+
+### Registry recovery delay
+
+1. Applications and publishers remained blocked after host recovery because the registry remained offline.
+2. Registry downtime was extended by a forced offline check of its 2 TiB filesystem and the restarted scan.
+3. That check was selected before a registry-specific manual-repair error had been established.
+4. CSI errors for the two Mimir claims were attributed to the registry from adjacent truncated log output, without
+   binding each error's volume handle to its actual PV, PVC, and owner.
+5. The repair decision proceeded on a narrative diagnosis rather than a required volume-specific error binding.
+   Offline ownership safeguards protected the repair itself, but did not validate the reason for choosing it.
+
+Action: require the exact error-to-volume ownership binding before selecting offline repair, alongside the existing
+exclusive ownership, snapshot, device-identity, and process-exit guards. The registry's later independently found
+metadata damage and missing journal do not retroactively validate the initial misattribution.
+
+### Bayn materialization failure after activation
+
+1. Bayn readiness degraded because the broker and cycle runner could not obtain a fresh published observation.
+2. Publication failed because the Valkey client was offline, despite passing native server and access checks.
+3. Concurrent callers dispatched a command while another caller was reconnecting the same open but unready client.
+4. The failing caller destroyed the shared socket, interrupting the other reconnect and repeating the failure.
+5. Connection ownership was not enforced across reconnect, request, and cancellation. Tests covered initially ready
+   concurrent reads and sequential recovery, but not concurrent recovery or cancellation of a queued caller.
+
+Action: PR #15047 adds that ownership boundary and both missing regressions. Local tests reproduce the old failure
+and pass with the fix. Its immutable rollout and sustained runtime acceptance remain required.
+
+### Ofz's independent archive release
+
+1. The new exporter could not acknowledge its bootstrap audit receipt because the old NUC backend rejected the
+   required encrypted write. The archive fence prevented a fabricated acknowledgement or platform activation.
+2. The reviewed NUC encryption update had not been deployed when the fenced cluster release started its exporter.
+3. Deployment was treated as blocked by SSH agent failure even though the existing direct NUC key worked through
+   its short alias.
+4. The canonical DNS name selected different SSH options because the global 1Password rule excluded only `nuc`.
+5. Effective canonical-host configuration and native access were not checked against the known working alias before
+   treating an SSH unlock as an external blocker.
+
+Action: the reviewed archive source is deployed and pinned under persistent storage with its original credentials,
+and all verified NUC names now select the same existing direct key. Native encrypted retention/readback and the
+production audit acknowledgement passed. The separate identity/runtime cutover remains fenced under its owner.
+
+## Contributing factors and maintenance mistakes
 
 The maintenance agent missed the existing October 10 XFS runbook before rebooting. That delayed diagnosis of an
 already documented risk. The agent also treated the staged configuration resource as evidence that a hard restart
@@ -231,7 +303,22 @@ The CSI log misattribution added another avoidable delay. Every storage error mu
 PV, PVC, owning controller, and current device mapping before a recovery action is selected. A nearby log line and
 an enumerated `/dev/rbdN` name are insufficient evidence.
 
-## Corrective changes delivered
+## What was not the root cause
+
+- Disabling project quotas did not recover Turin: the working boot completed its quota check with quotas still enabled.
+  A staged resource showing `false` was not evidence of the active boot configuration.
+- Console SideroLink and endpoint-watch failures did not establish the original boot trigger. They were downstream
+  of the blocked mount and unavailable CRI/Tailscale path.
+- The initial registry CSI excerpt did not prove registry filesystem damage. The explicit manual-repair errors
+  belonged to the two Mimir claims; registry corruption was established independently later.
+- The archive JAR did not omit the reported Kafka SCRAM class. Native inspection found it present, leaving the
+  runtime classloading failure unproven.
+- Passing Valkey server health alone did not explain or resolve Bayn's later failure. The native trace and local
+  regression identified a client connection ownership race.
+- A Ready host, an accepted invocation, a running Job, or one successful HTTP probe did not establish durable
+  application recovery, complete historical telemetry, or permission to trade.
+
+## Recovery actions and corrective changes
 
 [PR #15034](https://github.com/proompteng/lab/pull/15034) merged as
 `cfe63e5491577d5fbb12cc0601dc83fd1779095e` at `09:09:31Z`. The committed template was rendered, validated,
@@ -299,7 +386,9 @@ The requested Turin case-fan setting was restored and read back at 1120 RPM on F
 The CPU fan and full-speed pump remained separately controlled; the pump read 3780 RPM. These are observed values,
 not a promise of identical RPM under every future thermal condition.
 
-## Recovery state at this revision
+## Final verification
+
+Final acceptance remains open. The following inventory is an interim readback, not incident closure.
 
 At approximately `12:03Z`, the inventory contained 91 Argo Applications. 88 reported `Synced` and `Healthy`, but
 three of those had reconciliation paused, leaving 85 with both current health/sync and active reconciliation.
