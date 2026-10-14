@@ -11,7 +11,7 @@ import { createServer } from 'node:http2'
 import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import * as restate from '@restatedev/restate-sdk'
-import { Clock, Config, Effect, Layer, Metric, Schema, Schedule } from 'effect'
+import { Clock, Config, Effect, Layer, Metric, Schema } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import { embeddedBuildMetadata } from '../build'
@@ -24,8 +24,12 @@ import { makeResearchStore } from '../research-inference/store'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
-import { approvePublicInformation, makePublicInformationServices } from './restate-public-information'
-import { publicInformationEnabled, publicInformationIntervalMs, PublicInformationSource } from '../public-information'
+import {
+  approvePublicInformation,
+  makePublicInformationServices,
+  submitPublicInformationJobs,
+} from './restate-public-information'
+import { publicInformationEnabled, publicInformationIntervalMs } from '../public-information'
 import { runPublicInformation } from '../public-information-resources'
 import { sendRestateInvocation } from './restate-invocation-client'
 import { makeBaynResearchRun } from './restate-research-run'
@@ -138,8 +142,8 @@ export const researchServerProgram = Effect.gen(function* () {
       const enabled = yield* Config.Boolean('BAYN_PUBLIC_INFORMATION_ENABLED').pipe(Config.withDefault(false))
       yield* Metric.update(publicInformationEnabled, enabled ? 1 : 0)
       if (!enabled) return
-      for (const source of Object.values(PublicInformationSource))
-        yield* sendRestateInvocation(
+      yield* submitPublicInformationJobs((source) =>
+        sendRestateInvocation(
           'http://restate.restate.svc.cluster.local:8080/BaynPublicInformationControl/activate/send',
           {
             source,
@@ -147,8 +151,8 @@ export const researchServerProgram = Effect.gen(function* () {
             approval: approvePublicInformation(source, config.sourceRevision, config.approvalKey),
           },
           { timeoutMs: 5_000, headers: { 'Idempotency-Key': `public-information:${source}:${config.sourceRevision}` } },
-        ).pipe(Effect.retry({ schedule: Schedule.spaced('10 seconds'), times: 60 }))
-      yield* Effect.logInfo('Independent public information Restate jobs activated')
+        ),
+      )
     }).pipe(
       Effect.catchCause(() =>
         Effect.logWarning(

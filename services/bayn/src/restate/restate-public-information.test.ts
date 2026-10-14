@@ -1,12 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import type { Context, ObjectContext } from '@restatedev/restate-sdk'
-import { Redacted } from 'effect'
+import { Deferred, Effect, Fiber, Redacted } from 'effect'
+import { TestClock } from 'effect/testing'
 import { PublicInformationSource, publicInformationIntervalMs, type PublicInformationRun } from '../public-information'
 import {
   approvePublicInformation,
   makePublicInformationServices,
+  submitPublicInformationJobs,
   type PublicInformationRuntime,
 } from './restate-public-information'
+import { RestateInvocationClientError } from './restate-invocation-client'
 
 const revision = 'a'.repeat(40)
 const key = Redacted.make('b'.repeat(64))
@@ -15,6 +18,8 @@ const run = (source: PublicInformationSource): PublicInformationRun => ({
   source,
   sourceRevision: revision,
   completedAt: '1970-01-01T00:00:01.000Z',
+  symbols: [],
+  issuerCiks: {},
   artifacts: [],
   missingIssuerSymbols: [],
   unavailableCompanyFacts: [],
@@ -63,6 +68,32 @@ const harness = (
 }
 
 describe('independent Restate public information jobs', () => {
+  test('submits the macro job while filing activation is retrying', async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const macroSubmitted = yield* Deferred.make<void>()
+          let filingAttempts = 0
+          const fiber = yield* submitPublicInformationJobs((source) =>
+            source === PublicInformationSource.Macro
+              ? Deferred.succeed(macroSubmitted, undefined)
+              : Effect.suspend(() => {
+                  filingAttempts += 1
+                  return Effect.fail(
+                    new RestateInvocationClientError({ operation: 'send', message: 'injected', cause: null }),
+                  )
+                }),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(macroSubmitted)
+          expect(filingAttempts).toBe(1)
+          yield* TestClock.adjust('10 seconds')
+          expect(filingAttempts).toBe(2)
+          yield* Fiber.interrupt(fiber)
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    )
+  })
+
   test('activation schedules collection without awaiting or calling it', async () => {
     let captures = 0
     const h = harness({

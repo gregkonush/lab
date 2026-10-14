@@ -57,7 +57,7 @@ spec:
               app: rook-ceph-rgw
               rook_cluster: rook-ceph
       ports:
-        - port: 80
+        - port: 8080
           protocol: TCP
     - to:
         - podSelector:

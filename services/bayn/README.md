@@ -1416,7 +1416,6 @@ Flamingo preparation costs, shared allocation evidence, untouched comparisons an
 measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
 the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
 
-
 ### Independent public information jobs
 
 `BaynPublicInformation` runs one private Restate Virtual Object per `SEC_FILINGS` and `MACRO_CALENDAR` source on the
@@ -1424,6 +1423,7 @@ existing research endpoint. Activation schedules work and returns without fetchi
 bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
 polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
 sent to Restate. The research worker submits these activations asynchronously after listening and registration.
+Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
 
 The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
 checks the BLS iCalendar and Federal Reserve FOMC calendar hourly. Requests use fixed official URLs, a dedicated public
@@ -1437,7 +1437,9 @@ upload/readback verification. The generated `BUCKET_NAME` selects the bucket. Th
 no trading process receives it. Restate retains small artifact references, SHA-256, byte length, actual fetch/upload/check
 clocks, source revision, exclusions and failed URLs. It never journals the source documents. Unchanged content reuses its
 original artifact and fetch clock while advancing its successful check clock. A failed refresh retains the last good
-reference and its original timestamps. These inputs support research; they do not change active entry or exit policy.
+reference and its original timestamps within the current issuer universe. Retained symbol-to-CIK mappings keep a
+failed ticker refresh explicit while pruning references for removed issuers. These inputs support research; they do
+not change active entry or exit policy.
 
 Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
 closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,

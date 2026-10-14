@@ -1,8 +1,12 @@
-const requiredTradingHosts = new Set([
+const requiredHosts = new Set([
   'paper-api.alpaca.markets',
   'api.alpaca.markets',
   'data.alpaca.markets',
   'api.typesafe.ai',
+  'www.sec.gov',
+  'data.sec.gov',
+  'www.bls.gov',
+  'www.federalreserve.gov',
 ])
 
 export interface BaynEgressProxyContract {
@@ -35,12 +39,12 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
     throw new Error('destination-domain ACL is incomplete')
   }
   if (
-    allowedHosts.length !== requiredTradingHosts.size ||
-    new Set(allowedHosts).size !== requiredTradingHosts.size ||
-    allowedHosts.some((host) => !requiredTradingHosts.has(host))
+    allowedHosts.length !== requiredHosts.size ||
+    new Set(allowedHosts).size !== requiredHosts.size ||
+    allowedHosts.some((host) => !requiredHosts.has(host))
   ) {
     throw new Error(
-      'destination-domain ACL must contain exactly the Alpaca trading, market-data, and TypeSafe API hosts',
+      'destination-domain ACL must contain exactly the Alpaca, TypeSafe, SEC, BLS and Federal Reserve hosts',
     )
   }
 

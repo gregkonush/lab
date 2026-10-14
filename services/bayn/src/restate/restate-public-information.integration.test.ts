@@ -28,6 +28,8 @@ describeRestate('Real Restate independent public information jobs', () => {
       source,
       sourceRevision: revision,
       completedAt: '2026-10-14T00:00:00.000Z',
+      symbols: [],
+      issuerCiks: {},
       artifacts: [],
       missingIssuerSymbols: [],
       unavailableCompanyFacts: [],

@@ -1,10 +1,28 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import * as restate from '@restatedev/restate-sdk'
-import { Redacted, Result, Schema } from 'effect'
+import { Effect, Redacted, Result, Schedule, Schema } from 'effect'
 
 import { PublicInformationSource, PublicInformationRunSchema, type PublicInformationRun } from '../public-information'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
+import type { RestateInvocationClientError } from './restate-invocation-client'
+
+export const submitPublicInformationJobs = (
+  submit: (source: PublicInformationSource) => Effect.Effect<unknown, RestateInvocationClientError>,
+) =>
+  Effect.forEach(
+    Object.values(PublicInformationSource),
+    (source) =>
+      submit(source).pipe(
+        Effect.retry({ schedule: Schedule.spaced('10 seconds'), times: 60 }),
+        Effect.andThen(Effect.logInfo('Public information activation submitted')),
+        Effect.catchCause(() =>
+          Effect.logWarning('Public information activation failed; other jobs remain independent'),
+        ),
+        Effect.annotateLogs({ source }),
+      ),
+    { concurrency: 2, discard: true },
+  )
 
 const jsonSerde = restate.serde.json.schema<unknown>({})
 const Binding = Schema.Struct({ source: Schema.Enum(PublicInformationSource), sourceRevision: GitSourceRevisionSchema })

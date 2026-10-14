@@ -191,7 +191,7 @@ export const runPublicInformation = (
         message: 'Public information symbols must be unique',
       })
     if (previous?.sourceRevision !== sourceRevision) yield* (yield* PublicArtifactStore).qualify(sourceRevision)
-    return yield* collectPublicInformation(source, sourceRevision, config.symbols, previous?.artifacts ?? [])
+    return yield* collectPublicInformation(source, sourceRevision, config.symbols, previous)
   }).pipe(
     Effect.timeoutOrElse({
       duration: '10 minutes',

@@ -23,11 +23,14 @@ export const PublicArtifactSchema = Schema.Struct({
   storedAt: UtcInstantSchema,
   checkedAt: UtcInstantSchema,
 })
+const CikSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 9_999_999_999 }))
 export const PublicInformationRunSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.public-information-run.v1'),
   source: Schema.Enum(PublicInformationSource),
   sourceRevision: GitSourceRevisionSchema,
   completedAt: UtcInstantSchema,
+  symbols: Schema.Array(SymbolSchema).check(Schema.isMaxLength(100)),
+  issuerCiks: Schema.Record(SymbolSchema, CikSchema),
   artifacts: Schema.Array(PublicArtifactSchema).check(Schema.isMaxLength(201)),
   missingIssuerSymbols: Schema.Array(SymbolSchema),
   unavailableCompanyFacts: Schema.Array(Schema.Int),
@@ -60,7 +63,7 @@ const tickerRows = Schema.Record(
   Schema.String,
   Schema.Struct({
     ticker: Schema.String,
-    cik_str: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 9_999_999_999 })),
+    cik_str: CikSchema,
   }),
 )
 const companyIdentity = Schema.Struct({ cik: Schema.Union([Schema.String, Schema.Int]) })
@@ -77,16 +80,40 @@ export const collectPublicInformation = (
   source: PublicInformationSource,
   sourceRevision: string,
   symbols: readonly string[],
-  previous: readonly PublicArtifact[],
+  previous: PublicInformationRun | null,
   pace: Effect.Effect<void> = Effect.sleep('1 second'),
 ) =>
   Effect.gen(function* () {
     const startedAtMs = yield* Clock.currentTimeMillis
     const http = yield* HttpClient.HttpClient
     const store = yield* PublicArtifactStore
-    const retained = new Map(previous.map((artifact) => [artifact.url, artifact]))
+    const universe = new Set(symbols)
+    let ciks = new Map(
+      source === PublicInformationSource.Filings
+        ? Object.entries(previous?.issuerCiks ?? {}).filter(([symbol]) => universe.has(symbol))
+        : [],
+    )
+    const tickerUrl = 'https://www.sec.gov/files/company_tickers.json'
+    const macroUrls = [
+      'https://www.bls.gov/schedule/news_release/bls.ics',
+      'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm',
+    ]
+    const issuerUrls = (cik: number) => {
+      const identity = String(cik).padStart(10, '0')
+      return [
+        `https://data.sec.gov/submissions/CIK${identity}.json`,
+        `https://data.sec.gov/api/xbrl/companyfacts/CIK${identity}.json`,
+      ]
+    }
+    const permittedUrls = () =>
+      new Set(
+        source === PublicInformationSource.Filings ? [tickerUrl, ...[...ciks.values()].flatMap(issuerUrls)] : macroUrls,
+      )
+    const priorUrls = permittedUrls()
+    const retained = new Map(
+      (previous?.artifacts ?? []).filter(({ url }) => priorUrls.has(url)).map((artifact) => [artifact.url, artifact]),
+    )
     const failures: PublicInformationRun['failures'][number][] = []
-    let missingIssuerSymbols: string[] = []
     const unavailableCompanyFacts: number[] = []
     const capture = (url: string, expectedCik?: number) =>
       Effect.gen(function* () {
@@ -198,20 +225,19 @@ export const collectPublicInformation = (
         }),
       )
     if (source === PublicInformationSource.Filings) {
-      const tickers = yield* attempt('https://www.sec.gov/files/company_tickers.json')
+      const tickers = yield* attempt(tickerUrl)
       if (Result.isSuccess(tickers)) {
         const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(tickerRows))(tickers.success).pipe(
           Effect.result,
         )
         if (Result.isFailure(decoded))
           failures.push({
-            url: 'https://www.sec.gov/files/company_tickers.json',
+            url: tickerUrl,
             stage: 'ticker-mapping',
             status: null,
           })
         else {
-          const universe = new Set(symbols)
-          const ciks = new Map<string, number>()
+          ciks = new Map<string, number>()
           for (const row of Object.values(decoded.success))
             if (universe.has(row.ticker)) {
               if (ciks.has(row.ticker))
@@ -221,7 +247,8 @@ export const collectPublicInformation = (
                 })
               ciks.set(row.ticker, row.cik_str)
             }
-          missingIssuerSymbols = symbols.filter((symbol) => !ciks.has(symbol)).sort()
+          const permitted = permittedUrls()
+          for (const url of retained.keys()) if (!permitted.has(url)) retained.delete(url)
           for (const cik of new Set(ciks.values())) {
             const identity = String(cik).padStart(10, '0')
             yield* attempt(`https://data.sec.gov/submissions/CIK${identity}.json`, cik)
@@ -233,8 +260,7 @@ export const collectPublicInformation = (
         }
       }
     } else {
-      yield* attempt('https://www.bls.gov/schedule/news_release/bls.ics')
-      yield* attempt('https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm')
+      for (const url of macroUrls) yield* attempt(url)
     }
     const completedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)
     const result: PublicInformationRun = {
@@ -242,8 +268,11 @@ export const collectPublicInformation = (
       source,
       sourceRevision,
       completedAt,
+      symbols: source === PublicInformationSource.Filings ? [...universe].sort() : [],
+      issuerCiks: Object.fromEntries([...ciks].sort(([a], [b]) => a.localeCompare(b))),
       artifacts: [...retained.values()].sort((a, b) => a.url.localeCompare(b.url)),
-      missingIssuerSymbols,
+      missingIssuerSymbols:
+        source === PublicInformationSource.Filings ? symbols.filter((symbol) => !ciks.has(symbol)).sort() : [],
       unavailableCompanyFacts,
       failures,
     }
