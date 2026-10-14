@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join, relative } from 'node:path'
 import { isMap, isSeq, parseAllDocuments, parseDocument } from 'yaml'
 
 type Rule = {
@@ -94,6 +96,52 @@ function manifest(path: string) {
   expect(document.errors).toEqual([])
   return document
 }
+
+test('controller identity reaches the mounted SPIFFE workload API', () => {
+  const controller = cutoverManifest('tengri', 'Deployment', 'tengri')
+  const mounts = controller.getIn(['spec', 'template', 'spec', 'containers', 0, 'volumeMounts'])
+  if (!isSeq(mounts)) throw new Error('Missing controller volume mounts')
+  expect(mounts.toJSON()).toContainEqual({
+    name: 'workload-api',
+    mountPath: '/spiffe-workload-api',
+    readOnly: true,
+  })
+})
+
+test('Nanoagent promotion rewrites the controller ConfigMap reference', () => {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'tengri-promotion-')))
+  const image = `registry.ide-newton.ts.net/lab/nanoagent@sha256:${'e'.repeat(64)}`
+  try {
+    writeFileSync(
+      join(directory, 'kustomization.yaml'),
+      JSON.stringify({
+        apiVersion: 'kustomize.config.k8s.io/v1beta1',
+        kind: 'Kustomization',
+        resources: [relative(directory, new URL('../../../../argocd/applications/tengri', import.meta.url).pathname)],
+        configMapGenerator: [{ name: 'tengri-release', behavior: 'merge', literals: [`NANOAGENT_IMAGE=${image}`] }],
+      }),
+    )
+    const rendered = parseAllDocuments(
+      execFileSync('kustomize', ['build', directory, '--load-restrictor', 'LoadRestrictionsNone'], {
+        encoding: 'utf8',
+      }),
+    )
+    const release = rendered.find(
+      (entry) => entry.get('kind') === 'ConfigMap' && entry.getIn(['data', 'NANOAGENT_IMAGE']) === image,
+    )
+    const controller = rendered.find(
+      (entry) => entry.get('kind') === 'Deployment' && entry.getIn(['metadata', 'name']) === 'tengri',
+    )
+    if (!release || !controller) throw new Error('Missing promoted image contract')
+    const env = controller.getIn(['spec', 'template', 'spec', 'containers', 0, 'env'])
+    if (!isSeq(env)) throw new Error('Missing controller environment')
+    const reference = env.items.find((entry) => isMap(entry) && entry.get('name') === 'TENGRI_DEFAULT_IMAGE')
+    if (!isMap(reference)) throw new Error('Missing guest image reference')
+    expect(reference.getIn(['valueFrom', 'configMapKeyRef', 'name'])).toBe(release.getIn(['metadata', 'name']))
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 test('the namespace quota covers six slots at the accepted native memory limit', () => {
   function mib(value: unknown) {

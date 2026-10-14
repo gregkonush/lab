@@ -73,7 +73,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: NANOAGENT_IMAGE
-                  name: tengri-release-dfck5g425d
+                  name: tengri-release
             - name: TENGRI_PUBLIC_URL
               value: https://tengri.proompteng.ai
             - name: TENGRI_PREVIEW_URL_TEMPLATE
@@ -136,6 +136,11 @@ spec:
             periodSeconds: 2
             timeoutSeconds: 2
           volumeMounts:
+            - mountPath: /spiffe-workload-api
+              name: workload-api
+              readOnly: true
+            - mountPath: /tmp
+              name: tmp
             - mountPath: /var/run/tengri/internal
               name: internal-request-key
               readOnly: true

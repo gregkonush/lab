@@ -290,36 +290,43 @@ pub async fn connect_vsock(path: &Path, port: u32) -> anyhow::Result<UnixStream>
 
 pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value> {
     timeout(Duration::from_secs(30), async {
-        let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
-        let mut command = command.clone();
-        if command["action"] == "resume" {
-            command["unixTimeNanos"] = json!(
-                chrono::Utc::now()
-                    .timestamp_nanos_opt()
-                    .context("host clock overflow")?
+        loop {
+            let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
+            let mut command = command.clone();
+            if command["action"] == "resume" {
+                command["unixTimeNanos"] = json!(
+                    chrono::Utc::now()
+                        .timestamp_nanos_opt()
+                        .context("host clock overflow")?
+                );
+            }
+            let mut bytes = serde_json::to_vec(&command)?;
+            bytes.push(b'\n');
+            let sent = Instant::now();
+            stream.write_all(&bytes).await?;
+            let mut reader = BufReader::new(stream);
+            let mut reply = String::new();
+            use tokio::io::AsyncReadExt;
+            (&mut reader).take(4097).read_line(&mut reply).await?;
+            ensure!(
+                reply.len() <= 4096 && reply.ends_with('\n'),
+                "invalid guest control response"
             );
+            let reply: Value = serde_json::from_str(&reply)?;
+            ensure!(
+                reply.get("ok").and_then(Value::as_bool) == Some(true),
+                "guest lifecycle failed: {}",
+                reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("invalid response")
+            );
+            // Snapshot page faults can delay the guest after the vsock handshake.
+            // Repeat the same idempotent claim within half its one-second clock skew budget.
+            if command["action"] != "resume" || sent.elapsed() <= Duration::from_millis(500) {
+                return Ok::<_, anyhow::Error>(reply);
+            }
         }
-        let mut bytes = serde_json::to_vec(&command)?;
-        bytes.push(b'\n');
-        stream.write_all(&bytes).await?;
-        let mut reader = BufReader::new(stream);
-        let mut reply = String::new();
-        use tokio::io::AsyncReadExt;
-        (&mut reader).take(4097).read_line(&mut reply).await?;
-        ensure!(
-            reply.len() <= 4096 && reply.ends_with('\n'),
-            "invalid guest control response"
-        );
-        let reply: Value = serde_json::from_str(&reply)?;
-        ensure!(
-            reply.get("ok").and_then(Value::as_bool) == Some(true),
-            "guest lifecycle failed: {}",
-            reply
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("invalid response")
-        );
-        Ok::<_, anyhow::Error>(reply)
     })
     .await
     .context("guest lifecycle timed out")?
@@ -387,6 +394,41 @@ pub fn evict_memory(_: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resume_refreshes_clock_after_slow_guest_readiness() {
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let mut ready_at = 0;
+            for round in 1..=2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                assert_eq!(line, format!("CONNECT {GUEST_CONTROL_PORT}\n"));
+                reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                let command: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(command["action"], "resume");
+                if round == 1 {
+                    sleep(Duration::from_millis(650)).await;
+                    ready_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+                } else {
+                    assert!(command["unixTimeNanos"].as_i64().unwrap() >= ready_at);
+                }
+                let reply = format!("{{\"ok\":true,\"round\":{round}}}\n");
+                reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        let reply = guest_command(&path, &json!({"action": "resume"}))
+            .await
+            .unwrap();
+        fs::remove_file(path).await.unwrap();
+        assert_eq!(reply["round"], 2);
+        peer.await.unwrap();
+    }
 
     #[tokio::test]
     async fn resume_clock_is_sampled_after_the_vsock_handshake() {
