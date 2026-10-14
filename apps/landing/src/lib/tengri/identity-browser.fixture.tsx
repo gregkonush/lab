@@ -4,6 +4,7 @@ import { AccessPanel } from '@/components/tengri/access-panel'
 import { startTengriSignIn, signOutTengri } from './auth-client'
 
 function Fixture() {
+  const workspaceUid = new URLSearchParams(window.location.search).get('workspace') || undefined
   const [authenticated, setAuthenticated] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -24,7 +25,7 @@ function Fixture() {
           >
             Sign out
           </button>
-          <AccessPanel />
+          <AccessPanel workspaceUid={workspaceUid} />
         </>
       ) : (
         <button type="button" onClick={() => void startTengriSignIn().catch((cause) => setError(String(cause)))}>

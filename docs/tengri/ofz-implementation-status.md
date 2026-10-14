@@ -7,12 +7,12 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is [#14920](https://github.com/proompteng/lab/pull/14920), the explicit Viewer scope policy.
-Its parent, [#14913](https://github.com/proompteng/lab/pull/14913), merged at
-`9bb95305b8dc72e7465fba35de6998714168a37b` after CI and both actionable review fixes passed. This includes the Ofz API
-builds and all four native Tengri/Nanoagent image builds. The Viewer layer is rebased onto current main, with unchanged
-tested policy code; its published head must pass CI and review before merge. Work stays on this PR until it merges.
-Passing image builds do not establish native KVM performance or deployed authorization.
+The active source frontier is [#14921](https://github.com/proompteng/lab/pull/14921), the Viewer administration UI.
+Its policy dependency, [#14920](https://github.com/proompteng/lab/pull/14920), merged at
+`70b513e03287b33af582520bb21671f4a99e92c2` after the exact published head passed CI, including both API and frontend
+architectures and all four native Tengri/Nanoagent builds. The UI layer is rebased onto this merged policy. Its request
+budget and target-administration fixes pass local and real browser qualification; the published head must pass CI before merge. Work
+stays on this PR until it merges. Passing image builds do not establish native KVM performance or deployed authorization.
 
 The 2026-10-13 live readback uses `galactic-tailscale`. Ofz has three SpiceDB replicas and two Playground replicas,
 with three PostgreSQL Pods. There is no Ofz API Deployment and there are no Tengri MicroVMs. The
@@ -34,8 +34,8 @@ the new VMM/protocol. Fresh workspaces must use the final contract. No legacy au
 | Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727` | Coordinated runtime/guest activation                                    |
 | API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda` | Warehouse/Stage enrollment and API deployment                           |
 | Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b` | Native performance, independent execution fencing and activation        |
-| Explicit Viewer scopes                                                            | #14920 is the only active PR                                | Current-head CI and review, bounded observers and cutover               |
-| Viewer administration UI                                                          | #14921 published; local continuation qualified              | Merge after #14920 and deployed UI acceptance                           |
+| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2` | Bounded observers and coordinated activation                            |
+| Viewer administration UI                                                          | #14921 is the only active PR                                | Current-head CI and deployed UI acceptance                              |
 | Exact-target protocol 4                                                           | #14923 published; local continuation qualified              | Merge after #14921, native proof and coordinated activation             |
 | Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                 |
 
@@ -64,9 +64,20 @@ That receipt proves publication of the factory revision, not deployment or compl
   These checks use synthetic GitHub identities and virtual passkeys.
 - The Viewer policy continuation, rebased onto the maintenance correction, passes nine Ofz unit tests, Clippy and
   55 real control commands with 174 immutable receipts. Both pending-scope and in-flight narrowing regressions pass.
-- The prepared Viewer UI continuation passes 338 BFF/component tests, TypeScript, lint and 71 real browser assertions.
+- The current Viewer UI passes 342 BFF/component tests, TypeScript, lint and 81 real browser assertions.
   It verifies metadata-only defaults, inline rejection before identity lookup, exact scopes, new-subject consent,
-  narrowing, screenshot consent and content removal without starting the workspace.
+  narrowing, screenshot consent and content removal without starting the workspace. Encoded commands must fit the
+  existing 64 KiB request budget, including escaping and metadata. Three regressions reproduce the prior size mismatch;
+  the browser now rejects an oversized scope inline without an identity lookup or policy change.
+  An accepted 64 KiB command also reproduced a late 429 from the private gRPC envelope caps. Both sender and decoder
+  now allow 128 KiB envelopes; the real BFF-to-Ofz boundary command commits and its scope can be removed afterward.
+  The browser also reproduces the old form's trimming of a whitespace-bearing file root, thread ID and terminal ID.
+  Target splitting now preserves each nonempty line exactly; the complete fixture passes with those literal targets.
+  The roster labels and quotes each target kind, distinguishes identical thread/terminal IDs, and does not advertise
+  browser access on metadata-only diagnostic grants. Invalid Unicode that protobuf would replace is rejected.
+  CI exposed a preview fixture reusing an expired context after earlier operations. It now creates a fresh five-second
+  context at preview submission; production deadlines and the expired-submission denial remain unchanged. The latest
+  combined browser proof passes after this correction, alongside 142 runtime units, three CRD tests and eleven contracts.
 - The prepared protocol-4 continuation passes Rust units/contracts, Go race/vet on macOS and native Linux, real RPC/SPIFFE
   interoperability, deterministic vector parity and 26 shared SQL tests. Ofz retains the full scope; signed guest proofs
   carry one exact authorized target and output budget. Retired protocol-3 proofs remain rejected.
