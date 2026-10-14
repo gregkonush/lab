@@ -32,6 +32,7 @@ export const expenseSourceFixture = (
     missing?: boolean
     rejected?: boolean
     abandoned?: boolean
+    notDispatched?: boolean
   } = {},
 ): InferenceExpenseSource => {
   const { requestId: _id, ...material } = evaluationRequestFixture()
@@ -50,25 +51,33 @@ export const expenseSourceFixture = (
           schemaVersion: 'bayn.jev-evaluation-receipt.v1',
           requestId: request.requestId,
           startedAt: request.observedAt,
-          completedAt: request.observedAt,
-          outcome: options.rejected
+          completedAt: options.notDispatched ? request.expiresAt : request.observedAt,
+          outcome: options.notDispatched
             ? {
                 status: JevOutcome.Failed,
-                failure: JevFailure.Response,
-                httpStatus: 429,
-                responseHash: canonicalHashV1(response),
-                rejectedResponse: response,
+                failure: JevFailure.NotDispatched,
+                httpStatus: null,
+                responseHash: null,
+                rejectedResponse: null,
               }
-            : {
-                status: JevOutcome.Received,
-                inference: {
-                  requestHash: request.requestHash,
+            : options.rejected
+              ? {
+                  status: JevOutcome.Failed,
+                  failure: JevFailure.Response,
+                  httpStatus: 429,
                   responseHash: canonicalHashV1(response),
-                  startedAt: request.observedAt,
-                  completedAt: request.observedAt,
-                  response,
+                  rejectedResponse: response,
+                }
+              : {
+                  status: JevOutcome.Received,
+                  inference: {
+                    requestHash: request.requestHash,
+                    responseHash: canonicalHashV1(response),
+                    startedAt: request.observedAt,
+                    completedAt: request.observedAt,
+                    response,
+                  },
                 },
-              },
         }),
       )
   const resolution = Result.getOrThrow(

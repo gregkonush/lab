@@ -34,6 +34,9 @@ Secrets or Valkey resources. Installing an unrelated CRD does not change cleanup
 Before introducing a new private-image owner, add its resource to the protection
 contract and the matching list-only RBAC rule. Tests require the rules to match.
 Missing retained manifests or blobs also fail preparation before uploads are stopped.
+Online preparation has a 45-minute execution budget. The Job retains its two-hour
+deadline; seven minutes of termination grace covers helper deletion and the
+five-minute restoration wait if it is interrupted during collection.
 Resolve a stale reference at its owning resource rather than bypassing protection.
 
 The manual phases below use the same committed implementation for recovery or
