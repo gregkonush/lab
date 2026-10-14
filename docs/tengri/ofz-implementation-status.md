@@ -7,12 +7,18 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is [#14921](https://github.com/proompteng/lab/pull/14921), the Viewer administration UI.
-Its policy dependency, [#14920](https://github.com/proompteng/lab/pull/14920), merged at
-`70b513e03287b33af582520bb21671f4a99e92c2` after the exact published head passed CI, including both API and frontend
-architectures and all four native Tengri/Nanoagent builds. The UI layer is rebased onto this merged policy. Its request
-budget and target-administration fixes pass local and real browser qualification; the published head must pass CI before merge. Work
-stays on this PR until it merges. Passing image builds do not establish native KVM performance or deployed authorization.
+The active source frontier is [#14923](https://github.com/proompteng/lab/pull/14923), the mandatory protocol-4 contract.
+Its UI dependency, [#14921](https://github.com/proompteng/lab/pull/14921), merged at
+`936489dd651c5896ba35abc47ab1065eb479d49c` after its exact published head passed CI, including both API and frontend
+architectures and all four native Tengri/Nanoagent builds. All three review findings are resolved. The protocol layer
+is rebased onto this merged UI. Work stays on this PR until it merges. Passing image builds do not establish native
+KVM performance or deployed authorization.
+
+Main run `38477121352` fails native KVM acceptance after three successful sleep/resume cycles on both architectures.
+AMD64 times out during the destructive disk-error probe; ARM64 reaches a final identity assertion that still expects
+an obsolete fixture name. The protocol continuation corrects that assertion and proves the login shell is ready before
+destroying its home disk. It retains the EIO assertion, responsiveness checks and resource/deadline limits. Native
+execution of the correction remains required before image publication and activation.
 
 The 2026-10-13 live readback uses `galactic-tailscale`. Ofz has three SpiceDB replicas and two Playground replicas,
 with three PostgreSQL Pods. There is no Ofz API Deployment and there are no Tengri MicroVMs. The
@@ -35,8 +41,8 @@ the new VMM/protocol. Fresh workspaces must use the final contract. No legacy au
 | API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda` | Warehouse/Stage enrollment and API deployment                           |
 | Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b` | Native performance, independent execution fencing and activation        |
 | Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2` | Bounded observers and coordinated activation                            |
-| Viewer administration UI                                                          | #14921 is the only active PR                                | Current-head CI and deployed UI acceptance                              |
-| Exact-target protocol 4                                                           | #14923 published; local continuation qualified              | Merge after #14921, native proof and coordinated activation             |
+| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c` | Deployed UI acceptance                                                  |
+| Exact-target protocol 4                                                           | #14923 is the only active PR                                | Current-head CI, native proof and coordinated activation                |
 | Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                 |
 
 The verified API factory receipt is main run `38397202365`. Its two-platform index is
@@ -79,8 +85,11 @@ That receipt proves publication of the factory revision, not deployment or compl
   context at preview submission; production deadlines and the expired-submission denial remain unchanged. The latest
   combined browser proof passes after this correction, alongside 142 runtime units, three CRD tests and eleven contracts.
 - The prepared protocol-4 continuation passes Rust units/contracts, Go race/vet on macOS and native Linux, real RPC/SPIFFE
-  interoperability, deterministic vector parity and 26 shared SQL tests. Ofz retains the full scope; signed guest proofs
-  carry one exact authorized target and output budget. Retired protocol-3 proofs remain rejected.
+  interoperability, deterministic vector parity and 26 shared SQL tests. The latest rebase passes 142 runtime units,
+  three CRD tests, eleven signed contracts, Clippy, macOS Go race/vet, real Rust/Go RPC/SPIFFE interoperability and all
+  26 shared SQL tests on NUC in 70.86 seconds. Local Go uses 1.27.1; native CI retains the pinned 1.25.5 toolchain.
+  Ofz retains the full scope; signed guest proofs carry one exact authorized target and output budget. Retired
+  protocol-3 proofs remain rejected.
 - Earlier physical promotion recovers unchanged clients in 2.84 seconds, preserves the unexpired consumed nonce and
   matches all 18 control-table hashes. The complete prepared HA renders validate 65 resources and reject 15 regressions.
   These isolated proofs do not establish deployed CNPG recovery or an independent restore.
@@ -90,8 +99,9 @@ That receipt proves publication of the factory revision, not deployment or compl
   remain required.
 - The PR cache policy passes Actionlint and 57 routing/release contract tests. Same-repository PRs use separate
   `cache-pr-<number>-<architecture>` tags per service. Main retains its own cache. The first Nanoagent cache exports
-  took about 25.5 minutes per architecture. Exported registry manifests are verified; warm reuse and any timing benefit
-  remain unmeasured.
+  took about 25.5 minutes per architecture. Exported registry manifests are verified. A subsequent #14921 ARM64 Tengri
+  build with unchanged Rust sources completed in 2m4s using the PR cache; the next Rust fixture change required a full
+  compilation. This does not establish a controlled performance benchmark or eliminate source rebuilds.
 
 ## Remaining implementation and cutover
 

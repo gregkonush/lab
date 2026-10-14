@@ -45,8 +45,9 @@ before acknowledging completion. The stable slot Pod, home PVC, TAP, and small h
 resource requests still reserve resume capacity even while resident guest RAM is released.
 
 This source uses one runtime. The previous Kata Pod lifecycle and guest SPIRE/token-refresh implementation are
-removed. The hard cutover is separately authorized and must preserve existing home PVC UIDs. Source and local tests
-do not establish a deployed migration or the authenticated p95 latency target.
+removed. The authorized hard cutover deleted the old workspaces and homes. Retire the old unclaimed prepared pool
+before activating the new contract; fresh workspaces receive new homes and grants. Source and local tests do not
+establish a deployed migration or the authenticated p95 latency target.
 
 ## Slot ownership and failure handling
 
@@ -65,8 +66,8 @@ without creating a runtime claim. Termination observes the current claim under t
 slot receives a deterministic retirement identity solely for stop acknowledgement.
 
 Runtime epochs are mandatory in private lifecycle claims and owned journals. Paired controller/guest artifacts and
-new root disks are required at the coordinated hard cutover; retain the existing home PVCs. Scoped observers and the
-independent host execution deadline remain separate authorization work.
+new root disks are required at the coordinated hard cutover. No old home or journal is imported. Scoped observers and
+the independent host execution deadline remain separate authorization work.
 
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
