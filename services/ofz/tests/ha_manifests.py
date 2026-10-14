@@ -2,6 +2,7 @@
 
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -387,6 +388,18 @@ def validate(targets):
         "sslmode=verify-full" in kc.get("KC_DB_URL", ""),
         "keycloak: database identity verification required",
     )
+    keycloak_pod = resource(targets, "keycloak", "StatefulSet", "keycloak")["spec"][
+        "template"
+    ]["spec"]
+    require(
+        next(
+            volume
+            for volume in keycloak_pod["volumes"]
+            if volume["name"] == "database-ca"
+        )["secret"]["defaultMode"]
+        == 0o440,
+        "keycloak: database CA files must retain mode 0440",
+    )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
         "keycloak: bounded connection pool required",
@@ -398,15 +411,89 @@ def validate(targets):
         "keycloak: database host spread required",
     )
     require(
+        database["affinity"].get("tolerations")
+        == [
+            {
+                "key": "workload.proompteng.ai/compute-local",
+                "operator": "Equal",
+                "value": "true",
+                "effect": "NoSchedule",
+            }
+        ],
+        "keycloak: third database host requires the exact compute-local toleration",
+    )
+    require(
         database["postgresql"]["synchronous"]
         == {"method": "any", "number": 1, "dataDurability": "required"},
         "keycloak: synchronous durability required",
+    )
+    checkpoint = resource(targets, "keycloak", "Backup", "keycloak-server-26-7-4")
+    require(
+        checkpoint["metadata"]["annotations"]
+        == {
+            "argocd.argoproj.io/sync-wave": "-10",
+            "argocd.argoproj.io/sync-options": "Prune=false,Delete=false",
+        }
+        and checkpoint["spec"]["method"] == "volumeSnapshot"
+        and checkpoint["spec"]["cluster"]["name"] == "keycloak-db"
+        and checkpoint["spec"]["online"] is True,
+        "keycloak: the server upgrade requires a fresh protected checkpoint before its wave",
     )
     ingress = resource(targets, "keycloak", "IngressRoute", "keycloak")["spec"]
     require(
         ingress["entryPoints"] == ["websecure"]
         and ingress["tls"]["secretName"] == "auth-proompteng-ai-tls",
         "keycloak: reviewed HTTPS certificate required",
+    )
+    for name in ["keycloak-tengri-broker", "keycloak-tengri-bff"]:
+        credential = resource(targets, "keycloak", "SealedSecret", name)
+        require(
+            credential["metadata"]
+            .get("annotations", {})
+            .get("argocd.argoproj.io/sync-wave")
+            == "-9",
+            "keycloak: outer SealedSecrets must precede realm bootstrap",
+        )
+    certificate = resource(targets, "keycloak", "Certificate", "auth-proompteng-ai")
+    require(
+        certificate["spec"]["dnsNames"] == ["auth.proompteng.ai"]
+        and certificate["spec"]["secretName"] == ingress["tls"]["secretName"],
+        "keycloak: issuer certificate must match the ingress and public hostname",
+    )
+    tunnel = resource(targets, "cloudflare", "Deployment", "cloudflared-deployment")
+    config_name = tunnel["spec"]["template"]["spec"]["volumes"][0]["configMap"]["name"]
+    require(
+        config_name.startswith("cloudflared-config-")
+        and config_name != "cloudflared-config",
+        "keycloak: changed tunnel configuration must roll its serving Pod",
+    )
+    config = resource(targets, "cloudflare", "ConfigMap", config_name)["data"][
+        "config.yaml"
+    ]
+    routes = json.loads(
+        subprocess.check_output(["yq", "-o=json", "."], input=config, text=True)
+    )["ingress"]
+    issuer_routes = [
+        route for route in routes if route.get("hostname") == "auth.proompteng.ai"
+    ]
+    require(
+        len(issuer_routes) == 1, "keycloak: one exact public issuer route is required"
+    )
+    issuer_route = issuer_routes[0]
+    require(
+        issuer_route["service"] == "https://traefik.traefik.svc.cluster.local:443"
+        and issuer_route.get("originRequest", {})
+        == {"originServerName": "auth.proompteng.ai"},
+        "keycloak: public issuer route must verify the origin TLS identity",
+    )
+    require(
+        routes.index(issuer_route)
+        < next(
+            index
+            for index, route in enumerate(routes)
+            if route.get("hostname") == "*.proompteng.ai"
+        ),
+        "keycloak: verified issuer route must precede the wildcard route",
     )
     network = resource(targets, "keycloak", "NetworkPolicy", "keycloak-server")["spec"]
     for direction, peer_key in [("ingress", "from"), ("egress", "to")]:
@@ -433,7 +520,7 @@ def main():
     directory = Path(sys.argv[1])
     targets = {
         name: json.loads((directory / f"{name}.json").read_text())
-        for name in ["tengri", "proompteng", "keycloak", "ofz", "crd"]
+        for name in ["tengri", "proompteng", "keycloak", "ofz", "crd", "cloudflare"]
     }
     validate(targets)
     mutations = [
@@ -463,9 +550,46 @@ def main():
         lambda data: container(data, "keycloak", "StatefulSet", "keycloak")[
             "env"
         ].append({"name": "KC_CACHE_EMBEDDED_MTLS_ENABLED", "value": "false"}),
+        lambda data: resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+            "template"
+        ]["spec"]["volumes"][0]["secret"].update(defaultMode=440),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "postgresql"
         ]["synchronous"].update(dataDurability="preferred"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "affinity"
+        ].update(tolerations=[]),
+        lambda data: resource(data, "keycloak", "Backup", "keycloak-server-26-7-4")[
+            "metadata"
+        ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
+        lambda data: resource(
+            data, "keycloak", "SealedSecret", "keycloak-tengri-broker"
+        )["metadata"].pop("annotations"),
+        lambda data: resource(data, "keycloak", "Certificate", "auth-proompteng-ai")[
+            "spec"
+        ].update(dnsNames=["other.proompteng.ai"]),
+        lambda data: resource(
+            data, "cloudflare", "Deployment", "cloudflared-deployment"
+        )["spec"]["template"]["spec"]["volumes"][0]["configMap"].update(
+            name="cloudflared-config"
+        ),
+        lambda data: next(
+            item for item in data["cloudflare"] if item and item["kind"] == "ConfigMap"
+        )["data"].update({"config.yaml": "ingress: []\n"}),
+        lambda data: next(
+            item for item in data["cloudflare"] if item and item["kind"] == "ConfigMap"
+        )["data"].update(
+            {
+                "config.yaml": next(
+                    item
+                    for item in data["cloudflare"]
+                    if item and item["kind"] == "ConfigMap"
+                )["data"]["config.yaml"].replace(
+                    "originServerName: auth.proompteng.ai",
+                    "originServerName: auth.proompteng.ai\n      noTLSVerify: true",
+                )
+            }
+        ),
         lambda data: resource(
             data, "tengri", "CustomResourceDefinition", "microvms.runtime.proompteng.ai"
         )["spec"].update(versions=[]),
@@ -537,7 +661,9 @@ def main():
         except ValueError:
             continue
         raise RuntimeError(f"HA regression {index + 1} was accepted")
-    print(f"PASS: four rendered HA targets and {len(mutations)} rejected regressions")
+    print(
+        f"PASS: {len(targets) - 1} rendered targets and {len(mutations)} rejected regressions"
+    )
 
 
 if __name__ == "__main__":
