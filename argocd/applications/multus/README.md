@@ -10,6 +10,12 @@ remain in place. Only pods explicitly selecting a NetworkAttachmentDefinition re
 The macvlan init container installs only `macvlan`; it does not replace Talos's Flannel, bridge, or IPAM binaries.
 Whereabouts maintains cluster-wide address leases and cleans up stale allocations.
 
+The Multus daemon reserves 256 MiB and is limited to 1 GiB. Turin's daemon repeatedly
+exceeded the previous 256 MiB limit during pod creation. Those OOM kills blocked
+local-path helpers, runner scratch claims, and CI scheduling even while the node
+reported Ready. Verify daemon restarts, new pod network setup, and scratch claim
+binding after resource changes; node readiness alone does not establish recovery.
+
 Ceph's [storage network](../rook-ceph/storage-network.yaml) reserves `10.100.0.64` through `10.100.0.239` on
 the real `storage0` link. The [Omni template](../../../devices/galactic/omni/cluster-template.yaml) creates that
 single-port bond on Altra and Turin. Physical ports are selected by permanent MAC, independently of PCIe slot names.
