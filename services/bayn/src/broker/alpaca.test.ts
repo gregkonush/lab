@@ -192,6 +192,24 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  test.each([
+    ['ETHUSD', 'us_equity'],
+    ['ETH/USD', 'us_equity'],
+    ['AAPL', 'crypto'],
+    ['XRPUSD', 'crypto'],
+    ['ETH/BTC', 'crypto'],
+    ['ethusd', 'crypto'],
+  ])('rejects mismatched or unsupported broker position %s in %s', async (symbol, assetClass) => {
+    const response = [{ ...positionResponse, symbol, asset_class: assetClass }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
+    expect(failure).toMatchObject({
+      operation: 'positions',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
+  })
+
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
     let method = ''
     let url = ''
