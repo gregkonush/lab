@@ -1,3 +1,4 @@
+import { instrumentMarket, MarketKind } from '../../instruments'
 import type { SimulatedMarketSnapshot, SimulatedVerifiedMarketSnapshot } from '../streaming/snapshot'
 import type { SimulatedSnapshotReference } from '../streaming/simulation-service'
 import type { StreamingMarketSnapshot, StreamingVerifiedMarketSnapshot } from '../streaming/snapshot'
@@ -57,12 +58,12 @@ export interface IntradayArchiveWatermark {
   readonly inclusiveLastOffset: string
 }
 
-export const usesCandidateWindowTrade = (
+export const usesWindowTradeEvidence = (
   request: Pick<IntradaySnapshotQuery, 'candidateEvidencePolicy' | 'candidateSymbols'>,
   symbol: string,
 ): boolean =>
   request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade &&
-  request.candidateSymbols?.includes(symbol) === true
+  (request.candidateSymbols?.includes(symbol) === true || instrumentMarket(symbol) === MarketKind.Crypto)
 
 export interface IntradaySnapshotRequest extends IntradaySnapshotQuery {
   /** Exact Kafka-backed archive version captured before this snapshot is loaded. */

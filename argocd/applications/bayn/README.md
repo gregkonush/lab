@@ -333,7 +333,7 @@ egress and its token-authenticated deployment activation call is made only by th
 Equities and `BTC/USD`, `ETH/USD`, `SOL/USD` use one account controller, planner, intent store, mutation coordinator,
 broker adapter and accounting pipeline. Market profiles select the recorded producer contract and instrument rules.
 The crypto profile consumes `bayn.market-data.crypto.v1` and `bayn.market-data.crypto.features.v1` continuously,
-including weekends and UTC midnight. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
+including weekends and UTC midnight. Both crypto candidates and benchmarks require fresh executable quotes and actual trades within the verified lookback window; the retained trade age remains contextual evidence. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
 holding, and three minutes of close recovery. Finished cycles rearm against the next admitted market window;
 the account risk day remains America/New_York for both markets.
 

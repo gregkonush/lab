@@ -26,7 +26,7 @@ import {
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   intradaySnapshotSymbols,
-  usesCandidateWindowTrade,
+  usesWindowTradeEvidence,
 } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
@@ -841,13 +841,13 @@ export const latestQuotes = (
     const trade = latestTrades[symbol]
     if (
       quote === undefined ||
-      (!usesCandidateWindowTrade(request, symbol) &&
+      (!usesWindowTradeEvidence(request, symbol) &&
         intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
         failure(
           'not-ready',
-          usesCandidateWindowTrade(request, symbol)
+          usesWindowTradeEvidence(request, symbol)
             ? 'intraday snapshot lacks a quote for candidate symbol'
             : 'intraday snapshot lacks a post-range quote for every symbol',
           {
@@ -858,7 +858,7 @@ export const latestQuotes = (
     }
     if (
       request.purpose === undefined &&
-      !usesCandidateWindowTrade(request, symbol) &&
+      !usesWindowTradeEvidence(request, symbol) &&
       (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
@@ -979,7 +979,7 @@ export const candidateAvailability = (
       )
       if (Result.isSuccess(available)) {
         if (!candidates.has(symbol)) continue
-        const pricingEvidence = usesCandidateWindowTrade(request, symbol)
+        const pricingEvidence = usesWindowTradeEvidence(request, symbol)
           ? [available.success[symbol]]
           : [available.success[symbol], symbolTrades.at(-1)]
         const stale = pricingEvidence.find(
@@ -990,7 +990,7 @@ export const candidateAvailability = (
         if (stale !== undefined) {
           const cause = failure(
             'freshness',
-            usesCandidateWindowTrade(request, symbol)
+            usesWindowTradeEvidence(request, symbol)
               ? 'intraday quote exceeds the decision-time freshness bound'
               : 'intraday quote or trade exceeds the decision-time freshness bound',
             {

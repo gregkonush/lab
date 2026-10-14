@@ -12,7 +12,10 @@ import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { MarketSource } from '../market-data/streaming/raw-events'
 
-export const cryptoMarketFixture = (candidate: 'BTC/USD' | 'ETH/USD' | 'SOL/USD' = 'BTC/USD') => {
+export const cryptoMarketFixture = (
+  candidate: 'BTC/USD' | 'ETH/USD' | 'SOL/USD' = 'BTC/USD',
+  timing: { readonly tradeLagMs?: number; readonly quoteLagMs?: number } = {},
+) => {
   const fixtures = [btc, eth, sol]
   const end = btc.feature.material.windowEndMs
   const observedAtMs = end + 3000
@@ -44,7 +47,9 @@ export const cryptoMarketFixture = (candidate: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'
     const bid = symbol === candidate ? 103.123456789 : 100.123456789
     const ask = bid + 0.00000001
     for (const [index, channel] of ['quotes', 'trades'].entries()) {
-      const at = new Date(end + 2000).toISOString()
+      const at = new Date(
+        end + 2000 - (channel === 'trades' ? (timing.tradeLagMs ?? 0) : (timing.quoteLagMs ?? 0)),
+      ).toISOString()
       projection = incorporateMarketRecord(
         projection,
         {
