@@ -6,6 +6,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
+import { reconciledStateHash } from '../reconciliation'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
@@ -151,6 +152,49 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const targetPlan = Result.getOrThrow(planTargets(plannerInput))
     expect(targetPlan).toMatchObject({ status: TargetPlanStatus.Planned })
     expect(targetPlan.intentTargets).toHaveLength(1)
+    // A native coin fee can leave a quantity that is not a multiple of a micro-unit.
+    const heldQuantity = '31234566'
+    expect(protocol.executionModel.precision.quantityIncrementAtoms).toBe('1')
+    const closeMaterial = {
+      ...broker,
+      positions: [
+        {
+          schemaVersion: 'bayn.position.v2' as const,
+          accountId: broker.account.accountId,
+          symbol,
+          quantityAtoms: heldQuantity,
+          averageEntryPriceMicros: '100000000',
+          costBasisMicros: '3123457',
+          marketPriceMicros: '103123457',
+          marketValueMicros: '3221044',
+          unrealizedPnlMicros: '97587',
+          observedAt,
+        },
+      ],
+      positionsObservedAt: observedAt,
+    }
+    const closeHash = Result.getOrThrow(reconciledStateHash(closeMaterial))
+    const closePlan = Result.getOrThrow(
+      planTargets({
+        ...plannerInput,
+        allocationCapitalMicros: '0',
+        targetWeights: { [symbol]: 0 },
+        brokerState: {
+          ...closeMaterial,
+          reconciliation: { ...broker.reconciliation, expectedHash: closeHash, observedHash: closeHash },
+        },
+      }),
+    )
+    expect(closePlan.status).toBe(TargetPlanStatus.Planned)
+    expect(closePlan.intentTargets).toMatchObject([
+      {
+        symbol,
+        side: OrderSide.Sell,
+        quantityAtoms: heldQuantity,
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+      },
+    ])
     const executionSession = Result.getOrThrow(
       bindCycleExecutionSession({
         cycle,

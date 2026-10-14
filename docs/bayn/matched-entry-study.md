@@ -90,6 +90,22 @@ The in-process recorder and its interval replay API have been removed. Producing
 path is unavailable. The [market-data archive boundary](market-data-archive.md) keeps its replacement outside trading;
 an independent Kafka archive cannot reconstruct the trading worker's original arrival or decision-commit clocks.
 
+The native `bayn.jev.batch-plan` trace span now carries `bayn.entry_timing.batch_id`, `observation_hash`,
+`snapshot_hash`, and the worker's actual `input_available_at`. For momentum-first entry batch v4 only, it also carries
+`deterministic_selected_at`, observed after the existing ranking and batch construction finish and before inference
+admission. This includes the actual observation-persistence delay; it is not a hypothetical earlier computation.
+The selected control symbol must be reproduced from the same retained snapshot with `jevMomentumEntryCandidates`.
+No extra ranking, database write, archive upload, or research RPC is added to execution.
+
+The native `bayn.jev.entry-decision-binding` span identifies the decision and exact batch completion. Its PostgreSQL
+children inherit those identities. An independent timing exporter must use the successful writer-fence
+`bayn.postgres.commit` span's end time as acknowledged commitment, require `binding_changed=true` and
+`binding_accepted=true` on the enclosing binding span, and verify the retained native decision document. Replays,
+failed or interrupted commits, missing spans, and conflicting clocks provide no witness. The trace resource must
+identify the exact registered source revision. Trace export remains asynchronous and does not gate trading or
+protective closures. Retain original trace bytes and independent capture/review seals; these annotations alone do
+not supply a complete Kafka source archive or qualify a strategy comparison.
+
 Each timing witness must point to a retained, independently verified private `bayn.jev-entry-timing.v1` file.
 The study command reads and hashes that file, checks source revision, batch, observation
 and snapshot identities, clock order, retained batch completion and frozen momentum selection. The required
