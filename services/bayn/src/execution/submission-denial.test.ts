@@ -4,7 +4,7 @@ import { invalidRequest, MutationOperation } from '../broker/alpaca-mutations/mo
 import { canonicalHashV1 } from '../hash'
 import { decideSubmitFailure } from './coordinator-decisions'
 import { IntentState, TerminalOutcome } from './contracts'
-import { decideMutationOutcome, makeEventResult, mutationIdResult } from './mutations/decisions'
+import { decodeOutcomeInput, decideMutationOutcome, makeEventResult, mutationIdResult } from './mutations/decisions'
 import { MutationEventType, OutcomeInputSchema } from './mutations/model'
 import { SubmissionDenialReason, SubmissionDenialReasonSchema, submissionDenialReason } from './submission-denial'
 
@@ -26,6 +26,11 @@ const started = Result.getOrThrow(
 )
 
 describe('durable submission denial reasons', () => {
+  test('the database outcome decoder preserves the typed denial reason', () => {
+    const input = { intentId, requestHash, occurredAt, denialReason: SubmissionDenialReason.ExpiredRiskDecision }
+    expect(Result.getOrThrow(decodeOutcomeInput('record-submit', input))).toEqual(input)
+  })
+
   test.each([
     [{ _tag: 'ExpiredRiskDecision', expiresAt: startedAt }, SubmissionDenialReason.ExpiredRiskDecision],
     [{ _tag: 'ExecutionWindowExpired' }, SubmissionDenialReason.ExecutionWindowExpired],

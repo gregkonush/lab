@@ -33,6 +33,7 @@ import {
 } from './model'
 import { MutationStoreError as MutationStoreErrorValue } from './model'
 import { Pipeable } from '../../pipeable'
+import type { SubmissionDenialReason } from '../submission-denial'
 
 const decodeStartInputResult = Schema.decodeUnknownResult(StartInputSchema, strictParseOptions)
 const decodeOutcomeInputResult = Schema.decodeUnknownResult(OutcomeInputSchema, strictParseOptions)
@@ -1005,6 +1006,7 @@ const decodeOutcomeInputDataFirst = (
     readonly occurredAt: string
     readonly brokerOrderId?: string
     readonly evidence?: PartialMutationEvidence
+    readonly denialReason?: SubmissionDenialReason
   },
 ): Result.Result<MutationOutcomeInput, MutationStoreError> => {
   const evidence = decideMutationEvidence(input.evidence)
@@ -1015,6 +1017,7 @@ const decodeOutcomeInputDataFirst = (
       occurredAt: input.occurredAt,
       ...(input.brokerOrderId === undefined ? {} : { brokerOrderId: input.brokerOrderId }),
       ...(evidence._tag === 'RetainCompleteEvidence' ? { evidence: evidence.evidence } : {}),
+      ...(input.denialReason === undefined ? {} : { denialReason: input.denialReason }),
     }),
     (cause) => storeError({ operation: storeOperation, failure: 'decode', message: 'invalid mutation outcome', cause }),
   )
