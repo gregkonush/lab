@@ -5,8 +5,6 @@ import { Option, Result } from 'effect'
 import {
   MutationOperation,
   cancelRequestHash,
-  legacyBoundedLimitOrderRequestBody,
-  orderPriceBoundaryMicros,
   orderRequestBody,
   type MutationEvidence,
 } from '../broker/alpaca-mutations'
@@ -70,7 +68,7 @@ const intent: Intent = {
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1250000',
+  quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
   state: IntentState.Approved,
   createdAt: '2026-07-25T00:00:00.000Z',
@@ -112,8 +110,8 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
   symbol: intent.symbol,
   assetClass: AssetClass.UsEquity,
-  notionalMicros: intent.notionalLimitMicros,
-  filledQuantityMicros: '0',
+  quantityAtoms: intent.quantityAtoms,
+  filledQuantityAtoms: '0',
   orderClass: OrderClass.Simple,
   orderType: BrokerOrderType.Market,
   side: BrokerSide.Buy,
@@ -188,7 +186,7 @@ describe('execution coordinator decisions', () => {
     const encoded = Result.getOrThrow(encodeOrder(MutationOperation.Submit, intent))
     const exact = decideSubmitSuccess(intent, encoded, {
       requestHash: encoded.requestHash,
-      order: order({ status: OrderStatus.Filled, filledQuantityMicros: intent.quantityMicros }),
+      order: order({ status: OrderStatus.Filled, filledQuantityAtoms: intent.quantityAtoms }),
       evidence,
     })
     const mismatched = decideSubmitSuccess(intent, encoded, {
@@ -236,96 +234,53 @@ describe('execution coordinator decisions', () => {
     ).toEqual(submit)
   })
 
-  test('recovers an interrupted pre-upgrade bounded-limit submit from its durable request hash', () => {
+  test('rejects a recovery hash from a retired order representation', () => {
     const unknownIntent = { ...intent, state: IntentState.Unknown }
-    const legacyRequest = Result.getOrThrow(legacyBoundedLimitOrderRequestBody(unknownIntent))
-    const legacyEvent = {
+    const retiredRequest = {
+      symbol: intent.symbol,
+      qty: '1',
+      side: 'buy',
+      type: 'limit',
+      time_in_force: 'day',
+      limit_price: '100',
+      client_order_id: intent.clientOrderId,
+      extended_hours: false,
+    }
+    const event = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(legacyRequest),
+      requestHash: canonicalHashV1(retiredRequest),
     }
-    const { notionalMicros: _notionalMicros, ...currentOrder } = order()
-    const legacyOrder: Order = {
-      ...currentOrder,
-      quantityMicros: intent.quantityMicros,
-      orderType: BrokerOrderType.Limit,
-      limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(intent)).toString(),
-    }
-
-    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
-    expect(
-      decideRecoverySuccess(
-        unknownIntent,
-        MutationOperation.Submit,
-        legacyEvent,
-        {
-          value: legacyOrder,
-          evidence,
-        },
-        undefined,
-      ),
-    ).toEqual({
-      _tag: 'RecoveryFound',
-      brokerOrderId,
-      evidence,
-    })
-    expect(
-      decideRecoverySuccess(
-        MutationOperation.Submit,
-        legacyEvent,
-        { value: legacyOrder, evidence },
-        undefined,
-      )(unknownIntent),
-    ).toEqual({
-      _tag: 'RecoveryFound',
-      brokerOrderId,
-      evidence,
-    })
+    expect(Result.isFailure(validateRecovery(unknownIntent, event, undefined))).toBe(true)
   })
 
-  test('matches accepted BUY orders to the exact cent-quantized request while retaining the durable limit', () => {
+  test('matches the exact BUY quantity and rejects a notional confirmation', () => {
     const request = encodedRequest(roundedNotionalIntent)
-    expect(request).toMatchObject({ notional: '200' })
-    expect(exactOrder(roundedNotionalIntent, request, order({ notionalMicros: '200000000' }))).toBe(true)
-    expect(
-      exactOrder(roundedNotionalIntent, request, order({ notionalMicros: roundedNotionalIntent.notionalLimitMicros })),
-    ).toBe(false)
+    expect(request).toMatchObject({ qty: '1.25' })
+    expect(exactOrder(roundedNotionalIntent, request, order())).toBe(true)
+    const { quantityAtoms: _quantity, ...base } = order()
+    expect(exactOrder(roundedNotionalIntent, request, { ...base, notionalMicros: '200000000' })).toBe(false)
   })
 
-  test('recovers an interrupted pre-quantization notional submit from its durable request hash', () => {
+  test('rejects a retired notional submit during recovery', () => {
     const unknownIntent = { ...roundedNotionalIntent, state: IntentState.Unknown }
-    const legacyRequest = {
-      ...encodedRequest(unknownIntent),
-      notional: '200.009999',
-    }
-    const legacyEvent = {
+    const { qty: _quantity, ...base } = encodedRequest(unknownIntent)
+    const retiredRequest = { ...base, notional: '200.009999' }
+    const event = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(legacyRequest),
+      requestHash: canonicalHashV1(retiredRequest),
     }
-
-    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
-    expect(
-      decideRecoverySuccess(
-        unknownIntent,
-        MutationOperation.Submit,
-        legacyEvent,
-        {
-          value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
-          evidence,
-        },
-        undefined,
-      ),
-    ).toMatchObject({ _tag: 'RecoveryFound' })
+    expect(Result.isFailure(validateRecovery(unknownIntent, event, undefined))).toBe(true)
   })
 
   test('recovers an interrupted close-only buy-to-cover from its durable quantity request', () => {
     const unknownIntent = { ...intent, state: IntentState.Unknown }
-    const closeOnlyRequest = Result.getOrThrow(orderRequestBody(unknownIntent, true))
+    const closeOnlyRequest = Result.getOrThrow(orderRequestBody(unknownIntent))
     const interrupted = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
       requestHash: canonicalHashV1(closeOnlyRequest),
     }
     const { notionalMicros: _notionalMicros, ...acceptedOrder } = order()
-    const acceptedCover = { ...acceptedOrder, quantityMicros: unknownIntent.quantityMicros }
+    const acceptedCover = { ...acceptedOrder, quantityAtoms: unknownIntent.quantityAtoms }
 
     expect(closeOnlyRequest).toMatchObject({ side: BrokerSide.Buy, qty: '1.25' })
     expect(Result.getOrThrow(validateRecovery(unknownIntent, interrupted, undefined))).toEqual(interrupted)
@@ -342,43 +297,6 @@ describe('execution coordinator decisions', () => {
       brokerOrderId,
       evidence,
     })
-  })
-
-  test('recovers a legacy sub-dollar BUY without permitting a new sub-dollar submission', () => {
-    const unknownIntent = {
-      ...intent,
-      notionalLimitMicros: '999999',
-      state: IntentState.Unknown,
-    }
-    const legacyRequest = {
-      symbol: unknownIntent.symbol,
-      notional: '0.999999',
-      side: 'buy',
-      type: 'market',
-      time_in_force: 'day',
-      client_order_id: unknownIntent.clientOrderId,
-      extended_hours: false,
-    }
-    const legacyEvent = {
-      ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown),
-      intentId: unknownIntent.intentId,
-      requestHash: canonicalHashV1(legacyRequest),
-    }
-
-    expect(Result.isFailure(orderRequestBody(unknownIntent))).toBe(true)
-    expect(Result.getOrThrow(validateRecovery(unknownIntent, legacyEvent, undefined))).toEqual(legacyEvent)
-    expect(
-      decideRecoverySuccess(
-        unknownIntent,
-        MutationOperation.Submit,
-        legacyEvent,
-        {
-          value: order({ notionalMicros: unknownIntent.notionalLimitMicros }),
-          evidence,
-        },
-        undefined,
-      ),
-    ).toMatchObject({ _tag: 'RecoveryFound' })
   })
 
   test('does not append another mutation event for the same known open recovery', () => {
@@ -521,7 +439,7 @@ describe('execution coordinator decisions', () => {
     const cancel = mutation(MutationOperation.Cancel, MutationEventType.CancelUnknown, acknowledged)
     const canceled = order({
       status: OrderStatus.Canceled,
-      filledQuantityMicros: '0',
+      filledQuantityAtoms: '0',
       accountId: 'd4aa6c51-2f30-4f1c-8dbc-462067dd569c',
     })
 
@@ -559,37 +477,16 @@ describe('execution coordinator decisions', () => {
     })
   })
 
-  test('recovers a partially filled canceled legacy limit order using the durable submit request', () => {
+  test('rejects a canceled-order recovery bound to a retired submit contract', () => {
     const acknowledged = { ...intent, state: IntentState.Acknowledged }
-    const legacyRequest = Result.getOrThrow(legacyBoundedLimitOrderRequestBody(acknowledged))
     const submitted = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitAccepted, acknowledged),
-      requestHash: canonicalHashV1(legacyRequest),
+      requestHash: '0'.repeat(64),
     }
     const cancel = mutation(MutationOperation.Cancel, MutationEventType.CancelUnknown, acknowledged)
-    const { notionalMicros: _notionalMicros, ...currentOrder } = order()
-    const legacyCanceled: Order = {
-      ...currentOrder,
-      status: OrderStatus.Canceled,
-      filledQuantityMicros: '500000',
-      quantityMicros: intent.quantityMicros,
-      orderType: BrokerOrderType.Limit,
-      limitPriceMicros: Result.getOrThrow(orderPriceBoundaryMicros(intent)).toString(),
-    }
-
     expect(
-      decideRecoverySuccess(
-        acknowledged,
-        MutationOperation.Cancel,
-        cancel,
-        { value: legacyCanceled, evidence },
-        submitted,
-      ),
-    ).toEqual({
-      _tag: 'RecoveryFound',
-      brokerOrderId,
-      evidence,
-      terminalOutcome: TerminalOutcome.Canceled,
-    })
+      decideRecoverySuccess(acknowledged, MutationOperation.Cancel, cancel, { value: order(), evidence }, submitted)
+        ._tag,
+    ).not.toBe('RecoveryFound')
   })
 })

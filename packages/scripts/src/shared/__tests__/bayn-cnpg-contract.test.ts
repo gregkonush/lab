@@ -371,7 +371,9 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   const deployment = readManifest('argocd/applications/bayn/deployment.yaml')
   const controller = readManifest('argocd/applications/bayn/execution-controller.yaml')
   const activationSecret = readManifest('argocd/applications/bayn/alpaca-sealedsecret.yaml')
-  const mandateIdentity = JSON.parse(activationSecret.metadata.annotations['proompteng.ai/bayn.mandate-identity'])
+  const request = activationSecret.spec.encryptedData['capital-activation-request']
+  const encodedIdentity = activationSecret.metadata.annotations['proompteng.ai/bayn.mandate-identity']
+  const mandateIdentity = request === undefined ? undefined : JSON.parse(encodedIdentity)
   const activationDocuments = YAML.parseAllDocuments(
     readRepoFile('argocd/applications/bayn/execution-activation.yaml'),
   ).map((document) => document.toJSON())
@@ -466,12 +468,24 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   }
   expect(controllerEnvironment.get('BAYN_CODE_REVISION')?.value).toBe(sourceRevision)
   expect(controllerEnvironment.get('BAYN_IMAGE_DIGEST')?.value).toBe(imageDigest)
-  expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
-    schemaVersion: 'bayn.research-capital-build-lineage.v1',
-    requestHash: mandateIdentity.requestHash,
-    authoredActivation: mandateIdentity.authoredActivation,
-    activation: mandateIdentity.authoredActivation,
-  })
+  if (mandateIdentity === undefined) {
+    expect(encodedIdentity).toBeUndefined()
+    for (const candidate of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+      for (const name of [
+        'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+        'BAYN_CAPITAL_ACTIVATION_REQUEST',
+        'BAYN_CAPITAL_ACTIVATION_KIND',
+      ])
+        expect(candidate.has(name)).toBe(false)
+    }
+  } else {
+    expect(JSON.parse(controllerEnvironment.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')?.value)).toEqual({
+      schemaVersion: 'bayn.research-capital-build-lineage.v1',
+      requestHash: mandateIdentity.requestHash,
+      authoredActivation: mandateIdentity.authoredActivation,
+      activation: mandateIdentity.authoredActivation,
+    })
+  }
   expect(controllerEnvironment.get('BAYN_KAFKA_BOOTSTRAP_TIMEOUT_MS')?.value).toBe('300000')
   expect(controllerEnvironment.get('BAYN_BROKER_ACCESS')?.value).toBe('read-only')
   expect(controllerEnvironment.get('BAYN_CAPITAL_AUTHORITY')?.value).toBe('none')
@@ -494,7 +508,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
     'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
   )
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
-  expect(activationSecret.spec.encryptedData['capital-activation-request']).toBeString()
+  if (mandateIdentity !== undefined) expect(request).toBeString()
   const previousBinding = {
     planHash: 'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
     sourceRevision: '808bfa84609959712042174b6fd176fc56f8edb2',
@@ -515,7 +529,9 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
   expect(controller.spec.restate).not.toHaveProperty('drainDelaySeconds')
-  expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value).toBe(mandateIdentity.requestHash)
+  const activationGeneration = activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_GENERATION')?.value
+  expect(activationGeneration).toMatch(/^[0-9a-f]{64}$/)
+  if (mandateIdentity !== undefined) expect(activationGeneration).toBe(mandateIdentity.requestHash)
   expect(activationEnvironment.get('BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID')).toEqual({
     name: 'BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID',
     valueFrom: { fieldRef: { apiVersion: 'v1', fieldPath: "metadata.labels['batch.kubernetes.io/controller-uid']" } },
@@ -531,11 +547,13 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   ])
 
   for (const candidate of [controllerEnvironment, activationEnvironment, deploymentEnvironment]) {
-    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_KIND')?.value).toBe('ResearchCapitalActivationRequest')
-    expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual({
-      name: 'bayn-alpaca-auth',
-      key: 'capital-activation-request',
-    })
+    if (mandateIdentity !== undefined) {
+      expect(candidate.get('BAYN_CAPITAL_ACTIVATION_KIND')?.value).toBe('ResearchCapitalActivationRequest')
+      expect(candidate.get('BAYN_CAPITAL_ACTIVATION_REQUEST')?.valueFrom?.secretKeyRef).toEqual({
+        name: 'bayn-alpaca-auth',
+        key: 'capital-activation-request',
+      })
+    }
     expect(candidate.has('BAYN_MAXIMUM_AUTHORITY')).toBe(false)
   }
   expect(kustomization.resources).toContain('execution-activation.yaml')

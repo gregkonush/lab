@@ -2,12 +2,13 @@ import { Result, pipe } from 'effect'
 
 import type { ExecutionModel } from '../../execution-model-contract'
 import { ceilDiv, ensureUnsigned, fail, scaledNumber, type ExecutionResult } from './fixed-point'
+import { quantityScale } from '../../quantity'
 import { BPS, MICROS } from './model'
 import { Pipeable } from '../../pipeable'
 
 export interface FeeInput {
   readonly side: 'buy' | 'sell'
-  readonly quantityMicros: bigint
+  readonly quantityAtoms: bigint
   readonly notionalMicros: bigint
 }
 
@@ -37,7 +38,7 @@ const calculateSessionFeesDataFirst = (
   }
   const totalNotional = fills.reduce((sum, fill) => sum + fill.notionalMicros, 0n)
   const sellNotional = fills.reduce((sum, fill) => sum + (fill.side === 'sell' ? fill.notionalMicros : 0n), 0n)
-  const totalQuantity = fills.reduce((sum, fill) => sum + fill.quantityMicros, 0n)
+  const totalQuantity = fills.reduce((sum, fill) => sum + fill.quantityAtoms, 0n)
 
   return pipe(
     Result.all({
@@ -52,7 +53,10 @@ const calculateSessionFeesDataFirst = (
       const tafNumerator = fills.reduce(
         (sum, fill) =>
           fill.side === 'sell'
-            ? sum + (fill.quantityMicros * tafRate < tafCap * MICROS ? fill.quantityMicros * tafRate : tafCap * MICROS)
+            ? sum +
+              (fill.quantityAtoms * tafRate < tafCap * quantityScale
+                ? fill.quantityAtoms * tafRate
+                : tafCap * quantityScale)
             : sum,
         0n,
       )
@@ -64,8 +68,8 @@ const calculateSessionFeesDataFirst = (
             rounding,
           ),
           sec: roundedFee(sellNotional * secRate * costMultiplierMicros, BPS * MICROS * MICROS, rounding),
-          taf: roundedFee(tafNumerator * costMultiplierMicros, MICROS * MICROS, rounding),
-          cat: roundedFee(totalQuantity * catRate * costMultiplierMicros, MICROS * MICROS, rounding),
+          taf: roundedFee(tafNumerator * costMultiplierMicros, quantityScale * MICROS, rounding),
+          cat: roundedFee(totalQuantity * catRate * costMultiplierMicros, quantityScale * MICROS, rounding),
         }),
         Result.map(
           ({ commission, sec, taf, cat }): FeeBreakdown => ({

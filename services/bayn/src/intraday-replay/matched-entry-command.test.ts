@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
@@ -49,7 +50,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const evidence = { ...retained, batchPlan, batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt) }
@@ -109,10 +110,10 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     origin: 'Synthetic native matched test capture',
     positions: [...positions.values()].sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition),
     universe: {
-      universeId: base.protocol.universeId,
-      universeSymbolHash: base.protocol.universeSymbolHash,
-      symbols: base.protocol.universe,
-      topics: { ...base.protocol.sourceTopics, features: 'torghut.market-features.v1' },
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      symbols: equityMarketProfile.universe,
+      topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
     },
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1',

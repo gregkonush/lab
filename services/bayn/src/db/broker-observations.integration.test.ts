@@ -44,7 +44,7 @@ const reserve = (sql: PgClient.PgClient, id: string, at: string) =>
     yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
     VALUES (${generationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${at}) ON CONFLICT DO NOTHING`
     yield* sql`INSERT INTO intents (intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id, decision_hash, policy_hash,
-    account_id, client_order_id, symbol, side, order_type, time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at)
+    account_id, client_order_id, symbol, side, order_type, time_in_force, quantity_atoms, notional_limit_micros, state, created_at, updated_at)
     VALUES (${id}, 'bayn.paper-intent.v3', ${generationHash}, 'intraday-momentum', ${'c'.repeat(64)}, ${id}, ${'e'.repeat(64)},
       ${accountId}, ${id.slice(0, 32)}, 'AAPL', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000000, 'PLANNED', ${at}, ${at})`
     yield* sql.withTransaction(
@@ -477,9 +477,9 @@ describePostgres('Durable per-account broker observations', () => {
           source_event_id, source_sequence, occurred_at, observed_at) VALUES (${'7'.repeat(64)}, 'bayn.paper-broker-event.v1',
           ${'7'.repeat(64)}, 'FILL', 'ALPACA', ${accountId}, 'new-fill', 1, ${at}, ${at})`
             yield* sql`INSERT INTO fills (event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id,
-          symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp)
-          VALUES (${'7'.repeat(64)}, ${accountId}, 'bayn.paper-fill.v1', 'new-fill', 'new-order', 'new-client',
-          'AAPL', 'BUY', '1000000', '100000000', '0', ${at.replace('Z', '000000Z')})`
+          symbol, side, quantity_atoms, price_atoms, fee_micros, source_timestamp)
+          VALUES (${'7'.repeat(64)}, ${accountId}, 'bayn.fill.v2', 'new-fill', 'new-order', 'new-client',
+          'AAPL', 'BUY', '1000000000', '100000000000', '0', ${at.replace('Z', '000000Z')})`
           }),
         )
         expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)

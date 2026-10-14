@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
@@ -60,7 +61,7 @@ export const scanControlInputs = (input: {
     let availableSnapshotCount = 0
     let unavailableSnapshotCount = 0
     const failures = new Map<string, { reason: string; count: number; firstObservedAt: string; firstMessage: string }>()
-    const candidates = protocol.candidateSymbols.map((symbol) => ({
+    const candidates = equityMarketProfile.candidateSymbols.map((symbol) => ({
       symbol,
       availableCount: 0,
       excludedCount: 0,
@@ -83,7 +84,7 @@ export const scanControlInputs = (input: {
         sessionDate,
         calendar: input.calendar,
         observedAtMs: atMs,
-        candidates: protocol.candidateSymbols,
+        candidates: equityMarketProfile.candidateSymbols,
       })
       const observation = yield* market.snapshot(query)
       if (observation.status === 'UNAVAILABLE') {

@@ -126,7 +126,7 @@ const IntentRow = Schema.Struct({
   side: Schema.Enum(OrderSide),
   order_type: Schema.Enum(OrderType),
   time_in_force: Schema.Enum(TimeInForce),
-  quantity_micros: Schema.String,
+  quantity_atoms: Schema.String,
   notional_limit_micros: Schema.String,
   state: Schema.Enum(IntentState),
   terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
@@ -135,6 +135,7 @@ const IntentRow = Schema.Struct({
   mutation_event_type: Schema.NullOr(Schema.Enum(MutationEventType)),
   mutation_occurred_at: Schema.NullOr(UtcInstant),
   submit_request_hash: Schema.NullOr(Sha256),
+  submit_request_body: Schema.Unknown,
 })
 const DurableFillRow = Schema.Struct({
   fill_id: NonEmptyString,
@@ -145,7 +146,7 @@ const DurableFillRow = Schema.Struct({
 })
 const ProjectedPositionRow = Schema.Struct({
   symbol: Schema.String,
-  quantity_micros: Schema.String,
+  quantity_atoms: Schema.String,
   cost_basis_micros: Schema.String,
 })
 const OpeningCashRow = Schema.Tuple([Schema.Struct({ cash_micros: Schema.String, observed_at: UtcInstant })])
@@ -435,7 +436,7 @@ export const makeReconciliation = (
             intent.side,
             intent.order_type,
             intent.time_in_force,
-            intent.quantity_micros::text AS quantity_micros,
+            intent.quantity_atoms::text AS quantity_atoms,
             intent.notional_limit_micros::text AS notional_limit_micros,
             intent.state,
             intent.terminal_outcome,
@@ -443,7 +444,8 @@ export const makeReconciliation = (
             latest.operation AS mutation_operation,
             latest.event_type AS mutation_event_type,
             to_char(latest.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS mutation_occurred_at,
-            submitted.request_hash AS submit_request_hash
+            submitted.request_hash AS submit_request_hash,
+            started.request_body AS submit_request_body
           FROM intents AS intent
           LEFT JOIN LATERAL (
             SELECT operation, event_type, occurred_at
@@ -470,6 +472,10 @@ export const makeReconciliation = (
             ORDER BY sequence DESC
             LIMIT 1
           ) AS submitted ON true
+          LEFT JOIN LATERAL (
+            SELECT request_body FROM mutation_events WHERE intent_id = intent.intent_id AND event_type = 'SUBMIT_STARTED'
+            ORDER BY sequence DESC LIMIT 1
+          ) AS started ON true
           WHERE intent.account_id = ${accountId}
           ORDER BY intent.client_order_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeIntents))
@@ -481,10 +487,10 @@ export const makeReconciliation = (
         const transactionRows = yield* sql<Record<string, unknown>>`
           SELECT
             schema_version, transaction_id, broker_event_id, intent_id, account_id, symbol, side,
-            quantity_micros::text AS quantity_micros, price_micros::text AS price_micros,
+            quantity_atoms::text AS quantity_atoms, price_atoms::text AS price_atoms,
             notional_micros::text AS notional_micros, fee_micros::text AS fee_micros,
             cost_basis_micros::text AS cost_basis_micros, realized_pnl_micros::text AS realized_pnl_micros,
-            quantity_delta_micros::text AS quantity_delta_micros,
+            quantity_delta_atoms::text AS quantity_delta_atoms,
             cost_basis_delta_micros::text AS cost_basis_delta_micros,
             cash_delta_micros::text AS cash_delta_micros, ledger_plan_hash, content_hash, occurred_at
           FROM accounting_transactions
@@ -569,19 +575,21 @@ export const makeReconciliation = (
         }))
 
         const projectedPositionRows = yield* sql<Record<string, unknown>>`
-          SELECT
-            symbol,
-            sum(quantity_delta_micros)::text AS quantity_micros,
-            sum(cost_basis_delta_micros)::text AS cost_basis_micros
-          FROM accounting_transactions
-          WHERE account_id = ${accountId}
-          GROUP BY symbol
-          HAVING sum(quantity_delta_micros) <> 0
-          ORDER BY symbol COLLATE "C"
+          SELECT symbol, sum(quantity_atoms)::text AS quantity_atoms, sum(cost_basis_micros)::text AS cost_basis_micros
+          FROM (
+            SELECT symbol, quantity_delta_atoms AS quantity_atoms, cost_basis_delta_micros AS cost_basis_micros
+            FROM accounting_transactions WHERE account_id = ${accountId}
+            UNION ALL
+            SELECT data->'coinDebit'->>'symbol' AS symbol,
+              -(data->'coinDebit'->>'quantityAtoms')::numeric AS quantity_atoms,
+              -coin_cost_basis_micros AS cost_basis_micros
+            FROM broker_fee_accounting WHERE account_id = ${accountId} AND data ? 'coinDebit' AND posted_at IS NOT NULL
+          ) AS inventory
+          GROUP BY symbol HAVING sum(quantity_atoms) <> 0 ORDER BY symbol COLLATE "C"
         `.pipe(Effect.flatMap(decodeProjectedPositions))
         const projectedPositions = projectedPositionRows.map((row) => ({
           symbol: row.symbol,
-          quantityMicros: row.quantity_micros,
+          quantityAtoms: row.quantity_atoms,
           costBasisMicros: row.cost_basis_micros,
         }))
 
