@@ -40,7 +40,7 @@ import {
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
 import { Pipeable } from '../../pipeable'
 import { quantityFromDecimal } from '../../quantity'
-import { decodeInstrument } from '../../instruments'
+import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
 
 const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
@@ -288,6 +288,16 @@ const normalizePositionResultDataFirst = (
     )
   }
   const assetClass = raw.asset_class
+  const symbol = raw.symbol
+  if ((instrumentMarket(symbol) === MarketKind.Crypto) !== (assetClass === AssetClass.Crypto)) {
+    return Result.fail(
+      contractFailure({
+        reason: 'ASSET_BINDING',
+        message: 'position symbol and asset class must agree',
+        facts: { field: 'position.symbol', actual: raw.symbol },
+      }),
+    )
+  }
   return Result.gen(function* () {
     const rawQuantity = BigInt(yield* quantityResult(raw.qty, 'position quantity', { signed: true }))
     const magnitude = rawQuantity < 0n ? -rawQuantity : rawQuantity
@@ -300,7 +310,7 @@ const normalizePositionResultDataFirst = (
     return {
       accountId,
       assetId: raw.asset_id,
-      symbol: raw.symbol,
+      symbol,
       exchange: raw.exchange,
       assetClass,
       side: raw.side,
