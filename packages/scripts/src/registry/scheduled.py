@@ -72,6 +72,7 @@ def run(context, directory):
     emit("collected", **result)
     emit(
         "complete",
+        collectionTimedOut=result["collectionTimedOut"],
         **purge.run(context, result["quarantineId"], directory / "purge.log"),
     )
 
