@@ -858,11 +858,18 @@ export const latestQuotes = (
     }
     if (
       request.purpose === undefined &&
-      !usesWindowTradeEvidence(request, symbol) &&
-      (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
+      (trade === undefined ||
+        (!usesWindowTradeEvidence(request, symbol) &&
+          intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)))
     ) {
       return Result.fail(
-        failure('not-ready', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
+        failure(
+          'not-ready',
+          usesWindowTradeEvidence(request, symbol)
+            ? `intraday snapshot lacks a trade for ${request.candidateSymbols?.includes(symbol) === true ? 'candidate' : 'benchmark'} symbol`
+            : 'intraday snapshot lacks a post-range trade for every symbol',
+          { symbol },
+        ),
       )
     }
     for (const evidence of request.purpose === undefined ? [quote, trade] : [quote]) {
@@ -1003,17 +1010,6 @@ export const candidateAvailability = (
           )
           exclusions.push(Object.freeze({ symbol, reason: 'freshness', message: cause.message }))
           continue
-        }
-        // The downstream signal contract requires a trade for every requested candidate; admitting a
-        // candidate with no trade rows at all would abort the whole batch, so it stays excluded here.
-        if (symbolTrades.length === 0) {
-          exclusions.push(
-            Object.freeze({
-              symbol,
-              reason: 'not-ready',
-              message: 'intraday snapshot lacks a trade for candidate symbol',
-            }),
-          )
         }
         continue
       }

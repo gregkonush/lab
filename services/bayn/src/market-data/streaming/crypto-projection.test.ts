@@ -35,6 +35,8 @@ test('crypto replay rejects a normalized price substituted beneath an unchanged 
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test(`${symbol} admits fresh quotes and actual window trades for both continuous candidate and benchmark`, () => {
+    const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
+    expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).toThrow()
     const { snapshot, rows } = cryptoMarketFixture(symbol, { tradeLagMs: 60_000 })
     expect(jevStalePricingSymbols(snapshot)).toEqual([])
     const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, symbol)).body).state

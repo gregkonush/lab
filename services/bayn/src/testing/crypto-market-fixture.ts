@@ -14,7 +14,11 @@ import type { MarketSource } from '../market-data/streaming/raw-events'
 
 export const cryptoMarketFixture = (
   candidate: 'BTC/USD' | 'ETH/USD' | 'SOL/USD' = 'BTC/USD',
-  timing: { readonly tradeLagMs?: number; readonly quoteLagMs?: number } = {},
+  timing: {
+    readonly tradeLagMs?: number
+    readonly quoteLagMs?: number
+    readonly missingTradeSymbols?: readonly string[]
+  } = {},
 ) => {
   const fixtures = [btc, eth, sol]
   const end = btc.feature.material.windowEndMs
@@ -47,6 +51,7 @@ export const cryptoMarketFixture = (
     const bid = symbol === candidate ? 103.123456789 : 100.123456789
     const ask = bid + 0.00000001
     for (const [index, channel] of ['quotes', 'trades'].entries()) {
+      if (channel === 'trades' && timing.missingTradeSymbols?.includes(symbol) === true) continue
       const at = new Date(
         end + 2000 - (channel === 'trades' ? (timing.tradeLagMs ?? 0) : (timing.quoteLagMs ?? 0)),
       ).toISOString()
