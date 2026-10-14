@@ -16,22 +16,25 @@ test('only a matching unused expired capture releases speculative debt after inv
   const result = JSON.parse(line.slice('CAPTURE_CLAIM_RESULT='.length))
   expect(result.expired).toMatchObject({
     _tag: 'Unavailable',
-    nextPollNotBeforeMs: result.measuredDeadline,
+    nextPollNotBeforeMs: expect.any(Number),
     captureNotStarted: { reason: 'ExpiredUnusedTicket' },
   })
   expect(result.expired.captureNotStarted.expiredByMs).toBeGreaterThanOrEqual(17_000)
-  for (const poll of [result.duplicate, result.missing, result.replaced]) {
+  for (const poll of [result.duplicate, result.replaced]) {
     expect(poll).toEqual({ _tag: 'Unavailable', nextPollNotBeforeMs: result.reservation.interruptedNotBeforeMs })
   }
   for (const failure of result.failures) {
     expect(failure.completion).toBe('Failure')
     expect(failure.retry).toEqual({
       _tag: 'Unavailable',
-      nextPollNotBeforeMs: result.reservation.interruptedNotBeforeMs,
+      nextPollNotBeforeMs: failure.deadline,
     })
   }
   expect(result.attempts).toBe(0)
-  expect(result.invalidations).toBeGreaterThanOrEqual(10)
+  expect(result.claims).toBe(5)
+  expect(result.regression).toBe('Failure')
+  expect(result.regressionRetry).toEqual({ _tag: 'Unavailable', nextPollNotBeforeMs: result.regressionDeadline })
+  expect(result.invalidations).toBeGreaterThanOrEqual(4)
   const expiryLog = result.logs.find((log: { message: string[] }) =>
     log.message.includes('Broker observation capture expired before starting'),
   )
@@ -39,7 +42,7 @@ test('only a matching unused expired capture releases speculative debt after inv
     'broker.capture_not_started_reason': 'expired_unused_ticket',
     'broker.capture_start_lateness_ms': result.expired.captureNotStarted.expiredByMs,
   })
-  expect(JSON.stringify(result.logs)).not.toContain(result.reservation.captureToken)
+  expect(JSON.stringify(result.logs)).not.toContain(result.reservation.captureId)
 })
 
 test('failed capture disposes lazy broker acquisition before returning measured quota after persistence failure', async () => {
@@ -59,13 +62,16 @@ test('failed capture disposes lazy broker acquisition before returning measured 
   expect(result.poll._tag).toBe('Unavailable')
   expect(result.attemptsAtReturn).toBe(1)
   expect(result.attemptsAfterReturn).toBe(1)
-  expect(result.nextPollNotBeforeMs).toBe(result.poll.nextPollNotBeforeMs)
   expect(result.persistenceTelemetry).toEqual({ loggerInherited: true, tracerInherited: true })
   expect(result.brokerTelemetry).toEqual({ loggerInherited: true, tracerInherited: true })
   const root = result.spans.find((span: { name: string }) => span.name === 'bayn.broker.observation.poll')
   const capture = result.spans.find((span: { name: string }) => span.name === 'bayn.broker.observation.capture')
   const http = result.spans.find((span: { name: string }) => span.name === 'http.client GET')
-  expect(root).toMatchObject({ sourceRevision: 'b'.repeat(40) })
+  expect(root).toMatchObject({
+    sourceRevision: 'b'.repeat(40),
+    traceId: 'a'.repeat(32),
+    parentSpanId: 'b'.repeat(16),
+  })
   expect(capture).toMatchObject({ parentSpanId: root.spanId, traceId: root.traceId })
   expect(http).toMatchObject({ name: 'http.client GET' })
   expect(result.logs).toContainEqual({

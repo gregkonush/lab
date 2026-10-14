@@ -113,7 +113,8 @@ export const feeActivitiesRequest = (
   query: FillActivitiesQuery,
 ): FillActivitiesRequest => {
   const request = fillActivitiesRequest(connection, query)
-  request.url.pathname = '/v2/account/activities/FEE'
+  request.url.pathname = '/v2/account/activities'
+  request.url.searchParams.set('activity_types', 'FEE,CFEE')
   return request
 }
 

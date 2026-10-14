@@ -2,7 +2,7 @@ import { Result, Schema, pipe } from 'effect'
 
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
-import { MICROS } from '../execution-model'
+import { quantityScale } from '../quantity'
 import { canonicalHashV1Result } from '../hash'
 import { strictParseOptions } from '../schemas'
 import {
@@ -80,14 +80,14 @@ const deriveTargetPlanSemanticFacts = (result: typeof TargetPlanResultBase.Type)
   let nonzeroDeltaCount = 0
   let positiveDeltaCount = 0
   const deltas = result.targets.map((target, index): TargetPlanDeltaFact => {
-    const currentQuantity = BigInt(target.currentQuantityMicros)
-    const targetQuantity = BigInt(target.targetQuantityMicros)
+    const currentQuantity = BigInt(target.currentQuantityAtoms)
+    const targetQuantity = BigInt(target.targetQuantityAtoms)
     const delta = targetQuantity - currentQuantity
     if (delta !== 0n) nonzeroDeltaCount += 1
     const exactShortCover = currentQuantity < 0n && targetQuantity === 0n && delta === -currentQuantity
     if (delta > 0n && !exactShortCover) {
       positiveDeltaCount += 1
-      requiredReferenceBuyNotional += (delta * BigInt(target.referencePriceMicros) + MICROS - 1n) / MICROS
+      requiredReferenceBuyNotional += (delta * BigInt(target.referencePriceMicros) + quantityScale - 1n) / quantityScale
     }
     return {
       index,
@@ -143,7 +143,7 @@ const targetQuantityIssues = (facts: TargetPlanSemanticFacts): readonly Schema.F
   for (const { index, target, targetQuantity } of facts.deltas) {
     if (target.targetWeight === 0 && targetQuantity !== 0n) {
       issues.push({
-        path: ['targets', index, 'targetQuantityMicros'],
+        path: ['targets', index, 'targetQuantityAtoms'],
         issue: 'must be zero when the target weight is zero',
       })
     }
@@ -176,9 +176,9 @@ const plannedIntentIssues = (
     }
     if (executionTerms.orderType === OrderType.Limit) return true
     return (
-      BigInt(target.targetQuantityMicros) === 0n &&
-      ((intent.side === OrderSide.Sell && BigInt(target.currentQuantityMicros) > 0n) ||
-        (intent.side === OrderSide.Buy && BigInt(target.currentQuantityMicros) < 0n))
+      BigInt(target.targetQuantityAtoms) === 0n &&
+      ((intent.side === OrderSide.Sell && BigInt(target.currentQuantityAtoms) > 0n) ||
+        (intent.side === OrderSide.Buy && BigInt(target.currentQuantityAtoms) < 0n))
     )
   }
   for (const { delta, index, intent, target } of facts.deltas) {
@@ -193,7 +193,7 @@ const plannedIntentIssues = (
     if (
       intent !== undefined &&
       (intent.side !== (delta > 0n ? OrderSide.Buy : OrderSide.Sell) ||
-        BigInt(intent.quantityMicros) !== (delta < 0n ? -delta : delta) ||
+        BigInt(intent.quantityAtoms) !== (delta < 0n ? -delta : delta) ||
         !supportedExecutionTerms(intent, target))
     ) {
       issues.push({ path: ['intentTargets', index], issue: 'must exactly encode the target quantity delta' })
@@ -257,7 +257,7 @@ const targetPlanExecutionTermsIssues = (result: typeof TargetPlanResultBase.Type
   }
   if (
     result.executionTerms.executionPurpose !== undefined &&
-    result.targets.some((target) => target.targetWeight !== 0 || BigInt(target.targetQuantityMicros) !== 0n)
+    result.targets.some((target) => target.targetWeight !== 0 || BigInt(target.targetQuantityAtoms) !== 0n)
   ) {
     return [{ path: ['executionTerms', 'executionPurpose'], issue: 'close execution must target a flat account' }]
   }

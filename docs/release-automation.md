@@ -74,11 +74,11 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Rune also takes its source commit from the built image. Its Warehouse requires the repository's source annotation,
+Bayn model provisioning also takes its source commit from the built image. Its Warehouse requires the repository's source annotation,
 a nonempty revision, and a successful build receipt whose run-qualified tag matches both the revision and run ID.
-The Stage checks out that verified image revision. Only Rune source, workflow, and deployment paths trigger its
-image build; shared Kargo and platform ApplicationSet changes do not compile CUDA. There is no independent Git
-subscription to select an earlier commit when an atomic push ends beyond the last Rune path change.
+The Stage checks out that verified image revision. Only Bayn model source, workflow, and deployment paths trigger its
+image build; shared Kargo and platform ApplicationSet changes do not rebuild its provisioning image. There is no independent Git
+subscription to select an earlier commit when an atomic push ends beyond the last Bayn model path change.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
@@ -97,8 +97,10 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates the public service,
-execution worker, and activation hook to the same source and digest, and carries the existing authored research
+Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
+main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
+and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
+public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
 request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 

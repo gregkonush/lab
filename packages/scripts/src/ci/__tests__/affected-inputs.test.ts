@@ -59,6 +59,50 @@ test('native Tengri images do not consume Bun metadata', () => {
   }
 })
 
+test('Ofz implementation keeps runtime qualification while packaging and docs skip guest images', () => {
+  const workflow = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
+    for (const file of ['services/ofz/README.md', 'nix/images/ofz.nix']) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
+    }
+    for (const file of [
+      'services/ofz/src/lib.rs',
+      'services/ofz/src/main.rs',
+      'services/ofz/Cargo.toml',
+      'services/ofz/Cargo.lock',
+      'services/ofz/build.rs',
+      'services/ofz/migrations/0001_control.sql',
+      'services/ofz/schema.zed',
+      'services/ofz/operations.json',
+      'services/ofz/test-control.sh',
+      'proto/proompteng/authz/v1/authz.proto',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
+test('Ofz image qualification follows its shared publication helpers', () => {
+  const workflow = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing Ofz image trigger paths')
+    for (const file of [
+      'packages/scripts/src/shared/oci.ts',
+      'packages/scripts/src/shared/cli.ts',
+      'nix/oci-push.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-release-contract.sh',
+      'nix/ci-run-timed.sh',
+      '.github/actions/setup-nix-toolchain/action.yml',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
 test('a changed transitive dependency still runs its consumers', () => {
   const upgraded = { ...before, packages: { ...before.packages, dayjs: after.packages.dayjs } }
   expect(selectAffectedInputs(['bun.lock'], targets, before, upgraded)).toEqual({ bayn: true, landing: false })
@@ -165,7 +209,32 @@ const text = (value: unknown): string => {
   return value
 }
 
-test('Tengri runtime repairs publish the desktop from the same source', () => {
+test('planner implementation, action, and map changes retain their owning validation', () => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/scripts-ci.yml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing scripts CI trigger paths')
+    for (const file of [
+      'packages/scripts/src/ci/affected-inputs.ts',
+      '.github/actions/affected-inputs/action.yml',
+      '.github/ci/root-script-map.yml',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
+test.each(['orbit-salvage', 'ricochet-rush'])('%s does not rebuild for unrelated impact-map edits', (name) => {
+  const workflow: unknown = Bun.YAML.parse(readFileSync(`.github/workflows/${name}-ci.yml`, 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing game CI trigger paths')
+    expect(paths.some((pattern) => matchesGlob('.github/ci/impact-map.yml', text(pattern)))).toBe(false)
+    expect(paths.some((pattern) => matchesGlob(`apps/${name}/project.godot`, text(pattern)))).toBe(true)
+  }
+})
+
+test('runtime-only PRs skip desktop builds while main publishes coordinated images', () => {
   const workflow: unknown = Bun.YAML.parse(readFileSync('.github/workflows/product-nix-images.yml', 'utf8'))
   const steps = property(property(property(workflow, 'jobs'), 'changes'), 'steps')
   if (!Array.isArray(steps)) throw new Error('Missing planner steps')
@@ -189,7 +258,7 @@ test('Tengri runtime repairs publish the desktop from the same source', () => {
     for (const event of ['pull_request', 'push']) {
       const paths = property(property(property(workflow, 'on'), event), 'paths')
       if (!Array.isArray(paths)) throw new Error('Missing image trigger paths')
-      expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(true)
+      expect(paths.some((pattern) => matchesGlob(source, text(pattern)))).toBe(event === 'push')
     }
     expect(selectAffectedInputs([source], configured, lock, lock)).toEqual({
       proompteng: true,
@@ -264,8 +333,25 @@ test.each([
   const plan = selectAffectedInputs(['bun.lock', 'apps/landing/package.json'], configured, base, head)
   expect(plan).toEqual(Object.fromEntries(Object.keys(configured).map((name) => [name, name === 'proompteng'])))
   expect(selectAffectedInputs(['.github/actions/affected-inputs/action.yml'], configured, base, base)).toEqual(
-    Object.fromEntries(Object.keys(configured).map((name) => [name, true])),
+    Object.fromEntries(Object.keys(configured).map((name) => [name, false])),
   )
+  for (const path of [
+    'packages/scripts/src/ci/affected-inputs.ts',
+    'packages/scripts/src/ci/__tests__/impact-router.test.ts',
+    'packages/scripts/src/shared/__tests__/kargo.test.ts',
+  ]) {
+    expect(selectAffectedInputs([path], configured, base, base)).toEqual(
+      Object.fromEntries(Object.keys(configured).map((name) => [name, false])),
+    )
+  }
+  expect(
+    selectAffectedInputs(
+      ['.github/actions/affected-inputs/action.yml', 'bun.lock', 'apps/landing/package.json'],
+      configured,
+      base,
+      head,
+    ),
+  ).toEqual(plan)
   expect(selectAffectedInputs(['packages/scripts/src/bumba/deploy-service.ts'], configured, base, base)).toEqual(
     Object.fromEntries(Object.keys(configured).map((name) => [name, false])),
   )

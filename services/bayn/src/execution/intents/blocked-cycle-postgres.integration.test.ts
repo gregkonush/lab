@@ -1,3 +1,4 @@
+import { orderRequestBody } from '../../broker/alpaca-mutations'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -21,7 +22,7 @@ import {
   makeIntradayCycleWindow,
 } from '../../cycle'
 import { CycleStore, CycleStoreLive } from '../../cycle/store'
-import { Authority, KillState } from '../../execution/contracts'
+import { Authority, KillState, OrderSide, OrderType, TimeInForce } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
@@ -37,6 +38,8 @@ import { restrictAuthority } from '../../db/reconciliation'
 import { MutationOperation } from '../../broker/alpaca-mutations'
 import { makeMutationEventPostgres } from '../mutations/postgres/events'
 import { makeMutationStartPostgres } from '../mutations/postgres/start'
+import { makeMutationOutcomePostgres } from '../mutations/postgres/outcome'
+import { SubmissionDenialReason } from '../submission-denial'
 import { WriterFence, WriterFenceLive } from '../writer-fence'
 import { recoverTerminalGenerationToObserve } from '../../blocked-generation-recovery'
 import { operationalError } from '../../errors'
@@ -474,7 +477,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           yield* sql`INSERT INTO intents (
           intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
           decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-          quantity_micros, notional_limit_micros, state, state_version, created_at, updated_at
+          quantity_atoms, notional_limit_micros, state, state_version, created_at, updated_at
         ) VALUES (
           ${intentId}, 'bayn.paper-intent.v3', ${executionHash}, NULL, 'intraday-momentum',
           ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
@@ -1135,15 +1138,15 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, cycle_id text, account_id text, policy_hash text,
     strategy_name text, side text, state text, terminal_outcome text, state_version integer,
-    updated_at timestamptz, risk_decision_id text
+    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric
   )`
   yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
   )`
   yield* sql`CREATE TABLE mutation_events (
     event_id text PRIMARY KEY, schema_version text, mutation_id text, intent_id text, sequence integer,
-    operation text, event_type text, request_hash text, consistency_delay_ms integer,
-    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz
+    operation text, event_type text, request_hash text, request_body jsonb, consistency_delay_ms integer,
+    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz, denial_reason text
   )`
   yield* sql`CREATE TABLE orders (intent_id text)`
   yield* sql`CREATE TABLE fills (intent_id text)`
@@ -1169,7 +1172,8 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   for (const intentId of expiryFixture.intentIds) {
     yield* sql`INSERT INTO intents VALUES (
       ${intentId}, ${expiryFixture.generationHash}, ${expiryFixture.cycleId}, ${accountId}, ${expiryFixture.policyHash},
-      'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId}
+      'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId},
+      ${'b1_' + 'A'.repeat(43)}, 'AAPL', 'MARKET', 'DAY', 1000000000, 100000000
     )`
     yield* sql`INSERT INTO risk_decisions VALUES (
       ${intentId}, ${intentId}, 'APPROVED', ${expiryFixture.createdAt}, ${expiryFixture.expiresAt}
@@ -1205,7 +1209,19 @@ const reserveExpiryIntent = Effect.gen(function* () {
   return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
     MutationOperation.Submit,
     expiryFixture.intentIds[0],
-    '1'.repeat(64),
+    canonicalHashV1(
+      Result.getOrThrow(
+        orderRequestBody({
+          clientOrderId: 'b1_' + 'A'.repeat(43),
+          symbol: 'AAPL',
+          side: OrderSide.Buy,
+          orderType: OrderType.Market,
+          timeInForce: TimeInForce.Day,
+          quantityAtoms: '1000000000',
+          notionalLimitMicros: '100000000',
+        }),
+      ),
+    ),
     1_000,
     expiryFixture.reservedAt,
   )
@@ -1242,6 +1258,83 @@ describePostgres('PostgreSQL untouched approval expiry safety', () => {
   afterAll(async () => {
     await owner?.dispose()
     await contender?.dispose()
+  })
+
+  test('atomically retains a decoded denial reason and rejects conflicting database replay', async () => {
+    const { event: started } = await owner.runPromise(reserveExpiryIntent)
+    const deny = (denialReason: SubmissionDenialReason) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        return yield* makeMutationOutcomePostgres(sql, fence, makeMutationEventPostgres(sql)).appendOutcome(
+          { _tag: 'SubmitDenied' },
+          started.intentId,
+          started.requestHash,
+          expiryFixture.expiresAt,
+          undefined,
+          undefined,
+          denialReason,
+        )
+      })
+    const denied = await owner.runPromise(deny(SubmissionDenialReason.ExpiredRiskDecision))
+    expect(denied.denialReason).toBe(SubmissionDenialReason.ExpiredRiskDecision)
+    const first = await owner.runPromise(readExpiryState)
+    expect(first.intents[0]).toMatchObject({ state: 'TERMINAL', terminal_outcome: 'REJECTED', state_version: 3 })
+    expect(first.events).toEqual([{ count: 2 }])
+    expect(first.mutationRows.find((row) => row['event_type'] === 'SUBMIT_DENIED')).toMatchObject({
+      event_id: denied.eventId,
+      denial_reason: SubmissionDenialReason.ExpiredRiskDecision,
+    })
+    const { eventId, ...material } = denied
+    expect(eventId).toBe(canonicalHashV1(material))
+    expect(first.orders).toEqual([])
+    expect(first.fills).toEqual([])
+    expect(await contender.runPromise(deny(SubmissionDenialReason.ExpiredRiskDecision))).toEqual(denied)
+    expect(
+      await contender.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* makeMutationEventPostgres(sql).latest(started.intentId, MutationOperation.Submit)
+        }),
+      ),
+    ).toEqual(denied)
+    expect(
+      Result.isFailure(
+        await contender.runPromise(deny(SubmissionDenialReason.ExecutionWindowExpired).pipe(Effect.result)),
+      ),
+    ).toBe(true)
+    expect(await owner.runPromise(readExpiryState)).toEqual(first)
+  })
+
+  test('rolls a denial and its reason back when the terminal intent transition fails', async () => {
+    const { event: started } = await owner.runPromise(reserveExpiryIntent)
+    await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE FUNCTION reject_test_terminal_transition() RETURNS trigger LANGUAGE plpgsql AS $body$
+        BEGIN RAISE EXCEPTION 'synthetic terminal transition failure'; END $body$`
+        yield* sql`CREATE TRIGGER reject_test_terminal_transition BEFORE UPDATE ON intents
+        FOR EACH ROW WHEN (NEW.state = 'TERMINAL') EXECUTE FUNCTION reject_test_terminal_transition()`
+      }),
+    )
+    const before = await owner.runPromise(readExpiryState)
+    const result = await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        return yield* makeMutationOutcomePostgres(sql, fence, makeMutationEventPostgres(sql)).appendOutcome(
+          { _tag: 'SubmitDenied' },
+          started.intentId,
+          started.requestHash,
+          expiryFixture.expiresAt,
+          undefined,
+          undefined,
+          SubmissionDenialReason.ExpiredRiskDecision,
+        )
+      }).pipe(Effect.result),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
   })
 
   test('expires untouched approvals exactly once without order I/O and preserves manual holds', async () => {

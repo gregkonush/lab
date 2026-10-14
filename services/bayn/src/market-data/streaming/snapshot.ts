@@ -18,7 +18,7 @@ import type {
 } from '../intraday/model'
 import { IntradayCandidateEvidencePolicy, IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { compareRecords, lineageOf, replayedBarRow, verifyIntradaySnapshotQuery } from '../intraday/verification'
-import type { RollingMarketFeature } from '../features/contract'
+import type { NativeMarketFeature } from '../features/native-feature'
 import type { KafkaProjectionCut } from './kafka'
 import type { KafkaBootstrapEvidence, KafkaPartitionPosition } from './bootstrap'
 import { kafkaBootstrapComplete } from './bootstrap'
@@ -33,7 +33,7 @@ export interface StreamingRecordReceipt {
   readonly sequence: number
   readonly contentHash: string
 }
-export interface StreamingFeatureReceipt<A = RollingMarketFeature> {
+export interface StreamingFeatureReceipt<A = NativeMarketFeature> {
   readonly topic: string
   readonly partition: number
   readonly offset: string
@@ -109,10 +109,18 @@ export const constructStreamingSnapshot = (
     const request = yield* verifyIntradaySnapshotQuery(query)
     const state = cut.projection
     const observedAtMs = Date.parse(request.observedAt)
+    const source = state.sources.get(request.universeId)
+    if (source === undefined) return yield* Result.fail(failure('not-ready', 'Market source has no incorporated input'))
+    const sourceTopics = new Set(Object.values(source.topics))
+    const sourceBootstrap = {
+      ...cut.bootstrap,
+      partitions: cut.bootstrap.partitions.filter((partition) => sourceTopics.has(partition.topic)),
+    }
+    const sourcePositions = cut.positions.filter((position) => sourceTopics.has(position.topic))
     const requiredPartitions =
       request.purpose === IntradaySnapshotPurpose.Liquidation
-        ? cut.bootstrap.partitions.filter((partition) => partition.topic === request.sourceTopics.quotes)
-        : cut.bootstrap.partitions
+        ? sourceBootstrap.partitions.filter((partition) => partition.topic === request.sourceTopics.quotes)
+        : sourceBootstrap.partitions
     const requiredTopics = new Set(requiredPartitions.map((partition) => partition.topic))
     if (
       state.availabilityMode !== 'observed' ||
@@ -130,10 +138,10 @@ export const constructStreamingSnapshot = (
     const snapshot = yield* constructSnapshotMaterial(
       state,
       request,
-      cut.positions,
+      sourcePositions,
       {
         schemaVersion: 'bayn.streaming-market-snapshot.v1',
-        streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: cut.bootstrap },
+        streaming: { schemaVersion: 'bayn.streaming-input-cut.v1', bootstrap: sourceBootstrap },
       },
       publicationPolicy,
     )
@@ -173,6 +181,15 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       exclusions,
       excluded,
     } = yield* selectStreamingInputs(state, request, publicationPolicy)
+    if (
+      request.purpose === undefined &&
+      request.candidateSymbols !== undefined &&
+      request.candidateSymbols.length > 0 &&
+      request.candidateSymbols.every((symbol) => excluded.has(symbol))
+    )
+      return yield* Result.fail(
+        failure('not-ready', 'No candidate has complete raw data and a matching rolling feature'),
+      )
     const sourcePositions = new Map(
       positions.map((position) => [topicPartitionKey(position.topic, position.partition), BigInt(position.offset)]),
     )

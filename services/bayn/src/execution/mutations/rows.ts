@@ -23,6 +23,7 @@ import {
   type OutcomeStoreOperation,
 } from './model'
 import { Pipeable } from '../../pipeable'
+import { SubmissionDenialReasonSchema } from '../submission-denial'
 
 const StoredEventRows = Schema.Array(
   Schema.Struct({
@@ -39,6 +40,7 @@ const StoredEventRows = Schema.Array(
     request_id: Schema.NullOr(NonEmptyString),
     response_status: Schema.NullOr(HttpStatus),
     response_content_hash: Schema.NullOr(Sha256),
+    denial_reason: Schema.optionalKey(Schema.NullOr(SubmissionDenialReasonSchema)),
     occurred_at: UtcInstant,
   }),
 )
@@ -105,6 +107,7 @@ const toEvent = (row: (typeof StoredEventRows.Type)[number]): MutationEvent => (
   ...(row.request_id === null ? {} : { requestId: row.request_id }),
   ...(row.response_status === null ? {} : { responseStatus: row.response_status }),
   ...(row.response_content_hash === null ? {} : { responseContentHash: row.response_content_hash }),
+  ...(row.denial_reason == null ? {} : { denialReason: row.denial_reason }),
   occurredAt: row.occurred_at,
 })
 

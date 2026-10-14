@@ -39,7 +39,7 @@ export type TerminalGenerationRolloverReceipt =
 export interface TerminalGenerationRecoveryInput<R> {
   readonly accountId: string
   readonly blockedIntents: BlockedCycleIntentStoreShape
-  readonly authorityStore: AuthorityGenerationStoreShape
+  readonly authorityStore: Pick<AuthorityGenerationStoreShape, 'ensureAuthorityGeneration'>
   readonly writerFence: WriterFenceService
   /** Must persist and validate a fresh exact, flat reconciliation after intent settlement. */
   readonly reconcileAfterSettlement: Effect.Effect<void, OperationalError, R>

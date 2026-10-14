@@ -1,10 +1,12 @@
+import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
+import { ValkeyCacheLive } from '../valkey-cache'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 import { createServer } from 'node:http2'
 
 import { NodeRuntime } from '@effect/platform-node'
 import * as restate from '@restatedev/restate-sdk'
-import { Config, Data, Effect, Layer, Option, Redacted, Schema } from 'effect'
+import { Config, Data, Effect, Layer, Option, Redacted } from 'effect'
 
 import { loadApplicationPlan } from '../application-plan'
 import { acquireNativeExecutionRuntime } from '../composition/native-execution-runtime'
@@ -17,7 +19,7 @@ import {
   type NativeExecutionRuntime,
 } from './restate-execution-controller'
 import { acquireRestateTelemetry } from './restate-telemetry'
-import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
+import { GitSourceRevisionSchema, Sha256Schema } from '../schemas'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
 import { startInferenceExpenseProjection } from '../inference-expense-runtime'
 
@@ -35,16 +37,6 @@ export const restateExecutionServerConfig = Config.all({
   port: Config.Port('PORT').pipe(Config.withDefault(9080)),
   requestIdentityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
 })
-
-const RestateRequestIdentityKeySchema = Schema.Trim.check(Schema.isPattern(/^publickeyv1_[1-9A-HJ-NP-Za-km-z]{43,44}$/))
-const RestateRequestIdentityKeysSchema = Schema.Array(RestateRequestIdentityKeySchema).check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(4),
-  Schema.isUnique(),
-)
-
-export const decodeRestateRequestIdentityKeys = (candidate: string) =>
-  Schema.decodeUnknownResult(RestateRequestIdentityKeysSchema, strictParseOptions)(candidate.split(','))
 
 export const makeRestateExecutionEndpointHandler = (
   config: ExecutionControllerConfig,
@@ -135,6 +127,10 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.effectDiscard(
       restateExecutionServerProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-controller' })),
-    ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')), Layer.launch),
+    ).pipe(
+      Layer.provide(ValkeyCacheLive),
+      Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.launch,
+    ),
   )
 }

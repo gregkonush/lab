@@ -167,7 +167,7 @@ describe('Bayn resource lifecycle', () => {
             : url.pathname === '/v2/orders' ||
                 url.pathname === '/v2/positions' ||
                 url.pathname === '/v2/account/activities/FILL' ||
-                url.pathname === '/v2/account/activities/FEE' ||
+                url.pathname === '/v2/account/activities' ||
                 url.pathname === '/v2/calendar'
               ? []
               : { code: 40410000, message: 'order not found' }
@@ -194,6 +194,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
           Effect.provideService(BrokerObservations, {
             read: Effect.die('not read by acquisition'),
+            readState: Effect.die('not read by acquisition'),
             readForSubmit: () => Effect.die('not submitted by acquisition'),
             invalidate: Effect.void,
           }),
@@ -254,6 +255,7 @@ describe('Bayn resource lifecycle', () => {
             Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
             Effect.provideService(BrokerObservations, {
               read: Effect.die('not read by acquisition'),
+              readState: Effect.die('not read by acquisition'),
               readForSubmit: () => Effect.die('not submitted by acquisition'),
               invalidate: Effect.void,
             }),

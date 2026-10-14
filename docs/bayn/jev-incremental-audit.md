@@ -94,9 +94,10 @@ pricing, stop observations, residual inventory or unpriced calls cannot drop an 
 Prespecified pre-model ineligibility is different from post-model missingness. Report both counts and reasons.
 Unobserved arrival paths are not recoverable by inventing a counterfactual or treating a later archive as live data.
 
-The current matched-entry study only samples native flat-entry observations and starts both rules after inference.
-Its explicit limitations are correct. Its completeness gate does not establish the broader cohort or immediate
-decision times above, even after the v2 source-binding repair.
+The matched-entry study now implements these three timing arms under definition/report v3 and input v2.
+It still samples retained native flat-entry observations. The independent capture schedule records opportunities
+while holding, but it does not synthesize missing Jev answers. Use the native Jev entry arm in the independent
+portfolio simulator for a complete policy comparison; inventory alone does not qualify a broader cohort.
 
 ## Management is a separate ablation
 

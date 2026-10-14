@@ -13,3 +13,9 @@ resources:
   - keycloak-admin-sealedsecret.yaml
   - keycloak.yaml
   - postgres-cluster.yaml
+  - postgres-backups.yaml
+  - database-backup-sealedsecret.yaml
+  - certificate.yaml
+  - network-policy.yaml
+  - pod-disruption-budget.yaml
+  - tengri

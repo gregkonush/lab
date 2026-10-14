@@ -17,7 +17,7 @@ class MarketDataChannelFreshnessTrackerTest {
       at: String,
       lastProviderAt: Instant? = lastMarketDataAt,
       feed: EquityFeed = EquityFeed.Iex,
-    ) = coreIexProviderIdleRequiresReconnect(
+    ) = providerMarketDataIdleRequiresReconnect(
       subscribedAt = subscribedAt,
       lastProviderMarketDataAt = lastProviderAt,
       now = Instant.parse(at),

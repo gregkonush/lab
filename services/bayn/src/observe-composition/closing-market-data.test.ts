@@ -34,7 +34,7 @@ import { currentUtcInstant } from '../time'
 import { CandidateObservationStore } from './candidate-observation'
 import {
   checkAdvancedMarketProjection,
-  closeQuoteContinuationDelayMs,
+  executionEvidenceContinuationDelayMs,
   reconciliationForPreparation,
 } from './recovery-driver'
 import { advanceExecutionOnce } from '../execution/advance'
@@ -416,10 +416,11 @@ describe('closing market-data fallback boundaries', () => {
                     report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } },
                   }
                 : fresh
+        if (fresh.riskContext.authority === null) throw new Error('fixture authority missing')
         const terminalReconciliation = yield* reconciliationForPreparation(
           preflight,
           refreshReconciliation,
-          Effect.succeed(fresh.riskContext.authority ?? undefined),
+          Effect.succeed(fresh.riskContext.authority),
           30_000,
         )
         const recoverClose = ensureExecutionCycleClosure({
@@ -455,7 +456,7 @@ describe('closing market-data fallback boundaries', () => {
                 pending ? 'BROKER_OBSERVATION_PENDING' : 'COMPLETION_EVIDENCE_PENDING',
               )
               expect(
-                closeQuoteContinuationDelayMs(
+                executionEvidenceContinuationDelayMs(
                   {
                     outcome: 'RECOVERED',
                     action: 'WAITING',
@@ -552,7 +553,7 @@ describe('closing market-data fallback boundaries', () => {
           if (!closeSettled || terminalOutcome !== TerminalOutcome.Canceled) return facts
           const positions = facts.brokerState.positions.map((position) => ({
             ...position,
-            quantityMicros: (BigInt(position.quantityMicros) / positionDivisor).toString(),
+            quantityAtoms: (BigInt(position.quantityAtoms) / positionDivisor).toString(),
             marketValueMicros: (BigInt(position.marketValueMicros) / positionDivisor).toString(),
           }))
           const releasedValue = facts.brokerState.positions.reduce(
@@ -683,7 +684,12 @@ describe('closing market-data fallback boundaries', () => {
         const residualReconciliation = yield* reconciliationForPreparation(
           yield* reconcile,
           refreshResidual,
-          Effect.suspend(() => reconcile.pipe(Effect.map((facts) => facts.riskContext.authority ?? undefined))),
+          reconcile.pipe(
+            Effect.map((facts) => {
+              if (facts.riskContext.authority === null) throw new Error('fixture authority missing')
+              return facts.riskContext.authority
+            }),
+          ),
           30_000,
         )
         const recoverResidual = ensureExecutionCycleClosure({
@@ -733,19 +739,19 @@ describe('closing market-data fallback boundaries', () => {
         expect(next.document.bindings.authorityGenerationHash).toBe(first.document.bindings.authorityGenerationHash)
         expect(next.document.orderedIntentIds).not.toEqual(first.document.orderedIntentIds)
         expect(
-          next.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
+          next.document.targetPlan.intentTargets.map(({ symbol, side, quantityAtoms }) => ({
             symbol,
             side,
-            quantityMicros,
+            quantityAtoms,
           })),
         ).toEqual(
-          first.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
+          first.document.targetPlan.intentTargets.map(({ symbol, side, quantityAtoms }) => ({
             symbol,
             side,
-            quantityMicros:
+            quantityAtoms:
               terminalOutcome === TerminalOutcome.Canceled
-                ? (BigInt(quantityMicros) / positionDivisor).toString()
-                : quantityMicros,
+                ? (BigInt(quantityAtoms) / positionDivisor).toString()
+                : quantityAtoms,
           })),
         )
         expect(yield* prepare(next.document)).toMatchObject({
@@ -877,10 +883,10 @@ describe('closing market-data fallback boundaries', () => {
       cycle: activeCycle,
     } as const
     const close = Date.parse(activeCycle.window.executionCloseAt)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close - 750).toISOString())).toBe(750)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close + 1).toISOString())).toBeUndefined()
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 750).toISOString())).toBe(750)
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close + 1).toISOString())).toBeUndefined()
     expect(
-      closeQuoteContinuationDelayMs(
+      executionEvidenceContinuationDelayMs(
         {
           outcome: 'RECOVERED',
           action: 'COMPLETED',
@@ -902,7 +908,7 @@ describe('closing market-data fallback boundaries', () => {
           TestClock.setTime(close),
           () => Effect.die(new Error('unexpected failure')),
         )
-        expect(closeQuoteContinuationDelayMs(waiting, 30_000, yield* currentUtcInstant)).toBeUndefined()
+        expect(executionEvidenceContinuationDelayMs(waiting, 30_000, yield* currentUtcInstant)).toBeUndefined()
       }).pipe(Effect.provide(TestClock.layer())),
     )
   })
@@ -964,7 +970,7 @@ describe('closing market-data fallback boundaries', () => {
           observedAt: first instanceof ExecutionCloseAwaitingMarketData ? first.observedAt : '',
           cycle: request.cycle,
         } as const
-        const nextDelayMs = closeQuoteContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
+        const nextDelayMs = executionEvidenceContinuationDelayMs(result, 30_000, yield* currentUtcInstant)
         expect(nextDelayMs).toBe(1_000)
         const command = {
           controllerKey: 'a'.repeat(64),
@@ -1051,31 +1057,36 @@ describe('closing market-data fallback boundaries', () => {
       observedAt: at,
       cycle: activeCycle,
     } as const
-    expect(closeQuoteContinuationDelayMs(waiting, 500, at)).toBe(500)
+    expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(500)
     expect(
-      closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'CLOSE_MARKET_DATA_UNAVAILABLE' }, 30_000, at),
+      executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'CLOSE_MARKET_DATA_UNAVAILABLE' }, 30_000, at),
     ).toBeUndefined()
-    expect(closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'JEV_POSITION_HELD' }, 30_000, at)).toBeUndefined()
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+    expect(
+      executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'JEV_POSITION_HELD' }, 30_000, at),
+    ).toBeUndefined()
+    expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
   })
 
-  test('nested broker observation waits use the durable short continuation without relaxing the close deadline', () => {
-    const waiting = {
-      outcome: 'RECOVERED',
-      action: 'WAITING',
-      waitReason: 'BROKER_OBSERVATION_PENDING',
-      observedAt: at,
-      cycle: activeCycle,
-    } as const
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
-    expect(closeQuoteContinuationDelayMs(waiting, 500, at)).toBe(500)
-    const close = Date.parse(activeCycle.window.executionCloseAt)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
-    expect(closeQuoteContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
-    expect(
-      closeQuoteContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
-    ).toBeUndefined()
-  })
+  test.each(['BROKER_OBSERVATION_PENDING', 'JEV_POSITION_AWAITING_RECONCILIATION'] as const)(
+    'pending broker evidence %s uses a short continuation within the close deadline',
+    (waitReason) => {
+      const waiting = {
+        outcome: 'RECOVERED',
+        action: 'WAITING',
+        waitReason,
+        observedAt: at,
+        cycle: activeCycle,
+      } as const
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, at)).toBe(1_000)
+      expect(executionEvidenceContinuationDelayMs(waiting, 500, at)).toBe(500)
+      const close = Date.parse(activeCycle.window.executionCloseAt)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, new Date(close - 250).toISOString())).toBe(250)
+      expect(executionEvidenceContinuationDelayMs(waiting, 30_000, activeCycle.window.executionCloseAt)).toBeUndefined()
+      expect(
+        executionEvidenceContinuationDelayMs({ ...waiting, waitReason: 'COMPLETION_EVIDENCE_PENDING' }, 30_000, at),
+      ).toBeUndefined()
+    },
+  )
 
   test('an unavailable intraday cut preserves its cause without a second reconciliation', async () => {
     const request = await fixture()

@@ -126,11 +126,13 @@ export function appendCodexEvent(
     return next
   }
 
-  const itemIdentity = codexEventItemIdentity(event)
-  const itemIndex = itemIdentity
+  const itemIndex = event.itemId
     ? current.findIndex(
         (candidate) =>
-          codexEventItemIdentity(candidate) === itemIdentity &&
+          candidate.threadId === event.threadId &&
+          candidate.turnId === event.turnId &&
+          candidate.itemId === event.itemId &&
+          candidate.kind === event.kind &&
           (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
       )
     : -1
@@ -1004,6 +1006,8 @@ function isCommandExecutionEvent(event: TengriCodexEvent, item: Record<string, u
 }
 
 function truncateEventText(value: string) {
+  // UTF-8 uses at most three bytes per UTF-16 code unit, including lone surrogates.
+  if (value.length * 3 <= MAX_EVENT_TEXT_BYTES) return value
   const encoder = new TextEncoder()
   const encoded = encoder.encode(value)
   if (encoded.byteLength <= MAX_EVENT_TEXT_BYTES) return value
@@ -1027,11 +1031,6 @@ function number(value: unknown) {
 
 function isDeltaEvent(event: TengriCodexEvent) {
   return !codexEventIsIndependentOfThreadSnapshot(event) && event.method.toLowerCase().endsWith('delta')
-}
-
-function codexEventItemIdentity(event: TengriCodexEvent) {
-  if (!event.itemId) return ''
-  return JSON.stringify([event.threadId, event.turnId, event.itemId, event.kind])
 }
 
 function isItemLifecycleTransition(previous: TengriCodexEvent, next: TengriCodexEvent) {

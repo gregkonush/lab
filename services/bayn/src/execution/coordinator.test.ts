@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { SubmissionDenialReason } from './submission-denial'
 
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -56,7 +57,7 @@ import {
 import { cancel, dryRunSubmit, ExecutionError, ExecutionFailure, recover, submit } from './coordinator'
 import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
 
-const encodedRequest = (value: Intent, closeOnly = false) => Result.getOrThrow(orderRequestBody(value, closeOnly))
+const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
 import {
   decideFinalSubmitAuthorization,
   decideMutationAuthority,
@@ -99,7 +100,7 @@ const intent: Intent = {
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1250000',
+  quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
   state: IntentState.Approved,
   createdAt: initialTime,
@@ -120,7 +121,7 @@ const riskDecision: RiskDecision = {
 const brokerOrder = (
   status = OrderStatus.Accepted,
   observedAt = '1970-01-01T00:00:01.000Z',
-  representation: 'notional' | 'quantity' = 'notional',
+  representation: 'notional' | 'quantity' = 'quantity',
 ): Order => ({
   accountId,
   brokerOrderId: orderId,
@@ -133,8 +134,8 @@ const brokerOrder = (
   assetClass: AssetClass.UsEquity,
   ...(representation === 'notional'
     ? { notionalMicros: intent.notionalLimitMicros }
-    : { quantityMicros: intent.quantityMicros }),
-  filledQuantityMicros: status === OrderStatus.Filled ? intent.quantityMicros : '0',
+    : { quantityAtoms: intent.quantityAtoms }),
+  filledQuantityAtoms: status === OrderStatus.Filled ? intent.quantityAtoms : '0',
   orderClass: OrderClass.Simple,
   orderType: BrokerOrderType.Market,
   side: BrokerSide.Buy,
@@ -1434,23 +1435,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
       setState(IntentState.Terminal, response.observedAt, TerminalOutcome.Rejected)
       return Effect.succeed(rejected)
     },
-    submitDenied: (_intentId, requestHash, occurredAt) =>
+    submitDenied: (_intentId, requestHash, occurredAt, denialReason) =>
       Effect.gen(function* () {
-        yield* Effect.fromResult(
+        const outcome = yield* Effect.fromResult(
           decideMutationOutcome(
-            { intentId: _intentId, requestHash, occurredAt },
+            { intentId: _intentId, requestHash, occurredAt, ...(denialReason === undefined ? {} : { denialReason }) },
             { _tag: 'SubmitDenied' },
             latest.get(MutationOperation.Submit),
             { state: stored.intent.state, terminalOutcome: stored.intent.terminalOutcome ?? null },
           ),
         )
-        const denied = event(
-          MutationOperation.Submit,
-          MutationEventType.SubmitDenied,
-          requestHash,
-          latest.get(MutationOperation.Submit)?.consistencyDelayMs ?? 1,
-          occurredAt,
-        )
+        const denied = outcome.event
+        latest.set(MutationOperation.Submit, denied)
         setState(IntentState.Terminal, occurredAt, TerminalOutcome.Rejected)
         return denied
       }),
@@ -1640,7 +1636,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       }
       if (options.crashAfterSubmit === true) return Effect.die(new Error('injected crash after send'))
       if (options.submitError !== undefined) return Effect.fail(options.submitError)
-      const hash = canonicalHashV1(encodedRequest(submitted, closeOnly))
+      const hash = canonicalHashV1(encodedRequest(submitted))
       if (options.unknownSubmit === true) {
         return Effect.fail(
           new BrokerMutationError({
@@ -1891,9 +1887,9 @@ describe('execution coordinator', () => {
 
     expect(accepted).toMatchObject({
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(encodedRequest(intent, true)),
+      requestHash: canonicalHashV1(encodedRequest(intent)),
     })
-    expect(encodedRequest(intent, true)).toMatchObject({ side: 'buy', qty: '1.25' })
+    expect(encodedRequest(intent)).toMatchObject({ side: 'buy', qty: '1.25' })
     expect(harness.submittedCloseOnly()).toBe(true)
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
@@ -2111,7 +2107,7 @@ describe('execution coordinator', () => {
 
   test('accepts the broker-determined filled quantity for an exact notional market order', async () => {
     const harness = makeHarness({
-      submittedOrder: { ...brokerOrder(OrderStatus.Filled), filledQuantityMicros: '500000' },
+      submittedOrder: { ...brokerOrder(OrderStatus.Filled), filledQuantityAtoms: '500000000' },
     })
 
     const result = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))
@@ -2131,6 +2127,7 @@ describe('execution coordinator', () => {
         failure: MutationFailure.InvalidRequest,
         outcome: MutationOutcome.Known,
         message: 'fresh quote crossed the durable order bound before transmission',
+        cause: { tag: 'ExpiredRiskDecision' },
       }),
     })
 
@@ -2145,6 +2142,7 @@ describe('execution coordinator', () => {
     )
 
     expect(result.denied.eventType).toBe(MutationEventType.SubmitDenied)
+    expect(result.denied.denialReason).toBe(SubmissionDenialReason.ExpiredRiskDecision)
     expect(result.replay).toEqual(result.denied)
     expect(harness.intent()).toMatchObject({
       state: IntentState.Terminal,
@@ -2186,7 +2184,7 @@ describe('execution coordinator', () => {
       lookupOrder: {
         ...brokerOrder(OrderStatus.Canceled),
         symbol: 'NVDA',
-        filledQuantityMicros: '1',
+        filledQuantityAtoms: '1000',
       },
       submitError: mismatchedSubmissionError(),
     })
@@ -2264,6 +2262,9 @@ describe('execution coordinator', () => {
           ),
         account: observe(
           (observedAt): Account => ({
+            cryptoStatus: null,
+            nonMarginableBuyingPowerMicros: null,
+
             id: accountId,
             status: AccountStatus.Active,
             currency: 'USD',
@@ -2301,6 +2302,7 @@ describe('execution coordinator', () => {
             const cached = yield* makeProjectedBrokerRead(fresh).pipe(
               Effect.provideService(BrokerObservations, {
                 read: observed,
+                readState: observed,
                 readForSubmit: () => observed,
                 invalidate: Effect.sync(() => {
                   available = false

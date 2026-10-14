@@ -1,3 +1,6 @@
+import { exchangeSessions } from '../market-hours'
+import { jevMarketForSymbol } from './markets'
+import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -7,7 +10,7 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import { intradayAgeNanos, millisecondsAsNanos } from '../market-data/intraday/time'
 import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { numberToMicros } from '../strategy/execution-model/fixed-point'
+import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { JevContractError } from './contract'
 import { JevManagementAction, JevManagementDecisionSchema } from './decision'
 import { JevObservationSchema } from './observation-contract'
@@ -52,11 +55,11 @@ export const jevProtectiveQuoteIsFresh = (
 
 export const jevProtectiveStopCrossed = (
   basisMicros: bigint,
-  quantityMicros: bigint,
+  quantityAtoms: bigint,
   bidMicros: bigint,
   stopBps: number,
 ): boolean =>
-  (basisMicros * 1_000_000n - bidMicros * quantityMicros) * 10_000n >= basisMicros * 1_000_000n * BigInt(stopBps)
+  (basisMicros * 1_000_000_000n - bidMicros * quantityAtoms) * 10_000n >= basisMicros * 1_000_000_000n * BigInt(stopBps)
 export const jevMaximumHoldDueAt = (firstFillAt: string, maximumHoldingMinutes: number): string =>
   new Date(Date.parse(firstFillAt) + maximumHoldingMinutes * 60_000).toISOString()
 export const jevBrokerEvidenceFreshUntilMs = (state: JevPortfolio['brokerState']): number =>
@@ -78,15 +81,17 @@ export const decideJevExit = (input: unknown) =>
     const { portfolio, protocol, trigger } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
     const state = portfolio.brokerState
-    const position = state.positions.find(({ quantityMicros }) => BigInt(quantityMicros) > 0n)
+    const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
     const firstFill = portfolio.entryFills[0]
     if (position?.schemaVersion !== 'bayn.position.v2' || firstFill === undefined)
       return yield* invalid('Exit requires a long position with cost basis and its first fill')
+    const market = jevMarketForSymbol(position.symbol)
     const now = Date.parse(evidence.observedAt)
     if (
       !protocol.candidateSymbols.includes(position.symbol) ||
-      firstFill.occurredAt.slice(0, 10) !== evidence.sessionDate ||
-      evidence.observedAt.slice(0, 10) !== evidence.sessionDate ||
+      (market.feed !== 'us' &&
+        (firstFill.occurredAt.slice(0, 10) !== evidence.sessionDate ||
+          evidence.observedAt.slice(0, 10) !== evidence.sessionDate)) ||
       [
         state.account.observedAt,
         state.positionsObservedAt,
@@ -121,25 +126,26 @@ export const decideJevExit = (input: unknown) =>
         const snapshot = yield* reproduceStrategySnapshot(trigger.manifest, trigger.rows)
         const m = snapshot.manifest
         const end = Math.floor(now / 60_000) * 60_000
-        const session = m.calendar.sessions.find(({ date }) => date === evidence.sessionDate)
+        const session = isContinuousMarket(m.calendar)
+          ? undefined
+          : exchangeSessions(m.calendar).find(({ date }) => date === evidence.sessionDate)
         if (
           m.purpose !== IntradaySnapshotPurpose.Liquidation ||
           m.observedAt !== evidence.observedAt ||
           m.sessionDate !== evidence.sessionDate ||
           m.symbols.length !== 1 ||
           m.symbols[0] !== position.symbol ||
-          m.universeId !== protocol.universeId ||
-          m.universeSymbolHash !== protocol.universeSymbolHash ||
-          !equal(m.universe, protocol.universe) ||
-          m.feed !== protocol.feed ||
-          m.delayClass !== protocol.delayClass ||
-          !equal(m.sourceTopics, protocol.sourceTopics) ||
+          m.universeId !== market.universeId ||
+          m.universeSymbolHash !== market.universeSymbolHash ||
+          !equal(m.universe, market.universe) ||
+          m.feed !== market.feed ||
+          m.delayClass !== market.delayClass ||
+          !equal(m.sourceTopics, market.sourceTopics) ||
           m.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
           Date.parse(m.rangeEndAt) !== end ||
           Date.parse(m.rangeStartAt) !== end - 60_000 ||
-          session === undefined ||
-          m.rangeStartAt < session.openAt ||
-          evidence.observedAt >= session.closeAt
+          (!isContinuousMarket(m.calendar) &&
+            (session === undefined || m.rangeStartAt < session.openAt || evidence.observedAt >= session.closeAt))
         )
           return yield* invalid(
             'Protective stop requires a fresh reproduced liquidation quote from the exact market source',
@@ -151,11 +157,11 @@ export const decideJevExit = (input: unknown) =>
           !jevProtectiveQuoteIsFresh(quote, evidence.observedAt, protocol.maximumQuoteAgeMs)
         )
           return yield* invalid('Protective stop has no fresh executable bid')
-        const bid = yield* numberToMicros(quote.bidPrice)
+        const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
         if (
           !jevProtectiveStopCrossed(
             BigInt(position.costBasisMicros),
-            BigInt(position.quantityMicros),
+            BigInt(position.quantityAtoms),
             bid,
             protocol.protectiveStopBps,
           )

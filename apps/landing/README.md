@@ -37,8 +37,33 @@ The homepage shows a “convex backend” badge once it can reach the Convex hea
 
 ## Tengri BFF development
 
-The server-only BFF uses stateless Better Auth GitHub OAuth and signed internal gRPC metadata. The browser never
-receives Kubernetes credentials, the internal HMAC secret, or a guest bootstrap token.
+The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and required verified passkeys. Ofz
+verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
+opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
+session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
+`/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
+and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
+the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
+inline before submission; the BFF independently validates the same command. The full encoded command, including JSON
+escaping and metadata, must fit the shared 64 KiB request budget. Developer assignments and removals cannot
+carry a Viewer scope. The roster shows the exact approved targets and budgets, or `Metadata only` after scope removal.
+Scope targets preserve their exact entered characters, including surrounding spaces; empty lines are ignored.
+The roster labels file roots, Codex thread IDs and terminal IDs separately and quotes each target to make spaces
+visible. Malformed Unicode that cannot survive protobuf encoding is rejected before submission.
+Selected content can contain private information. Scoped guest content remains denied until the separate bounded
+observer handlers are implemented and qualified.
+The prepared identity release is held until the controller and every runtime channel complete the hard migration.
+Workspace lifecycle operations use principal-scoped local storage and native Web Locks to coordinate desktop tabs.
+A successful creation keeps its operation ID until that exact workspace is confirmed deleted, so a stale empty tab
+recovers the same workspace instead of allocating another retained home. Uncertain outcomes retain the original
+payload and ID; an explicit superseded response retires that operation. Browsers without Web Locks cannot submit
+lifecycle changes.
+Choosing a different creation name first replays the recorded request. An active workspace is recovered; a confirmed
+terminal creation permits one fresh attempt with the new name. Denied or unavailable recovery preserves the original ID.
+Deletion waits for Ofz's confirmed retained-home cleanup on both fresh requests and recovered operation IDs.
+Pending cleanup or an unavailable authority returns an error and preserves those IDs for retry.
+Deletion ignores failed status from an older policy version while waiting for its committed stop to reconcile.
 The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
 Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
 The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a
@@ -98,15 +123,19 @@ Accepted types have explicit pre-layout resource checks. SVG sanitization and th
 The conversation follows new events while the reader is at the bottom. Reading earlier messages preserves the scroll
 position until the reader chooses **Jump to latest**.
 
-1. Set the Better Auth, GitHub OAuth, gRPC endpoint, HMAC, and `TENGRI_PUBLIC_URL` variables from `.env.example`.
-   The public URL must match the Rust controller and is exposed to the browser only as the allowlisted preview gateway
-   origin. HTTPS is required except for the exact `http://localhost` development host.
-2. Register `http://localhost:3000/api/auth/callback/github` as the local GitHub callback.
-3. Start the Rust Tengri service locally or point at an isolated development endpoint.
+1. Set the Ofz endpoint, exact SPIFFE identity, TLS control database files and OIDC client secret file from `.env.example`.
+2. Set `TENGRI_DESKTOP_ORIGIN` to the HTTPS desktop origin and `TENGRI_OIDC_ISSUER` to the dedicated realm. The issuer
+   registers the exact `${TENGRI_DESKTOP_ORIGIN}/api/auth/callback`. The GitHub OAuth client registers the Keycloak
+   broker callback documented in [`keycloak/tengri`](../../argocd/applications/keycloak/tengri/README.md).
+3. Keep `TENGRI_PUBLIC_URL` as the separate browser/preview gateway origin. It is not the desktop authentication origin.
+4. Start the Rust Tengri service against the isolated migrated control plane. Direct GitHub/Better Auth cookies and
+   development HTTP authentication have been removed. Native tests use private TLS and Workload API fixtures.
 
-For a zero-downtime HMAC rotation, temporarily set `TENGRI_INTERNAL_HMAC_SECRET` to `new,current`. The BFF emits both
-signatures until the controller has refreshed the same bundle; remove the previous key only after both sides have
-observed it.
+Generate the schema-derived BFF authorization client from the repository root:
+
+```sh
+buf generate --template services/ofz/buf.gen.yaml --path proto/proompteng/authz
+```
 
 Changing `TENGRI_PUBLIC_URL` rolls the landing Deployment through GitOps. One surge Pod keeps a ready web endpoint
 available while the replacement starts; existing streams reconnect when the old Pod terminates.
@@ -213,8 +242,10 @@ bunx playwright install chromium
 bash services/nanoagent/test-vscode-browser.sh
 ```
 
-The runner requires Bun, Go, Rust, Node.js, OpenSSL, Python, and `protoc`. It downloads and verifies the pinned upstream release, starts
-real Nanoagent and Tengri gateway fixtures, and drives the actual workbench through Chromium. Provisioning and identity
+The runner requires Bun, Go, Rust, Node.js, OpenSSL, Python, Docker, and `protoc`. It starts the disposable TLS PostgreSQL
+and SpiceDB fixture, migrates the shared runtime database and supplies separate controller/BFF database roles. It downloads
+and verifies the pinned upstream release, starts real Nanoagent and Tengri gateway fixtures, and drives the actual workbench
+through Chromium. Set `OFZ_FIXTURE_SSH` to use the authorized remote Docker host for the database. Provisioning and identity
 are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
 Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without

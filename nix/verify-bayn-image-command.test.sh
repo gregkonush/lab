@@ -69,6 +69,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(127)
 		}
+	case "bayn-research":
+		args := append([]string{"/bin/node", "/app/services/bayn/dist/research-command.js"}, os.Args[1:]...)
+		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(127)
+		}
 	case "bayn-control-study":
 		args := append([]string{"/bin/node", "/app/services/bayn/dist/control-study-command.js"}, os.Args[1:]...)
 		if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
@@ -98,6 +104,8 @@ func main() {
 		switch os.Args[1] {
 		case "/app/services/bayn/dist/forward-performance-command.js":
 			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help")
+		case "/app/services/bayn/dist/research-command.js":
+			fmt.Println("Usage: bayn-research --validate <run.json> | --run <run.json> --output <new-receipt.json> | --help")
 		case "/app/services/bayn/dist/inference-cost-command.js":
 			fmt.Println("Usage: bayn-inference-cost (--session YYYY-MM-DD | --evidence evidence.json) --rate-card rates.json [--expenses packet.json] | --ledger-session YYYY-MM-DD | --help")
 		case "/app/services/bayn/dist/backtest-command.js":
@@ -107,7 +115,7 @@ func main() {
 		case "/app/services/bayn/dist/jev-study-export-command.js":
 			fmt.Println("Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help")
 		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
-			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
+			fmt.Println("Usage: bayn-streaming-diagnostics --query <query.json> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
 		default:
 			os.Exit(2)
 		}
@@ -127,12 +135,12 @@ mkdir -p \
 
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-for command in forward-performance backtest inference-cost control-study jev-study-export; do
+for command in forward-performance backtest inference-cost research control-study jev-study-export; do
   mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
   install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
   ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
 done
-for command in forward-performance-command inference-cost-command backtest-command control-study-command jev-study-export-command restate-execution-server streaming-diagnostics-command; do
+for command in forward-performance-command inference-cost-command backtest-command control-study-command jev-study-export-command restate-execution-server restate-research-server research-command streaming-diagnostics-command; do
   : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \

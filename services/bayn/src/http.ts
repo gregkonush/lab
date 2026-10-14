@@ -628,7 +628,7 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
     return result(
       session.phase === CycleState.NoTrade
         ? ExecutionSessionCondition.Abstaining
-        : session.phase === CycleState.Completed
+        : session.phase === CycleState.Completed || session.terminalReason === CycleTerminalReason.UnusedEntryExpired
           ? ExecutionSessionCondition.Rearming
           : ExecutionSessionCondition.Blocked,
     )
