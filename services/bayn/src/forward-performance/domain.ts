@@ -181,11 +181,17 @@ const transactionTotalsMatch = (
   }
   for (const fee of input.brokerFees ?? []) {
     const net = parseSignedMicros(fee.netAmountMicros)
-    if (net === undefined) {
+    const inventoryCost =
+      fee.coinDebit === undefined
+        ? 0n
+        : fee.inventoryCostMicros === undefined
+          ? undefined
+          : parseSignedMicros(fee.inventoryCostMicros)
+    if (net === undefined || inventoryCost === undefined || inventoryCost < 0n) {
       reasons.add('INVALID_MICROS')
       return
     }
-    const nextFees = checkedAdd(fees, -net)
+    const nextFees = checkedAdd(fees, -net + inventoryCost)
     if (nextFees === undefined) {
       reasons.add('INVALID_MICROS')
       return

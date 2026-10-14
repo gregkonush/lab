@@ -189,7 +189,7 @@ test('activation consumes the current reconciliation rather than the startup pos
         schemaVersion: 'bayn.paper-position.v1',
         accountId,
         symbol: 'AAPL',
-        quantityMicros: '6000000',
+        quantityAtoms: '6000000000',
         averageEntryPriceMicros: '335970000',
         marketPriceMicros: '335970000',
         marketValueMicros: '2015820000',

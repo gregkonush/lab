@@ -6,7 +6,7 @@ metadata:
 data:
   TA_CRYPTO_TOPIC: "bayn.market-data.crypto.v1"
   TA_CRYPTO_LOCATION: "us"
-  TA_CRYPTO_SYMBOLS: "BTC/USD,ETH/USD"
+  TA_CRYPTO_SYMBOLS: "BTC/USD,ETH/USD,SOL/USD"
   TA_CRYPTO_FEATURES_TOPIC: "bayn.market-data.crypto.features.v1"
   TA_TECHNICAL_FEATURES_TOPIC: "torghut.technical-features.v1"
   TA_FEATURE_RESTORE_TOPOLOGY: "ROLLING_FEATURES"

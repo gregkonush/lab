@@ -13,6 +13,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 deadpool-postgres = "0.14.1"
 futures = "0.3.31"
 jsonwebtoken = { version = "10.3.0", default-features = false, features = ["aws_lc_rs"] }
+libc = "0.2"
 prost = "0.14.4"
 rand = "0.9.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }

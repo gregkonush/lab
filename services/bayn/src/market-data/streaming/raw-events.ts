@@ -4,6 +4,8 @@ import { MarketFeatureFailure } from '../features/contract'
 import { normalizeBar, normalizeQuote, normalizeTrade } from '../intraday/verification'
 import { decodeIntradayBarRows, decodeIntradayQuoteRows, decodeIntradayTradeRows } from '../intraday/rows'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
+import { nativePayloadCanonicalJson } from '../native-json'
+import { instrumentMarket, MarketKind } from '../../instruments'
 
 export enum RawMarketEventKind {
   Bar = 'bar',
@@ -24,7 +26,7 @@ export interface KafkaMarketRecord {
   readonly offset: string
   readonly value: string
 }
-export interface StreamingUniverse {
+export interface MarketSource {
   readonly universeId: string
   readonly universeSymbolHash: string
   readonly symbols: readonly string[]
@@ -36,13 +38,24 @@ export interface StreamingUniverse {
     readonly technicalFeatures?: string
   }
 }
+export const marketSourceKind = (source: MarketSource): MarketKind => instrumentMarket(source.symbols[0] ?? '')
+
+export type StreamingUniverse = MarketSource
+export type MarketSources = readonly [MarketSource, ...MarketSource[]]
+
+export const marketSourceForTopic = (universe: MarketSources, topic: string): MarketSource | undefined =>
+  universe.find((source) => Object.values(source.topics).includes(topic))
 
 const EnvelopeSchema = Schema.Struct({
   provider: Schema.Literal('alpaca'),
-  feed: Schema.Literal('iex'),
-  delayClass: Schema.Literal('real_time_exchange_only'),
-  marketSession: Schema.Literals(['regular', 'pre', 'post', 'overnight']),
-  channel: Schema.Literals(['bars', 'updatedBars', 'quotes', 'trades']),
+  feed: Schema.Literals(['iex', 'us']),
+  delayClass: Schema.Literals(['real_time_exchange_only', 'real_time_crypto']),
+  marketSession: Schema.Literals(['regular', 'pre', 'post', 'overnight', 'continuous']),
+  channel: Schema.Literals(['bars', 'updatedBars', 'quotes', 'trades', 'orderbooks', 'dailyBars']),
+  source: Schema.optionalKey(Schema.String),
+  seq: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER)),
+  ),
   symbol: Schema.String,
   eventTs: Schema.String,
   ingestTs: Schema.String,
@@ -101,14 +114,29 @@ export const decodeRawMarketRecord = (
     const envelope = yield* decodeEnvelope(json).pipe(
       Result.mapError((cause) => fail('invalid raw market envelope', cause)),
     )
-    if (!universe.symbols.includes(envelope.symbol))
+    const crypto = instrumentMarket(envelope.symbol) === MarketKind.Crypto
+    const source = universe
+    if (!source.symbols.includes(envelope.symbol))
       return yield* Result.fail(fail('raw market symbol is outside the configured universe'))
+    if (marketSourceKind(source) !== instrumentMarket(envelope.symbol))
+      return yield* Result.fail(fail('source and symbol market differ'))
+    if (
+      crypto
+        ? envelope.feed !== 'us' ||
+          envelope.delayClass !== 'real_time_crypto' ||
+          envelope.marketSession !== 'continuous' ||
+          envelope.seq === undefined
+        : envelope.feed !== 'iex' ||
+          envelope.delayClass !== 'real_time_exchange_only' ||
+          envelope.marketSession === 'continuous'
+    )
+      return yield* Result.fail(fail('raw market identity does not match the configured market'))
     const expectedTopic =
       envelope.channel === 'bars' || envelope.channel === 'updatedBars'
-        ? universe.topics.bars
+        ? source.topics.bars
         : envelope.channel === 'quotes'
-          ? universe.topics.quotes
-          : universe.topics.trades
+          ? source.topics.quotes
+          : source.topics.trades
     if (record.topic !== expectedTopic) return yield* Result.fail(fail('raw market topic does not match its channel'))
     const eventAt = yield* canonicalRawTimestamp(envelope.eventTs)
     const ingestedAt =
@@ -118,10 +146,33 @@ export const decodeRawMarketRecord = (
       (!Number.isSafeInteger(record.timestampMs) || Math.abs(record.timestampMs - Date.parse(ingestedAt)) > 5000)
     )
       return yield* Result.fail(fail('Kafka timestamp violates the producer clock contract'))
+    if (crypto) {
+      const payload = yield* Schema.decodeUnknownResult(
+        Schema.Struct({ S: Schema.String, T: Schema.String, t: Schema.String }),
+      )(envelope.payload).pipe(Result.mapError((cause) => fail('crypto payload identity is invalid', cause)))
+      const types: Readonly<Record<typeof envelope.channel, string>> = {
+        bars: 'b',
+        updatedBars: 'u',
+        quotes: 'q',
+        trades: 't',
+        orderbooks: 'o',
+        dailyBars: 'd',
+      }
+      if (
+        payload.S !== envelope.symbol ||
+        payload.T !== types[envelope.channel] ||
+        (yield* canonicalRawTimestamp(payload.t)) !== eventAt
+      )
+        return yield* Result.fail(fail('crypto payload differs from its envelope identity'))
+    }
+    if (envelope.channel === 'orderbooks' || envelope.channel === 'dailyBars') {
+      if (!crypto) return yield* Result.fail(fail('unsupported equity source channel'))
+      return { kind: RawMarketEventKind.Ignored }
+    }
     const identity = {
       provider: envelope.provider,
-      universe_id: universe.universeId,
-      universe_symbol_hash: universe.universeSymbolHash,
+      universe_id: source.universeId,
+      universe_symbol_hash: source.universeSymbolHash,
       feed: envelope.feed,
       market_session: envelope.marketSession,
       delay_class: envelope.delayClass,
@@ -132,6 +183,13 @@ export const decodeRawMarketRecord = (
       source_partition: record.partition,
       source_offset: record.offset,
       schema_version: 1,
+      ...(crypto
+        ? {
+            native_payload: yield* nativePayloadCanonicalJson(record.value).pipe(
+              Result.mapError((cause) => fail('invalid native payload provenance', cause)),
+            ),
+          }
+        : {}),
     }
     switch (envelope.channel) {
       case 'bars':
@@ -141,7 +199,8 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('bar payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
+        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+          return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayBarRows([
           {
             ...identity,
@@ -167,7 +226,8 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('quote payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
+        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+          return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayQuoteRows([
           { ...identity, bid_price: payload.bp, bid_size: payload.bs, ask_price: payload.ap, ask_size: payload.as },
         ]).pipe(Result.mapError((cause) => fail('invalid raw quote row', cause)))
@@ -184,7 +244,8 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('trade payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular') return { kind: RawMarketEventKind.Ignored }
+        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+          return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayTradeRows([{ ...identity, price: payload.p, size: payload.s }]).pipe(
           Result.mapError((cause) => fail('invalid raw trade row', cause)),
         )

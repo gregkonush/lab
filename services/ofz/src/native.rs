@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tonic::Status;
 
 use crate::{DECISION_TIMEOUT, policy::OFZ_ID, policy::workload_object_id};
@@ -111,6 +112,21 @@ pub struct Native {
 }
 
 impl Native {
+    pub(crate) async fn install_schema(&self) -> Result<Vec<u8>, Status> {
+        self.post("/v1/schema/write", json!({"schema": crate::SCHEMA}))
+            .await?;
+        self.schema_hash().await
+    }
+
+    pub(crate) async fn schema_hash(&self) -> Result<Vec<u8>, Status> {
+        let response = self.post("/v1/schema/read", json!({})).await?;
+        let schema = response["schemaText"]
+            .as_str()
+            .filter(|schema| !schema.is_empty())
+            .ok_or_else(|| Status::unavailable("missing installed authorization schema"))?;
+        Ok(Sha256::digest(schema.as_bytes()).to_vec())
+    }
+
     pub fn new(endpoint: &str, key_path: PathBuf) -> Result<Self, Status> {
         let url = reqwest::Url::parse(endpoint)
             .map_err(|_| Status::invalid_argument("invalid native endpoint"))?;

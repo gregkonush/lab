@@ -48,6 +48,8 @@ export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVe
   Object.freeze({
     ...defaultExecutionModel,
     schemaVersion: 'bayn.execution-model.v5',
+    assetClass: 'cash-spot',
+    venue: 'alpaca-cash-spot',
     order: Object.freeze({
       type: 'limit',
       timeInForce: 'ioc',
@@ -64,7 +66,7 @@ export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVe
     }),
     precision: Object.freeze({
       ...defaultExecutionModel.precision,
-      quantityIncrementMicros: '1000000',
+      quantityIncrementAtoms: '1',
     }),
   })
 

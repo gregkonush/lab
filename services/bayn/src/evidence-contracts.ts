@@ -206,7 +206,7 @@ const FillEventSchema = Schema.Struct({
   sessionDate: IsoDateSchema,
   symbol: Schema.String,
   side: Schema.Literals(['buy', 'sell']),
-  quantityMicros: Micros,
+  quantityAtoms: Micros,
   referencePriceMicros: Micros,
   priceMicros: Micros,
   notionalMicros: Micros,
@@ -255,8 +255,8 @@ export const SimulatedOrdersArtifactSchema = Schema.Struct({
       sessionDate: IsoDateSchema,
       symbol: Schema.String,
       side: Schema.Literals(['buy', 'sell']),
-      requestedQuantityMicros: Micros,
-      filledQuantityMicros: Micros,
+      requestedQuantityAtoms: Micros,
+      filledQuantityAtoms: Micros,
       status: Schema.Literals(['filled', 'partially-filled', 'rejected']),
       rejectionReason: Schema.NullOr(
         Schema.Literals(['below-minimum-buy-notional', 'zero-after-rounding', 'insufficient-buying-power']),
@@ -309,7 +309,7 @@ export const DailyPositionMarksArtifactSchema = Schema.Struct({
       positions: Schema.Array(
         Schema.Struct({
           symbol: Schema.String,
-          quantityMicros: Micros,
+          quantityAtoms: Micros,
           costBasisMicros: Micros,
           priceMicros: Micros,
           marketValueMicros: Micros,
