@@ -62,13 +62,13 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-NmdyuaM4NmjBzSr6BNJ5kkvOZZmvhYAMevjVhuN8WR8=";
-    aarch64-linux = "sha256-/vQQX4S6fgSfQCgZBtkJl5q5FSsbt0w/aozFQLpz3oc=";
+    x86_64-linux = "sha256-a/HWgtlvWemZVGb52YrzidmIeir4d8Q+kyRdyneLNDE=";
+    aarch64-linux = "sha256-wlkhwdcXYYBMAEhQxrQ8SpnAwVDU1mpcms47v8i5NOY=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/valkey-command.ts --target=node "
       + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -90,6 +90,7 @@ let
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/jev-study-export-command.js --help"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/backtest-command.js"
@@ -116,6 +117,7 @@ let
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/restate-research-server.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/valkey-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/research-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \

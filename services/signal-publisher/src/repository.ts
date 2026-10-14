@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { ClickhouseClient } from '@effect/sql-clickhouse'
-import { Effect, Schema } from 'effect'
+import { Duration, Effect, Schema } from 'effect'
 
 import {
   adjustment,
@@ -125,7 +125,9 @@ export const partitionInsertRows = <A extends { readonly session_date: string }>
 const decodeReadback = <A>(name: string, parse: () => A): Effect.Effect<A, PublicationError> =>
   Effect.try({ try: parse, catch: (cause) => publicationError('storage', `invalid ${name} readback`, cause) })
 
-export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, ClickhouseClient.ClickhouseClient> =
+export const makeSnapshotRepository = (
+  operationTimeoutMs: number,
+): Effect.Effect<SnapshotRepository, never, ClickhouseClient.ClickhouseClient> =>
   Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
 
@@ -221,12 +223,32 @@ export const makeSnapshotRepository: Effect.Effect<SnapshotRepository, never, Cl
           sql.insertQuery({ table, values: [...batch], format: 'JSONEachRow' }).pipe(
             sql.withQueryId(`signal-${kind}-${snapshotId.slice(-32)}-${index}`),
             sql.withClickhouseSettings({
+              insert_quorum: '2',
+              insert_quorum_parallel: 0,
+              insert_quorum_timeout: Math.floor(operationTimeoutMs * 0.8),
+              max_execution_time: (operationTimeoutMs * 0.9) / 1_000,
+              timeout_before_checking_execution_speed: 0,
+              log_profile_events: 1,
               insert_deduplicate: 1,
               insert_deduplication_token: `${kind}-${snapshotId}-${index}-${createHash('sha256')
                 .update(JSON.stringify(batch))
                 .digest('hex')}`,
             }),
             storage(`failed to insert ${kind} batch ${index + 1}`),
+            Effect.timed,
+            Effect.tap(([duration]) =>
+              Effect.logInfo('Signal insert batch acknowledged').pipe(
+                Effect.annotateLogs({
+                  event: 'insert_batch_acknowledged',
+                  queryId: `signal-${kind}-${snapshotId.slice(-32)}-${index}`,
+                  table,
+                  batch: index + 1,
+                  batches: batches.length,
+                  rows: batch.length,
+                  elapsedMs: Duration.toMillis(duration),
+                }),
+              ),
+            ),
             Effect.asVoid,
           ),
         { concurrency: 1, discard: true },

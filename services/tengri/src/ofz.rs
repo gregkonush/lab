@@ -38,6 +38,48 @@ pub struct Client {
 }
 
 impl Client {
+    pub async fn guest_maintenance(
+        &self,
+        uid: &str,
+        epoch: &str,
+        purpose: proto::GuestMaintenancePurpose,
+        terminal_id: &str,
+    ) -> Result<CheckResponse, Status> {
+        let mut context = workload_context()?;
+        context.workspace_uid = uid.into();
+        context.runtime_epoch = epoch.into();
+        context.deadline_unix_ms = now_ms()? + 2000;
+        let mut rpc = self.rpc.clone();
+        let decision = bounded(
+            DECISION_TIMEOUT,
+            rpc.authorize_guest_maintenance(request(
+                proto::AuthorizeGuestMaintenanceRequest {
+                    context: Some(context),
+                    workspace_uid: uid.into(),
+                    purpose: purpose as i32,
+                    terminal_id: terminal_id.into(),
+                },
+                DECISION_TIMEOUT,
+            )),
+        )
+        .await?
+        .decision
+        .ok_or_else(|| Status::unavailable("Ofz maintenance decision missing"))?;
+        let now = now_ms()?;
+        if !decision.allowed
+            || !canonical_uuid(&decision.audit_receipt_id)
+            || decision.revision.is_empty()
+            || decision.recovery_generation == 0
+            || decision.effective_scope.is_some()
+            || decision.valid_until_unix_ms <= now
+            || decision.valid_until_unix_ms > now + 2000
+        {
+            return Err(Status::unavailable(
+                "invalid or expired Ofz maintenance decision",
+            ));
+        }
+        Ok(decision)
+    }
     pub fn new(target: &str, identity: &crate::identity::WorkloadIdentity) -> anyhow::Result<Self> {
         let url = reqwest::Url::parse(&format!("https://{target}"))?;
         ensure!(

@@ -2,20 +2,20 @@
 set -eu
 
 cli() {
-  valkey-cli --no-auth-warning --raw -c --tls \
+  valkey-cli --no-auth-warning --raw --tls \
     --cacert /tls/ca.crt --cert /tls/tls.crt --key /tls/tls.key \
     --sni "$VALKEY_TLS_SERVER_NAME" --user "$VALKEY_USERNAME" \
     -h "$VALKEY_HOST" -p "$VALKEY_PORT" "$@"
 }
+replica() {
+  VALKEY_HOST="$VALKEY_REPLICA_HOST" cli "$@"
+}
 
-# The native User controller applies the application ACL after cluster creation.
-# Only this new credential is mounted; no broker or operator credential is used.
 ready=false
 attempt=1
 while [ "$attempt" -le 60 ]; do
-  info=$(cli CLUSTER INFO 2>/dev/null | tr -d '\r') || info=''
-  if printf '%s\n' "$info" | grep -qx 'cluster_state:ok' &&
-     printf '%s\n' "$info" | grep -qx 'cluster_slots_assigned:16384'; then
+  if [ "$(cli PING 2>/dev/null || true)" = PONG ] &&
+     [ "$(replica PING 2>/dev/null || true)" = PONG ]; then
     ready=true
     break
   fi
@@ -23,18 +23,14 @@ while [ "$attempt" -le 60 ]; do
   sleep 3
 done
 test "$ready" = true
-printf '%s\n' "$info" | grep -E '^cluster_(state|slots_assigned|slots_ok|known_nodes|size):'
 
-# Multiple hash tags exercise cluster-client redirections, not only one shard.
-for tag in 0 1 2 3 4 5 6 7 8 9 10 11; do
-  key="bayn:acceptance:{$tag}:${TEST_RUN_ID:?}"
-  test "$(cli SET "$key" verified EX 600)" = OK
-  test "$(cli GET "$key")" = verified
-  test "$(cli DEL "$key")" = 1
-done
-echo 'PASS: TLS-authenticated cluster writes, reads and deletion across hash tags'
+key="bayn:acceptance:${TEST_RUN_ID:?}"
+test "$(printf 'SET %s verified EX 600\nWAIT 1 3000\n' "$key" | cli)" = "$(printf 'OK\n1')"
+test "$(cli GET "$key")" = verified
+test "$(replica GET "$key")" = verified
+test "$(cli DEL "$key")" = 1
+echo 'PASS: TLS-authenticated primary writes, replica reads and deletion'
 
-# Do not perform destructive negative tests such as FLUSHALL.
 denied=$(cli GET forbidden:acceptance 2>&1) || true
 printf '%s\n' "$denied" | grep -q NOPERM
 echo 'PASS: application ACL rejects keys outside bayn:*'

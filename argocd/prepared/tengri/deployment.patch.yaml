@@ -42,6 +42,10 @@ spec:
               value: /var/run/tengri/database/password
             - name: TENGRI_DATABASE_CA_FILE
               value: /var/run/tengri/database-ca/ca.crt
+            - name: TENGRI_GUEST_SIGNING_KEY_FILE
+              value: /var/run/tengri/guest-signing/key
+            - name: TENGRI_GUEST_RECOVERY_GENERATION_FILE
+              value: /var/run/tengri/guest-signing/recovery-generation
           volumeMounts:
             - name: runtime-secret
               $patch: delete
@@ -55,6 +59,9 @@ spec:
               readOnly: true
             - name: database-ca
               mountPath: /var/run/tengri/database-ca
+              readOnly: true
+            - name: guest-signing
+              mountPath: /var/run/tengri/guest-signing
               readOnly: true
       volumes:
         - name: runtime-secret
@@ -73,3 +80,12 @@ spec:
           secret:
             secretName: ofz-database-ca
             defaultMode: 0440
+        - name: guest-signing
+          secret:
+            secretName: tengri-guest-signing
+            defaultMode: 0440
+            items:
+              - key: key
+                path: key
+              - key: recovery-generation
+                path: recovery-generation
