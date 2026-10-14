@@ -4,12 +4,16 @@ import { ConfigProvider, Effect, Fiber, Layer, Option, Result } from 'effect'
 
 import { makeValkeyCache, ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyCacheLive } from './valkey-cache'
 
-const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated') => {
+const transportFixture = async (
+  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated' | 'delayed-replica' | 'replica-timeout',
+) => {
   const { createServer } = await import('node:net')
   let response = mode
   const received = Promise.withResolvers<void>()
   let closed = Promise.withResolvers<void>()
   let closes = 0
+  let writes = 0
+  const waits: string[][] = []
   const values = new Map<string, string>()
   const server = createServer((socket) => {
     const connectionClosed = Promise.withResolvers<void>()
@@ -38,21 +42,31 @@ const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hol
         } else if (args[0]?.toUpperCase() === 'GET') {
           received.resolve()
           if (response === 'miss') socket.write('$-1\r\n')
-          if (response === 'write' || response === 'unreplicated') {
+          if (response === 'write' || response === 'unreplicated' || response === 'delayed-replica') {
             const value = values.get(args[1] ?? '')
             socket.write(value === undefined ? '$-1\r\n' : `$${Buffer.byteLength(value)}\r\n${value}\r\n`)
           }
           if (response === 'error') socket.write('-WRONGTYPE fixture\r\n')
         } else if (args[0]?.toUpperCase() === 'SET') {
+          writes++
           values.set(args[1] ?? '', args[2] ?? '')
           socket.write('+OK\r\n')
         } else if (args[0]?.toUpperCase() === 'DEL') {
           values.delete(args[1] ?? '')
           socket.write(':1\r\n')
         } else if (args[0]?.toUpperCase() === 'WAIT') {
-          socket.write(response === 'unreplicated' ? ':0\r\n' : ':1\r\n')
+          waits.push(args.slice(1))
+          if (response !== 'replica-timeout' || waits.length === 1)
+            socket.write(
+              response === 'unreplicated' ||
+                response === 'replica-timeout' ||
+                (response === 'delayed-replica' && waits.length === 1)
+                ? ':0\r\n'
+                : ':1\r\n',
+            )
         } else if (args[0]?.toUpperCase() === 'PING') {
-          if (response !== 'hold' && response !== 'handshake-hold') socket.write('+PONG\r\n')
+          if (response !== 'hold' && response !== 'handshake-hold' && response !== 'replica-timeout')
+            socket.write('+PONG\r\n')
         } else socket.write('-ERR unsupported fixture command\r\n')
       }
     })
@@ -68,6 +82,8 @@ const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hol
     received: received.promise,
     closed: () => closed.promise,
     closes: () => closes,
+    writes: () => writes,
+    waits: () => waits,
     resumeReads: () => {
       response = 'miss'
     },
@@ -77,14 +93,14 @@ const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hol
         NodeRedis.layer({
           RESP: 2,
           disableOfflineQueue: true,
-          commandOptions: { timeout: 100 },
+          commandOptions: { timeout: mode === 'replica-timeout' ? 2000 : 100 },
           pingInterval: 100,
           socket: {
             host: '127.0.0.1',
             port: address.port,
             reconnectStrategy: false,
             connectTimeout: 100,
-            socketTimeout: 250,
+            socketTimeout: mode === 'replica-timeout' ? 3000 : 250,
           },
         }),
       ),
@@ -93,7 +109,7 @@ const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hol
 }
 
 const runTransport = async <A, E>(
-  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated',
+  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated' | 'delayed-replica',
   effect: Effect.Effect<A, E, ValkeyCache>,
 ) => {
   const fixture = await transportFixture(mode)
@@ -143,14 +159,68 @@ describe('required native Effect Valkey binding', () => {
     )
     expect(Result.isSuccess(result)).toBe(true)
   })
-  test('a missing replica acknowledgement fails publication', async () => {
-    const result = await runTransport(
-      'unreplicated',
-      operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })),
-    )
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
-      expect(String(result.failure.cause)).toContain('replica')
+  test('a later replica acknowledgement completes the original write', async () => {
+    const fixture = await transportFixture('delayed-replica')
+    try {
+      const result = await operation((cache) =>
+        cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 }).pipe(Effect.andThen(cache.get('bayn:test'))),
+      ).pipe(Effect.provide(fixture.layer), Effect.result, Effect.runPromise)
+      expect(Result.isSuccess(result)).toBe(true)
+      if (Result.isSuccess(result)) expect(Option.getOrNull(result.success)).toBe('value')
+      expect(fixture.writes()).toBe(1)
+      expect(fixture.waits()).toEqual([
+        ['1', '250'],
+        ['1', '250'],
+      ])
+      await fixture.closed()
+      expect(fixture.closes()).toBe(1)
+    } finally {
+      await fixture.stop()
+    }
+  })
+  test('a missing replica acknowledgement fails after one bounded retry', async () => {
+    const fixture = await transportFixture('unreplicated')
+    try {
+      const result = await operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })).pipe(
+        Effect.provide(fixture.layer),
+        Effect.result,
+        Effect.runPromise,
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(String(result.failure.cause)).toContain('replica')
+      expect(fixture.writes()).toBe(1)
+      expect(fixture.waits()).toEqual([
+        ['1', '250'],
+        ['1', '250'],
+      ])
+      await fixture.closed()
+      expect(fixture.closes()).toBe(1)
+    } finally {
+      await fixture.stop()
+    }
+  })
+  test('replica acknowledgement retry cannot outlive the command deadline', async () => {
+    const fixture = await transportFixture('replica-timeout')
+    try {
+      const result = await operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })).pipe(
+        Effect.provide(fixture.layer),
+        Effect.result,
+        Effect.runPromise,
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(result.failure.message).toBe('Valkey command exceeded its deadline')
+      expect(fixture.writes()).toBe(1)
+      expect(fixture.waits()).toEqual([
+        ['1', '250'],
+        ['1', '250'],
+      ])
+      await fixture.closed()
+      expect(fixture.closes()).toBe(1)
+    } finally {
+      await fixture.stop()
+    }
   })
   test('the next operation reconnects after an aborted command without a legacy client', async () => {
     const fixture = await transportFixture('hold')
