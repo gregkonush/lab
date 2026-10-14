@@ -92,6 +92,7 @@ import {
   type MarketDataSnapshot,
 } from './market-data'
 import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from './market-data/intraday/model'
+import { marketDataOperationError } from './market-data/errors'
 import { constructStreamingSnapshot } from './market-data/streaming/snapshot'
 import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
 import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
@@ -328,7 +329,7 @@ test('preservation does not include a partially bound snapshot', () => {
 test.each(['RecoveryOnly', 'CloseOnly'] as const)(
   '%s startup preserves its open unbound cycle without discovering a replacement',
   async (executionMode) => {
-    const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+    const observedAt = evaluatedAt
     const terminalCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...cycle,
@@ -607,8 +608,8 @@ const cycle = Effect.runSync(
     state: CycleState.Active,
     bindings: {},
     stateVersion: 3,
-    createdAt: window.submissionOpenAt,
-    updatedAt: window.submissionOpenAt,
+    createdAt: new Date(Date.parse(evaluatedAt) - 1000).toISOString(),
+    updatedAt: new Date(Date.parse(evaluatedAt) - 1000).toISOString(),
   }),
 )
 
@@ -5892,7 +5893,7 @@ test('persists the pricing quote event and its full freshness deadline for every
   expect(Result.isFailure(makeExecutionDecisionDocument(withoutAllowance))).toBeTrue()
 })
 
-test('recovery preserves the open session for a real next strategy decision', async () => {
+test('recovery preserves a fresh admission for a real next strategy decision', async () => {
   const fixture = await executionLifecycleFixture()
   let stored = cycle
   let bound: CycleDecisionDocument | undefined
@@ -5953,19 +5954,22 @@ test('recovery preserves the open session for a real next strategy decision', as
           ),
     ),
     loadSnapshot: (query) =>
-      Effect.sync(() => {
-        snapshotLoads += 1
-        const snapshot = streamingFixtureFromRaw(
-          makeIntradayMomentumTestSnapshot(
-            currentIntradayProtocol,
-            { ...query, archiveWatermarks: [] },
-            { NVDA: 0.02 },
-            10,
-          ),
-          query,
-        ).snapshot
-        snapshots.push(snapshot)
-        return snapshot
+      Effect.suspend(() => {
+        if (!projectionReady) return Effect.fail(marketDataOperationError('load', 'projection disconnected', undefined))
+        return Effect.sync(() => {
+          snapshotLoads += 1
+          const snapshot = streamingFixtureFromRaw(
+            makeIntradayMomentumTestSnapshot(
+              currentIntradayProtocol,
+              { ...query, archiveWatermarks: [] },
+              { NVDA: 0.02 },
+              10,
+            ),
+            query,
+          ).snapshot
+          snapshots.push(snapshot)
+          return snapshot
+        })
       }),
     verifyReference: fixtureStreamingReference,
   }
@@ -5995,7 +5999,7 @@ test('recovery preserves the open session for a real next strategy decision', as
         observedAt: beforeOpenAt,
       })
       stored = cycle
-      yield* TestClock.setTime(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
       const input = { ...fixture.input, intradayMarketData }
       const startup = { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void }
       const restricted = yield* yield* makeMutationAutonomousCycleStartupProduction(input, 'RecoveryOnly')(startup)

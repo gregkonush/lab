@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import { CycleState, CycleTerminalReason, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
 import { isTerminalCycleState } from '../transitions'
+import { unusedEntryExpiresAt } from '../entry-admission'
 import { selectBoundDecision } from './recovery-decision-binding'
 import {
   decodeCycleRecoveryStateResult,
@@ -102,6 +103,19 @@ const selectDeadlineOrProvenance = (
       cycleId: cycle.identity.cycleId,
       observedAt: state.observedAt,
       reason: CycleTerminalReason.ProvenanceMismatch,
+    }
+  }
+  if (
+    cycle.bindings.snapshotId === undefined &&
+    cycle.bindings.decisionHash === undefined &&
+    state.decisionDocument == null &&
+    Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)
+  ) {
+    return {
+      action: 'BLOCK',
+      cycleId: cycle.identity.cycleId,
+      observedAt,
+      reason: CycleTerminalReason.UnusedEntryExpired,
     }
   }
   return undefined

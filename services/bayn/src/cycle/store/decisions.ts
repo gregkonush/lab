@@ -17,6 +17,7 @@ import {
 import { cycleTerminalReasonForBlockedTargetPlan } from '../recovery-decisions'
 import { cycleDraftMatches, cycleDraftOf, isCycleStateTransitionAllowed } from '../transitions'
 import { cycleDecisionStoreEvidence } from './decision-contract'
+import { unusedEntryExpiresAt } from '../entry-admission'
 import type { CycleStoreDecisionFailure } from './decision-contract'
 
 export type { CycleStoreDecisionFailure } from './decision-contract'
@@ -370,6 +371,14 @@ const decideBlockDataFirst = (
   if (reason === CycleTerminalReason.MissedSubmission && observedAt < cycle.window.submissionCutoffAt) {
     return fail('invariant', 'missed-submission transition cannot precede the broker submission cutoff')
   }
+  if (
+    reason === CycleTerminalReason.UnusedEntryExpired &&
+    (!isIntradayAutonomousCycle(cycle) ||
+      cycle.bindings.snapshotId !== undefined ||
+      cycle.bindings.decisionHash !== undefined ||
+      Date.parse(observedAt) < unusedEntryExpiresAt(cycle))
+  )
+    return fail('invariant', 'unused-entry expiry requires an unbound intraday cycle after its admission lease')
   if (observedAt < cycle.updatedAt) return fail('conflict', 'cycle update time cannot move backward')
   const decisionHash = cycle.bindings.decisionHash
   return cycle.state === CycleState.Active && decisionHash !== undefined

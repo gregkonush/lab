@@ -128,6 +128,36 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     await runtime?.dispose()
   })
 
+  test('unused entry expiry is persisted after its lease and rejected early by PostgreSQL', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        const at = '2026-08-28T14:31:00.000Z'
+        const cycle = (yield* store.acquire(draft(), at)).cycle
+        yield* store.activate(cycle.identity.cycleId, at)
+        const early = yield* sql`UPDATE autonomous_cycles SET state='BLOCKED',
+        terminal_reason='BLOCKED_UNUSED_ENTRY_EXPIRED',state_version=state_version+1,
+        updated_at='2026-08-28T14:31:59.999Z',terminal_at='2026-08-28T14:31:59.999Z'
+        WHERE cycle_id=${cycle.identity.cycleId}`.pipe(Effect.result)
+        expect(Result.isFailure(early)).toBe(true)
+        if (Result.isSuccess(early) || early.failure.reason._tag !== 'ConstraintError')
+          throw new Error('Expected the database admission deadline guard')
+        expect(String(early.failure.reason.cause)).toContain('unused entry admission must expire')
+        expect(Option.getOrThrow(yield* store.read(cycle.identity.cycleId)).state).toBe(CycleState.Active)
+        const expired = yield* store.block(
+          cycle.identity.cycleId,
+          CycleTerminalReason.UnusedEntryExpired,
+          '2026-08-28T14:32:00.000Z',
+        )
+        expect(expired.cycle).toMatchObject({
+          state: CycleState.Blocked,
+          terminalReason: CycleTerminalReason.UnusedEntryExpired,
+        })
+      }),
+    )
+  })
+
   test('converges concurrent acquisition on one immutable intraday cycle', async () => {
     const candidate = draft()
     const result = await runtime.runPromise(
@@ -295,7 +325,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
       expect(current.state).toBe(CycleState.Pending)
       expect(current.bindings).toEqual({})
-      expect(current.window).toEqual(candidate.window)
+      expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
+      expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
       expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
       expect(result.intentCount).toBe('0')
     })

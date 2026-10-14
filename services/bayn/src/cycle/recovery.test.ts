@@ -89,7 +89,7 @@ describe('intraday cycle recovery', () => {
   })
 
   test('activates a pending cycle and delegates signal readiness during the open session', () => {
-    const pending = pendingCycle()
+    const pending = { ...pendingCycle(), createdAt: '2026-02-02T14:44:30.000Z', updatedAt: '2026-02-02T14:44:30.000Z' }
     expect(
       value(
         selectCycleRecovery(
@@ -104,7 +104,7 @@ describe('intraday cycle recovery', () => {
       observedAt: '2026-02-02T14:45:00.000Z',
     })
 
-    const active = activeCycle()
+    const active = { ...activeCycle(), createdAt: '2026-02-02T14:59:30.000Z', updatedAt: '2026-02-02T14:59:30.000Z' }
     expect(
       value(
         selectCycleRecovery(
@@ -115,7 +115,10 @@ describe('intraday cycle recovery', () => {
       ),
     ).toEqual({ action: 'BUILD_DECISION', cycle: active })
 
-    expect(value(selectCycleRecovery(recoveryState(active)))).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    expect(value(selectCycleRecovery(recoveryState(active, { observedAt: '2026-02-02T15:00:15.000Z' })))).toEqual({
+      action: 'BUILD_DECISION',
+      cycle: active,
+    })
   })
 
   test('reads a durable decision for a decision-bound cycle', () => {
