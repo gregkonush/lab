@@ -469,7 +469,7 @@ can be extended by new slow operations. That policy was preserved. A contemporan
 - Retain the deployed Bayn acceptance evidence and its limits: native reads and current readiness pass, while the
   initial window included one broker failure and some publication attempts still hit the replica guard. Preserve
   OBSERVE authority until a separately reviewed mandate exists.
-- Recheck Kafka unavailable partitions and session-specific market-data freshness after the final application rollout.
+- Verify session-specific market-data freshness. The native Kafka unavailable-partition recheck after the final Bayn rollout already passed with zero unavailable partitions.
 - Let Ceph finish rebalancing and clear its remaining native warnings; zero degraded objects does not mean every PG is clean. Retain all original OSD identities.
 - Confirm Home Stash's active Job completes normally and Argo returns to green between scheduled runs.
 - Resolve the separately owned Cloudflare, Keycloak, and Tengri reconciliation holds through their intended release.
