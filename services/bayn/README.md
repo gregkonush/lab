@@ -488,6 +488,8 @@ cutoff and fresh decision/risk gates still apply; other restrictions and changed
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
 order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+Cycle runners require an explicit decision-evidence verifier before durable binding. The verifier checks canonical
+market-data references and owns any legitimate empty evidence; omitting it cannot bypass verification.
 Each new entry risk decision retains its pricing quote event time and the snapshot's maximum quote age. Approval
 expires at that event-time deadline or an earlier broker, intent, or session deadline. The final submit transaction
 rechecks the persisted expiry after writer/grant locks and broker reads, so retries or worker restarts cannot extend
