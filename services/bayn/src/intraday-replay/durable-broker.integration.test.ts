@@ -171,7 +171,7 @@ durableTest.each(['ioc', 'fractional'] as const)(
             ? [order(OrderSide.Buy), order(OrderSide.Sell)]
             : [
                 order(OrderSide.Buy),
-                ...['500000', '2500000'].map((quantityAtoms, index) => ({
+                ...['500000000', '2500000000'].map((quantityAtoms, index) => ({
                   ...order(OrderSide.Sell),
                   clientOrderId: `fractional-${index}`,
                   quantityAtoms,

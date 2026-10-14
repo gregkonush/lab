@@ -26,7 +26,7 @@ import {
   IntradaySnapshotFailure,
   IntradaySnapshotPurpose,
   intradaySnapshotSymbols,
-  usesCandidateWindowTrade,
+  usesWindowTradeEvidence,
 } from './model'
 import type { IntradayArchiveWatermarkRow, IntradayBarRow, IntradayQuoteRow, IntradayTradeRow } from './rows'
 import {
@@ -841,13 +841,13 @@ export const latestQuotes = (
     const trade = latestTrades[symbol]
     if (
       quote === undefined ||
-      (!usesCandidateWindowTrade(request, symbol) &&
+      (!usesWindowTradeEvidence(request, symbol) &&
         intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt))
     ) {
       return Result.fail(
         failure(
           'not-ready',
-          usesCandidateWindowTrade(request, symbol)
+          usesWindowTradeEvidence(request, symbol)
             ? 'intraday snapshot lacks a quote for candidate symbol'
             : 'intraday snapshot lacks a post-range quote for every symbol',
           {
@@ -858,11 +858,33 @@ export const latestQuotes = (
     }
     if (
       request.purpose === undefined &&
-      !usesCandidateWindowTrade(request, symbol) &&
-      (trade === undefined || intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt))
+      (trade === undefined ||
+        (!usesWindowTradeEvidence(request, symbol) &&
+          intradayInstantNanos(trade.eventAt) < intradayInstantNanos(request.rangeEndAt)))
     ) {
       return Result.fail(
-        failure('not-ready', 'intraday snapshot lacks a post-range trade for every symbol', { symbol }),
+        failure(
+          'not-ready',
+          usesWindowTradeEvidence(request, symbol)
+            ? `intraday snapshot lacks a trade for ${request.candidateSymbols?.includes(symbol) === true ? 'candidate' : 'benchmark'} symbol`
+            : 'intraday snapshot lacks a post-range trade for every symbol',
+          { symbol },
+        ),
+      )
+    }
+    if (
+      usesWindowTradeEvidence(request, symbol) &&
+      request.candidateSymbols?.includes(symbol) !== true &&
+      intradayAgeNanos(request.observedAt, quote.eventAt) > millisecondsAsNanos(request.maximumQuoteAgeMs)
+    ) {
+      return Result.fail(
+        failure('freshness', 'intraday quote exceeds the decision-time freshness bound', {
+          symbol,
+          sourceTopic: quote.sourceTopic,
+          eventAt: quote.eventAt,
+          observedAt: request.observedAt,
+          maximumQuoteAgeMs: request.maximumQuoteAgeMs,
+        }),
       )
     }
     for (const evidence of request.purpose === undefined ? [quote, trade] : [quote]) {
@@ -979,7 +1001,7 @@ export const candidateAvailability = (
       )
       if (Result.isSuccess(available)) {
         if (!candidates.has(symbol)) continue
-        const pricingEvidence = usesCandidateWindowTrade(request, symbol)
+        const pricingEvidence = usesWindowTradeEvidence(request, symbol)
           ? [available.success[symbol]]
           : [available.success[symbol], symbolTrades.at(-1)]
         const stale = pricingEvidence.find(
@@ -990,7 +1012,7 @@ export const candidateAvailability = (
         if (stale !== undefined) {
           const cause = failure(
             'freshness',
-            usesCandidateWindowTrade(request, symbol)
+            usesWindowTradeEvidence(request, symbol)
               ? 'intraday quote exceeds the decision-time freshness bound'
               : 'intraday quote or trade exceeds the decision-time freshness bound',
             {
@@ -1003,17 +1025,6 @@ export const candidateAvailability = (
           )
           exclusions.push(Object.freeze({ symbol, reason: 'freshness', message: cause.message }))
           continue
-        }
-        // The downstream signal contract requires a trade for every requested candidate; admitting a
-        // candidate with no trade rows at all would abort the whole batch, so it stays excluded here.
-        if (symbolTrades.length === 0) {
-          exclusions.push(
-            Object.freeze({
-              symbol,
-              reason: 'not-ready',
-              message: 'intraday snapshot lacks a trade for candidate symbol',
-            }),
-          )
         }
         continue
       }

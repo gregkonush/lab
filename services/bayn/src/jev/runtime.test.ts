@@ -19,7 +19,7 @@ import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime
 import { utcInstantFromEpochMillis } from '../time'
 import { canonicalHashV1 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
-import { defaultJevProtocolDocument, momentumFirstJevProtocolDocument } from './protocol'
+import { defaultJevProtocolDocument } from './protocol'
 
 const scenario = (
   options: {
@@ -443,9 +443,9 @@ describe('Jev management observation admission', () => {
   })
 
   test.each([
-    [JevPurpose.Entry, 'retained', defaultJevProtocolDocument],
-    [JevPurpose.Manage, 'retained', defaultJevProtocolDocument],
-    [JevPurpose.Entry, 'momentum', { ...momentumFirstJevProtocolDocument, candidateSymbols: ['AAPL'] }],
+    [JevPurpose.Entry, 'current', defaultJevProtocolDocument],
+    [JevPurpose.Manage, 'current', defaultJevProtocolDocument],
+    [JevPurpose.Entry, 'single-candidate', { ...defaultJevProtocolDocument, candidateSymbols: ['AAPL'] }],
   ] as const)(
     '%s %s retains typed expiry and structured admission diagnostics',
     async (purpose, _label, protocolDocument) => {
@@ -535,7 +535,7 @@ describe('Jev management observation admission', () => {
       expect(planning?.attributes.get('bayn.entry_timing.snapshot_hash')).toBe(fixture.snapshot.manifest.contentHash)
       expect(planning?.attributes.get('bayn.entry_timing.batch_id')).toMatch(/^[0-9a-f]{64}$/)
       expect(planning?.attributes.get('bayn.entry_timing.observation_hash')).toBe(fixture.observation.contentHash)
-      if (fixture.protocol.schemaVersion === 'bayn.jev.protocol.v2')
+      if (purpose === JevPurpose.Entry)
         expect(planning?.attributes.get('bayn.entry_timing.deterministic_selected_at')).toBe(
           warning?.annotations['checkedAt'],
         )
