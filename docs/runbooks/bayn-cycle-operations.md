@@ -192,11 +192,10 @@ Confirm the current Restate registration's label selector before comparing worke
   gates qualify, preserving the generic unready signal when dedicated telemetry is incomplete. Ordinary abstention
   remains ready. Repair the failed prerequisite through its existing owner. Do not move the session window,
   force a decision, or create another execution process.
-- `BaynInputWindowUnavailable`: the consumer reports `executionSession.condition=INPUT_UNAVAILABLE` on the first matching rule evaluation
+- `BaynInputWindowUnavailable`: the consumer reports `executionSession.condition=INPUT_UNAVAILABLE` for one minute
   on an ACTIVE, decision-unbound cycle, at or after `firstObservationAt` and before `submissionCutoffAt`.
   Runtime readiness, cycle projection availability, and scrape health must all be true on that same replica before
-  replicas are aggregated. The group evaluates every 15 seconds with no additional pending period because continuous admissions can expire in one minute.
-  Check the retained pass's bounded readiness reason and required feature/window identity,
+  replicas are aggregated. Check the retained pass's bounded readiness reason and required feature/window identity,
   then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
   acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
   minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
@@ -204,14 +203,11 @@ Confirm the current Restate registration's label selector before comparing worke
   do not relax freshness, admission, risk, or authority gates or force a trade.
 - `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
   `bayn_cycle_decision_deadline_timestamp_seconds`. For the current Jev protocol, the first full observation is 30
-  minutes and two seconds after the exchange opens, bounded below by submission opening. Continuous crypto uses
-  completed rolling history immediately at submission opening. Both use the persisted `executionCalendarSchemaVersion`.
-  The deadline adds the protocol's maximum decision lag to the later
+  minutes and two seconds after submission opens. The deadline adds the protocol's maximum decision lag to the later
   of that observation and the attempt's creation time. Follow the current Restate tick trace through decision construction,
   risk evaluation, and the PostgreSQL decision bind. Do not synthesize a decision or submit directly to the broker.
-  An unused native admission expires at the earlier of its one-minute lease and `submissionCutoffAt`.
-  `BLOCKED_UNUSED_ENTRY_EXPIRED` releases the empty slot through the existing approved controller after cooldown.
-  It does not authorize entries while an operator or capital restriction remains active.
+  If no decision is durably bound by `submissionCutoffAt`, Bayn must classify the cycle as
+  `MISSED_SUBMISSION_CUTOFF` and close readiness rather than wait until execution close.
 - `BaynCycleObservationUnavailable`: inspect `cycle.error` in `GET /v1/status`, then restore the existing PostgreSQL
   projection path. Do not substitute cached or synthetic state.
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,

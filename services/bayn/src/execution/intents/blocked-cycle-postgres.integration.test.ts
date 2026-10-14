@@ -9,9 +9,6 @@ import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Resul
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
-import { recoverExpiredNativeEntryAdmission } from '../../../migrations/0101_reclassify_expired_native_entry'
-import { canRearmUnusedCycle } from '../../cycle/runner/calendar-decisions'
-import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import {
   CycleState,
@@ -126,47 +123,6 @@ const makeFixture = (openSession = false) => {
     restrictedAt: instant(now - 2 * 60_000),
     reconciledAt: instant(now - 60_000),
     positionsObservedAt: instant(now - 90_000),
-  }
-}
-
-const makeExpiredNativeFixture = () => {
-  const original = makeFixture(true)
-  const date = instant(Date.now() - 24 * 60 * 60_000).slice(0, 10)
-  const calendar = value(
-    makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
-      source: 'alpaca-v2-calendar',
-      date,
-      openAt: `${date}T00:00:00.000Z`,
-      closeAt: `${date}T23:59:59.999Z`,
-    }),
-  )
-  const policy = original.cycle.identity.executionPolicy
-  if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('Expected native policy')
-  const identity = value(
-    makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
-      entryAttemptOrdinal: 1,
-      strategyName: original.cycle.identity.strategyName,
-      qualificationRunId: planHash,
-      strategyProtocolHash: original.cycle.identity.strategyProtocolHash,
-      accountId,
-      executionSessionDate: date,
-      executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
-      executionCalendarSource: calendar.executionCalendarSource,
-      executionCalendarHash: calendar.executionCalendarHash,
-      executionPolicy: policy,
-    }),
-  )
-  const cycle = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, policy))))
-  if (!isIntradayCycleDraft(cycle)) throw new Error('Expected native cycle')
-  return {
-    ...original,
-    cycle,
-    generationActivatedAt: `${date}T00:59:00.000Z`,
-    acquiredAt: `${date}T01:00:00.000Z`,
-    cycleActivatedAt: `${date}T01:00:01.000Z`,
-    restrictedAt: cycle.window.submissionCutoffAt,
   }
 }
 
@@ -302,103 +258,6 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
 
   afterAll(async () => {
     await runtime?.dispose()
-  })
-
-  test.each(['clear', 'operator', 'position'] as const)(
-    'native expired-entry migration requires clear flat authority: %s',
-    async (scenario) => {
-      const fixture = makeExpiredNativeFixture()
-      const result = await runtime.runPromise(
-        Effect.gen(function* () {
-          const sql = yield* PgClient.PgClient
-          const cycles = yield* CycleStore
-          yield* seedRepairableCycle(sql, cycles, fixture)
-          if (scenario === 'operator')
-            yield* sql`UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',
-        reason='operator stop',version=version+1,updated_at=clock_timestamp() WHERE singleton`
-          if (scenario === 'position')
-            yield* sql`INSERT INTO position_snapshots
-        (snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash,ingestion_order_trusted)
-        VALUES (${'9'.repeat(64)},'bayn.paper-position-snapshot.v1',${accountId},${'9'.repeat(64)},
-        ${instant(Date.parse(fixture.reconciledAt) - 1)},1,${'9'.repeat(64)},true)`
-          const before = Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))
-          const repair = yield* Effect.all([recoverExpiredNativeEntryAdmission, recoverExpiredNativeEntryAdmission], {
-            concurrency: 2,
-          }).pipe(Effect.result)
-          const first = Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))
-          const replay = yield* recoverExpiredNativeEntryAdmission.pipe(Effect.result)
-          const repeated = Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))
-          const triggers =
-            yield* sql`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='autonomous_cycles'::regclass
-        AND tgname IN ('autonomous_cycle_lifecycle','autonomous_cycles_unused_entry_admission') ORDER BY tgname`
-          return { before, first, repeated, triggers, repair, replay }
-        }),
-      )
-      expect(Result.isSuccess(result.repair)).toBe(scenario === 'clear')
-      expect(Result.isSuccess(result.replay)).toBe(scenario === 'clear')
-      expect(result.first.state).toBe(CycleState.Blocked)
-      expect(result.first.terminalReason).toBe(
-        scenario === 'clear' ? CycleTerminalReason.UnusedEntryExpired : CycleTerminalReason.Authority,
-      )
-      expect(result.first.stateVersion).toBe(result.before.stateVersion + (scenario === 'clear' ? 1 : 0))
-      expect(result.repeated).toEqual(result.first)
-      expect(result.triggers).toEqual([
-        { tgname: 'autonomous_cycle_lifecycle', tgenabled: 'O' },
-        { tgname: 'autonomous_cycles_unused_entry_admission', tgenabled: 'O' },
-      ])
-      if (scenario === 'clear') {
-        const policy = fixture.cycle.identity.executionPolicy
-        if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
-          throw new Error('Expected native policy')
-        const at = instant(Date.now())
-        const session = value(
-          tradingWindow(continuousMarketHours, at, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
-        )
-        if (session === null) throw new Error('Expected continuous session')
-        expect(
-          canRearmUnusedCycle(
-            result.first,
-            {
-              cycleBindingId: planHash,
-              strategyName: 'intraday-momentum',
-              strategyProtocolHash: fixture.cycle.identity.strategyProtocolHash,
-              accountId,
-              executionPolicy: policy,
-            },
-            continuousMarketHours,
-            session,
-            at,
-          ),
-        ).toBe(true)
-      }
-    },
-  )
-
-  test('a failed native expiry migration restores the terminal row and both lifecycle guards', async () => {
-    const fixture = makeExpiredNativeFixture()
-    const result = await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const cycles = yield* CycleStore
-        yield* seedRepairableCycle(sql, cycles, fixture)
-        const before = yield* cycles.read(fixture.cycle.identity.cycleId)
-        yield* sql`CREATE FUNCTION reject_fixture_expiry() RETURNS trigger LANGUAGE plpgsql AS $body$
-        BEGIN RAISE EXCEPTION 'fixture expiry write failure' USING ERRCODE='23514'; END $body$`
-        yield* sql`CREATE TRIGGER reject_fixture_expiry AFTER UPDATE ON autonomous_cycles
-        FOR EACH ROW EXECUTE FUNCTION reject_fixture_expiry()`
-        const failed = yield* recoverExpiredNativeEntryAdmission.pipe(Effect.result)
-        const after = yield* cycles.read(fixture.cycle.identity.cycleId)
-        const triggers = yield* sql`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='autonomous_cycles'::regclass
-        AND tgname IN ('autonomous_cycle_lifecycle','autonomous_cycles_unused_entry_admission') ORDER BY tgname`
-        return { before, after, failed, triggers }
-      }),
-    )
-    expect(Result.isFailure(result.failed)).toBe(true)
-    expect(result.after).toEqual(result.before)
-    expect(result.triggers).toEqual([
-      { tgname: 'autonomous_cycle_lifecycle', tgenabled: 'O' },
-      { tgname: 'autonomous_cycles_unused_entry_admission', tgenabled: 'O' },
-    ])
   })
 
   test('reads and locks capital authority persisted with the active intraday protocol', async () => {

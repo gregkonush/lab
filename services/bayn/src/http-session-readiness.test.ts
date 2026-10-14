@@ -43,7 +43,6 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
         accountId,
         signalSessionDate: '2026-10-01',
         executionSessionDate: '2026-10-01',
-        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
         phase: CycleState.Active,
         snapshotId: null,
         publicationDeadlineAt: null,
@@ -465,67 +464,6 @@ test('an unused entry expiry reports rearming during the market rotation cooldow
       },
     },
     'REARMING',
-    true,
-  )
-})
-
-test.each([
-  [null, 'AWAITING_DECISION', true],
-  [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
-  [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
-] as const)(
-  'continuous admission immediately reports %s evidence without an equity warmup',
-  (reason, condition, ready) => {
-    const state = sessionState('2026-10-01T13:30:00.000Z')
-    const current = state.cycle.current
-    if (current === null) throw new Error('fixture cycle missing')
-    const continuous: RuntimeState = {
-      ...state,
-      cycle: {
-        ...state.cycle,
-        current: {
-          ...current,
-          executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
-          createdAt: current.submissionOpenAt,
-          updatedAt: current.submissionOpenAt,
-          submissionCutoffAt: '2026-10-01T13:31:00.000Z',
-          executionCloseAt: '2026-10-01T13:49:00.000Z',
-        },
-      },
-      autonomousCycleLoop: {
-        ...state.autonomousCycleLoop,
-        lastPass:
-          reason === null
-            ? null
-            : {
-                result: 'SUCCESS',
-                outcome: 'RECOVERED',
-                recoveryAction: 'WAITING',
-                observedAt: state.health.checkedAt ?? '',
-                readiness: { reason, message: 'fixture unavailable' },
-              },
-      },
-    }
-    expect(statusResponseDecision(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
-      body: {
-        executionSession: {
-          condition,
-          ready,
-          firstObservationAt: current.submissionOpenAt,
-          decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
-        },
-      },
-    })
-  },
-)
-
-test('an equity warmup starts at exchange opening rather than adding a second submission warmup', () => {
-  const state = sessionState('2026-10-01T14:00:02.000Z')
-  const current = state.cycle.current
-  if (current === null) throw new Error('fixture cycle missing')
-  expectSession(
-    { ...state, cycle: { ...state.cycle, current: { ...current, submissionOpenAt: '2026-10-01T13:45:00.000Z' } } },
-    'AWAITING_DECISION',
     true,
   )
 })

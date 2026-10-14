@@ -20,9 +20,6 @@ import { Authority, KillState } from '../../execution/contracts'
 import { canonicalHashV1 } from '../../hash'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
-import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
-import { defaultJevProtocolDocument } from '../../jev/protocol'
-import { makeIntradayCycleDraft } from '../runner/calendar-decisions'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleObservability, CycleObservabilityLive, CycleStore, CycleStoreLive } from '.'
 
@@ -314,40 +311,6 @@ describePostgres('PostgreSQL intraday observability projection', () => {
 
   afterAll(async () => {
     await runtime?.dispose()
-  })
-
-  test('projects the persisted continuous calendar for a native crypto admission', async () => {
-    const window = value(
-      tradingWindow(continuousMarketHours, activatedAt, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
-    )
-    if (window === null) throw new Error('Expected continuous admission')
-    const executionPolicy = value(makeCycleExecutionPolicyFromModel(defaultJevProtocolDocument.executionModel))
-    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
-      throw new Error('Expected native policy')
-    const candidate = value(
-      makeIntradayCycleDraft(
-        {
-          cycleBindingId: qualificationRunId,
-          strategyName: 'jev',
-          strategyProtocolHash: '6'.repeat(64),
-          accountId,
-          executionPolicy,
-        },
-        continuousMarketHours,
-        window,
-      ),
-    )
-    const projection = await runtime.runPromise(
-      Effect.gen(function* () {
-        yield* (yield* CycleStore).acquire(candidate, activatedAt)
-        return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
-      }),
-    )
-    expect(projection.current).toMatchObject({
-      cycleId: candidate.identity.cycleId,
-      executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
-      submissionOpenAt: activatedAt,
-    })
   })
 
   test('projects the active intraday cycle with exact safety and zero execution facts', async () => {

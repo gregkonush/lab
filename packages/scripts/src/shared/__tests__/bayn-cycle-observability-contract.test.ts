@@ -44,12 +44,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynCycleStalled',
       'BaynCycleFailed',
     ])
-    expect(rules.find((rule) => rule.alert === 'BaynInputWindowUnavailable')?.for).toBe('0s')
-    expect(
-      rules
-        .filter((rule) => rule.alert !== 'BaynInputWindowUnavailable')
-        .every((rule) => rule.for === '1m' || rule.for === '2m'),
-    ).toBe(true)
+    expect(rules.every((rule) => rule.for === '1m' || rule.for === '2m')).toBe(true)
 
     const expressions = Object.fromEntries(rules.map((rule) => [rule.alert, rule.expr]))
     expect(expressions.BaynMetricsUnavailable).toContain('up{')

@@ -285,7 +285,6 @@ const publicCycleSnapshot = (snapshot: RuntimeState['cycle']['current']) =>
         cycleId: snapshot.cycleId,
         signalSessionDate: snapshot.signalSessionDate,
         executionSessionDate: snapshot.executionSessionDate,
-        executionCalendarSchemaVersion: snapshot.executionCalendarSchemaVersion,
         phase: snapshot.phase,
         snapshotId: snapshot.snapshotId,
         decisionHash: snapshot.decisionHash,
@@ -586,14 +585,9 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   const firstObservationMs =
     session === null
       ? Number.NaN
-      : session.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-        ? Date.parse(session.submissionOpenAt)
-        : Math.max(
-            Date.parse(session.submissionOpenAt),
-            Date.parse(session.executionOpenAt) +
-              defaultJevProtocolDocument.lookbackMinutes * 60_000 +
-              defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
-          )
+      : Date.parse(session.submissionOpenAt) +
+        defaultJevProtocolDocument.lookbackMinutes * 60_000 +
+        defaultJevProtocolDocument.decisionDelaySeconds * 1_000
   const deadlineMs =
     session === null
       ? Number.NaN

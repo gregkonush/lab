@@ -3009,7 +3009,6 @@ data:
               summary: Restate Operator is waiting for a required CRD
               description: At least one operator controller has been unable to discover its required CRD for five minutes.
       - name: bayn-cycle-operations.rules
-        interval: 15s
         rules:
           - alert: BaynMetricsUnavailable
             expr: |
@@ -3300,7 +3299,7 @@ data:
                 and on(job, namespace, service, instance)
                 (up{job="bayn",namespace="bayn",service="bayn"} == 1)
               )
-            for: 0s
+            for: 1m
             labels:
               severity: warning
               team: trading
@@ -3308,7 +3307,7 @@ data:
               notify: email
             annotations:
               summary: Bayn consumer input window is unavailable
-              description: An active unbound cycle reports unavailable inputs after its first complete observation time and before submission cutoff. The warning fires on the first matching evaluation of a scraped replica with current runtime and cycle projections because admissions can expire in one minute. Producer acknowledgements do not prove a complete consumer window.
+              description: An active unbound cycle reports unavailable inputs after its first complete observation time and before submission cutoff for one minute, on a scraped replica with current runtime and cycle projections. Producer acknowledgements do not prove a complete consumer window.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionDecisionLagging
             expr: |

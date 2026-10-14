@@ -937,10 +937,7 @@ bearer header is not retained with the result. Private activation, deactivation,
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
 
-For equities, the first complete observation is 30 minutes and two seconds after the exchange opens, bounded below
-by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
-observation time equals submission opening. Both calculations use the persisted `executionCalendarSchemaVersion`,
-which is also exposed on the current and last cycle.
+For the pinned Jev protocol, the first complete observation is 30 minutes and two seconds after submission opens.
 The decision deadline adds the protocol's maximum decision lag to the later of that observation and the attempt's
 creation time. A later intraday attempt receives its own allowance; repeated waiting passes cannot extend it.
 `bayn_cycle_first_observation_timestamp_seconds`, `bayn_cycle_decision_deadline_timestamp_seconds`,

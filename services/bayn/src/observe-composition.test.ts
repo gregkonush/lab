@@ -304,26 +304,19 @@ test('close-only recovery allows only close submissions strictly before the dead
 })
 
 test.each(['RecoveryOnly', 'CloseOnly', 'Mutation'] as const)(
-  '%s preserves an untouched native cycle only through its admission lease',
+  '%s preserves an untouched cycle through its entry window',
   (capability) => {
-    for (const observedAt of [cycle.createdAt, utcInstantFromEpochMillis(unusedEntryExpiresAt(cycle) - 1)]) {
+    for (const observedAt of [
+      cycle.window.submissionOpenAt,
+      utcInstantFromEpochMillis(Date.parse(cycle.window.submissionCutoffAt) - 1),
+    ]) {
       expect(decideUnboundExecutionCycleTerminalization({ capability, observedAt, cycle })).toBeUndefined()
     }
     expect(
       decideUnboundExecutionCycleTerminalization({ capability, observedAt: cycle.window.submissionCutoffAt, cycle }),
-    ).toBe(CycleTerminalReason.UnusedEntryExpired)
+    ).toBe(capability === 'Mutation' ? undefined : CycleTerminalReason.Authority)
   },
 )
-
-test('a native empty admission expires before close-only authority can strand its slot at the cutoff', () => {
-  expect(
-    decideUnboundExecutionCycleTerminalization({
-      capability: 'CloseOnly',
-      observedAt: cycle.window.submissionCutoffAt,
-      cycle,
-    }),
-  ).toBe(CycleTerminalReason.UnusedEntryExpired)
-})
 
 test('preservation does not include a partially bound snapshot', () => {
   expect(

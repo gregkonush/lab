@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { Pipeable } from '../pipeable'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
-import { CycleState, CycleTerminalReason, type ExecutionCalendarObservation } from './model'
+import { CycleState, CycleTerminalReason } from './model'
 import { EntryAllocationReason } from './entry-allocation-observation'
 
 export interface CycleOperationsThresholds {
@@ -17,7 +17,6 @@ export interface CycleOperationsSnapshot {
   readonly accountId: string
   readonly signalSessionDate: string
   readonly executionSessionDate: string
-  readonly executionCalendarSchemaVersion: ExecutionCalendarObservation['executionCalendarSchemaVersion']
   readonly phase: CycleState
   readonly snapshotId: string | null
   readonly decisionHash: string | null
