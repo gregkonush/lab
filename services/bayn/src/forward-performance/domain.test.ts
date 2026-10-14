@@ -1137,6 +1137,34 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
   })
 
+  test('retains observed settlement costs and withholds qualification until broker receipts match', () => {
+    for (const settled of [false, true]) {
+      const receipt = success(
+        makeForwardPerformanceReceipt(
+          input({
+            transactions: exactTransactions(),
+            executionEvidence: exactExecutionEvidence(),
+            marketVolumeEvidence: exactMarketVolumeEvidence(),
+            brokerFeeAccruals: [
+              { accrualId: 'a'.repeat(64), accountId: 'paper-account-1', expenseMicros: '140', settled },
+            ],
+            ledgerTotals: {
+              realizedGainMicros: '100',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '160',
+              otherChargedCostsMicros: '0',
+              cashYieldMicros: '0',
+            },
+          }),
+        ),
+      )
+      expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+      expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+      expect(receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
+      expect(receipt.executionQuality.reasonCodes.includes('EXPLICIT_COST_EVIDENCE_GAP')).toBe(!settled)
+    }
+  })
+
   test('deducts delayed broker fees and refunds without fabricating fills', () => {
     const receipt = success(
       makeForwardPerformanceReceipt(

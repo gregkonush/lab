@@ -2,6 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Schema } from 'effect'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
+import { readStoredFeeAccruals } from '../../db/fee-accruals'
 import { StoredFeeSchema } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db/accounting-rows'
@@ -313,11 +314,11 @@ export const readForwardPerformancePostgresDataFirst = (
             LIMIT 1
           ), accounted_cash AS (
             SELECT COALESCE(sum(transaction.cash_delta_micros), 0) + COALESCE((
-              SELECT sum(fee.net_amount_micros) FROM broker_fee_accounting AS fee
+              SELECT sum(fee.cash_delta_micros) FROM broker_cash_fee_deltas AS fee
               CROSS JOIN closing_snapshot
               WHERE fee.account_id = ${accountId} AND fee.posted_at IS NOT NULL
-                AND fee.first_observed_at >= (SELECT observed_at FROM opening_snapshot)
-                AND fee.first_observed_at <= closing_snapshot.observed_at
+                AND fee.effective_at >= (SELECT observed_at FROM opening_snapshot)
+                AND fee.effective_at <= closing_snapshot.observed_at
             ), 0) AS cash_delta_micros
             FROM accounting_transactions AS transaction
             CROSS JOIN latest_reconciliation
@@ -364,7 +365,7 @@ export const readForwardPerformancePostgresDataFirst = (
           Effect.flatMap(decodeTransactions),
         )
         const brokerFeeRows = yield* sql<Record<string, unknown>>`
-          SELECT fee.data, fee.coin_cost_basis_micros::text AS coin_cost_basis_micros, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
+          SELECT fee.data, COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=fee.account_id AND m.activity_id=fee.activity_id),0)::text AS matched_cash_micros, fee.coin_cost_basis_micros::text AS coin_cost_basis_micros, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
             fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
             fee.tigerbeetle_ledger::integer AS tigerbeetle_ledger, fee.posted_at IS NOT NULL AS posted,
             fee.first_observed_at, fee.posted_at,
@@ -397,6 +398,7 @@ export const readForwardPerformancePostgresDataFirst = (
             ),
           ),
         )
+        const brokerFeeAccrualRecords = yield* readStoredFeeAccruals(sql, accountId)
         const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
         )
@@ -878,6 +880,7 @@ export const readForwardPerformancePostgresDataFirst = (
           ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
           ledgerTransactions,
+          brokerFeeAccrualRecords,
           brokerFeeRecords: brokerFeeRows.map(
             ({
               includes_generation: _owned,

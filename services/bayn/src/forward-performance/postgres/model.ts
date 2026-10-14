@@ -212,6 +212,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly transactions: readonly AccountingTransaction[]
   /** All account transactions through the selected reconciliation, for stable-account ledger replay. */
   readonly ledgerTransactions: readonly AccountingTransaction[]
+  readonly brokerFeeAccrualRecords: readonly (typeof import('../../db/fee-accruals').StoredAccrual.Type)[]
   readonly brokerFeeRecords?: readonly import('../../accounting/broker-fees').StoredBrokerFee[]
   readonly generationBrokerFeeIds?: readonly string[]
   readonly ambiguousBrokerFeeCount?: number

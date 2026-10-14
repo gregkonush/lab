@@ -30,10 +30,11 @@ const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: Normal
       store.accounting.account,
       { discard: true },
     )
-    return yield* store.valuation.value({
+    const valuation = yield* store.valuation.value({
       accountEventId: accountReceipt.eventId,
       positionSnapshotId: positionsReceipt.snapshotId,
     })
+    return { valuation, positionSnapshotId: positionsReceipt.snapshotId, accountEventId: accountReceipt.eventId }
   })
 
 const makeReconciliationDecision = (
@@ -41,6 +42,8 @@ const makeReconciliationDecision = (
   ordersObservedAt: string,
   valuation: BrokerSnapshot['valuation'],
   reconciledAt: string,
+  positionSnapshotId: string,
+  accountEventId: string,
 ): ReconciliationWriteDecision => {
   const positions = normalized.positions.positions
     .map((event) => event.position)
@@ -51,8 +54,11 @@ const makeReconciliationDecision = (
   return {
     snapshot: {
       account: normalized.account.account,
+      cashReportingQuantumMicros: normalized.cashReportingQuantumMicros,
       positions,
       positionsObservedAt: normalized.positions.observedAt,
+      positionSnapshotId,
+      accountEventId,
       orders,
       ordersObservedAt,
       fills: normalized.fillEvents.map((event) => event.fill),
@@ -109,13 +115,23 @@ const logCompletedPass = (
 
 const writeReconciliation = (
   store: ReconciliationPersistence,
+  fence: WriterFenceService,
   normalized: NormalizedBrokerSnapshot,
   ordersObservedAt: string,
   now: Effect.Effect<string, ReconciliationError>,
 ) =>
   Effect.gen(function* () {
-    const valuation = yield* ingestBrokerEvents(store, normalized)
-    const decision = makeReconciliationDecision(normalized, ordersObservedAt, valuation, yield* now)
+    const { valuation, positionSnapshotId, accountEventId } = yield* fence.transaction(
+      ingestBrokerEvents(store, normalized),
+    )
+    const decision = makeReconciliationDecision(
+      normalized,
+      ordersObservedAt,
+      valuation,
+      yield* now,
+      positionSnapshotId,
+      accountEventId,
+    )
     const persisted = yield* store.reconciliation.reconcile(decision.snapshot)
     const result = makePassResult(decision, persisted)
     yield* logCompletedPass(result, decision)
@@ -128,10 +144,10 @@ const persistStableSnapshotDataFirst = (
   snapshot: StableBrokerSnapshot,
   now: Effect.Effect<string, ReconciliationError>,
 ) =>
-  fence.transaction(
-    prepareNormalizedSnapshot(store, snapshot).pipe(
-      Effect.flatMap((normalized) => writeReconciliation(store, normalized, snapshot.history.orders.observedAt, now)),
-    ),
-  )
+  Effect.gen(function* () {
+    const normalized = yield* prepareNormalizedSnapshot(store, snapshot)
+    yield* store.reconciliation.recoverFees(normalized.account.accountId)
+    return yield* writeReconciliation(store, fence, normalized, snapshot.history.orders.observedAt, now)
+  })
 
 export const persistStableSnapshot = Pipeable.dual(4, persistStableSnapshotDataFirst)

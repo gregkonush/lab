@@ -114,7 +114,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
-    if (statement.includes('SELECT fee.data, fee.coin_cost_basis_micros')) {
+    if (statement.includes('FROM broker_fee_accounting AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
         times === undefined
@@ -127,6 +127,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   date: '2026-07-20',
                   netAmountMicros: '-100',
                 },
+                matched_cash_micros: '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
                   requestId: 'synthetic-fee-read',
@@ -1019,6 +1020,7 @@ describe('forward performance read program', () => {
       inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
+          brokerFeeAccrualRecords: [],
           cycles: [
             {
               cycleId,

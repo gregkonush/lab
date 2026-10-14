@@ -27,8 +27,14 @@ requires flat, settled inventory and complete accounting, archives the original 
 ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
 published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).
 Retained history is audit evidence; retired protocols and order encodings cannot create or submit current orders.
-Crypto fee activities retain exact coin debits separately from USD cash fees. Same-day missing fee activities are
-incomplete cost evidence, never evidence of zero fees.
+Crypto settlement records gross fills unchanged and accrues only debits observed in fresh broker positions or cash.
+Accruals require the active native cycle, accounted fills, the complete observed order quantity and the corresponding
+retained broker snapshot. Fee bounds reject unrelated balance changes. USD cash comparisons use the precision
+reported by the provider, while the ledger retains six-decimal micros.
+Migration 102 adds immutable settlement accruals and receipt matches. Preparation commits before ledger posting;
+recovery posts the same deterministic plans before accounting later fills. Delayed coin and USD fee activities match
+those accruals and post only the remaining adjustment. Missing receipts remain incomplete cost evidence, never
+zero fees or final economic qualification.
 
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.

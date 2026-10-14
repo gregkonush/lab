@@ -21,6 +21,7 @@ export type ForwardPerformanceReasonCode =
   | 'MISSING_LEDGER_ACCOUNT'
   | 'NON_EXACT_RECONCILIATION'
   | 'OPERATING_COST_EVIDENCE_GAP'
+  | 'BROKER_FEE_SETTLEMENT_PENDING'
   | 'OPEN_POSITION'
   | 'STARTING_CAPITAL_GAP'
   | 'UNCLOSED_WINDOW'
@@ -337,6 +338,12 @@ export interface ForwardPerformanceEvidenceInput {
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly accountTransactions?: readonly AccountingTransaction[]
+  readonly brokerFeeAccruals?: readonly {
+    readonly accrualId: string
+    readonly accountId: string
+    readonly expenseMicros: string
+    readonly settled: boolean
+  }[]
   readonly brokerFees?: readonly (import('../broker/alpaca').FeeActivity & { readonly inventoryCostMicros?: string })[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
   readonly unverifiedDecisionHashes?: readonly string[]

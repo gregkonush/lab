@@ -666,10 +666,10 @@ const makeCycleObservability = Effect.gen(function* () {
             WHERE transaction.account_id = (SELECT account_id FROM selected_account)
           ),
           selected_broker_fee_cash AS (
-            SELECT coalesce(sum(fee.net_amount_micros), 0) AS net_amount_micros
-            FROM broker_fee_accounting AS fee
+            SELECT coalesce(sum(fee.cash_delta_micros), 0) AS net_amount_micros
+            FROM broker_cash_fee_deltas AS fee
             WHERE fee.account_id = (SELECT account_id FROM selected_account)
-              AND fee.first_observed_at <= CURRENT_TIMESTAMP
+              AND fee.effective_at <= CURRENT_TIMESTAMP
               AND fee.posted_at <= CURRENT_TIMESTAMP
           ),
           selected_accounting_receipts AS (

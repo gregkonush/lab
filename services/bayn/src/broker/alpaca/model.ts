@@ -11,6 +11,7 @@ import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
 import { Pipeable } from '../../pipeable'
+import type { CashReportingQuantum } from './cash-reporting'
 
 export const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
@@ -245,6 +246,7 @@ export interface Account {
   readonly status: AccountStatus
   readonly currency: 'USD'
   readonly cashMicros: string
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly equityMicros: string
   readonly lastEquityMicros: string
   readonly cryptoStatus: string | null
