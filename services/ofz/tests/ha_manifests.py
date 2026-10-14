@@ -495,14 +495,13 @@ def validate(targets):
     keycloak_pod = resource(targets, "keycloak", "StatefulSet", "keycloak")["spec"][
         "template"
     ]["spec"]
+    keycloak_ca = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "database-ca"
+    )["secret"]
     require(
-        next(
-            volume
-            for volume in keycloak_pod["volumes"]
-            if volume["name"] == "database-ca"
-        )["secret"]["defaultMode"]
-        == 0o440,
-        "keycloak: database CA files must retain mode 0440",
+        keycloak_ca["defaultMode"] == 0o440
+        and keycloak_ca.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
+        "keycloak: mount only the public database CA certificate with mode 0440",
     )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
@@ -773,6 +772,13 @@ def main():
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["metadata"][
             "annotations"
         ].pop("argocd.argoproj.io/sync-wave"),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "database-ca"
+        )["secret"].pop("items"),
         lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
             "configuration"
         ].update(endpointURL="https://rook-ceph-rgw.rook-ceph.svc"),
