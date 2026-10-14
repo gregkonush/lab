@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
         .timeout(std::time::Duration::from_secs(5))
         .add_service(
             AuthorizationServiceServer::new(Service::new(database, native, issuer))
-                .max_decoding_message_size(65536)
+                .max_decoding_message_size(128 * 1024)
                 .max_encoding_message_size(1_048_576),
         )
         .serve_with_incoming_shutdown(transport::incoming(listener, tls), async {

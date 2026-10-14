@@ -106,6 +106,26 @@ identity, authentication time and assurance level before issuing a hash-only opa
 revokes the previous browser credential in the same transaction. Failed establishment records an immutable denial
 without storing the ID token. Platform membership remains necessary after successful identity-provider authentication.
 
+A workspace Viewer has metadata access by default. Content requires an explicit Owner-approved observation scope
+stored with the collaborator: selected file roots, conversation IDs, terminal IDs, screenshot permission and response
+budgets. Scope changes use the same versioned, audited command as role assignment. A same-role change updates the
+scope; removing it immediately makes subsequent content checks fail, including checks for an existing stream receipt.
+Owners and Developers retain their existing privileged authority. Viewer scopes cannot grant execution, lifecycle,
+editor or application-preview access. The roster returns the exact stored scope. File roots and selected IDs reject
+control characters, traversal and known credential paths where applicable. Scoped guest content stays denied until
+the separate bounded observer handlers are implemented and qualified.
+
+The BFF limits complete encoded commands to 64 KiB, including JSON escaping and metadata. Its gRPC sender and the API
+accept protobuf envelopes up to 128 KiB so an accepted command still fits after the BFF adds its authenticated context,
+resolved identity and request hash. The public-body and private-envelope limits remain enforced independently.
+
+A native Viewer relationship cannot authorize content without its committed SQL role and scope. Changing a Viewer
+scope clears content access in the durable intent transaction, before native finalization advances the policy version.
+The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
+stream-receipt lookup; changed authority returns a denial and records it. The real control fixture reproduces both
+pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 174 immutable
+receipts afterward.
+
 The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
 requires fresh MFA for changes, shows quota usage and audit receipts, and retries an uncertain command with its original
 operation ID. The independent `/access` page permits policy administration without starting a guest or opening content.

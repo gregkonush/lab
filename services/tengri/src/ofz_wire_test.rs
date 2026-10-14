@@ -435,6 +435,7 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
             .unwrap();
     let mut preview_principal = principal.clone();
     preview_principal.action = Action::PreviewAccess;
+    preview_principal.context.deadline_unix_ms = now_ms().unwrap() + 5000;
     authorization
         .access(&preview_principal, &uid, &context.runtime_epoch, "")
         .unwrap()

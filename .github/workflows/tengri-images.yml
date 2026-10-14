@@ -163,8 +163,8 @@ jobs:
           buf format ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto --diff --exit-code
           bash generate-proto.sh
           git diff --exit-code -- internal/guestpb
-          node ../tengri/fixtures/generate-ofz-guest-request-v3.mjs
-          git diff --exit-code -- ../tengri/fixtures/ofz-guest-request-v3.json internal/guestauth/testdata/ofz-guest-request-v3.json
+          node ../tengri/fixtures/generate-ofz-guest-request-v4.mjs
+          git diff --exit-code -- ../tengri/fixtures/ofz-guest-request-v4.json internal/guestauth/testdata/ofz-guest-request-v4.json
           test -z "$(gofmt -l .)"
           GOWORK=off go test -race ./...
           GOWORK=off go vet ./...

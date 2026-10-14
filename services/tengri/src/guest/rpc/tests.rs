@@ -14,11 +14,20 @@ async fn identity_is_verified_over_authenticated_grpc() {
     use super::test_server::{TestServer, TestService};
     use std::sync::Arc;
     for (id, version, expected) in [
-        ("expected", 3, true),
-        ("wrong", 3, false),
+        (
+            "expected",
+            tengri::guest_authorization::PROTOCOL_VERSION,
+            true,
+        ),
+        (
+            "wrong",
+            tengri::guest_authorization::PROTOCOL_VERSION,
+            false,
+        ),
         ("expected", 0, false),
         ("expected", 1, false),
         ("expected", 2, false),
+        ("expected", 3, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
@@ -322,7 +331,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                     get_info: Some(Arc::new(|_| {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
-                            protocol_version: 3,
+                            protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
                         })
                     })),
                     ..Default::default()

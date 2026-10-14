@@ -42,6 +42,17 @@ verifies the signed numeric GitHub identity, active platform membership and auth
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
 `/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
+and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
+the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
+inline before submission; the BFF independently validates the same command. The full encoded command, including JSON
+escaping and metadata, must fit the shared 64 KiB request budget. Developer assignments and removals cannot
+carry a Viewer scope. The roster shows the exact approved targets and budgets, or `Metadata only` after scope removal.
+Scope targets preserve their exact entered characters, including surrounding spaces; empty lines are ignored.
+The roster labels file roots, Codex thread IDs and terminal IDs separately and quotes each target to make spaces
+visible. Malformed Unicode that cannot survive protobuf encoding is rejected before submission.
+Selected content can contain private information. Scoped guest content remains denied until the separate bounded
+observer handlers are implemented and qualified.
 The prepared identity release is held until the controller and every runtime channel complete the hard migration.
 Workspace lifecycle operations use principal-scoped local storage and native Web Locks to coordinate desktop tabs.
 A successful creation keeps its operation ID until that exact workspace is confirmed deleted, so a stale empty tab

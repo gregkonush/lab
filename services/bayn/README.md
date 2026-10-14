@@ -35,6 +35,21 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
+## Optional Valkey client
+
+The scoped `ValkeyCache` service provides namespaced reads, bounded-TTL writes and
+deletion over authenticated TLS. Bayn's API and execution worker receive the
+existing connection ConfigMap, password Secret and client certificate mount.
+Configuration, TLS material and the connection are acquired only on the first
+valid cache operation. Missing cache artifacts do not fail layer construction;
+existing execution paths do not read Valkey.
+
+After building, `bun run valkey:verify` runs synthetic miss, write/read, deletion
+and expiry checks and exits after closing the client. See the
+[caching plan](../../docs/bayn/valkey-caching-plan.md) for candidate read paths,
+correctness rules, measurement gates and the client contract. Cache availability
+never grants trading or accounting authority.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
@@ -58,6 +73,10 @@ the native Restate attempt's trace, allowing scheduling, capture and publication
 `bayn.broker.observation.poll` span contains capture and publication spans; capture carries its span and log context
 across the broker runtime boundary. Existing publication logs are JSON with source revision, snapshot hash, original
 observation time, next HTTP-budget deadline and trace/span IDs. The child runtimes create no additional exporter.
+
+The execution controller and broker observation owner preload their small durable state with each invocation.
+State reads therefore avoid lazy-fetch round trips before execution or capture. State mutations, capture claims,
+quota reservations and replay protection retain their existing durable semantics.
 
 Each poll reads the independent order, fill and fee histories concurrently in both stability scans, retaining complete pagination and the existing before/after stability check,
 account and position observations, configuration and recent-order/fill evidence. Original response timestamps and
@@ -725,6 +744,10 @@ request graph, the full scoped TigerBeetle account and transfer sets, and posted
 quotes, pending verification and priced-usage gaps; `completeMeteredCoverage` requires all three to be zero.
 The report gives the source cut and ledger observation times separately. Concurrent posting can fail reconciliation
 and must be retried rather than accepted as a matching subset. Even complete metered coverage remains an estimate:
+The private ledger command's `coverage.requestsWithCoverageIssues` identifies each missing quote, unverified ledger acknowledgement, unknown
+usage or unpriced model with its request ID, purpose and immutable evidence hashes. It excludes account identity
+and model payloads. An abandoned request without a receipt remains an unknown charge; absence of a response cannot
+establish that the provider performed no billable work. The forward-performance summary retains aggregate counts.
 `invoiceReconciled` is false. Prepaid credit refills, provider invoice allocation, data, infrastructure and research
 expenses need their own evidence; this projection alone cannot populate complete economic profit or qualify a policy.
 
@@ -1019,6 +1042,15 @@ query, socket and trading deadlines remain unchanged. The additive indexes and c
 rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
 The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
+
+The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
+LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint
+interval spread checkpoint work; the existing five-minute archive timeout still bounds idle WAL archival.
+These settings retain fsync, full-page writes and the synchronous standby requirement. Buffer changes require
+the existing CNPG rolling restart and switchover, so deploy them while the account is flat outside the regular session.
+Compare WAL buffer-full events, WAL bytes, PostgreSQL 18 I/O counters, replica flush lag and native Bayn latency
+before and after rollout. A configuration revert through GitOps restores the previous settings without deleting
+evidence or changing replication. Compression and larger buffers alone do not establish a faster closure path.
 
 ## Replay and backtesting
 

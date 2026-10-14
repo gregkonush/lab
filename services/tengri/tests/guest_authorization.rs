@@ -46,7 +46,7 @@ struct InvalidVector {
 }
 
 fn fixture() -> Vector {
-    serde_json::from_str(include_str!("../fixtures/ofz-guest-request-v3.json")).unwrap()
+    serde_json::from_str(include_str!("../fixtures/ofz-guest-request-v4.json")).unwrap()
 }
 
 fn seed(vector: &Vector) -> Vec<u8> {
@@ -132,6 +132,18 @@ fn all_actor_kinds_and_scopes_round_trip_across_languages() {
                 vector.now_unix_ms,
             )
             .unwrap();
+        if c.observation.is_some() {
+            assert!(case.payload.len() <= MAX_CONTEXT_BYTES);
+            let mut retargeted = binding(&c, case.body.as_bytes());
+            retargeted.target = "/workspace/another-authorized-root/report.txt";
+            assert!(
+                verifier
+                    .verify_for(&case.proof, &retargeted, vector.now_unix_ms)
+                    .is_err(),
+                "a request budget must not authorize another target: {}",
+                case.name
+            );
+        }
     }
 }
 
@@ -238,7 +250,7 @@ fn every_declared_guest_rpc_has_an_explicit_action() {
     )))
     .unwrap();
     let vector: serde_json::Value =
-        serde_json::from_str(include_str!("../fixtures/ofz-guest-request-v3.json")).unwrap();
+        serde_json::from_str(include_str!("../fixtures/ofz-guest-request-v4.json")).unwrap();
     let mut catalog_count = 0;
     for entry in catalog
         .as_array()
