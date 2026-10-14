@@ -18,13 +18,24 @@ rules:
     resources: [cronjobs, jobs]
     verbs: [list]
   - apiGroups: [actions.github.com]
-    resources: [autoscalingrunnersets]
+    resources: [autoscalingrunnersets, ephemeralrunnersets, ephemeralrunners]
     verbs: [list]
   - apiGroups: [agents.proompteng.ai]
     resources: [agentproviders, agentruns]
     verbs: [list]
   - apiGroups: [argoproj.io]
-    resources: [workflows, workflowtemplates, clusterworkflowtemplates, cronworkflows]
+    resources:
+      - applications
+      - workflows
+      - workflowtemplates
+      - clusterworkflowtemplates
+      - cronworkflows
+      - analysistemplates
+      - clusteranalysistemplates
+      - analysisruns
+    verbs: [list]
+  - apiGroups: [caching.internal.knative.dev]
+    resources: [images]
     verbs: [list]
   - apiGroups: [flink.apache.org]
     resources: [flinkdeployments]

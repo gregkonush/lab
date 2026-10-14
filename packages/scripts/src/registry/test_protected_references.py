@@ -24,6 +24,30 @@ class ProtectedReferencesTest(unittest.TestCase):
             "tools.tools.proompteng.ai": [
                 {"kind": "Tool", "spec": {"image": self.registry + "tool:retained"}}
             ],
+            "applications.argoproj.io": [
+                {
+                    "spec": {
+                        "sources": [
+                            {
+                                "helm": {
+                                    "valuesObject": {
+                                        "template": {
+                                            "spec": {
+                                                "containers": [
+                                                    {
+                                                        "image": self.registry
+                                                        + "helm-runner:retained"
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ],
             "workflowtemplates.argoproj.io": [
                 {
                     "spec": {
@@ -81,6 +105,59 @@ class ProtectedReferencesTest(unittest.TestCase):
                 {"status": {"image": self.registry + "promotion@sha256:" + "c" * 64}}
             ],
         }
+        for resource in [
+            "analysistemplates",
+            "clusteranalysistemplates",
+            "analysisruns",
+        ]:
+            self.objects[resource + ".argoproj.io"] = [
+                {
+                    "spec": {
+                        "metrics": [
+                            {
+                                "provider": {
+                                    "job": {
+                                        "spec": {
+                                            "template": {
+                                                "spec": {
+                                                    "containers": [
+                                                        {
+                                                            "image": self.registry
+                                                            + resource
+                                                            + ":retained"
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        for resource in [
+            "autoscalingrunnersets",
+            "ephemeralrunnersets",
+            "ephemeralrunners",
+        ]:
+            self.objects[resource + ".actions.github.com"] = [
+                {
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "containers": [
+                                    {"image": self.registry + resource + ":retained"}
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+        self.objects["images.caching.internal.knative.dev"] = [
+            {"spec": {"image": self.registry + "knative-cache:retained"}}
+        ]
 
     def read(self, args, **kwargs):
         self.calls.append(args)
@@ -116,6 +193,32 @@ class ProtectedReferencesTest(unittest.TestCase):
         with patch.object(protection.subprocess, "check_output", side_effect=self.read):
             result = protection.references("fixture")
         self.assertIn(self.registry + "tool:retained", result)
+
+    def test_analysis_jobs_are_protected_before_a_job_or_pod_exists(self):
+        with patch.object(protection.subprocess, "check_output", side_effect=self.read):
+            result = protection.references("fixture")
+        for resource in [
+            "analysistemplates",
+            "clusteranalysistemplates",
+            "analysisruns",
+        ]:
+            self.assertIn(self.registry + resource + ":retained", result)
+
+    def test_helm_application_values_are_protected_before_workload_creation(self):
+        with patch.object(protection.subprocess, "check_output", side_effect=self.read):
+            result = protection.references("fixture")
+        self.assertIn(self.registry + "helm-runner:retained", result)
+
+    def test_runner_retries_and_knative_cache_images_are_protected_without_pods(self):
+        with patch.object(protection.subprocess, "check_output", side_effect=self.read):
+            result = protection.references("fixture")
+        for image in [
+            "autoscalingrunnersets",
+            "ephemeralrunnersets",
+            "ephemeralrunners",
+            "knative-cache",
+        ]:
+            self.assertIn(self.registry + image + ":retained", result)
 
     def test_templates_scale_to_zero_catalogs_and_kargo_in_other_namespaces_are_protected(
         self,
