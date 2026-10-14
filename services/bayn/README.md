@@ -1441,6 +1441,10 @@ reference and its original timestamps within the current issuer universe. Retain
 failed ticker refresh explicit while pruning references for removed issuers. These inputs support research; they do
 not change active entry or exit policy.
 
+The SEC artifacts are filing-history metadata and XBRL financial-fact JSON, not the full text of every filing. BLS and
+Federal Reserve artifacts retain the original calendar file and HTML. Changed content gets a new immutable object key;
+this rollout adds no automatic expiry or deletion of historical source snapshots.
+
 Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
 closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,
 upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
