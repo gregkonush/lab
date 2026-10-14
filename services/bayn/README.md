@@ -1431,7 +1431,9 @@ the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev
 existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
 bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
 polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
-sent to Restate. The research worker submits these activations asynchronously after listening and registration.
+sent to Restate. The research worker submits these activations asynchronously after listening. Before each submission,
+it checks the control endpoint's deployed source revision through ingress and retries until it matches. This prevents
+an accepted send from binding a new activation to an old deployment while the operator is registering the new endpoint.
 Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
 
 The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
