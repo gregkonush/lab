@@ -177,3 +177,6 @@ spec:
           secret:
             secretName: keycloak-db-ca
             defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
