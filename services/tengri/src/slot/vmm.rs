@@ -321,9 +321,18 @@ pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value
                     .and_then(Value::as_str)
                     .unwrap_or("invalid response")
             );
-            // Snapshot page faults can delay the guest after the vsock handshake.
-            // Repeat the same idempotent claim within half its one-second clock skew budget.
-            if command["action"] != "resume" || sent.elapsed() <= Duration::from_millis(500) {
+            if command["action"] != "resume" {
+                return Ok::<_, anyhow::Error>(reply);
+            }
+            let after_clock = reply["clockElapsedNanos"]
+                .as_u64()
+                .context("guest resume requires clock application timing")?;
+            // The guest clock advances during readiness checks after it is set.
+            let transfer = sent
+                .elapsed()
+                .checked_sub(Duration::from_nanos(after_clock))
+                .context("invalid guest clock application timing")?;
+            if transfer <= Duration::from_millis(500) {
                 return Ok::<_, anyhow::Error>(reply);
             }
         }
@@ -419,7 +428,7 @@ mod tests {
                 } else {
                     assert!(command["unixTimeNanos"].as_i64().unwrap() >= ready_at);
                 }
-                let reply = format!("{{\"ok\":true,\"round\":{round}}}\n");
+                let reply = format!("{{\"ok\":true,\"round\":{round},\"clockElapsedNanos\":0}}\n");
                 reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
             }
         });
@@ -429,6 +438,30 @@ mod tests {
         fs::remove_file(path).await.unwrap();
         assert_eq!(reply["round"], 2);
         peer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn slow_readiness_after_setting_clock_does_not_repeat_resume() {
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let applied = Instant::now();
+            sleep(Duration::from_millis(1100)).await;
+            let elapsed = applied.elapsed().as_nanos();
+            let reply = format!("{{\"ok\":true,\"clockElapsedNanos\":{elapsed}}}\n");
+            reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
+        });
+        let result = guest_command(&path, &json!({"action": "resume"})).await;
+        fs::remove_file(path).await.unwrap();
+        peer.await.unwrap();
+        assert!(result.is_ok(), "healthy guest was retried: {result:?}");
     }
 
     #[tokio::test]
@@ -451,7 +484,7 @@ mod tests {
             let command: Value = serde_json::from_str(&command).unwrap();
             reader
                 .get_mut()
-                .write_all(b"{\"ok\":true}\n")
+                .write_all(b"{\"ok\":true,\"clockElapsedNanos\":0}\n")
                 .await
                 .unwrap();
             (connected_at, command)
