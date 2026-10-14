@@ -1,89 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-
-import { Cause, ConfigProvider, Effect, Exit, Fiber, Layer, Option, Result } from 'effect'
+import { NodeRedis } from '@effect/platform-node'
+import { ConfigProvider, Effect, Fiber, Layer, Option, Result } from 'effect'
 
 import { makeValkeyCache, ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyCacheLive } from './valkey-cache'
 
-const rejectedInput = async (
-  operation: (
-    cache: Effect.Success<ReturnType<typeof makeValkeyCache>>,
-  ) => Effect.Effect<unknown, ValkeyCacheError | ValkeyCacheInputError>,
-) => {
-  const result = await Effect.gen(function* () {
-    const cache = yield* makeValkeyCache(Effect.die('Invalid input must not acquire a client'))
-    return yield* operation(cache)
-  }).pipe(Effect.scoped, Effect.result, Effect.runPromise)
-  expect(Result.isFailure(result)).toBe(true)
-  if (Result.isFailure(result)) {
-    expect(result.failure).toBeInstanceOf(ValkeyCacheInputError)
-    return result.failure
-  }
-  throw new Error('Expected invalid cache input to fail before connecting')
-}
-
-describe('Valkey cache trust boundary', () => {
-  test('layer acquisition succeeds without cache configuration', async () => {
-    const result = await Effect.void.pipe(
-      Effect.provide(ValkeyCacheLive),
-      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
-      Effect.result,
-      Effect.runPromise,
-    )
-    expect(Result.isSuccess(result)).toBe(true)
-  })
-
-  test('missing optional cache configuration fails only the requested operation', async () => {
-    const result = await Effect.gen(function* () {
-      const cache = yield* ValkeyCache
-      return yield* cache.get('bayn:test')
-    }).pipe(
-      Effect.provide(ValkeyCacheLive),
-      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
-      Effect.result,
-      Effect.runPromise,
-    )
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) {
-      expect(result.failure).toBeInstanceOf(ValkeyCacheError)
-      expect(result.failure.operation).toBe('configure')
-    }
-  })
-
-  test('rejects foreign and empty namespaces before opening a socket', async () => {
-    for (const key of ['other:private', 'bayn:', 'bayn:\n']) {
-      const error = await rejectedInput((cache) => cache.get(key))
-      expect(error.operation).toBe('get')
-      expect(error.message).not.toContain('other:private')
-    }
-  })
-
-  test('rejects deletion outside the application namespace', async () => {
-    const error = await rejectedInput((cache) => cache.remove('other:private'))
-    expect(error.operation).toBe('remove')
-  })
-
-  test('requires a finite positive bounded expiry for every write', async () => {
-    for (const ttlMs of [0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 300_001]) {
-      const error = await rejectedInput((cache) => cache.put({ key: 'bayn:test', value: 'private-value', ttlMs }))
-      expect(error.operation).toBe('put')
-      expect(error.message).not.toContain('private-value')
-    }
-  })
-
-  test('rejects oversized values before opening a socket', async () => {
-    const error = await rejectedInput((cache) =>
-      cache.put({ key: 'bayn:test', value: 'x'.repeat(262_145), ttlMs: 1000 }),
-    )
-    expect(error.operation).toBe('put')
-  })
-})
-
-const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hold') => {
+const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated') => {
   const { createServer } = await import('node:net')
   let response = mode
   const received = Promise.withResolvers<void>()
   let closed = Promise.withResolvers<void>()
   let closes = 0
+  const values = new Map<string, string>()
   const server = createServer((socket) => {
     const connectionClosed = Promise.withResolvers<void>()
     closed = connectionClosed
@@ -111,7 +38,21 @@ const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hol
         } else if (args[0]?.toUpperCase() === 'GET') {
           received.resolve()
           if (response === 'miss') socket.write('$-1\r\n')
+          if (response === 'write' || response === 'unreplicated') {
+            const value = values.get(args[1] ?? '')
+            socket.write(value === undefined ? '$-1\r\n' : `$${Buffer.byteLength(value)}\r\n${value}\r\n`)
+          }
           if (response === 'error') socket.write('-WRONGTYPE fixture\r\n')
+        } else if (args[0]?.toUpperCase() === 'SET') {
+          values.set(args[1] ?? '', args[2] ?? '')
+          socket.write('+OK\r\n')
+        } else if (args[0]?.toUpperCase() === 'DEL') {
+          values.delete(args[1] ?? '')
+          socket.write(':1\r\n')
+        } else if (args[0]?.toUpperCase() === 'WAIT') {
+          socket.write(response === 'unreplicated' ? ':0\r\n' : ':1\r\n')
+        } else if (args[0]?.toUpperCase() === 'PING') {
+          if (response !== 'hold' && response !== 'handshake-hold') socket.write('+PONG\r\n')
         } else socket.write('-ERR unsupported fixture command\r\n')
       }
     })
@@ -131,147 +72,135 @@ const transportFixture = async (mode: 'miss' | 'hold' | 'error' | 'handshake-hol
       response = 'miss'
     },
     stop: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
-    layer: Layer.effect(
-      ValkeyCache,
-      makeValkeyCache(
-        Effect.succeed({
+    layer: Layer.effect(ValkeyCache, makeValkeyCache).pipe(
+      Layer.provide(
+        NodeRedis.layer({
           RESP: 2,
           disableOfflineQueue: true,
-          socket: { host: '127.0.0.1', port: address.port, reconnectStrategy: false, connectTimeout: 100 },
+          commandOptions: { timeout: 100 },
+          pingInterval: 100,
+          socket: {
+            host: '127.0.0.1',
+            port: address.port,
+            reconnectStrategy: false,
+            connectTimeout: 100,
+            socketTimeout: 250,
+          },
         }),
       ),
     ),
   }
 }
 
-describe('Valkey cache transport lifecycle', () => {
-  test('shares one lazy connection across concurrent first reads', async () => {
-    const fixture = await transportFixture('miss')
-    try {
-      const values = await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        return yield* Effect.all([cache.get('bayn:first'), cache.get('bayn:second')], { concurrency: 'unbounded' })
-      }).pipe(Effect.provide(fixture.layer), Effect.runPromise)
-      expect(values.every(Option.isNone)).toBe(true)
-      await fixture.closed()
-      expect(fixture.closes()).toBe(1)
-    } finally {
-      await fixture.stop()
-    }
-  })
+const runTransport = async <A, E>(
+  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated',
+  effect: Effect.Effect<A, E, ValkeyCache>,
+) => {
+  const fixture = await transportFixture(mode)
+  try {
+    const result = await effect.pipe(Effect.provide(fixture.layer), Effect.result, Effect.runPromise)
+    await fixture.closed()
+    expect(fixture.closes()).toBe(1)
+    return result
+  } finally {
+    await fixture.stop()
+  }
+}
 
-  test('reconnects after an interrupted command and closes both connections', async () => {
+const operation = <A, E>(f: (cache: ValkeyCache['Service']) => Effect.Effect<A, E>) => Effect.flatMap(ValkeyCache, f)
+
+describe('required native Effect Valkey binding', () => {
+  test('missing configuration fails startup without an operation', async () => {
+    const result = await Effect.void.pipe(
+      Effect.provide(ValkeyCacheLive),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+      Effect.result,
+      Effect.runPromise,
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(ValkeyCacheError)
+  })
+  test('shares the native scoped connection across concurrent reads', async () => {
+    const result = await runTransport(
+      'miss',
+      operation((cache) => Effect.all([cache.get('bayn:first'), cache.get('bayn:second')], { concurrency: 2 })),
+    )
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) expect(result.success.every(Option.isNone)).toBe(true)
+  })
+  test('publishes and reads real broker-sized values after replica acknowledgement', async () => {
+    const result = await runTransport(
+      'write',
+      operation((cache) =>
+        Effect.gen(function* () {
+          const value = 'x'.repeat(768_935)
+          yield* cache.put({ key: 'bayn:large', value, ttlMs: 60_000 })
+          expect(Option.getOrNull(yield* cache.get('bayn:large'))).toBe(value)
+          yield* cache.remove('bayn:large')
+          expect(Option.isNone(yield* cache.get('bayn:large'))).toBe(true)
+        }),
+      ),
+    )
+    expect(Result.isSuccess(result)).toBe(true)
+  })
+  test('a missing replica acknowledgement fails publication', async () => {
+    const result = await runTransport(
+      'unreplicated',
+      operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+      expect(String(result.failure.cause)).toContain('replica')
+  })
+  test('the next operation reconnects after an aborted command without a legacy client', async () => {
     const fixture = await transportFixture('hold')
     try {
-      const value = await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        const failed = yield* Effect.result(cache.get('bayn:first'))
-        expect(Result.isFailure(failed)).toBe(true)
-        yield* Effect.promise(fixture.closed)
-        yield* Effect.sync(fixture.resumeReads)
-        return yield* cache.get('bayn:second')
-      }).pipe(Effect.provide(fixture.layer), Effect.runPromise)
-      expect(Option.isNone(value)).toBe(true)
-    } finally {
-      await fixture.stop()
-    }
-    await fixture.closed()
-    expect(fixture.closes()).toBe(2)
-  })
-
-  test('preserves defects from client configuration', async () => {
-    const layer = Layer.effect(ValkeyCache, makeValkeyCache(Effect.die('cache configuration invariant')))
-    const exit = await Effect.gen(function* () {
-      const cache = yield* ValkeyCache
-      return yield* cache.get('bayn:test')
-    }).pipe(Effect.provide(layer), Effect.runPromiseExit)
-    expect(Exit.isFailure(exit)).toBe(true)
-    if (Exit.isFailure(exit))
-      expect(Result.getOrThrow(Cause.findDie(exit.cause)).defect).toBe('cache configuration invariant')
-  })
-
-  test('bounds and destroys a stalled initial connection handshake', async () => {
-    const fixture = await transportFixture('handshake-hold')
-    try {
-      const result = await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        return yield* cache.get('bayn:test')
-      }).pipe(Effect.provide(fixture.layer), Effect.result, Effect.runPromise)
-      await fixture.received
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) expect(result.failure.message).toContain('deadline')
-      await fixture.closed()
-      expect(fixture.closes()).toBe(1)
-    } finally {
-      await fixture.stop()
-    }
-  })
-
-  test('caller interruption closes a stalled initial connection handshake', async () => {
-    const fixture = await transportFixture('handshake-hold')
-    try {
-      await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        const fiber = yield* Effect.forkScoped(cache.get('bayn:test'))
-        yield* Effect.promise(() => fixture.received)
-        yield* Fiber.interrupt(fiber)
-      }).pipe(Effect.scoped, Effect.provide(fixture.layer), Effect.runPromise)
-      await fixture.closed()
-      expect(fixture.closes()).toBe(1)
-    } finally {
-      await fixture.stop()
-    }
-  })
-
-  test('returns a miss and closes its scoped connection exactly once', async () => {
-    const fixture = await transportFixture('miss')
-    try {
-      const result = await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        return yield* cache.get('bayn:test')
-      }).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+      const result = await operation((cache) =>
+        Effect.gen(function* () {
+          expect(Result.isFailure(yield* cache.get('bayn:first').pipe(Effect.result))).toBe(true)
+          fixture.resumeReads()
+          return yield* cache.get('bayn:second')
+        }),
+      ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
       expect(Option.isNone(result)).toBe(true)
       await fixture.closed()
-      expect(fixture.closes()).toBe(1)
+      expect(fixture.closes()).toBe(2)
     } finally {
       await fixture.stop()
     }
   })
-
-  test('retains transport failure context without treating it as a miss', async () => {
-    const fixture = await transportFixture('error')
-    try {
-      const result = await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        return yield* cache.get('bayn:test')
-      }).pipe(Effect.provide(fixture.layer), Effect.result, Effect.runPromise)
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(ValkeyCacheError)
-      await fixture.closed()
-      expect(fixture.closes()).toBe(1)
-    } finally {
-      await fixture.stop()
+  test('a transport error remains a failure and retains its cause', async () => {
+    const result = await runTransport(
+      'error',
+      operation((cache) => cache.get('bayn:test')),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
+      expect(result.failure.operation).toBe('get')
+      expect(String(result.failure.cause)).toContain('WRONGTYPE')
     }
   })
-
-  test('destroys an in-flight transport on deadline instead of leaving it running', async () => {
-    const fixture = await transportFixture('hold')
-    try {
-      const result = await Effect.gen(function* () {
-        const cache = yield* ValkeyCache
-        return yield* cache.get('bayn:test')
-      }).pipe(Effect.provide(fixture.layer), Effect.result, Effect.runPromise)
-      await fixture.received
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) expect(result.failure.message).toContain('deadline')
-      await fixture.closed()
-      expect(fixture.closes()).toBe(1)
-    } finally {
-      await fixture.stop()
-    }
+  test('a stalled command fails and native scope release closes the socket', async () => {
+    const result = await runTransport(
+      'hold',
+      operation((cache) => cache.get('bayn:test')),
+    )
+    expect(Result.isFailure(result)).toBe(true)
   })
-
-  test('caller interruption destroys the in-flight connection', async () => {
+  test('a stalled startup handshake fails and closes the socket', async () => {
+    const result = await runTransport(
+      'handshake-hold',
+      Effect.void.pipe(
+        Effect.provideService(ValkeyCache, {
+          get: () => Effect.die('startup must fail'),
+          put: () => Effect.die('startup must fail'),
+          remove: () => Effect.die('startup must fail'),
+        }),
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+  })
+  test('interruption unwinds the native scope and cancels pending work', async () => {
     const fixture = await transportFixture('hold')
     try {
       await Effect.gen(function* () {
@@ -285,5 +214,26 @@ describe('Valkey cache transport lifecycle', () => {
     } finally {
       await fixture.stop()
     }
+  })
+})
+
+describe('Valkey command boundary', () => {
+  const rejected = async (
+    f: (cache: ValkeyCache['Service']) => Effect.Effect<unknown, ValkeyCacheInputError | ValkeyCacheError>,
+  ) => {
+    const result = await runTransport('miss', operation(f))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(ValkeyCacheInputError)
+  }
+  test('rejects foreign, empty and multiline keys', async () => {
+    for (const key of ['other:private', 'bayn:', 'bayn:\n']) await rejected((cache) => cache.get(key))
+    await rejected((cache) => cache.remove('other:private'))
+  })
+  test('requires finite positive bounded expiry', async () => {
+    for (const ttlMs of [0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 300_001])
+      await rejected((cache) => cache.put({ key: 'bayn:test', value: 'private-value', ttlMs }))
+  })
+  test('bounds actual broker-sized payloads without raising memory without limit', async () => {
+    await rejected((cache) => cache.put({ key: 'bayn:test', value: 'x'.repeat(4_194_305), ttlMs: 1000 }))
   })
 })

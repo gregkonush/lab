@@ -17,6 +17,8 @@ from minio import Minio
 from minio.error import S3Error
 from minio.objectlockconfig import ObjectLockConfig
 from minio.retention import COMPLIANCE, Retention
+from minio.sse import SseS3
+from minio.sseconfig import Rule, SSEConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "services/ofz"))
 from audit_export import (
@@ -39,6 +41,22 @@ def write_private(path: Path, value: str, *, exclusive: bool = False) -> None:
         os.fsync(target.fileno())
 
 
+def persist_once(path: Path, value: str) -> None:
+    temporary = path.with_name(f".{path.name}-{secrets.token_hex(8)}")
+    write_private(temporary, value, exclusive=True)
+    try:
+        os.link(temporary, path)
+    except FileExistsError:
+        pass
+    finally:
+        temporary.unlink()
+    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def prepare(directory: Path) -> None:
     if (
         directory.is_symlink()
@@ -55,19 +73,26 @@ def prepare(directory: Path) -> None:
             "archive_access_key": f"OFZAUDIT{secrets.token_hex(10).upper()}",
             "archive_secret_key": secrets.token_hex(32),
         }
-        temporary = directory / f".manifest-{secrets.token_hex(8)}"
-        write_private(temporary, json.dumps(values, sort_keys=True), exclusive=True)
-        try:
-            os.link(temporary, manifest)
-        except FileExistsError:
-            pass
-        finally:
-            temporary.unlink()
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        persist_once(manifest, json.dumps(values, sort_keys=True))
+    encryption_key = directory / "sse_kek"
+    encryption_fingerprint = directory / "sse_kek.sha256"
+    if not encryption_key.exists():
+        if encryption_fingerprint.exists():
+            raise ArchiveError("restore the original recovery encryption key")
+        persist_once(encryption_key, secrets.token_hex(32))
+    key = credential(str(encryption_key))
+    try:
+        valid_key = len(key) == 64 and len(bytes.fromhex(key)) == 32
+    except ValueError:
+        valid_key = False
+    if not valid_key:
+        raise ArchiveError("invalid persistent recovery encryption key")
+    fingerprint = hashlib.sha256(bytes.fromhex(key)).hexdigest()
+    if not encryption_fingerprint.exists():
+        persist_once(encryption_fingerprint, fingerprint)
+    if credential(str(encryption_fingerprint)) != fingerprint:
+        raise ArchiveError("recovery encryption key identity changed")
+    write_private(directory / "security.toml", f'[s3.sse]\nkek = "{key}"\n')
     values = json.loads(credential(str(manifest)))
     names = {
         "root_access_key",
@@ -158,6 +183,11 @@ def configure(directory: Path, storage: Minio | None = None) -> None:
         or existing.duration < RETENTION_DAYS
     ):
         raise ArchiveError("existing archive has an unapproved retention policy")
+    encryption = storage.get_bucket_encryption(BUCKET)
+    if encryption is None:
+        storage.set_bucket_encryption(BUCKET, SSEConfig(Rule.new_sse_s3_rule()))
+    elif encryption.rule != Rule.new_sse_s3_rule():
+        raise ArchiveError("existing archive has an unapproved encryption policy")
 
 
 def denied(operation) -> None:
@@ -190,7 +220,12 @@ def verify(
         days=RETENTION_DAYS, seconds=1
     )
     written = writer.put_object(
-        BUCKET, key, io.BytesIO(data), len(data), retention=Retention(COMPLIANCE, until)
+        BUCKET,
+        key,
+        io.BytesIO(data),
+        len(data),
+        retention=Retention(COMPLIANCE, until),
+        sse=SseS3(),
     )
     if not written.version_id:
         raise ArchiveError("archive did not return an immutable version")
@@ -199,6 +234,8 @@ def verify(
         raise ArchiveError("archive retention readback failed")
     response = writer.get_object(BUCKET, key, version_id=written.version_id)
     try:
+        if response.headers.get("x-amz-server-side-encryption") != "AES256":
+            raise ArchiveError("archive encryption readback failed")
         if response.read(len(data) + 1) != data:
             raise ArchiveError("archive version readback failed")
     finally:
@@ -227,6 +264,7 @@ def verify(
         "retainedUntil": retention.retain_until_date.isoformat(),
         "versionId": written.version_id,
         "sha256": digest,
+        "encryption": "AES256",
         "writerDeleteDenied": True,
         "rootVersionDeleteDenied": True,
         "retentionShorteningDenied": True,

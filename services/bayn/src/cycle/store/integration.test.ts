@@ -265,6 +265,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             authorityGenerationHash: '7'.repeat(64),
             executionPolicy,
             buildDecision: forbidden,
+            buildDecisionEvidence: forbidden,
           })
           const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
           const sql = yield* PgClient.PgClient

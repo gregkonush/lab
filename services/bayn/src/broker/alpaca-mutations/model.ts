@@ -5,6 +5,7 @@ import { StrictNonEmptyStringSchema as NonEmptyString, UtcInstantSchema as UtcIn
 import type { Intent } from '../../execution/contracts'
 import type { BrokerReadError, Order, ReadResult } from '../alpaca'
 import { Pipeable } from '../../pipeable'
+import { submissionDenialReason, type SubmissionDenialReason } from '../../execution/submission-denial'
 
 const RequestId = NonEmptyString.check(Schema.isMaxLength(256))
 
@@ -40,6 +41,7 @@ export class BrokerMutationError extends Data.TaggedError('BrokerMutationError')
   readonly evidence?: PartialMutationEvidence
   readonly brokerOrderId?: string
   readonly brokerCode?: string
+  readonly denialReason?: SubmissionDenialReason
   readonly cause?: Readonly<Record<string, string>>
 }> {}
 
@@ -113,6 +115,7 @@ export interface BrokerMutationInvalidRequestInput {
   readonly operation: MutationOperation
   readonly message: string
   readonly cause?: unknown
+  readonly denialReason?: SubmissionDenialReason
 }
 
 export const invalidRequest = (input: BrokerMutationInvalidRequestInput) =>
@@ -120,6 +123,7 @@ export const invalidRequest = (input: BrokerMutationInvalidRequestInput) =>
     operation: input.operation,
     failure: MutationFailure.InvalidRequest,
     outcome: MutationOutcome.Known,
+    denialReason: input.denialReason ?? submissionDenialReason(input.cause),
     message: input.message,
     ...(input.cause === undefined ? {} : { cause: causeSummary(input.cause) }),
   })

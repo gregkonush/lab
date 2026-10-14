@@ -28,6 +28,8 @@ import {
   BlockedCycleIntentStoreError,
 } from '../execution/intents'
 import { MutationStore, MutationStoreLive, MutationStoreError } from '../execution/mutations'
+import { SubmissionDenialReason } from '../execution/submission-denial'
+import { MutationOperation } from '../broker/alpaca-mutations'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
@@ -750,9 +752,37 @@ durableTest.each(
           }
           expect(expiredStartedSubmit).toBe(true)
           expect((yield* broker.snapshot).orders).toHaveLength(0)
-          expect(yield* sql`SELECT event_type FROM mutation_events WHERE event_type = 'SUBMIT_DENIED'`).toEqual([
-            { event_type: 'SUBMIT_DENIED' },
-          ])
+          expect(
+            yield* sql`SELECT event_type, denial_reason FROM mutation_events WHERE event_type = 'SUBMIT_DENIED'`,
+          ).toEqual([{ event_type: 'SUBMIT_DENIED', denial_reason: SubmissionDenialReason.ExpiredRiskDecision }])
+          const [denial] = yield* sql<{
+            intent_id: string
+            event_id: string
+          }>`SELECT intent_id,event_id FROM mutation_events WHERE event_type='SUBMIT_DENIED'`
+          if (denial === undefined) throw new Error('Missing durable submit denial')
+          const retainedDenial = yield* mutations.latest(denial.intent_id, MutationOperation.Submit)
+          if (retainedDenial === undefined) throw new Error('Missing decoded submit denial')
+          expect(retainedDenial).toMatchObject({
+            eventId: denial.event_id,
+            denialReason: SubmissionDenialReason.ExpiredRiskDecision,
+          })
+          const replayedDenial = yield* mutations.submitDenied(
+            denial.intent_id,
+            retainedDenial.requestHash,
+            retainedDenial.occurredAt,
+            SubmissionDenialReason.ExpiredRiskDecision,
+          )
+          expect(replayedDenial).toEqual(retainedDenial)
+          const conflictingDenial = yield* mutations
+            .submitDenied(
+              denial.intent_id,
+              replayedDenial.requestHash,
+              replayedDenial.occurredAt,
+              SubmissionDenialReason.ExecutionWindowExpired,
+            )
+            .pipe(Effect.result)
+          expect(Result.isFailure(conflictingDenial)).toBe(true)
+          expect(yield* mutations.latest(denial.intent_id, MutationOperation.Submit)).toEqual(retainedDenial)
           const recovered = yield* readAuthority
           expect(recovered).toMatchObject({
             maximum: Authority.Execution,

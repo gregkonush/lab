@@ -13,9 +13,10 @@ memory, caps the dataset at 512Mi and owns a 10Gi Ceph RBD volume. AOF uses
 `appendfsync everysec`; `noeviction` rejects writes at capacity.
 
 There is no Sentinel or automatic promotion. A failed primary makes the cache
-unavailable until recovery or an operator-managed manual promotion. Cache users
-must bound requests and use their authoritative source on cache transport
-failure. A replica alone does not guarantee automatic HA across two hosts.
+unavailable until recovery or an operator-managed manual promotion. Bayn bounds
+cache requests and fails explicitly on missing or unavailable materializations;
+the polling owner must publish a fresh cut before readers can proceed. A replica
+alone does not guarantee automatic HA across two hosts.
 Automatic failover requires independent voters; this deployment does not place
 workloads on the reserved compute host or change its taints.
 
@@ -34,6 +35,14 @@ letters, digits and special characters and fit the operator's 32-character
 limit. Generate replacements in memory and update only the encrypted value in
 `auth-sealedsecret.yaml`, preserving Secret identity and strict sealing scope.
 A synced SealedSecret does not prove User admission.
+
+The operator makes the password Secret a dependent of its User. GitOps applies
+only the Secret's patch annotation before reconciling the SealedSecret; it never
+declares password data. Sealed Secrets uses
+[patch mode](https://github.com/bitnami/sealed-secrets#patching-existing-secrets)
+to supply the encrypted password without replacing the operator's owner reference
+or finalizer. Keep this annotation in the sealed template as well. Do not add the
+`managed` annotation: that would make the two controllers compete for ownership.
 
 ## Acceptance
 

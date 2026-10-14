@@ -1,7 +1,9 @@
 # Ofz
 
-Ofz provides the shared SpiceDB service and the official SpiceDB Playground in the `ofz` namespace.
-The platform ApplicationSet owns its namespace and reconciles these manifests from `main`.
+Ofz provides the central authorization API, independent audit exporter, shared SpiceDB service and official
+SpiceDB Playground in the `ofz` namespace. The platform ApplicationSet owns the namespace. Kargo promotes
+the immutable API image and complete reviewed configuration to `kargo/ofz`; Argo reconciles that branch.
+The API begins fenced. Publishing this configuration does not establish a completed Tengri cutover.
 
 ## Components
 
@@ -11,6 +13,8 @@ The platform ApplicationSet owns its namespace and reconciles these manifests fr
 | PostgreSQL | CNPG PostgreSQL 18.6, three instances, one required synchronous standby, 20 GiB per instance |
 | Backups | Barman Cloud plugin, continuous WAL archiving, daily base backup at 10:30 UTC, 14-day retention |
 | Playground | Two replicas of upstream `v0.3.1`, pinned to its multi-architecture image digest |
+| Authorization API | Two replicas, exact SPIFFE mTLS, SQL-backed sessions and policy commands |
+| Audit exporter | Two replicas with one SQL lease, COMPLIANCE archive on independent NUC |
 | Browser endpoint | <https://ofz.ide-newton.ts.net>, through the lab's Tailscale ingress |
 | SpiceDB API | `ofz.ofz.svc.cluster.local:50051` for gRPC and port `8443` for the HTTP gateway |
 
@@ -22,7 +26,7 @@ The upstream Playground image runs with a non-root user and a read-only filesyst
 its entrypoint-generated Nginx configuration so only `/tmp` needs a writable mount.
 
 These are upstream platform images. Reviewed changes pin their versions and digests directly, as with the SpiceDB
-operator. No repository image build or Kargo promotion is involved.
+operator. Their upstream versions remain pinned in source; the repository-owned API and exporter image follows Kargo.
 
 ## Credentials and data
 
@@ -38,13 +42,12 @@ The database, its inherited resources, the backup ObjectStore, and the bucket cl
 or Application deletion. Ceph provides both database storage and the backup bucket. These backups do not protect
 against loss of the entire Ceph cluster.
 
-Tengri is the first consuming application. Its controller checks the `tengri_workspace.access` permission for
-GitHub subjects represented by their existing SHA-256 hashes. The owner-only schema is maintained in
-[`services/tengri/src/authz.zed`](../../../services/tengri/src/authz.zed). On the first rollout Tengri installs it only
-if the shared service has no schema, then enrolls retained workspaces. Existing shared schemas are preserved.
-See [Tengri's authorization contract](../../../services/tengri/README.md#workspace-authorization) for enrollment,
-revocation, credential rotation, and real SpiceDB acceptance tests. PostgreSQL persists the shared schema and
-relationships; application services call SpiceDB rather than querying that database directly.
+Tengri consumes the typed Ofz API. The final schema is maintained in
+[`services/ofz/schema.zed`](../../../services/ofz/schema.zed); controllers and BFFs hold no native SpiceDB key.
+The [control-plane runbook](control-plane/README.md) describes managed roles, checksum-bound migration hooks,
+archive credentials and fenced bootstrap. The independent NUC archive is installed and verified separately from
+cluster-local Ceph backups. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
+and `tengri_control` databases. Application roles have distinct schema/table permissions.
 
 ## Validate before deployment
 
@@ -81,7 +84,7 @@ python3 argocd/applications/ofz/verify-api.py --endpoint http://127.0.0.1:18443
 unset OFZ_TEST_TOKEN
 ```
 
-The check refuses an existing application schema. On a new instance it tests schema writes, relationship writes,
+The following historical bootstrap check refuses an existing application schema. Do not run it after Ofz bootstrap. On a new instance it tests schema writes, relationship writes,
 allowed and denied checks, revocation at the returned revision, and rejected credentials. It then removes its test
 relationships and schema. Stop the port-forward after validation. After application integration, use that
 application's permission fixtures instead of this bootstrap check.

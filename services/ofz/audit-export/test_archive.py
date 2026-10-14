@@ -21,6 +21,7 @@ from minio import Minio
 from minio.error import S3Error
 from minio.objectlockconfig import ObjectLockConfig
 from minio.retention import COMPLIANCE, GOVERNANCE, Retention
+from minio.sseconfig import Rule, SSEConfig
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
@@ -56,6 +57,29 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_recovery_key_is_stable_and_corruption_is_not_replaced(self):
+        with tempfile.TemporaryDirectory(prefix="ofz-recovery-key-") as temporary:
+            directory = Path(temporary)
+            initialize.prepare(directory)
+            key = directory / "sse_kek"
+            original = key.read_bytes()
+            configuration = (directory / "security.toml").read_bytes()
+            initialize.prepare(directory)
+            self.assertEqual(original, key.read_bytes())
+            self.assertEqual(configuration, (directory / "security.toml").read_bytes())
+            self.assertEqual(len(bytes.fromhex(original.decode())), 32)
+            key.write_text("corrupt-key")
+            with self.assertRaises(archive.ArchiveError):
+                initialize.prepare(directory)
+            self.assertEqual(key.read_text(), "corrupt-key")
+            key.write_text("00" * 32)
+            with self.assertRaisesRegex(archive.ArchiveError, "identity changed"):
+                initialize.prepare(directory)
+            key.unlink()
+            with self.assertRaisesRegex(archive.ArchiveError, "original"):
+                initialize.prepare(directory)
+            self.assertFalse(key.exists())
+
     def test_private_credentials_and_redacted_failures(self):
         with tempfile.TemporaryDirectory(
             prefix="ofz-archive-credentials-"
@@ -122,7 +146,6 @@ class RealArchive(unittest.TestCase):
                     (credentials / "manifest.json").read_bytes()
                 ).hexdigest(),
             )
-            config = credentials / "s3.json"
             filer_config = root / "filer.toml"
             filer_config.write_text(
                 (
@@ -132,31 +155,32 @@ class RealArchive(unittest.TestCase):
             )
             filer_config.chmod(0o444)
             docker("volume", "create", name)
-            initialized = subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "--interactive",
-                    "--user",
-                    "0:0",
-                    "--cap-drop=ALL",
-                    "--cap-add=CHOWN",
-                    "--cap-add=DAC_OVERRIDE",
-                    "--read-only",
-                    "--entrypoint",
-                    "/bin/sh",
-                    "--mount",
-                    f"type=volume,source={name},target=/data",
-                    IMAGE,
-                    "-ec",
-                    "cat > /data/s3.json; chmod 0600 /data/s3.json; chown 1000:1000 /data /data/s3.json",
-                ],
-                input=config.read_text(),
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            for filename in ["s3.json", "security.toml"]:
+                initialized = subprocess.run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--interactive",
+                        "--user",
+                        "0:0",
+                        "--cap-drop=ALL",
+                        "--cap-add=CHOWN",
+                        "--cap-add=DAC_OVERRIDE",
+                        "--read-only",
+                        "--entrypoint",
+                        "/bin/sh",
+                        "--mount",
+                        f"type=volume,source={name},target=/data",
+                        IMAGE,
+                        "-ec",
+                        f"cat > /data/{filename}; chmod 0600 /data/{filename}; chown 1000:1000 /data /data/{filename}",
+                    ],
+                    input=(credentials / filename).read_text(),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(initialized.returncode, 0, initialized.stderr)
             with socket.socket() as reservation:
                 reservation.bind(("127.0.0.1", 0))
                 host_port = reservation.getsockname()[1]
@@ -382,6 +406,57 @@ class RealArchive(unittest.TestCase):
             self.assertEqual(exporter.tick(), 1)
             self.assertEqual(exporter.tick(), 0)
 
+            plaintext = b"qualification payload with valid hash and retention"
+            plaintext_hash = hashlib.sha256(plaintext).hexdigest()
+            plaintext_key = f"batches/1-1-{plaintext_hash}.json"
+            until = datetime.now(UTC).replace(microsecond=0) + timedelta(
+                days=90, seconds=1
+            )
+            administrator.delete_bucket_encryption(archive.BUCKET)
+            try:
+                unencrypted = administrator.put_object(
+                    archive.BUCKET,
+                    plaintext_key,
+                    io.BytesIO(plaintext),
+                    len(plaintext),
+                    retention=Retention(COMPLIANCE, until),
+                )
+            finally:
+                administrator.set_bucket_encryption(
+                    archive.BUCKET, SSEConfig(Rule.new_sse_s3_rule())
+                )
+            with self.assertRaisesRegex(archive.ArchiveError, "encrypted"):
+                exporter.verify_object(
+                    archive.Receipt(
+                        plaintext_key,
+                        unencrypted.version_id,
+                        plaintext_hash,
+                        until.isoformat(),
+                    )
+                )
+
+            marker = f"OFZ-CIPHERTEXT-PROBE-{uuid.uuid4().hex}"
+            payload = (marker.encode() * (8 * 1024 * 1024 // len(marker) + 1))[
+                : 8 * 1024 * 1024
+            ]
+            payload_hash = hashlib.sha256(payload).hexdigest()
+            encrypted = storage.put_object(
+                archive.BUCKET,
+                "qualification/encrypted-multipart",
+                io.BytesIO(payload),
+                len(payload),
+            )
+            self.assertTrue(encrypted.version_id)
+            docker(
+                "exec",
+                name,
+                "/bin/sh",
+                "-ec",
+                'if grep -aFq -- "$1" /data/*.dat /data/filer.sqlite3*; then exit 1; fi',
+                "sh",
+                marker,
+            )
+
             for client in [storage, administrator]:
                 with self.assertRaises(S3Error):
                     client.remove_object(
@@ -463,6 +538,21 @@ class RealArchive(unittest.TestCase):
                     time.sleep(0.2)
             self.assertTrue(cli("activate")["currentArchiveHealthy"])
             exporter.verify_object(receipt)
+            response = storage.get_object(
+                archive.BUCKET,
+                "qualification/encrypted-multipart",
+                version_id=encrypted.version_id,
+            )
+            try:
+                self.assertEqual(
+                    response.headers.get("x-amz-server-side-encryption"), "AES256"
+                )
+                self.assertEqual(
+                    hashlib.sha256(response.read()).hexdigest(), payload_hash
+                )
+            finally:
+                response.close()
+                response.release_conn()
             self.assertTrue(
                 initialize.verify(credentials, writer=storage, root=administrator)[
                     "rootVersionDeleteDenied"
@@ -579,7 +669,7 @@ class RealArchive(unittest.TestCase):
             finally:
                 archive.MAX_BATCH_BYTES = original_budget
             print(
-                "PASS: independent versioned compliance archive; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
+                "PASS: independent versioned compliance archive; encrypted multipart and ciphertext backing-store proof; unencrypted versions rejected; stable recovery key; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
             )
 
 

@@ -90,7 +90,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
   const [modelError, setModelError] = useState('')
-  const [modelSelectionUnavailable, setModelSelectionUnavailable] = useState(false)
   const [modelReload, setModelReload] = useState(0)
   const [selection, setSelection] = useState<TengriCodexSelection>(defaultCodexSelection)
   const [selectionWarning, setSelectionWarning] = useState('')
@@ -141,7 +140,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const threadResumeGeneration = useRef(0)
   const mountedRef = useRef(true)
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
-  const canStartTurn = Boolean(selectedOptions) || modelSelectionUnavailable
+  const canStartTurn = Boolean(selectedOptions)
   const optionsRef = useRef<TengriCodexOptions>({})
   optionsRef.current = selectedOptions ?? {}
   const accountChecked = account !== null
@@ -256,7 +255,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setAccount(null)
     setModels(null)
     setModelError('')
-    setModelSelectionUnavailable(false)
     setSelection(readStoredSelection(agentId))
     setSelectionWarning('')
     loginIdRef.current = ''
@@ -330,16 +328,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const controller = new AbortController()
     setModels(null)
     setModelError('')
-    setModelSelectionUnavailable(false)
     void loadCodexModels(agentId, controller.signal)
       .then((models) => {
         if (!controller.signal.aborted) setModels(models)
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
-          setModelSelectionUnavailable(
-            cause instanceof TengriRequestError && cause.code === 'model_selection_unavailable',
-          )
           setModelError(cause instanceof Error ? cause.message : 'Codex models could not be loaded')
         }
       })

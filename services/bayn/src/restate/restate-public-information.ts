@@ -5,7 +5,51 @@ import { Effect, Redacted, Result, Schedule, Schema } from 'effect'
 import { PublicInformationSource, PublicInformationRunSchema, type PublicInformationRun } from '../public-information'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
-import type { RestateInvocationClientError } from './restate-invocation-client'
+import {
+  callRestateInvocation,
+  RestateInvocationClientError,
+  restateInvocationAcceptTimeoutMs,
+  sendRestateInvocation,
+  type RestateHttpRequest,
+} from './restate-invocation-client'
+
+export const submitPublicInformationActivation = (
+  config: {
+    readonly sourceRevision: string
+    readonly approvalKey: Redacted.Redacted<string>
+    readonly ingressOrigin: string
+  },
+  source: PublicInformationSource,
+  request: RestateHttpRequest = fetch,
+) =>
+  Effect.gen(function* () {
+    const registered = yield* callRestateInvocation(
+      `${config.ingressOrigin}/BaynPublicInformationControl/revision`,
+      null,
+      { timeoutMs: restateInvocationAcceptTimeoutMs },
+      request,
+    )
+    const decoded = Schema.decodeUnknownResult(GitSourceRevisionSchema)(registered)
+    if (Result.isFailure(decoded) || decoded.success !== config.sourceRevision)
+      return yield* new RestateInvocationClientError({
+        operation: 'call',
+        message: 'Public information worker revision is not registered yet',
+      })
+    return yield* sendRestateInvocation(
+      `${config.ingressOrigin}/BaynPublicInformationControl/activate/send`,
+      {
+        source,
+        sourceRevision: config.sourceRevision,
+        approval: approvePublicInformation(source, config.sourceRevision, config.approvalKey),
+      },
+      { timeoutMs: 5_000, headers: { 'Idempotency-Key': `public-information:${source}:${config.sourceRevision}` } },
+      request,
+    )
+  }).pipe(
+    Effect.withSpan('bayn.public-information.activation', {
+      attributes: { 'bayn.public.source': source, 'bayn.source.revision': config.sourceRevision },
+    }),
+  )
 
 export const submitPublicInformationJobs = (
   submit: (source: PublicInformationSource) => Effect.Effect<unknown, RestateInvocationClientError>,
@@ -155,6 +199,7 @@ export const makePublicInformationServices = (
     name: 'BaynPublicInformationControl',
     options: { hooks: [...hooks] },
     handlers: {
+      revision: async () => config.sourceRevision,
       activate: async (ctx: restate.Context, input: unknown) => {
         const activation = decode(Activation, input)
         const expected = approvePublicInformation(activation.source, activation.sourceRevision, config.approvalKey)

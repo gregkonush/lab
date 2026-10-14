@@ -33,6 +33,7 @@ import {
 } from './model'
 import { MutationStoreError as MutationStoreErrorValue } from './model'
 import { Pipeable } from '../../pipeable'
+import type { SubmissionDenialReason } from '../submission-denial'
 
 const decodeStartInputResult = Schema.decodeUnknownResult(StartInputSchema, strictParseOptions)
 const decodeOutcomeInputResult = Schema.decodeUnknownResult(OutcomeInputSchema, strictParseOptions)
@@ -64,6 +65,7 @@ const eventIdentity = (event: Omit<MutationEvent, 'eventId'>) => ({
   ...(event.requestId === undefined ? {} : { requestId: event.requestId }),
   ...(event.responseStatus === undefined ? {} : { responseStatus: event.responseStatus }),
   ...(event.responseContentHash === undefined ? {} : { responseContentHash: event.responseContentHash }),
+  ...(event.denialReason === undefined ? {} : { denialReason: event.denialReason }),
   occurredAt: event.occurredAt,
 })
 
@@ -661,6 +663,7 @@ const sameOutcome = (previous: MutationEvent, event: MutationEvent): boolean =>
   previous.requestId === event.requestId &&
   previous.responseStatus === event.responseStatus &&
   previous.responseContentHash === event.responseContentHash &&
+  previous.denialReason === event.denialReason &&
   previous.brokerOrderId === event.brokerOrderId
 
 const matchesReplayIntent = (
@@ -730,7 +733,7 @@ const decideMutationEventContract = (
         return false
     }
   })()
-  return valid
+  return valid && (event.denialReason === undefined || event.eventType === MutationEventType.SubmitDenied)
     ? Result.succeed(undefined)
     : Result.fail(
         storeError({
@@ -801,6 +804,7 @@ const decideMutationOutcomeDataFirst = (
     ...(input.evidence?.requestId === undefined ? {} : { requestId: input.evidence.requestId }),
     ...(input.evidence?.status === undefined ? {} : { responseStatus: input.evidence.status }),
     ...(input.evidence?.contentHash === undefined ? {} : { responseContentHash: input.evidence.contentHash }),
+    ...(input.denialReason === undefined ? {} : { denialReason: input.denialReason }),
     occurredAt: input.occurredAt,
   })
   if (Result.isFailure(eventResult)) return Result.fail(eventResult.failure)
@@ -1002,6 +1006,7 @@ const decodeOutcomeInputDataFirst = (
     readonly occurredAt: string
     readonly brokerOrderId?: string
     readonly evidence?: PartialMutationEvidence
+    readonly denialReason?: SubmissionDenialReason
   },
 ): Result.Result<MutationOutcomeInput, MutationStoreError> => {
   const evidence = decideMutationEvidence(input.evidence)
@@ -1012,6 +1017,7 @@ const decodeOutcomeInputDataFirst = (
       occurredAt: input.occurredAt,
       ...(input.brokerOrderId === undefined ? {} : { brokerOrderId: input.brokerOrderId }),
       ...(evidence._tag === 'RetainCompleteEvidence' ? { evidence: evidence.evidence } : {}),
+      ...(input.denialReason === undefined ? {} : { denialReason: input.denialReason }),
     }),
     (cause) => storeError({ operation: storeOperation, failure: 'decode', message: 'invalid mutation outcome', cause }),
   )

@@ -314,7 +314,7 @@ Expected:
   `BaynBrokerObservations` object through the existing worker endpoint, with `activateDeployment` as the sole public
   handler;
 - migration 87 is applied before endpoint registration; deployment activation drains the predecessor, publishes a fresh
-  source-bound `broker_observations` projection, then activates the native controller. PostgreSQL reads prove its
+  source-bound Valkey materializations and `broker_observations` references, then activates the native controller. PostgreSQL reads prove its
   timestamp advances across background polls and its source revision matches the promoted image. Unavailable,
   expired or invalidated observations block execution instead of issuing broker GETs from normal submission;
 - delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
@@ -343,6 +343,10 @@ USD ledgers remain in millionths of a dollar. It archives the original immutable
 broker event and TigerBeetle transfer identities, and rewrites the current projection atomically. It requires flat
 broker and accounted inventory, settled orders, complete fill accounting and no bound unfinished cycle. An unsafe
 cutover fails without changing the schema. There is no mixed-unit runtime or retired order encoder.
+
+Migration startup has a dedicated fifteen-minute database budget and a twenty-minute worker startup probe. The
+thirty-minute Kargo deployment budget covers that startup and native handoff. These limits accommodate the retained
+immutable history rewrite; readiness and native authority still require completed migrations and verified state.
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
@@ -384,10 +388,11 @@ exact reconciliation, and no broker-ledger advance before replacing the mandate.
 invoke the activation handler manually.
 
 The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
-`lab-delivery/bayn` Warehouse correlates that tag with its exact main commit; the automatic Stage copies that source,
-updates the status, worker, and activation bindings, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also
-updates the activation endpoint of the existing research build lineage while preserving its authored request and
-build. The native hook still verifies the exact controller binding before the status service rolls out.
+`lab-delivery/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
+The automatic Stage checks out that image revision, updates the status, worker, and activation bindings from the same
+image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
+research build lineage while preserving its authored request and build. The native hook still verifies the exact
+controller binding before the status service rolls out.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
