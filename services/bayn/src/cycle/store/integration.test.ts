@@ -188,6 +188,26 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
   })
 
+  test('activation at the equity cutoff persists unused expiry without binding evidence', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const candidate = draft()
+        const acquiredAt = '2026-08-28T19:54:59.000Z'
+        yield* store.acquire(candidate, acquiredAt)
+        const receipt = yield* store.activate(candidate.identity.cycleId, candidate.window.submissionCutoffAt)
+        expect(receipt.cycle).toMatchObject({
+          state: CycleState.Blocked,
+          terminalReason: CycleTerminalReason.UnusedEntryExpired,
+          bindings: {},
+          terminalAt: candidate.window.submissionCutoffAt,
+        })
+        expect(Option.isNone(yield* store.readDecisionDocument(candidate.identity.cycleId))).toBe(true)
+        expect(Option.getOrThrow(yield* store.read(candidate.identity.cycleId))).toEqual(receipt.cycle)
+      }),
+    )
+  })
+
   test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
     const first = draft(undefined, undefined, 1)
     const second = draft(undefined, undefined, 2)
