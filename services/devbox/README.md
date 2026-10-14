@@ -60,6 +60,8 @@ Boot files and the source revision are applied after dependency installation, so
 boot-only changes reuse the Nix, Rust, workspace dependency, and browser layers.
 Codex version changes reuse those layers too. The dependency installer itself
 remains an input to its installation layer.
+Build commands use the runner Pod's network. Its 1400-byte MTU avoids the nested
+Docker bridge's 1500-byte MTU, which can stall HTTPS artifact downloads.
 
 The `devbox` Warehouse and Stage bind the image to its source commit and successful
 workflow run. Kargo updates `argocd/applications/devbox` on `kargo/devbox`; the
