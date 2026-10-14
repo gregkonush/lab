@@ -346,6 +346,9 @@ error into only the disposable fixture home disk and requires the guest to repor
 The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
+Resume replies report monotonic time spent after applying the host clock. The host excludes that readiness work
+when bounding clock-transfer delay, and repeats the same idempotent resume if the timestamp arrived too late.
+Missing or inconsistent clock timing rejects the resume; the controller and guest images must be promoted together.
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
