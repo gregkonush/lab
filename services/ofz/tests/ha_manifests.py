@@ -180,6 +180,66 @@ def validate(targets):
         and export["strategy"]["rollingUpdate"]["maxSurge"] == 0,
         "ofz: archive leadership must fit its four-connection budget",
     )
+    activation = resource(targets, "ofz", "Job", "ofz-platform-activate")
+    activation_pod = activation["spec"]["template"]["spec"]
+    activation_app = activation_pod["containers"][0]
+    require(
+        activation["metadata"]["annotations"].get("argocd.argoproj.io/hook")
+        == "PostSync"
+        and activation_app["args"]
+        == ["activate", "/var/run/ofz/bootstrap/manifest.json"]
+        and activation_pod["serviceAccountName"] == "ofz-migrator"
+        and values(activation_app) == values(bootstrap_app)
+        and activation_pod["volumes"] == bootstrap_pod["volumes"],
+        "ofz: archive-gated activation must use only the approved owner manifest and authority",
+    )
+    reader = resource(targets, "ofz", "Role", "ofz-public-ca-reader")
+    require(
+        reader["rules"]
+        == [
+            {
+                "apiGroups": [""],
+                "resources": ["secrets"],
+                "resourceNames": ["ofz-db-ca"],
+                "verbs": ["get"],
+            }
+        ],
+        "ofz: public CA projection must not permit discovery or access to unrelated Secrets",
+    )
+    ca_store = resource(targets, "ofz", "ClusterSecretStore", "ofz-database-ca")["spec"]
+    require(
+        ca_store["conditions"] == [{"namespaces": ["tengri", "proompteng"]}]
+        and ca_store["provider"]["kubernetes"]["remoteNamespace"] == "ofz"
+        and ca_store["provider"]["kubernetes"]["auth"]["serviceAccount"]
+        == {"name": "ofz-public-ca-reader", "namespace": "ofz"},
+        "ofz: database CA store must retain its exact reader and application namespace allowlist",
+    )
+    for target in ["tengri", "proompteng"]:
+        ca = resource(targets, target, "ExternalSecret", "ofz-database-ca")["spec"]
+        require(
+            ca.get("dataFrom") is None
+            and ca["data"]
+            == [
+                {
+                    "secretKey": "ca.crt",
+                    "remoteRef": {"key": "ofz-db-ca", "property": "ca.crt"},
+                }
+            ]
+            and ca["secretStoreRef"]
+            == {"kind": "ClusterSecretStore", "name": "ofz-database-ca"}
+            and ca["refreshInterval"] == "1m",
+            f"{target}: only the refreshed public CA may leave the Ofz namespace",
+        )
+        require(
+            not any(
+                item
+                and item.get("kind") == "SealedSecret"
+                and item["metadata"]["name"]
+                in ["tengri-runtime", "tengri-spicedb-key", "tengri-bff"]
+                for item in targets[target]
+            ),
+            f"{target}: obsolete authority must be deleted during hard cutover",
+        )
     export_pod = export["template"]["spec"]
     export_app = export_pod["containers"][0]
     require(
@@ -472,6 +532,20 @@ def validate(targets):
         )
         cluster = resource(targets, target, "Cluster", f"{target}-db")["spec"]
         require(
+            cluster["affinity"]["podAntiAffinityType"] == "required"
+            and cluster["affinity"]["topologyKey"] == "kubernetes.io/hostname"
+            and cluster["affinity"].get("tolerations")
+            == [
+                {
+                    "key": "workload.proompteng.ai/compute-local",
+                    "operator": "Equal",
+                    "value": "true",
+                    "effect": "NoSchedule",
+                }
+            ],
+            f"{target}: database replicas must use three hosts without removing the compute taint",
+        )
+        require(
             resource(targets, target, "Cluster", f"{target}-db")["metadata"]
             .get("annotations", {})
             .get("argocd.argoproj.io/sync-wave")
@@ -604,6 +678,26 @@ def main():
         lambda data: resource(data, "keycloak", "Backup", "keycloak-db-nuc-cutover")[
             "metadata"
         ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
+        lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"][
+            "affinity"
+        ].update(podAntiAffinityType="preferred"),
+        lambda data: resource(data, "ofz", "Job", "ofz-platform-activate")["spec"][
+            "template"
+        ]["spec"]["containers"][0].update(
+            args=["bootstrap", "/var/run/ofz/bootstrap/manifest.json"]
+        ),
+        lambda data: resource(data, "ofz", "Role", "ofz-public-ca-reader")["rules"][
+            0
+        ].pop("resourceNames"),
+        lambda data: resource(data, "tengri", "ExternalSecret", "ofz-database-ca")[
+            "spec"
+        ]["data"][0]["remoteRef"].update(property="ca.key"),
+        lambda data: resource(data, "proompteng", "ExternalSecret", "ofz-database-ca")[
+            "spec"
+        ].update(dataFrom=[{"extract": {"key": "ofz-db-ca"}}]),
+        lambda data: resource(data, "ofz", "ClusterSecretStore", "ofz-database-ca")[
+            "spec"
+        ].update(conditions=[{"namespaceRegexes": [".*"]}]),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["metadata"][
             "annotations"
         ].pop("argocd.argoproj.io/sync-wave"),

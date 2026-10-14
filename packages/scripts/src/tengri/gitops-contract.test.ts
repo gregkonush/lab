@@ -69,9 +69,13 @@ const cutover = new Map(
   ['tengri', 'proompteng'].map((app) => [
     app,
     parseAllDocuments(
-      execFileSync('kustomize', ['build', new URL(`../../../../argocd/prepared/${app}`, import.meta.url).pathname], {
-        encoding: 'utf8',
-      }),
+      execFileSync(
+        'kustomize',
+        ['build', new URL(`../../../../argocd/applications/${app}`, import.meta.url).pathname],
+        {
+          encoding: 'utf8',
+        },
+      ),
     ),
   ]),
 )
@@ -390,12 +394,12 @@ test('the BFF reads the same dedicated request key contract as the controller', 
   expect(deployment.getIn(['spec', 'template', 'spec', 'securityContext', 'fsGroup'])).toBe(1001)
 })
 
-test('active deployments do not switch authority before cutover dependencies exist', () => {
+test('active deployments use the complete Ofz cutover contract', () => {
   for (const app of ['tengri', 'proompteng']) {
     const active = manifest(`argocd/applications/${app}/deployment.yaml`).toString()
-    expect(active).not.toContain('OFZ_GRPC_ENDPOINT')
-    expect(active).not.toContain('tengri-internal-request-key')
-    expect(active).not.toContain('ofz-database-ca')
+    expect(active).toContain('OFZ_GRPC_ENDPOINT')
+    expect(active).toContain('tengri-internal-request-key')
+    expect(active).toContain('ofz-database-ca')
   }
 })
 

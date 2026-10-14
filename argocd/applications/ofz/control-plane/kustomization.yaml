@@ -11,3 +11,5 @@ resources:
   - audit-archive-sealedsecret.yaml
   - databases.yaml
   - network-policy.yaml
+  - database-ca-reader.yaml
+  - activation.yaml

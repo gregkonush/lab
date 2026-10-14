@@ -104,8 +104,13 @@ spec:
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
-    podAntiAffinityType: preferred
+    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
+    tolerations:
+      - key: workload.proompteng.ai/compute-local
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
   resources:
     requests:
       cpu: 250m
