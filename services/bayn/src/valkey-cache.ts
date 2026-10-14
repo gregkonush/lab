@@ -49,7 +49,11 @@ export const makeValkeyCache = Effect.gen(function* () {
   })
   // Native close waits for replies; cache scope exit and cancellation must abort stalled sockets.
   yield* Effect.addFinalizer(() => destroy)
-  const command = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
+  const command = <A>(
+    operation: string,
+    run: (signal: AbortSignal) => Promise<A>,
+    deadlineCause?: () => Error | undefined,
+  ) =>
     commands
       .withPermit(
         Effect.tryPromise({
@@ -67,7 +71,13 @@ export const makeValkeyCache = Effect.gen(function* () {
         Effect.timeoutOrElse({
           duration: '1 second',
           orElse: () =>
-            Effect.fail(new ValkeyCacheError({ operation, message: 'Valkey command exceeded its deadline' })),
+            Effect.fail(
+              new ValkeyCacheError({
+                operation,
+                message: 'Valkey command exceeded its deadline',
+                cause: deadlineCause?.(),
+              }),
+            ),
         }),
         Effect.withSpan(`bayn.valkey.${operation}`),
       )
@@ -92,13 +102,21 @@ export const makeValkeyCache = Effect.gen(function* () {
               message: 'Cache writes require a bayn: key, bounded value and TTL of 1–300000 ms',
             }),
         ),
-        Effect.flatMap(({ key, value, ttlMs }) =>
-          command('put', async (signal) => {
-            const connection = client.withAbortSignal(signal)
-            await connection.set(key, value, { PX: ttlMs })
-            while ((await connection.wait(1, 250)) < 1) signal.throwIfAborted()
-          }),
-        ),
+        Effect.flatMap(({ key, value, ttlMs }) => {
+          let acknowledgementFailure: Error | undefined
+          return command(
+            'put',
+            async (signal) => {
+              const connection = client.withAbortSignal(signal)
+              await connection.set(key, value, { PX: ttlMs })
+              while ((await connection.wait(1, 250)) < 1) {
+                acknowledgementFailure ??= new Error('Valkey replica did not acknowledge publication')
+                signal.throwIfAborted()
+              }
+            },
+            () => acknowledgementFailure,
+          )
+        }),
         Effect.asVoid,
       ),
     remove: (input) =>

@@ -62,7 +62,8 @@ deadline, and interrupting a queued caller does not close an active caller's soc
 Reconnect happens on the next command rather than in a competing background retry.
 Replica acknowledgement uses 250 ms waits on the owned connection for the remaining
 one-second command budget, without repeating `SET`. Missing acknowledgement at that
-deadline cancels the outstanding work and fails publication.
+deadline cancels the outstanding work and fails publication. A deadline after a
+negative acknowledgement retains that replication failure as its cause.
 
 The broker observation owner publishes an immutable full snapshot and compact
 state in Valkey. PostgreSQL `broker_observations` stores their content hashes and

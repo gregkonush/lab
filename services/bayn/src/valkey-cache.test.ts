@@ -191,6 +191,8 @@ describe('required native Effect Valkey binding', () => {
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
         expect(result.failure.message).toBe('Valkey command exceeded its deadline')
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(String(result.failure.cause)).toContain('replica')
       expect(fixture.writes()).toBe(1)
       expect(fixture.waits().length).toBeGreaterThan(2)
       expect(fixture.waits().every((args) => args.length === 2 && args[0] === '1' && args[1] === '250')).toBe(true)
@@ -211,6 +213,8 @@ describe('required native Effect Valkey binding', () => {
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
         expect(result.failure.message).toBe('Valkey command exceeded its deadline')
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(String(result.failure.cause)).toContain('replica')
       expect(fixture.writes()).toBe(1)
       expect(fixture.waits()).toEqual([
         ['1', '250'],
