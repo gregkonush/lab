@@ -34,6 +34,34 @@ spec:
     - to:
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: bayn-egress-proxy
+      ports:
+        - port: 3128
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rook-ceph
+          podSelector:
+            matchLabels:
+              app: rook-ceph-rgw
+              rook_cluster: rook-ceph
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
               cnpg.io/cluster: bayn-db
       ports:
         - port: 5432
