@@ -45,7 +45,7 @@ import {
   type JevExitEvidence,
   type JevExitTarget,
 } from './exit'
-import { JevPositionStore } from './portfolio'
+import { JevPositionStore, JevPurpose } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
 import { type JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
@@ -184,6 +184,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         message: `Jev is waiting for fresh signal pricing for ${staleSymbols.join(', ')}`,
         readiness: DecisionReadinessReason.SnapshotStale,
       })
+    const inputAvailableAt = yield* currentUtcInstant
     const observation = yield* recordJevObservation({ ...input, snapshot })
     const batchPlan = yield* Effect.suspend(() =>
       Effect.fromResult(
@@ -196,7 +197,21 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
             input.protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
         }),
       ),
-    ).pipe(withObservedStage('bayn.jev.batch-plan'))
+    ).pipe(
+      Effect.tap((plan) =>
+        Effect.gen(function* () {
+          yield* Effect.annotateCurrentSpan({
+            'bayn.entry_timing.batch_id': plan.batchId,
+            'bayn.entry_timing.observation_hash': plan.observationHash,
+            'bayn.entry_timing.snapshot_hash': snapshot.manifest.contentHash,
+            'bayn.entry_timing.input_available_at': inputAvailableAt,
+          })
+          if (input.portfolio.purpose === JevPurpose.Entry && plan.schemaVersion === JevBatchPlanVersion.V4)
+            yield* Effect.annotateCurrentSpan('bayn.entry_timing.deterministic_selected_at', yield* currentUtcInstant)
+        }),
+      ),
+      withObservedStage('bayn.jev.batch-plan'),
+    )
     const saved = yield* evaluateJevBatch(batchPlan).pipe(
       Effect.catchTag('JevBatchExpired', (cause) =>
         Effect.logWarning('Jev observation expired before batch admission').pipe(

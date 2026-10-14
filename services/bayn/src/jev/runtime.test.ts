@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Fiber, Logger, Option, References, Result } from 'effect'
+import { Clock, Effect, Fiber, Logger, Option, References, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 import { NodeServices } from '@effect/platform-node'
 
@@ -19,6 +19,7 @@ import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime
 import { utcInstantFromEpochMillis } from '../time'
 import { canonicalHashV1 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
+import { defaultJevProtocolDocument, momentumFirstJevProtocolDocument } from './protocol'
 
 const scenario = (
   options: {
@@ -441,10 +442,22 @@ describe('Jev management observation admission', () => {
     expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
   })
 
-  test.each([JevPurpose.Entry, JevPurpose.Manage])(
-    '%s retains typed expiry and structured admission diagnostics',
-    async (purpose) => {
-      const fixture = nativeJevFixture(purpose, '2026-09-04T14:30:32.000Z')
+  test.each([
+    [JevPurpose.Entry, 'retained', defaultJevProtocolDocument],
+    [JevPurpose.Manage, 'retained', defaultJevProtocolDocument],
+    [JevPurpose.Entry, 'momentum', { ...momentumFirstJevProtocolDocument, candidateSymbols: ['AAPL'] }],
+  ] as const)(
+    '%s %s retains typed expiry and structured admission diagnostics',
+    async (purpose, _label, protocolDocument) => {
+      const fixture = nativeJevFixture(purpose, '2026-09-04T14:30:32.000Z', undefined, protocolDocument)
+      const spans: Tracer.NativeSpan[] = []
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options)
+          spans.push(span)
+          return span
+        },
+      })
       const logs: { message: unknown; annotations: Readonly<Record<string, unknown>> }[] = []
       const logger = Logger.make(({ message, fiber }) => {
         logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) })
@@ -494,6 +507,7 @@ describe('Jev management observation admission', () => {
           Effect.provide(TestClock.layer()),
           Effect.provide(Logger.layer([logger])),
           Effect.provide(NodeServices.layer),
+          Effect.provideService(Tracer.Tracer, tracer),
         ),
       )
       expect(Result.isFailure(result)).toBe(true)
@@ -514,6 +528,18 @@ describe('Jev management observation admission', () => {
         ),
         admissionLagMs: fixture.protocol.inferenceValidityMs + 100,
       })
+      const planning = spans.find((span) => span.name === 'bayn.jev.batch-plan')
+      expect(planning?.attributes.get('bayn.entry_timing.input_available_at')).toBe(
+        fixture.observation.payload.observedAt,
+      )
+      expect(planning?.attributes.get('bayn.entry_timing.snapshot_hash')).toBe(fixture.snapshot.manifest.contentHash)
+      expect(planning?.attributes.get('bayn.entry_timing.batch_id')).toMatch(/^[0-9a-f]{64}$/)
+      expect(planning?.attributes.get('bayn.entry_timing.observation_hash')).toBe(fixture.observation.contentHash)
+      if (fixture.protocol.schemaVersion === 'bayn.jev.protocol.v2')
+        expect(planning?.attributes.get('bayn.entry_timing.deterministic_selected_at')).toBe(
+          warning?.annotations['checkedAt'],
+        )
+      else expect(planning?.attributes.has('bayn.entry_timing.deterministic_selected_at')).toBe(false)
     },
   )
 
