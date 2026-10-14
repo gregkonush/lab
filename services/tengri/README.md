@@ -359,7 +359,7 @@ BuildKit reports export errors without canceling required image publication
 or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
 The fixture uses a private Docker
-network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
+network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
