@@ -45,6 +45,10 @@ Each run resumes receipted quarantine purges, prepares online, refreshes protect
 references, collects for at most four minutes and purges with uploads open.
 An empty plan skips the read-only restart. Missing protected content or a failed
 read of a configured image owner fails the run before collection.
+If collection reaches its deadline after writing a durable receipt, the controller
+restores uploads, releases its hold and purges the partial batch online. Completion
+reports `collectionTimedOut: true`. A missing or invalid receipt fails the run.
+Restoration allows five minutes for the registry's existing startup probes.
 
 Protection reads only the workload and release resources named in
 `packages/scripts/src/registry/protected_resources.json`. RBAC grants list access

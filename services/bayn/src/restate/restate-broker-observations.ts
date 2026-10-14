@@ -2,7 +2,6 @@ import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
-import { brokerObservationQuotaWindowMs } from '../broker/alpaca/poll-budget'
 import { GitSourceRevisionSchema, Sha256Schema, strictParseOptions } from '../schemas'
 
 const key = 'polling'
@@ -27,6 +26,7 @@ type State = typeof BrokerObservationOwnerStateSchema.Type
 export type BrokerObservationPoll = (
   | { readonly _tag: 'Published'; readonly snapshotHash: string }
   | { readonly _tag: 'Invalidated' }
+  | { readonly _tag: 'QuotaWait' }
   | {
       readonly _tag: 'Unavailable'
       readonly captureNotStarted?: { readonly reason: 'ExpiredUnusedTicket'; readonly expiredByMs: number }
@@ -34,15 +34,17 @@ export type BrokerObservationPoll = (
 ) & { readonly nextPollNotBeforeMs: number }
 
 export interface BrokerObservationRuntime {
-  readonly activate: (signal: AbortSignal) => Promise<void>
+  readonly activate: (signal: AbortSignal, nextPollNotBeforeMs: number) => Promise<void>
   readonly poll: (
     signal: AbortSignal,
     reservation: {
       readonly captureId: string
-      readonly captureStartDeadlineMs: number
-      readonly interruptedNotBeforeMs: number
     },
-  ) => Promise<BrokerObservationPoll>
+  ) => Promise<{
+    readonly poll: BrokerObservationPoll
+    readonly startedAtMs: number
+    readonly completedAtMs: number
+  }>
 }
 export interface BrokerObservationOwnerConfig {
   readonly controllerKey: string
@@ -81,42 +83,33 @@ export const makeBaynBrokerObservations = (
     ctx: restate.ObjectContext,
     waitForQuota: boolean,
   ): Promise<{ readonly poll: BrokerObservationPoll; readonly startedAt: number }> => {
-    const stored = await ctx.get<unknown>(budgetKey)
-    const notBefore = stored === null ? 0 : decode(BudgetDeadlineSchema, stored)
-    let startedAt = await ctx.date.now()
-    if (notBefore > startedAt) {
-      if (!waitForQuota) return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: notBefore }, startedAt }
-      await ctx.sleep({ milliseconds: notBefore - startedAt })
-      startedAt = await ctx.date.now()
-    }
-    const captureStartDeadlineMs = startedAt + config.operationTimeoutMs
-    const interruptedNotBeforeMs = captureStartDeadlineMs + abortTimeoutMs + brokerObservationQuotaWindowMs
-    ctx.set(budgetKey, interruptedNotBeforeMs)
-    try {
-      const poll = await ctx.run(
-        'poll and publish broker observation',
-        () =>
-          runtime.poll(ctx.request().attemptCompletedSignal, {
-            captureId: ctx.request().id,
-            captureStartDeadlineMs,
-            interruptedNotBeforeMs,
-          }),
-        { maxRetryAttempts: 0 },
-      )
-      // Only a returned, journaled result can replace the unknown-work reservation.
-      const nextPollNotBeforeMs = Math.max(notBefore, poll.nextPollNotBeforeMs)
-      ctx.set(budgetKey, nextPollNotBeforeMs)
-      return { poll: { ...poll, nextPollNotBeforeMs }, startedAt }
-    } catch {
-      ctx.console.warn('Broker observation poll failed before publication')
-      return { poll: { _tag: 'Unavailable', nextPollNotBeforeMs: interruptedNotBeforeMs }, startedAt }
+    while (true) {
+      let sampled: Awaited<ReturnType<BrokerObservationRuntime['poll']>>
+      try {
+        sampled = await ctx.run(
+          'poll and publish broker observation',
+          () => runtime.poll(ctx.request().attemptCompletedSignal, { captureId: ctx.request().id }),
+          { maxRetryAttempts: 0 },
+        )
+      } catch {
+        ctx.console.warn('Broker observation poll failed before publication; the durable claim retains quota')
+        return {
+          poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+          startedAt: transportClock.currentTimeMillisUnsafe(),
+        }
+      }
+      if (!waitForQuota || sampled.poll._tag !== 'QuotaWait')
+        return { poll: sampled.poll, startedAt: sampled.startedAtMs }
+      await ctx.sleep({ milliseconds: Math.max(0, sampled.poll.nextPollNotBeforeMs - sampled.completedAtMs) })
     }
   }
   const nextDelay = (poll: BrokerObservationPoll, startedAt: number, completedAt: number) =>
     Math.max(
-      poll._tag === 'Invalidated'
-        ? mutationConsistencyDelayMs
-        : Math.max(1_000, config.pollIntervalMs - (completedAt - startedAt)),
+      poll._tag === 'QuotaWait'
+        ? 0
+        : poll._tag === 'Invalidated'
+          ? mutationConsistencyDelayMs
+          : Math.max(1_000, config.pollIntervalMs - (completedAt - startedAt)),
       poll.nextPollNotBeforeMs - completedAt,
     )
   return restate.object({
@@ -129,12 +122,16 @@ export const makeBaynBrokerObservations = (
           throw new restate.TerminalError('broker observation activation revision mismatch')
         const stored = await ctx.get<unknown>(key)
         const current = stored === null ? null : decode(BrokerObservationOwnerStateSchema, stored)
-        if (current?.sourceRevision !== config.sourceRevision)
+        if (current?.sourceRevision !== config.sourceRevision) {
+          const storedBudget = await ctx.get<unknown>(budgetKey)
+          const nextPollNotBeforeMs = storedBudget === null ? 0 : decode(BudgetDeadlineSchema, storedBudget)
           await ctx.run(
             'activate broker observation projection',
-            () => runtime.activate(ctx.request().attemptCompletedSignal),
+            () => runtime.activate(ctx.request().attemptCompletedSignal, nextPollNotBeforeMs),
             { maxRetryAttempts: 0 },
           )
+          ctx.clear(budgetKey)
+        }
         const { poll, startedAt } = await sample(ctx, true)
         const sameRevision = current?.sourceRevision === config.sourceRevision
         const state: State = {
