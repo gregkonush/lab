@@ -63,6 +63,8 @@ and the named `registry` Application in namespace `argocd`.
 Preparation validates retained blobs once while traversing their manifest graph;
 the candidate scan skips those already protected blobs. If preparation fails, the
 Job log includes its exit status and final diagnostics before collection can start.
+Recent revision links retain only manifest payloads that still exist. Missing
+content referenced by retained tags, protected images or image indexes fails the run.
 
 Keep at least five recent build tags per repository, every image uploaded in the
 last seven days, and all digests referenced by workload templates or retained Kargo
