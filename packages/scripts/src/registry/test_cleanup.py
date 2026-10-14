@@ -170,6 +170,69 @@ class CleanupTest(unittest.TestCase):
         self.image_manifest(layer, recent=True)
         self.assertEqual(self.prepare()["blobs"], [])
 
+    def test_deleted_untagged_revision_does_not_block_cleanup(self):
+        orphan = self.blob(b"layer from a deleted manifest")
+        deleted = self.image_manifest(orphan, recent=True)
+        self.store.blob(deleted).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+        result = self.collect(plan)
+        self.assertEqual(result["quarantinedBlobs"], 1)
+        self.assertTrue(self.store.blob(self.image).exists())
+        self.assertTrue(self.store.blob(self.layer).exists())
+
+    def test_reuploaded_untagged_manifest_rescues_prepared_layers(self):
+        layer = self.blob(b"layer from a reuploaded manifest")
+        image = self.image_manifest(layer, recent=True)
+        raw = self.store.blob(image).read_bytes()
+        self.store.blob(image).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [layer])
+        self.blob(raw)
+        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
+        self.assertTrue(self.store.blob(layer).exists())
+
+    def test_missing_recent_tagged_manifest_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"tagged layer"), recent=True)
+        self.tag("release", deleted)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_missing_recent_protected_manifest_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"protected layer"), recent=True)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare(self.references + ["registry.example/lab/test@" + deleted])
+
+    def test_missing_recent_index_child_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"platform layer"), recent=True)
+        index = self.manifest(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [self.descriptor(self.image), self.descriptor(deleted)],
+            }
+        )
+        self.tag("latest", index)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_unreadable_recent_untagged_manifest_is_not_ignored(self):
+        image = self.image_manifest(self.blob(b"unreadable layer"), recent=True)
+        unreadable = self.store.blob(image)
+        original = cleanup.signature
+
+        def read_signature(path):
+            if path == unreadable:
+                raise PermissionError("Cannot read a recent manifest")
+            return original(path)
+
+        with patch.object(cleanup, "signature", side_effect=read_signature):
+            with self.assertRaises(PermissionError):
+                self.prepare()
+
     def test_retention_uses_upload_time_keeps_five_unknown_recent_and_protected(self):
         for number in range(8):
             self.tag("sha-" + format(number, "040x") + "-run-123-amd64", self.image)

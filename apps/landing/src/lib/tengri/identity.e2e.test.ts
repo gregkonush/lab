@@ -407,7 +407,7 @@ identityTest(
           if (value) headers.set(name, Array.isArray(value) ? value.join(',') : value)
         const chunks = []
         for await (const chunk of request) chunks.push(Buffer.from(chunk))
-        const incoming = new Request(url, {
+        const incoming = new Request(new URL(url.pathname + url.search, 'http://0.0.0.0:3000'), {
           method: request.method,
           headers,
           ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),

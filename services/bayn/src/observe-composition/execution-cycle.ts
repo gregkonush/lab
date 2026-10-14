@@ -10,7 +10,7 @@ import {
   type CycleRunResult,
 } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
-import { unusedEntryExpiresAt } from '../cycle/entry-admission'
+import { hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
   makeExecutionCycleClosure,
@@ -1066,13 +1066,7 @@ export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly observedAt: string
   readonly cycle: AutonomousCycle
 }): CycleTerminalReason.Authority | CycleTerminalReason.UnusedEntryExpired | undefined => {
-  if (
-    input.cycle.schemaVersion === 'bayn.autonomous-cycle.v4' &&
-    input.cycle.bindings.snapshotId === undefined &&
-    input.cycle.bindings.decisionHash === undefined &&
-    Date.parse(input.observedAt) >= unusedEntryExpiresAt(input.cycle)
-  )
-    return CycleTerminalReason.UnusedEntryExpired
+  if (hasExpiredUnusedEntryAdmission(input.cycle, input.observedAt)) return CycleTerminalReason.UnusedEntryExpired
   const deadline =
     input.cycle.bindings.snapshotId === undefined
       ? input.cycle.window.submissionCutoffAt
