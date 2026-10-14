@@ -2020,7 +2020,7 @@ spec:
         - uses: argocd-update
           as: deploy
           retry:
-            timeout: 20m0s
+            timeout: 30m0s
             errorThreshold: 3
           config:
             apps:

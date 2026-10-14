@@ -47,26 +47,35 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
-## Optional Valkey client
+## Required Valkey broker materializations
 
-The scoped `ValkeyCache` service provides namespaced reads, bounded-TTL writes and
-deletion over authenticated TLS. Bayn's API and execution worker receive the
-existing connection ConfigMap, password Secret and client certificate mount.
-Configuration, TLS material and the connection are acquired only on the first
-valid cache operation. Missing cache artifacts do not fail layer construction;
-existing execution paths do not read Valkey.
+Bayn uses Effect's native `@effect/platform-node/NodeRedis` binding for authenticated
+TLS connections. The API and execution worker require the connection ConfigMap,
+password Secret and client certificate at startup. The small `ValkeyCache` adapter
+adds the `bayn:` namespace, bounded values and expiry, command cancellation and
+replica acknowledgement. Scope exit destroys outstanding socket work before the
+native binding closes its client.
 
-After building, `bun run valkey:verify` runs synthetic miss, write/read, deletion
-and expiry checks and exits after closing the client. See the
-[caching plan](../../docs/bayn/valkey-caching-plan.md) for candidate read paths,
-correctness rules, measurement gates and the client contract. Cache availability
-never grants trading or accounting authority.
+The broker observation owner publishes an immutable full snapshot and compact
+state in Valkey. PostgreSQL `broker_observations` stores their content hashes and
+the generation, quota and mutation fences. Migration 98 removes its JSONB payload.
+Reconciliation reads full history. Health, account, position, configuration,
+recent-history probes and final submission preflight read compact state. Every read
+rechecks PostgreSQL fences, account binding, original times and content identity.
+Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
+PostgreSQL payload fallback or cache-disable mode.
+
+`bun run valkey:verify` exercises authenticated writes, replica acknowledgement,
+reads, deletion and expiry. Add `--broker` to verify the actual fenced broker
+materializations and collect 20 samples of full and compact read latency and
+payload size. The command is read-only against PostgreSQL and prints no account
+values. See the [migration and performance evidence](../../docs/bayn/valkey-caching-plan.md).
 
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
-handlers poll without overlap and publish a complete snapshot in PostgreSQL `broker_observations`. Execution and
-status processes read that shared projection; they do not start local pollers. Endpoint registration remains separate
+handlers poll without overlap and publish full and compact snapshots in Valkey before committing their fenced
+references in PostgreSQL `broker_observations`. Execution and status processes read those shared materializations; they do not start local pollers. Endpoint registration remains separate
 from capital authority. Authorized bootstrap drains a predecessor controller, publishes a fresh observation for the
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.

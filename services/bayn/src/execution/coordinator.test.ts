@@ -2304,6 +2304,7 @@ describe('execution coordinator', () => {
             const cached = yield* makeProjectedBrokerRead(fresh).pipe(
               Effect.provideService(BrokerObservations, {
                 read: observed,
+                readState: observed,
                 readForSubmit: () => observed,
                 invalidate: Effect.sync(() => {
                   available = false

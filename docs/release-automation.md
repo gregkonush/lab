@@ -99,8 +99,8 @@ authorized break-glass direct deployment is an incident action, not a normal rel
 
 Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
 main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
-and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the public service,
-execution worker, and activation hook to the same source and digest, and carries the existing authored research
+and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
+public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
 request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
 

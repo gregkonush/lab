@@ -973,11 +973,8 @@ spec:
   freightCreationPolicy: Automatic
   freightCreationCriteria:
     expression: >-
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision'] != nil &&
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision'] != '' &&
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab' &&
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == 'kargo-sha-' +
-      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision']
+      imageFrom('registry.ide-newton.ts.net/lab/bayn').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.revision'] &&
+      imageFrom('registry.ide-newton.ts.net/lab/bayn').Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'
   subscriptions:
     - image:
         repoURL: registry.ide-newton.ts.net/lab/bayn
