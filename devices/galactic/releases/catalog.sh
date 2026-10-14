@@ -39,6 +39,7 @@ verify() {
 }
 
 if [[ "$1" == build ]]; then
+  python3 -m unittest discover -s "$release_dir/tests" -v
   verify "$source_ref" >"$output/kata-signature.json"
   crane manifest "$source_ref" >"$output/kata-index.json"
   jq -e '

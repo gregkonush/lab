@@ -101,7 +101,9 @@ an existing version tag with different contents unless `previousCatalogDigest` n
 The reviewed r5-to-r6 replacement pins that previous digest. Repeating publication after the replacement is a no-op.
 Preserve the accepted installer before the targeted cache rebuild, then record and verify the completed replacement
 installer before any node upgrade. The `v1.13.9` catalog and accepted installers remain available for
-recovery. `catalog.sh build <directory>` can repeat the artifact validation with Crane, Cosign, jq, and GNU tar.
+recovery. `catalog.sh build <directory>` runs the publication-boundary tests and artifact validation with Python 3,
+Crane, Cosign, jq, and GNU tar. Catalog-only updates reuse the pinned, signed Kata binary; changes to Kata source
+still run both native builds.
 
 The native Kata regression tests use `nix develop --file devices/galactic/extensions/kata/shell.nix` on Linux, with
 Rust 1.96 installed by the workflow. This
