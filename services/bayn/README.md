@@ -1028,6 +1028,15 @@ rolling back the application image through Kargo; do not remove retained evidenc
 The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
+The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
+LZ4 WAL compression reduces full-page image traffic. A 4 GiB WAL checkpoint threshold and 15-minute checkpoint
+interval spread checkpoint work; the existing five-minute archive timeout still bounds idle WAL archival.
+These settings retain fsync, full-page writes and the synchronous standby requirement. Buffer changes require
+the existing CNPG rolling restart and switchover, so deploy them while the account is flat outside the regular session.
+Compare WAL buffer-full events, WAL bytes, PostgreSQL 18 I/O counters, replica flush lag and native Bayn latency
+before and after rollout. A configuration revert through GitOps restores the previous settings without deleting
+evidence or changing replication. Compression and larger buffers alone do not establish a faster closure path.
+
 ## Replay and backtesting
 
 `bayn-gap-recovery` is an offline, original-receipt decision replay command in the
