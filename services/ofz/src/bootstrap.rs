@@ -266,18 +266,19 @@ async fn initial_authority<C: tokio_postgres::GenericClient + Sync>(
         .map(|id| policy::github_human_id(id))
         .collect::<Result<Vec<_>, _>>()?;
     let ready: bool = client.query_one("SELECT count(*)=4 AND (SELECT minimum_administrators=2 FROM ofz.platform_state) FROM ofz.memberships WHERE human_id=ANY($1) AND role IN (1,2)", &[&humans]).await.map_err(sql_error)?.get(0);
-    let checks = changes(manifest)?
+    let expected = changes(manifest)?
         .into_iter()
-        .map(|update| {
-            let relationship = update.relationship;
-            Check {
-                resource: relationship.resource,
-                permission: relationship.relation,
-                subject: relationship.subject,
-            }
+        .map(|update| update.relationship)
+        .collect::<Vec<_>>();
+    let checks = expected
+        .iter()
+        .map(|relationship| Check {
+            resource: relationship.resource.clone(),
+            permission: relationship.relation.clone(),
+            subject: relationship.subject.clone(),
         })
         .collect::<Vec<_>>();
-    if !ready || !native.check(&checks).await?.0 {
+    if !ready || !native.check(&checks).await?.0 || !native.platform_matches(&expected).await? {
         return Err(Status::failed_precondition(
             "initial administrator and workload authority changed",
         ));
@@ -639,6 +640,20 @@ mod tests {
         archiver.pool.get().await.unwrap().batch_execute("BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='bootstrap-control-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;").await.unwrap();
     }
 
+    async fn write_fixture_relationship(update: Update) {
+        let response = reqwest::Client::new()
+            .post(format!(
+                "{}/v1/relationships/write",
+                env::var("OFZ_TEST_NATIVE_ENDPOINT").unwrap()
+            ))
+            .bearer_auth("ofz-policy-fixture")
+            .json(&serde_json::json!({"updates": [update]}))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+    }
+
     async fn cli(role: &str, operation: &str, manifest: &Manifest) -> std::process::Output {
         let directory = env::temp_dir().join(format!("ofz-bootstrap-cli-{}", Uuid::new_v4()));
         fs::create_dir(&directory).unwrap();
@@ -891,6 +906,39 @@ mod tests {
         );
         acknowledge(&archiver).await;
 
+        let surplus = [
+            Relationship::new("platform", "lab", "administrator", "human", &unapproved),
+            Relationship::new(
+                "platform",
+                "lab",
+                "kube_broker",
+                "workload",
+                &policy::workload_object_id(BFF_ID),
+            ),
+            Relationship::new("platform", "retired", "member", "human", &unapproved),
+        ];
+        for relationship in &surplus {
+            write_fixture_relationship(Update::touch(relationship.clone())).await;
+            assert_eq!(
+                execute(&database, &native, Operation::Activate, manifest.clone())
+                    .await
+                    .err()
+                    .expect("surplus native authority must keep activation fenced")
+                    .code(),
+                tonic::Code::FailedPrecondition
+            );
+            assert!(database.state().await.unwrap().fenced);
+            assert_eq!(database.state().await.unwrap().version, 1);
+            assert!(
+                !native
+                    .applied(&Operation::Activate.native_id(&manifest))
+                    .await
+                    .unwrap()
+                    .0
+            );
+            write_fixture_relationship(Update::delete(relationship.clone())).await;
+        }
+
         let second = policy::github_human_id("2").unwrap();
         database
             .pool
@@ -985,51 +1033,60 @@ mod tests {
         );
 
         acknowledge(&archiver).await;
-        let checked = std::sync::Arc::new(tokio::sync::Notify::new());
-        let resume = std::sync::Arc::new(tokio::sync::Notify::new());
-        let barrier_native = native
-            .clone()
-            .with_check_barrier(checked.clone(), resume.clone());
-        let mut connection = database.command_connection().await.unwrap();
-        let record = load(&connection.client).await.unwrap().unwrap();
-        let revision = native
-            .applied(&Operation::Activate.native_id(&manifest))
-            .await
-            .unwrap()
-            .1;
-        let late_activation = tokio::spawn(async move {
-            finalize(
-                &mut connection.client,
-                &barrier_native,
-                &record,
-                Operation::Activate,
-                revision,
-            )
-            .await
-        });
-        for pass in 0..2 {
-            tokio::time::timeout(Duration::from_secs(5), checked.notified())
+        for added in [None, Some(surplus[1].clone())] {
+            let checked = std::sync::Arc::new(tokio::sync::Notify::new());
+            let resume = std::sync::Arc::new(tokio::sync::Notify::new());
+            let barrier_native = native
+                .clone()
+                .with_check_barrier(checked.clone(), resume.clone());
+            let mut connection = database.command_connection().await.unwrap();
+            let record = load(&connection.client).await.unwrap().unwrap();
+            let revision = native
+                .applied(&Operation::Activate.native_id(&manifest))
                 .await
-                .expect("activation did not reach its authority check");
-            if pass == 1 {
-                archiver
-                    .pool
-                    .get()
+                .unwrap()
+                .1;
+            let late_activation = tokio::spawn(async move {
+                finalize(
+                    &mut connection.client,
+                    &barrier_native,
+                    &record,
+                    Operation::Activate,
+                    revision,
+                )
+                .await
+            });
+            for pass in 0..2 {
+                tokio::time::timeout(Duration::from_secs(5), checked.notified())
                     .await
-                    .unwrap()
-                    .batch_execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0")
-                    .await
-                    .unwrap();
+                    .expect("activation did not reach its authority check");
+                if pass == 1 {
+                    if let Some(relationship) = &added {
+                        write_fixture_relationship(Update::touch(relationship.clone())).await;
+                    } else {
+                        archiver
+                            .pool
+                            .get()
+                            .await
+                            .unwrap()
+                            .batch_execute("UPDATE ofz.archive_state SET acknowledged_at_ms=0")
+                            .await
+                            .unwrap();
+                    }
+                }
+                resume.notify_one();
             }
-            resume.notify_one();
+            assert_eq!(
+                late_activation.await.unwrap().err().unwrap().code(),
+                tonic::Code::FailedPrecondition
+            );
+            assert!(database.state().await.unwrap().fenced);
+            assert_eq!(database.state().await.unwrap().version, 1);
+            if let Some(relationship) = added {
+                write_fixture_relationship(Update::delete(relationship)).await;
+            }
+            acknowledge(&archiver).await;
         }
-        assert_eq!(
-            late_activation.await.unwrap().err().unwrap().code(),
-            tonic::Code::FailedPrecondition
-        );
-        assert!(database.state().await.unwrap().fenced);
-        assert_eq!(database.state().await.unwrap().version, 1);
-        acknowledge(&archiver).await;
         let activated = execute(&database, &native, Operation::Activate, manifest.clone())
             .await
             .unwrap();
@@ -1153,7 +1210,7 @@ mod tests {
             2
         );
         println!(
-            "PASS: owner-only two-administrator bootstrap; interrupted native write recovery; immutable retries; archive-gated activation; in-flight archive failure; marker domain separation; recovery/offboarding replay stays fenced"
+            "PASS: owner-only two-administrator bootstrap; interrupted native write recovery; immutable retries; archive-gated activation; exact native platform relationships; in-flight archive and surplus-authority failure; marker domain separation; recovery/offboarding replay stays fenced"
         );
     }
 }

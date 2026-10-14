@@ -691,6 +691,50 @@ describe('bounded execution risk', () => {
     expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
   })
 
+  test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
+    'allows the broker-supported MARKET duration only for a reducing %s close',
+    (symbol) => {
+      const crypto = symbol.includes('/')
+      const supportedDuration = crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day
+      const unsupportedDuration = crypto ? TimeInForce.Day : TimeInForce.GoodUntilCanceled
+      const policy = makePolicy({
+        schemaVersion: executionRiskPolicySchemaVersion,
+        allowedSymbols: ['AMD', symbol],
+        allowedOrderTypes: [OrderType.Limit],
+        allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+        maxOrderNotionalMicros: '200000000',
+      })
+      const positions = baseState().positions.map((position) =>
+        position.symbol === 'NVDA'
+          ? { ...position, symbol, quantityAtoms: '1000000001', marketValueMicros: '100000001' }
+          : position,
+      )
+      const state = makeState({
+        positions,
+        marketDataSymbol: symbol,
+        closeOnly: true,
+        closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      })
+      const close = makeIntent({
+        policyHash: canonicalHashV1(policy),
+        symbol,
+        side: OrderSide.Sell,
+        orderType: OrderType.Market,
+        timeInForce: supportedDuration,
+        quantityAtoms: '1000000001',
+        notionalLimitMicros: '100000001',
+      })
+      expect(evaluateSuccess(close, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
+      expectBlocked(
+        Reason.OrderTypeNotAllowed,
+        makeIntent({ ...close, timeInForce: unsupportedDuration }),
+        state,
+        policy,
+      )
+      expectBlocked(Reason.OrderTypeNotAllowed, close, makeState({ ...state, closeOnly: false }), policy)
+    },
+  )
+
   test('admits an out-of-policy symbol only as an exact reconciled close', () => {
     const positions = baseState().positions.map((position) =>
       position.symbol === 'NVDA'
