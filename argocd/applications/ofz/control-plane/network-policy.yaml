@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ofz-api
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
 spec:
   podSelector:
     matchLabels:
@@ -74,6 +76,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ofz-audit-export
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
 spec:
   podSelector:
     matchLabels:
@@ -113,6 +117,8 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: ofz-migrate
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
 spec:
   podSelector:
     matchLabels:
@@ -141,3 +147,45 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ofz-bootstrap
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ofz-bootstrap
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: ofz-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: ofz-spicedb
+      ports:
+        - protocol: TCP
+          port: 8443

@@ -1,11 +1,14 @@
 # Fenced Ofz control plane
 
 The active Ofz application includes this directory. Kargo selects one successful immutable Ofz image and applies
-its digest to the API, exporter and both migration jobs. The application tracks `kargo/ofz`; the selected image's
+its digest to the API, exporter, both migration jobs and the initial bootstrap job. The application tracks `kargo/ofz`; the selected image's
 source revision, digest and build run are recorded on the rendered resources.
 
 CNPG manages seven separate login roles with namespace-bound SealedSecrets. The short-lived `ofz_migrator` and
 `tengri_migrator` owners initialize their respective databases through Sync hooks before the serving deployments.
+The next hook runs `ofz bootstrap` with the protected approved administrator manifest and retains the platform fence.
+Every outer SealedSecret is in wave -9, before the database and native consumers. Network policies are in wave -5,
+before the migration hooks in -4 and bootstrap in -3. There is no automatic activation hook.
 The API uses `ofz_api`; only `ofz_archiver` can acknowledge audit exports. BFF, controller and supervisor roles have
 separate credentials and table grants. None of these roles can create roles or databases, replicate, bypass RLS or
 act as superuser. The fixed connection limits cover simultaneous serving surges and preserve the existing SQL budget.
@@ -25,8 +28,8 @@ only their database credential, database CA and NUC writer credential. NetworkPo
 `100.78.240.108:9444`. Native policy and NUC custodian credentials are absent.
 
 The API initially serves with the SQL platform fence set. Deploy the independent NUC archive first and verify its
-private TLS endpoint from another peer, then verify actual Kubernetes exports and acknowledgements. Run the reviewed
-owner-only bootstrap with the protected approved manifest. Activate only after identity, audit and coordinated runtime
+private TLS endpoint from another peer, then verify actual Kubernetes exports and acknowledgements. The reviewed
+owner bootstrap hook uses the protected approved manifest. Activate only after identity, audit and coordinated runtime
 checks pass. Keep the Kubernetes workspace-creation fence until the final controller/guest release is installed.
 The dedicated Keycloak realm and the valid `auth.proompteng.ai` certificate are required before opening sessions.
 

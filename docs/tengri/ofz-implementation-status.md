@@ -8,8 +8,9 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 ## Current release boundary
 
 The active source frontier is the fenced API/exporter GitOps enrollment on `codex/ofz-control-plane-rollout`.
+The fenced API/exporter and approved owner bootstrap are in [#15026](https://github.com/proompteng/lab/pull/15026).
 The independent archive merged in [#15020](https://github.com/proompteng/lab/pull/15020) at
-`1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6`; main image publication and NUC installation remain in progress.
+`1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6`. Its main image is published and its NUC service is deployed and verified.
 The owner-only bootstrap/activation commands merged in [#15014](https://github.com/proompteng/lab/pull/15014) at
 `3b78559173e6a5dd25b514f28a12b08bacfe0a9f`. Automatic review found that expected relationship checks permitted surplus
 native authority. The correction merged in [#15016](https://github.com/proompteng/lab/pull/15016) at
@@ -58,13 +59,18 @@ Activate only the new VMM/protocol. Fresh workspaces must use the final contract
 | Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c`              | Deployed UI acceptance                                                  |
 | Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0`              | Fifty-sample qualification and coordinated activation                   |
 | Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                                 | Protected inputs, independent archive and production activation         |
-| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), merged | Main image publication, NUC and Kubernetes rollout                |
+| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), merged | Kubernetes exporter adoption and full recovery qualification                |
 | Bounded file observers                                                            | Local implementation, unpublished                                        | Finish controller/BFF wiring and full scoped acceptance                 |
 
-The latest verified API factory receipt is main run `38509363935`. Its two-platform index is
-`registry.ide-newton.ts.net/lab/ofz@sha256:0a78811e79504c645c3a5f39f8a1da4ffeae050adf724bd6d4c5c8874f396a3b`,
-with immutable alias `kargo-sha-300b190c4e131dd37864c7c8fdece5aed4a8709c-run-38509363935`.
-That receipt proves publication of the factory revision, not deployment or completion of later source changes.
+The latest verified API factory receipt is main run `38521111594`. Its two-platform index is
+`registry.ide-newton.ts.net/lab/ofz@sha256:23168c8fc76893a4bd9313d221045a4fe8b39b316dd0a5d7338ec143d28a2d03`,
+with immutable alias `kargo-sha-1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6-run-38521111594`.
+The exact reviewed source archive and this image initialized the NUC service. Local S3 proof rejects writer/root
+version deletion and retention shortening. A separate Mac tailnet peer verifies native TLS 1.3, exact certificate
+identity, version-specific object readback and denied writer deletion. The same immutable version, SHA-256 and
+retention survive an actual server SIGKILL/restart. The existing six unrelated NUC containers remain running;
+Serve ports 443, 8090 and 8100 retain their original routes. This proves independent archive storage and TLS,
+not Kubernetes exporter adoption, independent database/home restore or the final Tengri cutover.
 
 ## Current isolated evidence
 
@@ -75,7 +81,7 @@ That receipt proves publication of the factory revision, not deployment or compl
   same disks and client endpoint. Corrupt payloads, short retention, weak defaults and archive loss immediately invalidate health without acknowledging pending rows.
   Receipt timestamps newer than the clock snapshot retain a full ninety days; oversized aggregate batches split
   without dropping or acknowledging omitted receipts. Both defects reproduce before their corrections.
-  These are isolated proofs; the NUC service and Kubernetes exporter have not been activated.
+  The NUC service now has the live storage/TLS/crash evidence above. Kubernetes exporter adoption remains pending.
 
 - The surplus-platform-authority regression fails before the correction. The corrected real bootstrap fixture rejects
   an unapproved administrator, a cross-role workload binding, a retired platform and authority added during the final

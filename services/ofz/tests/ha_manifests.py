@@ -95,6 +95,23 @@ def validate(targets):
         roles.keys() == limits.keys(),
         "ofz: every control database caller needs its own role",
     )
+    for item in targets["ofz"]:
+        if item and item["kind"] == "SealedSecret":
+            require(
+                item["metadata"]
+                .get("annotations", {})
+                .get("argocd.argoproj.io/sync-wave")
+                == "-9",
+                "ofz: Argo must create each outer SealedSecret before database and native consumers",
+            )
+        if item and item["kind"] == "NetworkPolicy":
+            require(
+                item["metadata"]
+                .get("annotations", {})
+                .get("argocd.argoproj.io/sync-wave")
+                == "-5",
+                "ofz: network isolation must precede owner jobs and serving workloads",
+            )
     for name, limit in limits.items():
         role = roles[name]
         require(
@@ -138,6 +155,25 @@ def validate(targets):
             "ofz: schema migration must precede serving workloads",
         )
     export = resource(targets, "ofz", "Deployment", "ofz-audit-export")["spec"]
+    bootstrap = resource(targets, "ofz", "Job", "ofz-platform-bootstrap")
+    bootstrap_pod = bootstrap["spec"]["template"]["spec"]
+    bootstrap_app = bootstrap_pod["containers"][0]
+    require(
+        bootstrap_app["args"] == ["bootstrap", "/var/run/ofz/bootstrap/manifest.json"]
+        and "dbname=ofz_control user=ofz_migrator"
+        in values(bootstrap_app)["OFZ_DATABASE_DSN"]
+        and bootstrap["metadata"]["annotations"].get("argocd.argoproj.io/sync-wave")
+        == "-3",
+        "ofz: approved owner bootstrap must follow migration and retain the platform fence",
+    )
+    require(
+        {
+            item["name"]: item.get("secret", {}).get("secretName")
+            for item in bootstrap_pod["volumes"]
+        }.get("bootstrap")
+        == "ofz-bootstrap-manifest",
+        "ofz: bootstrap requires the protected approved manifest",
+    )
     require(
         export["replicas"] == 2
         and export["strategy"]["rollingUpdate"]["maxSurge"] == 0,
@@ -445,6 +481,22 @@ def main():
     ]
     mutations.extend(
         [
+            lambda data: resource(data, "ofz", "SealedSecret", "ofz-api-db-auth")[
+                "metadata"
+            ].pop("annotations"),
+            lambda data: resource(data, "ofz", "NetworkPolicy", "ofz-migrate")[
+                "metadata"
+            ].pop("annotations"),
+            lambda data: resource(data, "ofz", "Job", "ofz-platform-bootstrap")["spec"][
+                "template"
+            ]["spec"]["containers"][0].update(
+                args=["activate", "/var/run/ofz/bootstrap/manifest.json"]
+            ),
+            lambda data: resource(data, "ofz", "Job", "ofz-platform-bootstrap")["spec"][
+                "template"
+            ]["spec"]["volumes"][-1]["secret"].update(
+                secretName="unapproved-bootstrap"
+            ),
             lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
                 "roles"
             ][1].update(superuser=True),
