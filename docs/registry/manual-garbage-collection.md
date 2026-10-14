@@ -17,6 +17,9 @@ The GitOps-managed `registry-cleanup` CronJob runs at **03:23 America/Los_Angele
 every day. `concurrencyPolicy: Forbid` prevents overlapping scheduled runs.
 The Job has a two-hour deadline, no automatic retry, one retained successful run
 and three retained failed runs. Inspect its status and logs in namespace `registry`.
+The 24-hour starting deadline lets Kubernetes catch up the most recent missed run
+after maintenance suspension or a controller interruption. Older missed runs are
+skipped. This start deadline is separate from the two-hour execution deadline.
 
 `scheduled.py` resumes receipted quarantine purges, prepares online, refreshes
 protected references immediately before collection, then purges with uploads open.

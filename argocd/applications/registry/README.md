@@ -41,6 +41,8 @@ rate causes storage or Kafka stalls.
 `registry-cleanup` runs daily at **03:23 America/Los_Angeles**. Its CronJob,
 service account, permissions and scripts are committed with this Application.
 Runs cannot overlap; failed runs are retained and are not automatically retried.
+Kubernetes can start the most recent missed run up to 24 hours late after
+maintenance suspension or a controller interruption. Older missed runs are skipped.
 Each run resumes receipted quarantine purges, prepares online, refreshes protected
 references, collects for at most four minutes and purges with uploads open.
 An empty plan skips the read-only restart. Missing protected content or a failed
