@@ -8,6 +8,7 @@ const transportFixture = async (
   mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated' | 'delayed-replica' | 'replica-timeout',
 ) => {
   const { createServer } = await import('node:net')
+  const outerDeadline = mode === 'replica-timeout' || mode === 'unreplicated'
   let response = mode
   const received = Promise.withResolvers<void>()
   let closed = Promise.withResolvers<void>()
@@ -60,7 +61,7 @@ const transportFixture = async (
             socket.write(
               response === 'unreplicated' ||
                 response === 'replica-timeout' ||
-                (response === 'delayed-replica' && waits.length === 1)
+                (response === 'delayed-replica' && waits.length <= 2)
                 ? ':0\r\n'
                 : ':1\r\n',
             )
@@ -93,14 +94,14 @@ const transportFixture = async (
         NodeRedis.layer({
           RESP: 2,
           disableOfflineQueue: true,
-          commandOptions: { timeout: mode === 'replica-timeout' ? 2000 : 100 },
+          commandOptions: { timeout: outerDeadline ? 2000 : 100 },
           pingInterval: 100,
           socket: {
             host: '127.0.0.1',
             port: address.port,
             reconnectStrategy: false,
             connectTimeout: 100,
-            socketTimeout: mode === 'replica-timeout' ? 3000 : 250,
+            socketTimeout: outerDeadline ? 3000 : 250,
           },
         }),
       ),
@@ -159,7 +160,7 @@ describe('required native Effect Valkey binding', () => {
     )
     expect(Result.isSuccess(result)).toBe(true)
   })
-  test('a later replica acknowledgement completes the original write', async () => {
+  test('replica acknowledgement uses the remaining command budget without replaying the write', async () => {
     const fixture = await transportFixture('delayed-replica')
     try {
       const result = await operation((cache) =>
@@ -171,6 +172,7 @@ describe('required native Effect Valkey binding', () => {
       expect(fixture.waits()).toEqual([
         ['1', '250'],
         ['1', '250'],
+        ['1', '250'],
       ])
       await fixture.closed()
       expect(fixture.closes()).toBe(1)
@@ -178,7 +180,7 @@ describe('required native Effect Valkey binding', () => {
       await fixture.stop()
     }
   })
-  test('a missing replica acknowledgement fails after one bounded retry', async () => {
+  test('a missing replica acknowledgement fails at the command deadline', async () => {
     const fixture = await transportFixture('unreplicated')
     try {
       const result = await operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })).pipe(
@@ -188,12 +190,12 @@ describe('required native Effect Valkey binding', () => {
       )
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(result.failure.message).toBe('Valkey command exceeded its deadline')
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
         expect(String(result.failure.cause)).toContain('replica')
       expect(fixture.writes()).toBe(1)
-      expect(fixture.waits()).toEqual([
-        ['1', '250'],
-        ['1', '250'],
-      ])
+      expect(fixture.waits().length).toBeGreaterThan(2)
+      expect(fixture.waits().every((args) => args.length === 2 && args[0] === '1' && args[1] === '250')).toBe(true)
       await fixture.closed()
       expect(fixture.closes()).toBe(1)
     } finally {
@@ -211,6 +213,8 @@ describe('required native Effect Valkey binding', () => {
       expect(Result.isFailure(result)).toBe(true)
       if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
         expect(result.failure.message).toBe('Valkey command exceeded its deadline')
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(String(result.failure.cause)).toContain('replica')
       expect(fixture.writes()).toBe(1)
       expect(fixture.waits()).toEqual([
         ['1', '250'],
