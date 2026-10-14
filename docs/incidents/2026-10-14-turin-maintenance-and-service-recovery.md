@@ -1,6 +1,6 @@
 # Turin maintenance and service recovery on October 14, 2026
 
-Status: recovery in progress. Evidence updated through approximately `12:59Z` on October 14.
+Status: recovery in progress. Evidence updated through approximately `16:04Z` on October 14.
 This report does not declare the incident closed or all applications recovered.
 
 ## What happened
@@ -484,3 +484,131 @@ can be extended by new slow operations. That policy was preserved. A contemporan
 - Resolve the separately owned Cloudflare, Keycloak, and Tengri reconciliation holds through their intended release.
 - Update this report with final application counts, runtime acceptance times, remaining data-integrity uncertainty,
   and the final disposition of each corrective action before declaring the incident closed.
+
+## Recovery continuation through 16:04Z
+
+The incident remains open. A new Argo inventory at `14:54Z` reported 89 of 91 Applications Synced/Healthy;
+three of those still had their separately owned reconciliation holds, leaving 86 actively reconciled and green.
+Home Stash's active importer and Rook-Ceph remained non-green. Bayn's current Argo health must also be distinguished
+from the failed sustained-readiness checks below.
+
+### Replica acknowledgement and the command budget
+
+A controller failure labelled `market-data` was traced to its same-pass broker reconciliation read, not to a proven
+independent Kafka feed failure. The observation fence rejected a cut after Valkey publication failed its replica
+acknowledgement. Trace `b215ac54205133bacf4a973114d5410a` retained that exact cause after approximately 328 ms.
+Valkey also logged delayed asynchronous AOF fsync operations on both hosts during recovery; those observations do
+not isolate the cause of every acknowledgement delay.
+
+[PR #15049](https://github.com/proompteng/lab/pull/15049) added one further acknowledgement wait without replaying
+`SET`, retaining the existing one-second command deadline and mandatory positive replica acknowledgement.
+Its native regression, all six local checks, required remote PostgreSQL/application gates and both image builds
+passed; review completed without findings. It merged as `27bc084125b7833c071914f0fa3575f412c6bddd` at `14:06:39Z`.
+Main publisher `38577604315` succeeded. Freight `69528cb9a03d2b68507601b69b894c21eac7bb09` selected immutable image
+`sha256:5ae3522729588c71620f2838244386f34a65dee38511f3d60a8e1584d1f6f639`; promotion
+`bayn.01m4xc1svychf054mdshg4ttym.69528cb` generated `bf50806e5c12779117754d9501184e0879a31b27` and succeeded
+at `14:13:22Z`. Exact-image public and controller replicas ran on both Turin and Altra.
+
+That change did not achieve sustained recovery. The new-source readiness window from approximately `14:21Z` to
+`14:27Z` passed 17 of 24 samples. A separate read-only diagnostic using the deployed source's database fences,
+content hashes, parent binding and age checks passed 74 of 80 full/compact attempts without retries; all six failed
+attempts retained the unavailable-observation fence. This diagnostic used its own scoped connections and made no
+financial mutation. The earlier built-in materialization command retries failed samples, so its final successful
+sample count must not be interpreted as first-attempt reliability.
+
+Trace `c31f14e5540fee52cbdbfdef78e5e64d` then established that the two-wait limit rejected publication after
+633 ms, before the one-second command budget was exhausted. The failure chain is:
+
+1. Public broker readiness failed because a fresh cut was not available through its durable observation fence.
+2. The cut was not published because both acknowledgement waits returned zero.
+3. Publication stopped before its existing deadline because the recovery implementation also imposed a fixed
+   two-attempt limit.
+4. Two independent stopping conditions had been encoded where the existing deadline should have been the single
+   bound. The attempt count unnecessarily shortened the available budget.
+
+[PR #15050](https://github.com/proompteng/lab/pull/15050) removes that attempt cap and uses 250 ms waits on the same
+owned connection for the remaining command budget. It still issues `SET` once, requires positive acknowledgement,
+and cancels at the unchanged one-second deadline. Native tests cover a third wait, permanent missing acknowledgement,
+and a stalled retry. Review identified loss of the known replication cause at the deadline; the correction retains
+that per-operation cause, and its new regressions failed before the correction and passed afterward. All 16 native
+binding tests and all six local checks passed, including 2,951 tests with 394 skipped and zero failures.
+The current-head remote gates then passed, including PostgreSQL integration and both architecture builds. The
+resolved review finding was checked again before merge. Fresh native status from both public replicas proved exact
+accounting, zero unresolved mutations and open orders, and unchanged `none`/`read-only`/`OBSERVE` authority.
+
+PR #15050 merged as `c429484a83c09ec23c91b5d2c9f5c073912cbc75` at `15:42:54Z`. Main publisher `38591749045`
+completed both platform images and their index. Freight `dd632fe5ab920653a165621a30b362471ee7032c` selected
+`sha256:20aaefa46a6b5d784bd3fdb1f14286c4944d6a714e1cefb014c5f00de0a8187d`; promotion
+`bayn.01m4xhhvy61rhp3995exgn5whw.dd632fe` generated `1bb31e1bd5551fb7590c6c023f441ba0be7743c8` and succeeded
+at `15:50:13Z`. Argo completed the activation hook and ordinary rollout. Exact-image public and execution-controller
+replicas ran on Turin and Altra with zero restarts at the recorded baseline.
+
+This deployment still had an early publication failure. Trace `f201645ae4fb92a3228c12a5c10e6653` recorded
+`bayn.valkey.put` failing at approximately 1,001 ms, with `Valkey replica did not acknowledge publication` retained
+as its cause. Both public replicas recorded a cycle-runner degradation during that startup interval. This proves
+the deadline and diagnostic correction ran in production; it does not prove the underlying latency resolved.
+A new, explicitly bounded readiness window ran from `15:52:07Z` through `16:01:38Z`, without retrying failed
+samples. All 40 sampled readiness checks passed over 9.5 minutes. Separate full/compact first-attempt reads
+passed 80 of 80 attempts across the two hosts. These results are retained with their exact scope.
+
+They did not establish sustained recovery. At `16:01:38.837Z`, immediately after the last sampled check, a
+new publication failed. Trace `dfbc64d81ef78da63e72214325cffbc9` again recorded a 1,001 ms Valkey deadline
+with the known missing-replica-acknowledgement cause. Both public replicas subsequently logged broker degradation
+at `16:01:42Z` and `16:01:46Z`. Controller sequence 142,341 failed its same-pass reconciliation read. The
+post-window status guard also failed; the first failed payload was not persisted, so the retained controller
+trace and public health logs establish the specific fault. Subsequent native snapshots returned Ready with
+exact accounting, zero unresolved mutations/open orders, and unchanged capital authority. All four new replicas
+retained their original UIDs with zero restarts.
+
+The concurrency and deadline corrections are deployed, but intermittent acknowledgement latency remains an open
+recovery problem. Neither the successful sampled window nor the later Ready snapshots erase that failure. No
+command/freshness limit, replication requirement, health rule, storage policy or capital gate was weakened.
+
+### Model, telemetry and market-source readback
+
+The independent research model returned HTTP 200 from the permitted research worker, the exact locked Alpha-R1
+identity, the allowed synthetic identifier `mom_20`, complete stream termination and actual usage of 101 prompt plus
+13 completion tokens. The request completed in approximately 227 ms. Admission and engine running/waiting gauges
+returned to zero. Its trace `357f2e4b258c4589a0c9418defd2a851`, matching request log
+`86cfa8c988e74dcd969cad949f9d0466`, and completed-request counter were read back from Tempo, Loki and Mimir.
+Native GPU readback showed the expected Blackwell device and serving process. This model is independent of the
+active Jev path; the smoke request is neither strategy qualification nor capital authority.
+
+An authenticated read-only sample at `14:50Z` collected 200 committed records each from `torghut.quotes.v1` and
+`bayn.market-data.crypto.v1`. The sampled AMD and BTC/USD payloads retained original source timestamps in that
+same minute. No production consumer offsets were committed or reset. Administrative group lag was unavailable
+because the two current groups had no committed offsets; that result is UNKNOWN, not zero. Bounded source samples
+do not prove freshness for every asset required by a future decision.
+
+Physical Turin retained boot ID `87a50b3a-79e0-4841-a9dc-dbde248e86a8`, Talos 1.14.0 and kernel 6.18.48, remained
+schedulable, and reported no node pressure. Fresh fan readback showed 1120 RPM for the four case fans, 1400 RPM
+for the CPU fan and 3780 RPM for the protected pump; CPU temperature was 39 C. The retained Ceph readback showed
+all six original OSDs up/in, monitor quorum, zero degraded objects and 24 remapped PGs. Its two BlueStore warnings
+remained unmuted. None of these observations closes the outstanding service acceptance or separately owned cutover.
+
+### Fresh dependencies during the final observation window
+
+An authenticated source recheck at `15:48Z` again read 200 committed stock records and 200 committed crypto
+records. The last sampled AMD source timestamp was `15:48:11.216890326Z` and BTC/USD was
+`15:48:33.140727620Z`. Neither production consumer offsets nor topic state were changed. These remain bounded
+partition samples, rather than proof that every required trading asset is current.
+
+Both original Flink job IDs remained `RUNNING`. The archive had 292 completed checkpoints and one retained
+historical failure; technical analysis had 292 completed checkpoints and no failures at this readback. Native
+checkpoint IDs had advanced to 47,435 and 117,389, respectively, with current completion timestamps.
+
+Fresh Turin sensors reported four case fans at 1120 RPM, CPU fan 1400 RPM, protected pump 3780 RPM, CPU 40 C,
+NIC 74 C and DIMM banks 62/59 C. Ceph retained all six OSDs up/in and all 601 PGs active, with no degraded PGs.
+It still had 23 remapped PGs, approximately 544,000 misplaced objects and two unmuted BlueStore warnings.
+The current importer completed more runs normally; a subsequent scheduled run was active. The three separate
+identity/runtime cutover holds remained in place. Final all-application acceptance is still open.
+
+The `16:00Z` application inventory still contained 91 Applications: 89 reported Synced/Healthy, with 86 actively
+reconciled and green. The remaining active exceptions were Home Stash's running importer and Rook-Ceph. Cached
+Healthy states on the paused Cloudflare, Keycloak and Tengri Applications still do not establish cutover acceptance.
+Bayn's subsequent native publication failure also keeps its service-level acceptance open despite current Argo health.
+
+The active Turin `EPHEMERAL` volume configuration was read again during this window. Its partition provisioning
+retained `grow: false`, and the original XFS volume remained ready. The host retained the recovered boot ID and
+reported Ready, schedulable and no node pressure. Future-boot acceptance remains unverified; no new reboot was
+performed to manufacture that proof during trading-service recovery.
