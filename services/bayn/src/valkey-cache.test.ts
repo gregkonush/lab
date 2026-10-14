@@ -169,6 +169,45 @@ describe('required native Effect Valkey binding', () => {
       await fixture.stop()
     }
   })
+  test('concurrent operations reconnect together after an aborted command', async () => {
+    const fixture = await transportFixture('hold')
+    try {
+      const values = await operation((cache) =>
+        Effect.gen(function* () {
+          expect(Result.isFailure(yield* cache.get('bayn:first').pipe(Effect.result))).toBe(true)
+          fixture.resumeReads()
+          return yield* Effect.all([cache.get('bayn:second'), cache.get('bayn:third')], { concurrency: 2 })
+        }),
+      ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+      expect(values.every(Option.isNone)).toBe(true)
+      await fixture.closed()
+      expect(fixture.closes()).toBe(2)
+    } finally {
+      await fixture.stop()
+    }
+  })
+  test('interrupting a queued command leaves the active connection alone', async () => {
+    const fixture = await transportFixture('hold')
+    try {
+      await operation((cache) =>
+        Effect.gen(function* () {
+          const active = yield* cache
+            .get('bayn:active')
+            .pipe(Effect.result, Effect.forkChild({ startImmediately: true }))
+          yield* Effect.promise(() => fixture.received)
+          const queued = yield* cache.get('bayn:queued').pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Fiber.interrupt(queued)
+          yield* Effect.sleep('10 millis')
+          expect(fixture.closes()).toBe(0)
+          expect(Result.isFailure(yield* Fiber.join(active))).toBe(true)
+        }),
+      ).pipe(Effect.provide(fixture.layer), Effect.runPromise)
+      await fixture.closed()
+      expect(fixture.closes()).toBe(1)
+    } finally {
+      await fixture.stop()
+    }
+  })
   test('a transport error remains a failure and retains its cause', async () => {
     const result = await runTransport(
       'error',
