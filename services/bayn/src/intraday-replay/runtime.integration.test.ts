@@ -98,6 +98,8 @@ durableTest.each(
       'approved-expiry-recovery',
       'approved-expiry-manual-hold',
       'approved-expiry-rollback',
+      'entry-lease-expires-during-bind',
+      'entry-lease-expires-at-commit',
       'fill',
       'fallback',
       'missing-benchmark',
@@ -133,6 +135,7 @@ durableTest.each(
   '$label: $scenario',
   async ({ scenario }) => {
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
+    const admissionRace = scenario.startsWith('entry-lease-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -163,12 +166,13 @@ durableTest.each(
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
-    const fixture = { ...simulationFixture(undefined, undefined, noTrade ? {} : undefined), protocol }
+    const fixture = { ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const cryptoAdmissionAtMs = initialAtMs + 120_000
     const reentryAtMs = initialAtMs + 240_100
-    const lifecycleObservations =
-      scenario === 'partial-exit-reentry'
+    const lifecycleObservations = admissionRace
+      ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+      : scenario === 'partial-exit-reentry'
         ? [
             { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 40, premium: 0.02 },
             ...Array.from({ length: 25 }, (_, index) => ({
@@ -561,6 +565,24 @@ durableTest.each(
           })),
         )
         const runtime = yield* createRuntime
+        if (scenario === 'entry-lease-expires-during-bind' || scenario === 'entry-lease-expires-at-commit') {
+          yield* sql`CREATE FUNCTION expire_fixture_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
+            BEGIN
+              UPDATE simulated_execution_clocks SET observed_at = (
+                SELECT LEAST(submission_cutoff_at,GREATEST(created_at,submission_open_at)+interval '1 minute')
+                FROM autonomous_cycles WHERE cycle_id=NEW.cycle_id
+              ) WHERE account_id=(SELECT account_id FROM autonomous_cycles WHERE cycle_id=NEW.cycle_id);
+              RETURN NEW;
+            END
+            $function$`
+          if (scenario === 'entry-lease-expires-during-bind')
+            yield* sql`CREATE TRIGGER expire_fixture_admission AFTER INSERT ON autonomous_cycle_shadow_decisions
+              FOR EACH ROW EXECUTE FUNCTION expire_fixture_admission()`
+          else
+            yield* sql`CREATE TRIGGER zz_expire_fixture_admission BEFORE UPDATE ON autonomous_cycles
+              FOR EACH ROW WHEN (OLD.decision_hash IS NULL AND NEW.decision_hash IS NOT NULL)
+              EXECUTE FUNCTION expire_fixture_admission()`
+        }
         const passUnavailableCryptoAdmission = (driver: Pick<typeof runtime, 'advance'>) =>
           Effect.gen(function* () {
             const ordersBefore = (yield* broker.snapshot).orders.length
@@ -579,6 +601,27 @@ durableTest.each(
             expect((yield* broker.snapshot).orders).toHaveLength(ordersBefore)
             yield* advanceMarketTo(reentryAtMs)
           })
+        if (scenario.startsWith('entry-lease-')) {
+          yield* advanceMarketTo(initialAtMs + 30_000)
+          yield* runtime.advance
+          expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
+            { unbound: true },
+          ])
+          yield* advanceMarketTo(initialAtMs + 60_000)
+          const advanced = yield* runtime.advance
+          expect(advanced.observation.result).toBe('FAILURE')
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect((yield* broker.snapshot).fills).toEqual([])
+          expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
+            { unbound: true },
+          ])
+          expect(
+            yield* sql`SELECT (SELECT count(*)::int FROM autonomous_cycle_shadow_decisions) AS decisions,
+            (SELECT count(*)::int FROM intents) AS intents,
+            ((SELECT count(*)::int FROM streaming_snapshot_references)+(SELECT count(*)::int FROM simulated_snapshot_references)) AS references`,
+          ).toEqual([{ decisions: 0, intents: 0, references: 0 }])
+          return { _tag: 'Coverage' as const }
+        }
         if (untouchedExpiry) {
           for (let attempt = 0; attempt < 20 && !expiredApprovedIntent; attempt++) {
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)

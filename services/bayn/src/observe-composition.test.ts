@@ -93,6 +93,8 @@ import {
 } from './market-data'
 import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from './market-data/intraday/model'
 import { marketDataOperationError } from './market-data/errors'
+import { unusedEntryExpiresAt } from './cycle/entry-admission'
+import { decideDecisionBinding } from './cycle/store/decisions'
 import { constructStreamingSnapshot } from './market-data/streaming/snapshot'
 import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
 import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
@@ -5891,6 +5893,19 @@ test('persists the pricing quote event and its full freshness deadline for every
   expect(Result.isFailure(makeExecutionDecisionDocument({ ...material, closeLimitSlippageBps: 10 }))).toBeTrue()
   const { entryLimitSlippageBps: _allowance, ...withoutAllowance } = material
   expect(Result.isFailure(makeExecutionDecisionDocument(withoutAllowance))).toBeTrue()
+})
+
+test('decision construction crossing the admission lease cannot bind its completed decision', async () => {
+  const fixture = await executionLifecycleFixture()
+  expect(Result.getOrThrow(decideDecisionBinding(cycle, fixture.document, fixture.document.createdAt, []))._tag).toBe(
+    'Persist',
+  )
+  const late = Result.getOrThrow(
+    decideDecisionBinding(cycle, fixture.document, utcInstantFromEpochMillis(unusedEntryExpiresAt(cycle)), []),
+  )
+  expect(late._tag).toBe('Block')
+  if (late._tag !== 'Block') throw new Error('Expected expired admission')
+  expect(late.reason).toBe(CycleTerminalReason.UnusedEntryExpired)
 })
 
 test('recovery preserves a fresh admission for a real next strategy decision', async () => {

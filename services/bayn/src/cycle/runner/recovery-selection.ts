@@ -106,6 +106,7 @@ const selectDeadlineOrProvenance = (
     }
   }
   if (
+    cycle.schemaVersion === 'bayn.autonomous-cycle.v4' &&
     cycle.bindings.snapshotId === undefined &&
     cycle.bindings.decisionHash === undefined &&
     state.decisionDocument == null &&

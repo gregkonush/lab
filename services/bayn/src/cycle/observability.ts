@@ -190,6 +190,7 @@ export enum CycleOperationsReason {
   LastCycleNoTrade = 'LAST_CYCLE_NO_TRADE',
   TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   LastCycleBlocked = 'LAST_CYCLE_BLOCKED',
+  UnusedEntryExpired = 'UNUSED_ENTRY_EXPIRED',
   MissedPublicationDeadline = 'MISSED_PUBLICATION_DEADLINE',
   MissedSubmissionCutoff = 'MISSED_SUBMISSION_CUTOFF',
   MissedExecutionClose = 'MISSED_EXECUTION_CLOSE',
@@ -295,6 +296,8 @@ const lifecycleCondition = (
   const current = projection.current
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
+      if (projection.last.terminalReason === CycleTerminalReason.UnusedEntryExpired)
+        return [CycleOperationsCondition.Waiting, CycleOperationsReason.UnusedEntryExpired]
       return [
         maximumAuthority !== Authority.Execution ||
         (projection.last.terminalReason === CycleTerminalReason.Authority &&

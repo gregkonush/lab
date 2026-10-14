@@ -79,7 +79,7 @@ export type DecisionBindingDecision =
   | {
       readonly _tag: 'Block'
       readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedSubmission
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.UnusedEntryExpired
     }
 
 export type CompletionDecision =
@@ -260,6 +260,9 @@ const decideDecisionBindingDataFirst = (
       reason: CycleTerminalReason.MissedSubmission,
     })
   }
+  if (cycle.schemaVersion === 'bayn.autonomous-cycle.v4' && Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)) {
+    return Result.succeed({ _tag: 'Block', cycle, reason: CycleTerminalReason.UnusedEntryExpired })
+  }
   const executionMarketData = document.bindings.executionMarketData
   const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData
   const snapshotMatches = isIntradayAutonomousCycle(cycle)
@@ -373,7 +376,7 @@ const decideBlockDataFirst = (
   }
   if (
     reason === CycleTerminalReason.UnusedEntryExpired &&
-    (!isIntradayAutonomousCycle(cycle) ||
+    (cycle.schemaVersion !== 'bayn.autonomous-cycle.v4' ||
       cycle.bindings.snapshotId !== undefined ||
       cycle.bindings.decisionHash !== undefined ||
       Date.parse(observedAt) < unusedEntryExpiresAt(cycle))
