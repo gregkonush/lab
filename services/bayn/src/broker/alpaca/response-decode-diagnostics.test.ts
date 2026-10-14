@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result, Schema, SchemaIssue } from 'effect'
 
 import { decodePositions } from './model'
-import { positionDecodeDiagnostic } from './response-decode-diagnostics'
+import { positionDecodeDiagnostic, type PositionDecodeDiagnostic } from './response-decode-diagnostics'
 
 const position = {
   asset_id: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
@@ -91,6 +91,7 @@ test('diagnostics do not invoke input accessors or issue formatters', () => {
       throw new Error('private getter')
     },
   })
+
   const error = new Schema.SchemaError(
     new SchemaIssue.Pointer([0, 'qty'], new SchemaIssue.InvalidType(Schema.String.ast)),
   )
@@ -100,4 +101,102 @@ test('diagnostics do not invoke input accessors or issue formatters', () => {
     expectedType: 'string',
     actualType: 'unknown',
   })
+})
+
+test('hostile issue accessors and proxy traps cannot replace the original decode failure', () => {
+  const unknown: PositionDecodeDiagnostic = {
+    field: 'unknown',
+    issue: 'unknown',
+    expectedType: 'unknown',
+    actualType: 'unknown',
+  }
+  let invoked = 0
+  const hostile = () => {
+    invoked += 1
+    throw new Error('private-accessor-value')
+  }
+  const leaf = () => new SchemaIssue.InvalidType(Schema.String.ast)
+  const issueGetter = new Schema.SchemaError(leaf())
+  Object.defineProperty(issueGetter, 'issue', { get: hostile })
+  expect(positionDecodeDiagnostic(issueGetter, [])).toEqual(unknown)
+  for (const key of ['_tag', 'path', 'issue']) {
+    const pointer = new SchemaIssue.Pointer([0, 'qty'], leaf())
+    Object.defineProperty(pointer, key, { get: hostile })
+    expect(positionDecodeDiagnostic(new Schema.SchemaError(pointer), [{ qty: null }])).toEqual(unknown)
+  }
+  const proxy = new Proxy(new Schema.SchemaError(leaf()), { get: hostile, getOwnPropertyDescriptor: hostile })
+  expect(positionDecodeDiagnostic(proxy, [])).toEqual(unknown)
+  const revoked = Proxy.revocable(new Schema.SchemaError(leaf()), {})
+  revoked.revoke()
+  expect(positionDecodeDiagnostic(revoked.proxy, [])).toEqual(unknown)
+  expect(invoked).toBe(0)
+})
+
+test('revoked inputs and hostile path arrays degrade safely without inspecting values or iterators', () => {
+  const error = new Schema.SchemaError(
+    new SchemaIssue.Pointer([0, 'qty'], new SchemaIssue.InvalidType(Schema.String.ast)),
+  )
+  const revoked = Proxy.revocable([], {})
+  revoked.revoke()
+  expect(positionDecodeDiagnostic(error, revoked.proxy)).toEqual({
+    field: 'unknown',
+    issue: 'unknown',
+    expectedType: 'unknown',
+    actualType: 'unknown',
+  })
+  let invoked = 0
+  const path = [0, 'qty']
+  Object.defineProperty(path, Symbol.iterator, {
+    get: () => {
+      invoked += 1
+      throw new Error('private-iterator')
+    },
+  })
+  const hostilePath = new Schema.SchemaError(
+    new SchemaIssue.Pointer(path, new SchemaIssue.InvalidType(Schema.String.ast)),
+  )
+  expect(positionDecodeDiagnostic(hostilePath, [{ qty: null }])).toEqual({
+    field: '[].qty',
+    issue: 'type',
+    expectedType: 'string',
+    actualType: 'null',
+  })
+  expect(invoked).toBe(0)
+})
+
+test('nested proxies, AST accessors, sparse paths and cyclic issues stay bounded and value-free', () => {
+  const unknown: PositionDecodeDiagnostic = {
+    field: 'unknown',
+    issue: 'unknown',
+    expectedType: 'unknown',
+    actualType: 'unknown',
+  }
+  let invoked = 0
+  const hostile = () => {
+    invoked += 1
+    throw new Error('private-nested-value')
+  }
+  const leaf = new SchemaIssue.InvalidType(Schema.String.ast)
+  const pointer = (path: readonly PropertyKey[], issue = leaf) => new SchemaIssue.Pointer(path, issue)
+  const pathProxy = new Proxy([0, 'qty'], { get: hostile, getOwnPropertyDescriptor: hostile })
+  expect(positionDecodeDiagnostic(new Schema.SchemaError(pointer(pathProxy)), [])).toEqual(unknown)
+  const issueProxy = new Proxy(leaf, { get: hostile, getOwnPropertyDescriptor: hostile })
+  expect(positionDecodeDiagnostic(new Schema.SchemaError(pointer([0, 'qty'], issueProxy)), [])).toEqual(unknown)
+  const inputProxy = new Proxy({ qty: null }, { get: hostile, getOwnPropertyDescriptor: hostile })
+  expect(positionDecodeDiagnostic(new Schema.SchemaError(pointer([0, 'qty'])), [inputProxy])).toEqual({
+    field: '[].qty',
+    issue: 'type',
+    expectedType: 'string',
+    actualType: 'unknown',
+  })
+  const astGetter = new SchemaIssue.InvalidType(Schema.String.ast)
+  Object.defineProperty(astGetter, 'ast', { get: hostile })
+  expect(positionDecodeDiagnostic(new Schema.SchemaError(pointer([0, 'qty'], astGetter)), [])).toEqual(unknown)
+  const path = [0, 'qty']
+  Object.defineProperty(path, 1, { get: hostile })
+  expect(positionDecodeDiagnostic(new Schema.SchemaError(pointer(path)), [])).toEqual(unknown)
+  const cycle = pointer([])
+  Object.defineProperty(cycle, 'issue', { value: cycle })
+  expect(positionDecodeDiagnostic(new Schema.SchemaError(cycle), [])).toEqual(unknown)
+  expect(invoked).toBe(0)
 })
