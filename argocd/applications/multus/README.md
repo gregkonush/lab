@@ -15,6 +15,19 @@ the real `storage0` link. The [Omni template](../../../devices/galactic/omni/clu
 single-port bond on Altra and Turin. Physical ports are selected by permanent MAC, independently of PCIe slot names.
 This installs the secondary network; it does not change Ceph's network provider or restart its OSDs.
 
+## Daemon memory budget
+
+The Multus daemon requests 256 MiB and has a 1 GiB memory limit. Turin's daemon repeatedly hit the former 256 MiB
+limit during pod sandbox creation, leaving ordinary application rollouts waiting on CNI timeouts while the node had
+ample free memory. The higher limit gives the node-critical daemon room to handle its startup request backlog.
+The existing rolling update keeps `maxUnavailable=1`; existing pod networks persist while a daemon is replaced.
+
+For this resource-only recovery, verify `OOMKilled` history, the live limit and node memory pressure first. Render
+and validate the patch, merge it, and sync Multus to the exact reviewed main commit. Require all Multus daemon pods
+Ready, stable restart counts, successful pending pod sandbox creation and the blocked application's normal rollout
+acceptance. If the larger budget still exhausts, inspect daemon memory and request concurrency before raising it
+again. Roll back by restoring the prior resource values through GitOps; that can reintroduce the original OOM loop.
+
 ## Deploy and verify
 
 1. Render `kustomize build argocd/applications/multus` and validate the output. Child applications must not render
