@@ -176,6 +176,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: bayn-execution-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-research
       ports:
         - port: 3128
           protocol: TCP

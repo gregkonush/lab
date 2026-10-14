@@ -47,26 +47,35 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
-## Optional Valkey client
+## Required Valkey broker materializations
 
-The scoped `ValkeyCache` service provides namespaced reads, bounded-TTL writes and
-deletion over authenticated TLS. Bayn's API and execution worker receive the
-existing connection ConfigMap, password Secret and client certificate mount.
-Configuration, TLS material and the connection are acquired only on the first
-valid cache operation. Missing cache artifacts do not fail layer construction;
-existing execution paths do not read Valkey.
+Bayn uses Effect's native `@effect/platform-node/NodeRedis` binding for authenticated
+TLS connections. The API and execution worker require the connection ConfigMap,
+password Secret and client certificate at startup. The small `ValkeyCache` adapter
+adds the `bayn:` namespace, bounded values and expiry, command cancellation and
+replica acknowledgement. Scope exit destroys outstanding socket work before the
+native binding closes its client.
 
-After building, `bun run valkey:verify` runs synthetic miss, write/read, deletion
-and expiry checks and exits after closing the client. See the
-[caching plan](../../docs/bayn/valkey-caching-plan.md) for candidate read paths,
-correctness rules, measurement gates and the client contract. Cache availability
-never grants trading or accounting authority.
+The broker observation owner publishes an immutable full snapshot and compact
+state in Valkey. PostgreSQL `broker_observations` stores their content hashes and
+the generation, quota and mutation fences. Migration 98 removes its JSONB payload.
+Reconciliation reads full history. Health, account, position, configuration,
+recent-history probes and final submission preflight read compact state. Every read
+rechecks PostgreSQL fences, account binding, original times and content identity.
+Missing, expired, corrupt or unavailable Valkey data fails explicitly. There is no
+PostgreSQL payload fallback or cache-disable mode.
+
+`bun run valkey:verify` exercises authenticated writes, replica acknowledgement,
+reads, deletion and expiry. Add `--broker` to verify the actual fenced broker
+materializations and collect 20 samples of full and compact read latency and
+payload size. The command is read-only against PostgreSQL and prints no account
+values. See the [migration and performance evidence](../../docs/bayn/valkey-caching-plan.md).
 
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
-handlers poll without overlap and publish a complete snapshot in PostgreSQL `broker_observations`. Execution and
-status processes read that shared projection; they do not start local pollers. Endpoint registration remains separate
+handlers poll without overlap and publish full and compact snapshots in Valkey before committing their fenced
+references in PostgreSQL `broker_observations`. Execution and status processes read those shared materializations; they do not start local pollers. Endpoint registration remains separate
 from capital authority. Authorized bootstrap drains a predecessor controller, publishes a fresh observation for the
 exact source revision, and only then activates the execution controller. A failed initial sample leaves execution
 inactive while the observation object's delayed loop continues to retry.
@@ -204,6 +213,13 @@ Untouched expired entry approvals can retire under restricted submission authori
 A bound sell's remaining position keeps the cycle active; clearing that obligation requires fresh, exact reconciliation
 with exact accounting and no unknown orders or mutations. Cleanup cannot enable trading or clear a manual hold.
 Close documents retain their existing residual-replanning and hard-deadline failure behavior.
+
+A known pre-transmission rejection records a bounded `denialReason` on its `SUBMIT_DENIED` event. Expired risk or
+submission windows, stale or consumed broker state, changed authority, and known sizing failures retain distinct
+reasons without storing exception messages or request payloads. The reason is hashed with the event and committed
+atomically with the terminal intent transition. Exact retries retain that first reason; conflicting retries fail.
+Historical events without a reason remain unchanged and readable, and unrecognized failures remain explicitly
+`UNCLASSIFIED_INVALID_REQUEST`. A local denial is not broker rejection evidence and cannot permit another submission.
 
 The existing account writer fence, durable `SUBMIT_STARTED` intent reservation, single-use exact reconciliation
 version and persisted grant checks remain submission authority. The final projection permits only that reserved
@@ -479,6 +495,8 @@ cutoff and fresh decision/risk gates still apply; other restrictions and changed
 Mutation preparation uses its verified durable decision and session binding plus fresh broker reconciliation. It does
 not reread the market calendar after the decision is bound, so an unrelated calendar outage cannot prevent accepted
 order recovery or the scheduled close. New decision construction still reads and verifies the broker calendar.
+Cycle runners require an explicit decision-evidence verifier before durable binding. The verifier checks canonical
+market-data references and owns any legitimate empty evidence; omitting it cannot bypass verification.
 Each new entry risk decision retains its pricing quote event time and the snapshot's maximum quote age. Approval
 expires at that event-time deadline or an earlier broker, intent, or session deadline. The final submit transaction
 rechecks the persisted expiry after writer/grant locks and broker reads, so retries or worker restarts cannot extend
@@ -1415,3 +1433,40 @@ Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFI
 Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
 measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
 the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
+
+### Independent public information jobs
+
+`BaynPublicInformation` runs one private Restate Virtual Object per `SEC_FILINGS` and `MACRO_CALENDAR` source on the
+existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
+bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
+polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
+sent to Restate. The research worker submits these activations asynchronously after listening. Before each submission,
+it checks the control endpoint's deployed source revision through ingress and retries until it matches. This prevents
+an accepted send from binding a new activation to an old deployment while the operator is registering the new endpoint.
+Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
+
+The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
+checks the BLS iCalendar and Federal Reserve FOMC calendar hourly. Requests use fixed official URLs, a dedicated public
+HTTP client, at least one second between requests, a sixteen-MiB body bound, a thirty-second capture deadline and a
+ten-minute run bound. Redirects are rejected. Broker, model and object-store credentials and trace propagation headers
+are absent from public requests. A missing ticker mapping or a company-facts 404 is an explicit exclusion.
+
+Original UTF-8 source bytes are written under `captures/v1/public-information/` in the existing private Rook research
+bucket. Before the first collection under each code revision, the job requires an owner-only private ACL and exact synthetic
+upload/readback verification. The generated `BUCKET_NAME` selects the bucket. The research worker uses its reflected OBC owner credential;
+no trading process receives it. Restate retains small artifact references, SHA-256, byte length, actual fetch/upload/check
+clocks, source revision, exclusions and failed URLs. It never journals the source documents. Unchanged content reuses its
+original artifact and fetch clock while advancing its successful check clock. A failed refresh retains the last good
+reference and its original timestamps within the current issuer universe. Retained symbol-to-CIK mappings keep a
+failed ticker refresh explicit while pruning references for removed issuers. These inputs support research; they do
+not change active entry or exit policy.
+
+The SEC artifacts are filing-history metadata and XBRL financial-fact JSON, not the full text of every filing. BLS and
+Federal Reserve artifacts retain the original calendar file and HTML. Changed content gets a new immutable object key;
+this rollout adds no automatic expiry or deletion of historical source snapshots.
+
+Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
+closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,
+upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
+attempt. Source-labelled duration, completed/incomplete polls, bytes, document counts, last-success metrics and traced
+fetch/upload spans support session diagnosis. The stale-input alert is a research warning and does not stop trading.

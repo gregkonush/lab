@@ -165,6 +165,28 @@ export const ObservedBrokerSnapshotSchema = Schema.Struct({
   observedAt: UtcInstantSchema,
 }) satisfies Schema.Schema<ObservedBrokerSnapshot>
 
+export const ObservedBrokerStateSchema = Schema.Struct({
+  ...ObservedBrokerSnapshotSchema.fields,
+  snapshot: Schema.Struct({
+    account: ObservedBrokerSnapshotSchema.fields.snapshot.fields.account,
+    positions: ObservedBrokerSnapshotSchema.fields.snapshot.fields.positions,
+  }),
+}) satisfies Schema.Schema<ObservedBrokerState>
+export type ObservedBrokerState = Omit<ObservedBrokerSnapshot, 'snapshot'> & {
+  readonly snapshot: Pick<StableBrokerSnapshot, 'account' | 'positions'>
+}
+
+export const observedBrokerState = (value: ObservedBrokerSnapshot): ObservedBrokerState => ({
+  snapshot: { account: value.snapshot.account, positions: value.snapshot.positions },
+  configuration: value.configuration,
+  openOrders: value.openOrders,
+  recentOrders: value.recentOrders,
+  recentFills: value.recentFills,
+  startedAt: value.startedAt,
+  completedAt: value.completedAt,
+  observedAt: value.observedAt,
+})
+
 export const decodeObservedBrokerSnapshot = Schema.decodeUnknownResult(ObservedBrokerSnapshotSchema, strictParseOptions)
 
 export const observationUnavailable = (message: string, cause?: unknown): BrokerReadError =>
@@ -176,14 +198,13 @@ export const observationUnavailable = (message: string, cause?: unknown): Broker
     ...(cause === undefined ? {} : { cause }),
   })
 
-export const observationTimes = (value: ObservedBrokerSnapshot): readonly string[] => [
+export const observationTimes = (value: ObservedBrokerState): readonly string[] => [
   value.startedAt,
   value.completedAt,
   value.observedAt,
   value.snapshot.account.evidence.observedAt,
   value.snapshot.account.value.observedAt,
   value.snapshot.positions.evidence.observedAt,
-  value.snapshot.history.orders.observedAt,
   value.configuration.evidence.observedAt,
   value.configuration.value.observedAt,
   value.openOrders.evidence.observedAt,
@@ -192,25 +213,25 @@ export const observationTimes = (value: ObservedBrokerSnapshot): readonly string
   ...value.snapshot.positions.value.map((row) => row.observedAt),
 ]
 
-export const validateObservedBrokerSnapshot = (
-  value: ObservedBrokerSnapshot,
+const stateAccounts = (value: ObservedBrokerState): readonly string[] => [
+  value.snapshot.account.value.id,
+  ...value.snapshot.positions.value.map((row) => row.accountId),
+  ...value.openOrders.value.map((row) => row.accountId),
+  ...value.recentOrders.value.map((row) => row.accountId),
+  ...value.recentFills.value.items.map((row) => row.accountId),
+]
+
+const validateObservedBrokerCut = <A extends ObservedBrokerState>(
+  value: A,
+  observedTimes: readonly string[],
+  accounts: readonly string[],
   accountId: string,
   now: string,
   maximumAgeMs: number,
-): Effect.Effect<ObservedBrokerSnapshot, BrokerReadError> =>
+): Effect.Effect<A, BrokerReadError> =>
   Effect.suspend(() => {
     const current = Date.parse(now)
-    const times = observationTimes(value).map(Date.parse)
-    const accounts = [
-      value.snapshot.account.value.id,
-      ...value.snapshot.positions.value.map((row) => row.accountId),
-      ...value.snapshot.history.orders.rows.map((row) => row.value.accountId),
-      ...value.snapshot.history.fills.map((row) => row.value.accountId),
-      ...value.snapshot.history.fees.map((row) => row.value.accountId),
-      ...value.openOrders.value.map((row) => row.accountId),
-      ...value.recentOrders.value.map((row) => row.accountId),
-      ...value.recentFills.value.items.map((row) => row.accountId),
-    ]
+    const times = observedTimes.map(Date.parse)
     const ageMs = current - Math.min(...times)
     const reason =
       !Number.isFinite(current) ||
@@ -236,13 +257,41 @@ export const validateObservedBrokerSnapshot = (
     return Effect.succeed(value)
   })
 
+export const validateObservedBrokerState = (
+  value: ObservedBrokerState,
+  accountId: string,
+  now: string,
+  maximumAgeMs: number,
+) => validateObservedBrokerCut(value, observationTimes(value), stateAccounts(value), accountId, now, maximumAgeMs)
+
+export const validateObservedBrokerSnapshot = (
+  value: ObservedBrokerSnapshot,
+  accountId: string,
+  now: string,
+  maximumAgeMs: number,
+) =>
+  validateObservedBrokerCut(
+    value,
+    [...observationTimes(value), value.snapshot.history.orders.observedAt],
+    [
+      ...stateAccounts(value),
+      ...value.snapshot.history.orders.rows.map((row) => row.value.accountId),
+      ...value.snapshot.history.fills.map((row) => row.value.accountId),
+      ...value.snapshot.history.fees.map((row) => row.value.accountId),
+    ],
+    accountId,
+    now,
+    maximumAgeMs,
+  )
+
 export interface BrokerObservationTicket {
   readonly generation: number
   readonly startedAt: string
 }
 export interface BrokerObservationsShape {
   readonly read: Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>
-  readonly readForSubmit: (intentId: string) => Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>
+  readonly readState: Effect.Effect<ObservedBrokerState, BrokerReadError>
+  readonly readForSubmit: (intentId: string) => Effect.Effect<ObservedBrokerState, BrokerReadError>
   readonly invalidate: Effect.Effect<void, BrokerReadError>
 }
 export class BrokerObservations extends Context.Service<BrokerObservations, BrokerObservationsShape>()(

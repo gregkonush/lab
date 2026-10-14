@@ -38,6 +38,8 @@ import { restrictAuthority } from '../../db/reconciliation'
 import { MutationOperation } from '../../broker/alpaca-mutations'
 import { makeMutationEventPostgres } from '../mutations/postgres/events'
 import { makeMutationStartPostgres } from '../mutations/postgres/start'
+import { makeMutationOutcomePostgres } from '../mutations/postgres/outcome'
+import { SubmissionDenialReason } from '../submission-denial'
 import { WriterFence, WriterFenceLive } from '../writer-fence'
 import { recoverTerminalGenerationToObserve } from '../../blocked-generation-recovery'
 import { operationalError } from '../../errors'
@@ -1144,7 +1146,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE mutation_events (
     event_id text PRIMARY KEY, schema_version text, mutation_id text, intent_id text, sequence integer,
     operation text, event_type text, request_hash text, request_body jsonb, consistency_delay_ms integer,
-    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz
+    broker_order_id text, request_id text, response_status integer, response_content_hash text, occurred_at timestamptz, denial_reason text
   )`
   yield* sql`CREATE TABLE orders (intent_id text)`
   yield* sql`CREATE TABLE fills (intent_id text)`
@@ -1256,6 +1258,83 @@ describePostgres('PostgreSQL untouched approval expiry safety', () => {
   afterAll(async () => {
     await owner?.dispose()
     await contender?.dispose()
+  })
+
+  test('atomically retains a decoded denial reason and rejects conflicting database replay', async () => {
+    const { event: started } = await owner.runPromise(reserveExpiryIntent)
+    const deny = (denialReason: SubmissionDenialReason) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        return yield* makeMutationOutcomePostgres(sql, fence, makeMutationEventPostgres(sql)).appendOutcome(
+          { _tag: 'SubmitDenied' },
+          started.intentId,
+          started.requestHash,
+          expiryFixture.expiresAt,
+          undefined,
+          undefined,
+          denialReason,
+        )
+      })
+    const denied = await owner.runPromise(deny(SubmissionDenialReason.ExpiredRiskDecision))
+    expect(denied.denialReason).toBe(SubmissionDenialReason.ExpiredRiskDecision)
+    const first = await owner.runPromise(readExpiryState)
+    expect(first.intents[0]).toMatchObject({ state: 'TERMINAL', terminal_outcome: 'REJECTED', state_version: 3 })
+    expect(first.events).toEqual([{ count: 2 }])
+    expect(first.mutationRows.find((row) => row['event_type'] === 'SUBMIT_DENIED')).toMatchObject({
+      event_id: denied.eventId,
+      denial_reason: SubmissionDenialReason.ExpiredRiskDecision,
+    })
+    const { eventId, ...material } = denied
+    expect(eventId).toBe(canonicalHashV1(material))
+    expect(first.orders).toEqual([])
+    expect(first.fills).toEqual([])
+    expect(await contender.runPromise(deny(SubmissionDenialReason.ExpiredRiskDecision))).toEqual(denied)
+    expect(
+      await contender.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* makeMutationEventPostgres(sql).latest(started.intentId, MutationOperation.Submit)
+        }),
+      ),
+    ).toEqual(denied)
+    expect(
+      Result.isFailure(
+        await contender.runPromise(deny(SubmissionDenialReason.ExecutionWindowExpired).pipe(Effect.result)),
+      ),
+    ).toBe(true)
+    expect(await owner.runPromise(readExpiryState)).toEqual(first)
+  })
+
+  test('rolls a denial and its reason back when the terminal intent transition fails', async () => {
+    const { event: started } = await owner.runPromise(reserveExpiryIntent)
+    await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`CREATE FUNCTION reject_test_terminal_transition() RETURNS trigger LANGUAGE plpgsql AS $body$
+        BEGIN RAISE EXCEPTION 'synthetic terminal transition failure'; END $body$`
+        yield* sql`CREATE TRIGGER reject_test_terminal_transition BEFORE UPDATE ON intents
+        FOR EACH ROW WHEN (NEW.state = 'TERMINAL') EXECUTE FUNCTION reject_test_terminal_transition()`
+      }),
+    )
+    const before = await owner.runPromise(readExpiryState)
+    const result = await owner.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        return yield* makeMutationOutcomePostgres(sql, fence, makeMutationEventPostgres(sql)).appendOutcome(
+          { _tag: 'SubmitDenied' },
+          started.intentId,
+          started.requestHash,
+          expiryFixture.expiresAt,
+          undefined,
+          undefined,
+          SubmissionDenialReason.ExpiredRiskDecision,
+        )
+      }).pipe(Effect.result),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    expect(await owner.runPromise(readExpiryState)).toEqual(before)
   })
 
   test('expires untouched approvals exactly once without order I/O and preserves manual holds', async () => {
