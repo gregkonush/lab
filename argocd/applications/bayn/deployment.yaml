@@ -59,6 +59,10 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bayn-valkey-connection
+                optional: true
           env:
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
@@ -160,6 +164,12 @@ spec:
               value: "7001"
             - name: NODE_ENV
               value: production
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-valkey-auth
+                  key: password
+                  optional: true
           startupProbe:
             httpGet:
               path: /livez
@@ -198,12 +208,20 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: valkey-client-tls
+              mountPath: /var/run/secrets/bayn/valkey
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             - name: postgres-ca
               mountPath: /var/run/secrets/bayn/postgres
               readOnly: true
       volumes:
+        - name: valkey-client-tls
+          secret:
+            secretName: bayn-valkey-client-tls
+            optional: true
+            defaultMode: 0440
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi

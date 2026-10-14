@@ -35,6 +35,21 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
+## Optional Valkey client
+
+The scoped `ValkeyCache` service provides namespaced reads, bounded-TTL writes and
+deletion over authenticated TLS. Bayn's API and execution worker receive the
+existing connection ConfigMap, password Secret and client certificate mount.
+Configuration, TLS material and the connection are acquired only on the first
+valid cache operation. Missing cache artifacts do not fail layer construction;
+existing execution paths do not read Valkey.
+
+After building, `bun run valkey:verify` runs synthetic miss, write/read, deletion
+and expiry checks and exits after closing the client. See the
+[caching plan](../../docs/bayn/valkey-caching-plan.md) for candidate read paths,
+correctness rules, measurement gates and the client contract. Cache availability
+never grants trading or accounting authority.
+
 ## Broker observation owner
 
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
