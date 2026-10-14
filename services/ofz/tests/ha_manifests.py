@@ -200,12 +200,56 @@ def validate(targets):
             {
                 "apiGroups": [""],
                 "resources": ["secrets"],
-                "resourceNames": ["ofz-db-ca"],
+                "resourceNames": ["ofz-db-public-ca"],
                 "verbs": ["get"],
             }
         ],
         "ofz: public CA projection must not permit discovery or access to unrelated Secrets",
     )
+    publisher = resource(targets, "ofz", "Role", "ofz-ca-publisher")
+    require(
+        publisher["rules"]
+        == [
+            {
+                "apiGroups": [""],
+                "resources": ["secrets"],
+                "resourceNames": ["ofz-db-ca"],
+                "verbs": ["get"],
+            }
+        ],
+        "ofz: only the namespace-local CA publisher may read the private CA Secret",
+    )
+    local_store = resource(targets, "ofz", "SecretStore", "ofz-ca-source")["spec"]
+    require(
+        local_store["provider"]["kubernetes"]["remoteNamespace"] == "ofz"
+        and local_store["provider"]["kubernetes"]["auth"]["serviceAccount"]
+        == {"name": "ofz-ca-publisher"},
+        "ofz: private CA source must remain namespace-scoped",
+    )
+    public_ca = resource(targets, "ofz", "ExternalSecret", "ofz-db-public-ca")["spec"]
+    require(
+        public_ca["secretStoreRef"] == {"kind": "SecretStore", "name": "ofz-ca-source"}
+        and public_ca["target"]["name"] == "ofz-db-public-ca"
+        and public_ca.get("dataFrom") is None
+        and public_ca["data"]
+        == [
+            {
+                "secretKey": "ca.crt",
+                "remoteRef": {"key": "ofz-db-ca", "property": "ca.crt"},
+            }
+        ]
+        and public_ca["refreshInterval"] == "1m",
+        "ofz: shared trust bundle must contain only the refreshed public certificate",
+    )
+    for item in targets["ofz"]:
+        if item and item["kind"] in ["Deployment", "Job"]:
+            for volume in item["spec"]["template"]["spec"].get("volumes", []):
+                secret = volume.get("secret", {})
+                if secret.get("secretName") == "ofz-db-ca":
+                    require(
+                        secret.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
+                        "ofz: database callers must not mount the CA signing key",
+                    )
     ca_store = resource(targets, "ofz", "ClusterSecretStore", "ofz-database-ca")["spec"]
     require(
         ca_store["conditions"] == [{"namespaces": ["tengri", "proompteng"]}]
@@ -222,7 +266,7 @@ def validate(targets):
             == [
                 {
                     "secretKey": "ca.crt",
-                    "remoteRef": {"key": "ofz-db-ca", "property": "ca.crt"},
+                    "remoteRef": {"key": "ofz-db-public-ca", "property": "ca.crt"},
                 }
             ]
             and ca["secretStoreRef"]
@@ -698,6 +742,25 @@ def main():
         lambda data: resource(data, "ofz", "Role", "ofz-public-ca-reader")["rules"][
             0
         ].pop("resourceNames"),
+        lambda data: resource(data, "ofz", "Role", "ofz-public-ca-reader")["rules"][
+            0
+        ].update(resourceNames=["ofz-db-ca"]),
+        lambda data: resource(data, "ofz", "Role", "ofz-ca-publisher")["rules"][0].pop(
+            "resourceNames"
+        ),
+        lambda data: resource(data, "ofz", "ExternalSecret", "ofz-db-public-ca")[
+            "spec"
+        ]["data"][0]["remoteRef"].update(property="ca.key"),
+        lambda data: resource(data, "ofz", "ExternalSecret", "ofz-db-public-ca")[
+            "spec"
+        ]["secretStoreRef"].update(kind="ClusterSecretStore"),
+        lambda data: next(
+            volume
+            for volume in resource(data, "ofz", "Deployment", "ofz-api")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume.get("secret", {}).get("secretName") == "ofz-db-ca"
+        )["secret"].pop("items"),
         lambda data: resource(data, "tengri", "ExternalSecret", "ofz-database-ca")[
             "spec"
         ]["data"][0]["remoteRef"].update(property="ca.key"),

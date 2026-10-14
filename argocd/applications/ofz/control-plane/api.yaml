@@ -132,6 +132,9 @@ spec:
         - name: database-ca
           secret:
             secretName: ofz-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
             defaultMode: 0440
         - name: native
           secret:
