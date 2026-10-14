@@ -1,0 +1,562 @@
+name: Tengri images
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+    paths:
+      - 'services/tengri/**'
+      - 'services/ofz/src/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
+      - 'proto/proompteng/authz/**'
+      - 'services/nanoagent/**'
+      - 'devices/galactic/omni/tengri-runner-*.json'
+      - '.github/workflows/tengri-images.yml'
+      - 'argocd/applications/tengri/**'
+      - 'argocd/applications/tengri/crd.yaml'
+      - 'packages/scripts/src/tengri/**'
+      - 'packages/scripts/src/shared/cli.ts'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/landing/**'
+      - 'services/tengri/**'
+      - 'services/ofz/src/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/test-control.sh'
+      - 'proto/proompteng/authz/**'
+      - 'services/nanoagent/**'
+      - 'devices/galactic/omni/tengri-runner-*.json'
+      - '.github/workflows/tengri-images.yml'
+      - 'argocd/applications/tengri/**'
+      - 'argocd/applications/tengri/crd.yaml'
+      - 'packages/scripts/src/tengri/**'
+      - 'packages/scripts/src/shared/cli.ts'
+  workflow_dispatch:
+    inputs:
+      kvm_samples:
+        description: Native sleep/resume cycles per architecture (50 for performance qualification)
+        type: choice
+        options:
+          - '3'
+          - '50'
+        default: '3'
+
+concurrency:
+  group: tengri-images-${{ github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NANOAGENT_IMAGE: registry.ide-newton.ts.net/lab/nanoagent
+  TENGRI_IMAGE: registry.ide-newton.ts.net/lab/tengri
+
+jobs:
+  validate-tengri:
+    if: github.event.action != 'edited' || github.event.changes.base
+    name: Validate Tengri
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+
+      - name: Cache validation Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tengri-validation
+          workspaces: |
+            services/tengri -> target
+            services/ofz -> target
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential protobuf-compiler
+
+      - name: Set up Go for seccomp and guest interoperability
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/tengri/seccomp/go.mod
+          cache-dependency-path: |
+            services/nanoagent/go.sum
+            services/tengri/seccomp/go.sum
+
+      - name: Validate native runner seccomp profile
+        working-directory: services/tengri/seccomp
+        env:
+          GOWORK: 'off'
+        run: |
+          set -euo pipefail
+          go test .
+          go run . | diff -u ../../../devices/galactic/omni/tengri-runner-amd64.json -
+
+      - name: Validate controller and generated CRD
+        working-directory: services/tengri
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --all-targets
+          bash test-runtime.sh
+          bash test-rpc-interop.sh
+          cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
+          diff -u /tmp/tengri-crd.yaml crd.yaml
+          diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml
+
+  validate-nanoagent:
+    if: github.event.action != 'edited' || github.event.changes.base
+    name: Validate Nanoagent
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: services/nanoagent/go.mod
+          cache-dependency-path: services/nanoagent/go.sum
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+
+      - name: Install race detector build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential e2fsprogs
+
+      - name: Validate guest service
+        working-directory: services/nanoagent
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          bash -n bootstrap-codex.sh
+          bash -n bootstrap-toolchain.sh
+          bash -n bootstrap-developer-tools.sh test-developer-tools-cache.sh
+          bash -n build-editor.sh launch-editor.sh test-editor-bundle.sh
+          bash -n validate-rootfs.sh validate-rootfs.test.sh
+          bash -n build-boot-artifacts.sh tengri-init.sh
+          bash validate-rootfs.test.sh
+          bash bootstrap-codex.sh --validate-manifest
+          buf lint ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto
+          buf format ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto --diff --exit-code
+          bash generate-proto.sh
+          git diff --exit-code -- internal/guestpb
+          node ../tengri/fixtures/generate-ofz-guest-request-v4.mjs
+          git diff --exit-code -- ../tengri/fixtures/ofz-guest-request-v4.json internal/guestauth/testdata/ofz-guest-request-v4.json
+          test -z "$(gofmt -l .)"
+          GOWORK=off go test -race ./...
+          GOWORK=off go vet ./...
+
+  build:
+    if: >-
+      (github.event.action != 'edited' || github.event.changes.base) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.base.ref == github.event.repository.default_branch && !github.event.pull_request.draft))
+    name: Build ${{ matrix.service }} (${{ matrix.architecture }})
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: tengri
+            architecture: amd64
+            runner: arc-amd64
+            context: services/tengri
+            image: registry.ide-newton.ts.net/lab/tengri
+          - service: tengri
+            architecture: arm64
+            runner: arc-arm64
+            context: services/tengri
+            image: registry.ide-newton.ts.net/lab/tengri
+          - service: nanoagent
+            architecture: amd64
+            runner: arc-amd64
+            context: services/nanoagent
+            image: registry.ide-newton.ts.net/lab/nanoagent
+          - service: nanoagent
+            architecture: arm64
+            runner: arc-arm64
+            context: services/nanoagent
+            image: registry.ide-newton.ts.net/lab/nanoagent
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build native image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
+          platforms: linux/${{ matrix.architecture }}
+          push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          load: ${{ github.event_name == 'pull_request' && (matrix.service == 'nanoagent' || matrix.architecture == 'amd64') }}
+          tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: |
+            type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('type=registry,ref={0}:cache-pr-{1}-{2}', matrix.image, github.event.pull_request.number, matrix.architecture) || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && format('type=registry,ref={0}:cache-{1},mode=max,ignore-error=true', matrix.image, matrix.architecture) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('type=registry,ref={0}:cache-pr-{1}-{2},mode=max,ignore-error=true', matrix.image, github.event.pull_request.number, matrix.architecture) || '' }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Verify boot artifact checksums
+        if: ${{ github.event_name == 'pull_request' && matrix.service == 'nanoagent' }}
+        env:
+          GUEST_BOOT_IMAGE: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          docker run --rm --read-only --cap-drop ALL \
+            --entrypoint /usr/bin/sha256sum "$GUEST_BOOT_IMAGE" --check /guest/SHA256SUMS
+
+      - name: Build isolated KVM test image
+        if: ${{ github.event_name == 'pull_request' && matrix.service == 'tengri' && matrix.architecture == 'amd64' }}
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/amd64 --target kvm-tests \
+            --cache-from "type=registry,ref=${NANOAGENT_IMAGE}:cache-amd64" \
+            --output type=local,dest=.artifacts/nanoagent-tests services/nanoagent
+          docker buildx build --load --platform linux/amd64 \
+            --file services/tengri/Dockerfile --target kvm-test \
+            --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64" \
+            --cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64" \
+            --build-context ofz-proto=proto \
+            --build-context ofz-catalog=services/ofz \
+            --build-context nanoagent-tests=.artifacts/nanoagent-tests \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag tengri-kvm-test:fixture services/tengri
+
+      - name: Export native KVM fixture image
+        if: ${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}
+        env:
+          SERVICE: ${{ matrix.service }}
+          IMAGE_REPOSITORY: ${{ matrix.image }}
+          PR_HEAD_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_REPOSITORY}:sha-${GITHUB_SHA}-amd64"
+          mkdir -p .artifacts/kvm-fixture
+          if [[ "$SERVICE" == tengri ]]; then
+            image=tengri-kvm-test:fixture
+            cp services/tengri/test-kvm.sh .artifacts/kvm-fixture/
+            jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+              devices/galactic/omni/tengri-runner-amd64.json > .artifacts/kvm-fixture/runner-seccomp.json
+          fi
+          docker save "$image" | gzip -1 > ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz"
+          config_path="$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" manifest.json | \
+            jq -er --arg image "$image" '[.[] | select(.RepoTags | index($image))] |
+              if length == 1 then .[0].Config | select(type == "string" and length > 0)
+              else error("fixture image must have exactly one saved configuration") end')"
+          config_digest="sha256:$(tar -xzOf ".artifacts/kvm-fixture/${SERVICE}-images.tar.gz" -- "$config_path" | \
+            sha256sum | cut -d ' ' -f 1)"
+          [[ "$config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          jq -n --arg revision "$GITHUB_SHA" --arg head "$PR_HEAD_REVISION" \
+            --arg image "$image" --arg digest "$config_digest" \
+            '{sourceRevision: $revision, prHeadRevision: $head, image: $image, configDigest: $digest}' \
+            > ".artifacts/kvm-fixture/${SERVICE}.json"
+          cd .artifacts/kvm-fixture
+          sha256sum "${SERVICE}-images.tar.gz" "${SERVICE}.json" > "${SERVICE}-SHA256SUMS"
+          if [[ "$SERVICE" == tengri ]]; then
+            sha256sum test-kvm.sh runner-seccomp.json >> "${SERVICE}-SHA256SUMS"
+          fi
+
+      - name: Retain native KVM fixture image
+        if: ${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-kvm-fixture-${{ matrix.service }}-amd64
+          path: .artifacts/kvm-fixture/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  validate-kvm:
+    name: Validate KVM slot (${{ matrix.architecture }})
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: arc-amd64
+          - architecture: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust for the owning Ofz migrator
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Install execution network and fixture build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2 build-essential protobuf-compiler openssl
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build guest test binaries
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nanoagent
+          platforms: linux/${{ matrix.architecture }}
+          target: kvm-tests
+          push: true
+          tags: ${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
+
+      - name: Pull paired boot artifacts
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          docker pull "$guest"
+
+      - name: Build native KVM test harness
+        uses: docker/build-push-action@v6
+        with:
+          context: services/tengri
+          file: services/tengri/Dockerfile
+          target: kvm-test
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          tags: tengri-kvm-test:validation
+          build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
+            nanoagent-tests=docker-image://${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: |
+            type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
+            type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }}
+          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }},mode=max,ignore-error=true
+
+      - name: Verify real guest administration and snapshot lifecycle
+        env:
+          TENGRI_KVM_TEST_IMAGE: tengri-kvm-test:validation
+          TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
+          TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
+          TENGRI_KVM_SECCOMP: ${{ github.workspace }}/.artifacts/runner-seccomp.json
+        run: |
+          mkdir -p .artifacts
+          jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+            devices/galactic/omni/tengri-runner-${{ matrix.architecture }}.json > "$TENGRI_KVM_SECCOMP"
+          bash services/ofz/test-control.sh kvm
+
+      - name: Retain KVM diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}
+          path: .artifacts/kvm/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs:
+      - build
+      - validate-tengri
+      - validate-nanoagent
+      - validate-kvm
+    runs-on: arc-arm64
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve source commit metadata
+        id: source
+        env:
+          EXPECTED_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          expected_source_sha="$(git rev-parse "${EXPECTED_SOURCE_REVISION}^{commit}")"
+          [[ "${source_sha}" == "${expected_source_sha}" ]]
+          printf 'source_sha=%s\n' "${source_sha}" >> "${GITHUB_OUTPUT}"
+          printf 'source_timestamp=%s\n' "$(git show -s --format=%cI HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Publish, verify, and sign multi-architecture images
+        id: images
+        shell: bash
+        env:
+          SIGNING_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/tengri-images.yml@refs/heads/main
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          SOURCE_TIMESTAMP: ${{ steps.source.outputs.source_timestamp }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/tengri
+          [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
+          tag="sha-${SOURCE_SHA}"
+
+          publish_image() {
+            set -euo pipefail
+            local image="$1"
+            local service="${image##*/}"
+            local index_path=".artifacts/tengri/${service}-index.json"
+
+            for architecture in amd64 arm64; do
+              local reference="${image}:${tag}-${architecture}"
+              crane mutate --platform "linux/${architecture}" "${reference}" \
+                --label "org.opencontainers.image.created=${SOURCE_TIMESTAMP}" \
+                --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+                --tag "${reference}" >/dev/null
+              crane config --platform "linux/${architecture}" "${reference}" | jq -e \
+                --arg source_timestamp "${SOURCE_TIMESTAMP}" \
+                --arg source_sha "${SOURCE_SHA}" \
+                '.config.Labels["org.opencontainers.image.created"] == $source_timestamp and
+                 .config.Labels["org.opencontainers.image.revision"] == $source_sha' >/dev/null
+            done
+
+            docker buildx imagetools create \
+              --annotation "index:org.opencontainers.image.source=${SOURCE_URL}" \
+              --annotation "index:org.opencontainers.image.revision=${SOURCE_SHA}" \
+              --tag "${image}:${tag}" \
+              "${image}:${tag}-amd64" \
+              "${image}:${tag}-arm64" >&2
+            docker buildx imagetools inspect --raw "${image}:${tag}" > "${index_path}"
+            jq -e \
+              --arg source_url "${SOURCE_URL}" \
+              --arg source_sha "${SOURCE_SHA}" '
+              .annotations["org.opencontainers.image.source"] == $source_url and
+              .annotations["org.opencontainers.image.revision"] == $source_sha and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "amd64") and
+              any(.manifests[]?; .platform.os == "linux" and .platform.architecture == "arm64")
+            ' "${index_path}" >&2
+
+            local digest
+            digest="$(
+              docker buildx imagetools inspect \
+                --format '{{json .Manifest}}' \
+                "${image}:${tag}" |
+                jq -er '.digest'
+            )"
+            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            local reference="${image}@${digest}"
+            cosign sign --yes "${reference}" >&2
+            cosign verify \
+              --certificate-identity "${SIGNING_IDENTITY}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${reference}" >/dev/null
+
+            printf '%s' "${digest}"
+          }
+
+          tengri_digest="$(publish_image "${TENGRI_IMAGE}")"
+          nanoagent_digest="$(publish_image "${NANOAGENT_IMAGE}")"
+          printf 'tengri_digest=%s\nnanoagent_digest=%s\n' \
+            "${tengri_digest}" "${nanoagent_digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo '### Tengri images'
+            echo
+            echo "- ${TENGRI_IMAGE}@${tengri_digest}"
+            echo "- ${NANOAGENT_IMAGE}@${nanoagent_digest}"
+            echo "- Source: ${SOURCE_SHA}"
+            echo '- Platforms: linux/amd64, linux/arm64'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain verified image indexes
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-image-indexes-${{ github.sha }}
+          path: .artifacts/tengri/*-index.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Expose both verified images to Kargo
+        env:
+          TENGRI_PREPARED_SLOT_CUTOVER_READY: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY || 'false' }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          TENGRI_DIGEST: ${{ steps.images.outputs.tengri_digest }}
+          NANOAGENT_DIGEST: ${{ steps.images.outputs.nanoagent_digest }}
+        run: |
+          set -euo pipefail
+          if [[ "${TENGRI_PREPARED_SLOT_CUTOVER_READY}" != 'true' ]]; then
+            echo 'Prepared-slot publication held: both Kargo aliases require approved old-writer fencing and retained-home enrollment. Set TENGRI_PREPARED_SLOT_CUTOVER_READY=true only after that cutover prerequisite is complete.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          [[ "${SOURCE_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${TENGRI_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${NANOAGENT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          tag="sha-${SOURCE_SHA}"
+          publish_kargo_alias() {
+            local image="$1"
+            local digest="$2"
+            local kargo_tag="kargo-sha-${SOURCE_SHA}"
+            local kargo_reference="${image}:${kargo_tag}"
+            local kargo_digest=''
+            local probe_error
+            probe_error="$(mktemp)"
+            if kargo_digest="$(
+              crane digest "${kargo_reference}" 2>"${probe_error}"
+            )"; then
+              [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+              [[ "${kargo_digest}" == "${digest}" ]]
+            else
+              probe_output="$(cat "${probe_error}")"
+              if ! grep -Eiq 'manifest[[:space:]_-]+(unknown|not[[:space:]]+found)|manifest[^[:cntrl:]]*404|404[^[:cntrl:]]*(manifest|not[[:space:]]+found)' <<<"${probe_output}"; then
+                rm -f "${probe_error}"
+                echo "Unable to inspect immutable Kargo tag ${kargo_reference}: ${probe_output}" >&2
+                exit 1
+              fi
+              docker buildx imagetools create --tag "${kargo_reference}" "${image}:${tag}" >&2
+              kargo_digest="$(
+                crane digest "${kargo_reference}"
+              )"
+              [[ "${kargo_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+              [[ "${kargo_digest}" == "${digest}" ]]
+            fi
+            rm -f "${probe_error}"
+          }
+          publish_kargo_alias "${TENGRI_IMAGE}" "${TENGRI_DIGEST}"
+          publish_kargo_alias "${NANOAGENT_IMAGE}" "${NANOAGENT_DIGEST}"
