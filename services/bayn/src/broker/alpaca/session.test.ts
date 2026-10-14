@@ -206,6 +206,7 @@ describe('Alpaca broker session acquisition retry', () => {
       Layer.provide(
         Layer.succeed(BrokerObservations, {
           read: Effect.succeed(observation),
+          readState: Effect.succeed(observation),
           readForSubmit: () => Effect.succeed(observation),
           invalidate: Effect.void,
         }),

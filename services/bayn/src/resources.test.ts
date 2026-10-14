@@ -194,6 +194,7 @@ describe('Bayn resource lifecycle', () => {
           Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
           Effect.provideService(BrokerObservations, {
             read: Effect.die('not read by acquisition'),
+            readState: Effect.die('not read by acquisition'),
             readForSubmit: () => Effect.die('not submitted by acquisition'),
             invalidate: Effect.void,
           }),
@@ -254,6 +255,7 @@ describe('Bayn resource lifecycle', () => {
             Effect.provide(AlpacaBrokerResourcesLive(connection, http)),
             Effect.provideService(BrokerObservations, {
               read: Effect.die('not read by acquisition'),
+              readState: Effect.die('not read by acquisition'),
               readForSubmit: () => Effect.die('not submitted by acquisition'),
               invalidate: Effect.void,
             }),

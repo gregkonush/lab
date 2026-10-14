@@ -1,3 +1,5 @@
+import { ValkeyCache } from '../valkey-cache'
+import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Layer, Logger, References, Tracer } from 'effect'
@@ -128,7 +130,7 @@ const result = await Effect.runPromise(
         brokerTelemetry,
       }
     }),
-  ).pipe(Effect.provide(telemetry)),
+  ).pipe(Effect.provideService(ValkeyCache, valkeyFixture().cache), Effect.provide(telemetry)),
 )
 process.stdout.write(
   `BROKER_POLL_RESULT=${JSON.stringify({
