@@ -8,7 +8,7 @@ import {
   type BrokerReadError,
   type BrokerReadShape,
 } from '../broker/alpaca'
-import type { ObservedBrokerSnapshot } from '../broker/alpaca/observed-snapshot'
+import type { ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
 import type { RuntimeConfig } from '../config'
 import { operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
@@ -108,17 +108,14 @@ const observeBrokerComponents = (read: BrokerReadShape, timeoutMs: number) =>
     { concurrency: 6 },
   )
 
-const observeBrokerProjection = (
-  snapshot: Effect.Effect<ObservedBrokerSnapshot, BrokerReadError>,
-  timeoutMs: number,
-) => {
+const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, BrokerReadError>, timeoutMs: number) => {
   const component = <A>(behavior: string, result: ProbeResult<A>): ProbeResult<A> =>
     result._tag === 'Available'
       ? result
       : { _tag: 'Unavailable', error: `Alpaca ${behavior} unavailable: ${result.error}` }
   return observe(snapshot).pipe(
     Effect.map((result) => {
-      const select = <A>(behavior: string, get: (value: ObservedBrokerSnapshot) => A): ProbeResult<A> =>
+      const select = <A>(behavior: string, get: (value: ObservedBrokerState) => A): ProbeResult<A> =>
         component(behavior, result._tag === 'Available' ? { _tag: 'Available', value: get(result.value) } : result)
       return {
         account: select('account read', (value) => value.snapshot.account),

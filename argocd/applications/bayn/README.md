@@ -314,7 +314,7 @@ Expected:
   `BaynBrokerObservations` object through the existing worker endpoint, with `activateDeployment` as the sole public
   handler;
 - migration 87 is applied before endpoint registration; deployment activation drains the predecessor, publishes a fresh
-  source-bound `broker_observations` projection, then activates the native controller. PostgreSQL reads prove its
+  source-bound Valkey materializations and `broker_observations` references, then activates the native controller. PostgreSQL reads prove its
   timestamp advances across background polls and its source revision matches the promoted image. Unavailable,
   expired or invalidated observations block execution instead of issuing broker GETs from normal submission;
 - delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
