@@ -63,7 +63,7 @@ test('normal broker polling emits diagnostics while native deployment activation
             accrued_fees: '0',
             pending_reg_taf_fees: '0.01',
           }
-        : url.pathname === '/v2/account/activities/FEE'
+        : url.pathname === '/v2/account/activities'
           ? [
               {
                 activity_type: 'FEE',
@@ -225,7 +225,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       expect(ticks).toHaveLength(1)
       expect(requests.every((request) => request.method === 'GET')).toBe(true)
       expect(requests.filter((request) => request.path === '/v2/account')).toHaveLength(3)
-      expect(requests.filter((request) => request.path === '/v2/account/activities/FEE')).toHaveLength(6)
+      expect(requests.filter((request) => request.path === '/v2/account/activities')).toHaveLength(6)
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),

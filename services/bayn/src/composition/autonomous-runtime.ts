@@ -113,11 +113,6 @@ export const makeAutonomousServiceRuntime = (
                     )
                     const readStartCycle = (startup: AutonomousCycleStartupInput) =>
                       Effect.gen(function* () {
-                        if (runtimeServices.authorityGenerationStore.readAuthorityState === undefined) {
-                          return yield* capitalActivationOperationalError(
-                            'OBSERVE cycle startup requires durable authority state reads',
-                          )
-                        }
                         const authority = yield* runtimeServices.authorityGenerationStore.readAuthorityState.pipe(
                           Effect.mapError((cause) =>
                             capitalActivationOperationalError('OBSERVE cycle startup authority read failed', cause),
@@ -150,13 +145,6 @@ export const makeAutonomousServiceRuntime = (
                       AutonomousRuntime<never, never>,
                       OperationalError
                     > => {
-                      if (runtimeServices.authorityGenerationStore.readOrInitializeObserveAuthority === undefined) {
-                        return Effect.fail(
-                          capitalActivationOperationalError(
-                            'OBSERVE runtime startup requires durable authority initialization',
-                          ),
-                        )
-                      }
                       return runtimeServices.authorityGenerationStore
                         .readOrInitializeObserveAuthority({
                           generationHash: observePlan.config.alpaca.authorityGenerationHash,
@@ -210,13 +198,6 @@ export const makeAutonomousServiceRuntime = (
                       generation: ResearchCapitalGrantGeneration,
                     ): Effect.Effect<AutonomousRuntime<never, never>, OperationalError, Scope.Scope> => {
                       const readAuthority = runtimeServices.authorityGenerationStore.readAuthorityState
-                      if (readAuthority === undefined) {
-                        return Effect.fail(
-                          capitalActivationOperationalError(
-                            'capital startup recovery requires durable authority state reads',
-                          ),
-                        )
-                      }
                       return readAuthority.pipe(
                         Effect.mapError((cause) =>
                           capitalActivationOperationalError('capital startup recovery authority read failed', cause),

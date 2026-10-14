@@ -1,14 +1,26 @@
 # Bayn
 
-Bayn is a single-writer intraday execution service. Restate schedules one account-keyed controller, pure TypeScript
+Bayn is a single-writer execution service for equities and continuous USD crypto markets. Restate schedules one account-keyed controller, pure TypeScript
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using momentum-first `bayn.jev.protocol.v2`. Historical strategy
-rows remain decodable for audit and reconciliation, but they are not runtime fallbacks and cannot create new cycles.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v3` and native Dorvud feature contracts.
+The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
+including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
+checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
+and at most one open position. Crypto uses cash buying power, quantity-based LIMIT/IOC entries and closes, and
+MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
 
-The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a protocol-v2 entry gate:
-exact positive own and SPY-relative momentum before Jev, with current Jev selection, sizing and management preserved.
+Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros. Migration 97
+requires flat, settled inventory and complete accounting, archives the original projections and preserves existing
+ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
+published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).
+Retained history is audit evidence; retired protocols and order encodings cannot create or submit current orders.
+Crypto fee activities retain exact coin debits separately from USD cash fees. Same-day missing fee activities are
+incomplete cost evidence, never evidence of zero fees.
+
+The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
+exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
 
 ## Profitability goal
@@ -1403,3 +1415,38 @@ Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFI
 Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
 measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
 the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
+
+### Independent public information jobs
+
+`BaynPublicInformation` runs one private Restate Virtual Object per `SEC_FILINGS` and `MACRO_CALENDAR` source on the
+existing research endpoint. Activation schedules work and returns without fetching. Each exclusive poll journals one
+bounded collection command and a delayed successor. Revision and sequence guards fence superseded or duplicate
+polls. HMAC activation proofs use a separate purpose string with the existing research approval key; the key is never
+sent to Restate. The research worker submits these activations asynchronously after listening and registration.
+Each source submits and retries independently, so a failed filing activation cannot prevent macro scheduling.
+
+The filings job checks SEC ticker mappings, submissions and XBRL company facts every fifteen minutes. The macro job
+checks the BLS iCalendar and Federal Reserve FOMC calendar hourly. Requests use fixed official URLs, a dedicated public
+HTTP client, at least one second between requests, a sixteen-MiB body bound, a thirty-second capture deadline and a
+ten-minute run bound. Redirects are rejected. Broker, model and object-store credentials and trace propagation headers
+are absent from public requests. A missing ticker mapping or a company-facts 404 is an explicit exclusion.
+
+Original UTF-8 source bytes are written under `captures/v1/public-information/` in the existing private Rook research
+bucket. Before the first collection under each code revision, the job requires an owner-only private ACL and exact synthetic
+upload/readback verification. The generated `BUCKET_NAME` selects the bucket. The research worker uses its reflected OBC owner credential;
+no trading process receives it. Restate retains small artifact references, SHA-256, byte length, actual fetch/upload/check
+clocks, source revision, exclusions and failed URLs. It never journals the source documents. Unchanged content reuses its
+original artifact and fetch clock while advancing its successful check clock. A failed refresh retains the last good
+reference and its original timestamps within the current issuer universe. Retained symbol-to-CIK mappings keep a
+failed ticker refresh explicit while pruning references for removed issuers. These inputs support research; they do
+not change active entry or exit policy.
+
+The SEC artifacts are filing-history metadata and XBRL financial-fact JSON, not the full text of every filing. BLS and
+Federal Reserve artifacts retain the original calendar file and HTML. Changed content gets a new immutable object key;
+this rollout adds no automatic expiry or deletion of historical source snapshots.
+
+Collection runs in a separate research process with independent HTTP and storage resources. Execution, protective
+closures, native execution activation and trading readiness neither invoke nor await these jobs. Source, parsing,
+upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
+attempt. Source-labelled duration, completed/incomplete polls, bytes, document counts, last-success metrics and traced
+fetch/upload spans support session diagnosis. The stale-input alert is a research warning and does not stop trading.

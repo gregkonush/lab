@@ -1,5 +1,8 @@
+import { orderRequestBody } from '../../../broker/alpaca-mutations'
+import { canonicalHashV1Result } from '../../../hash'
+import { OrderSide, OrderType, TimeInForce } from '../../contracts'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import type { SqlError } from 'effect/sql/SqlError'
 
 import { MutationOperation } from '../../../broker/alpaca-mutations'
@@ -60,7 +63,56 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
     )
 
   const appendEvent = (operation: MutationStoreError['operation'], event: MutationEvent, requireCurrentRisk = false) =>
-    sql<{ event_id: string }>`
+    Effect.gen(function* () {
+      let requestBody: unknown = null
+      if (event.eventType === 'SUBMIT_STARTED') {
+        const rows = yield* sql<
+          Record<string, unknown>
+        >`SELECT client_order_id, symbol, side, order_type, time_in_force,
+          quantity_atoms::text, notional_limit_micros::text FROM intents WHERE intent_id = ${event.intentId}`
+        const [intent] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([
+            Schema.Struct({
+              client_order_id: Schema.String,
+              symbol: Schema.String,
+              side: Schema.Enum(OrderSide),
+              order_type: Schema.Enum(OrderType),
+              time_in_force: Schema.Enum(TimeInForce),
+              quantity_atoms: Schema.String,
+              notional_limit_micros: Schema.String,
+            }),
+          ]),
+        )(rows).pipe(
+          Effect.mapError((cause) =>
+            storeError({ operation, failure: 'decode', message: 'submit evidence intent is invalid', cause }),
+          ),
+        )
+        const body = orderRequestBody({
+          clientOrderId: intent.client_order_id,
+          symbol: intent.symbol,
+          side: intent.side,
+          orderType: intent.order_type,
+          timeInForce: intent.time_in_force,
+          quantityAtoms: intent.quantity_atoms,
+          notionalLimitMicros: intent.notional_limit_micros,
+        })
+        if (Result.isFailure(body))
+          return yield* storeError({
+            operation,
+            failure: 'invariant',
+            message: 'submit evidence request is invalid',
+            cause: body.failure,
+          })
+        const hash = canonicalHashV1Result(body.success)
+        if (Result.isFailure(hash) || hash.success !== event.requestHash)
+          return yield* storeError({
+            operation,
+            failure: 'conflict',
+            message: 'submit evidence differs from the request hash',
+          })
+        requestBody = body.success
+      }
+      return yield* sql<{ event_id: string }>`
       INSERT INTO mutation_events (
         event_id,
         schema_version,
@@ -70,6 +122,7 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
         operation,
         event_type,
         request_hash,
+        request_body,
         consistency_delay_ms,
         broker_order_id,
         request_id,
@@ -86,6 +139,7 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
         ${event.operation},
         ${event.eventType},
         ${event.requestHash},
+        ${sql.json(requestBody)},
         ${event.consistencyDelayMs},
         ${event.brokerOrderId ?? null},
         ${event.requestId ?? null},
@@ -106,14 +160,15 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
         )
       RETURNING event_id
     `.pipe(
-      Effect.flatMap((rows) =>
-        fromDecision(() =>
-          Result.flatMap(decodeEventIds(operation, rows), (eventIds) =>
-            decideMutationAppend(operation, event, eventIds, requireCurrentRisk),
+        Effect.flatMap((rows) =>
+          fromDecision(() =>
+            Result.flatMap(decodeEventIds(operation, rows), (eventIds) =>
+              decideMutationAppend(operation, event, eventIds, requireCurrentRisk),
+            ),
           ),
         ),
-      ),
-    )
+      )
+    })
 
   return { readLatest, latest, appendEvent }
 }

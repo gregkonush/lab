@@ -65,7 +65,7 @@ const position = {
   schemaVersion: 'bayn.paper-position.v1' as const,
   accountId: account.accountId,
   symbol: 'NVDA',
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
   marketPriceMicros: '125000000',
   marketValueMicros: '125000000',
@@ -74,7 +74,7 @@ const position = {
 }
 
 const order = {
-  schemaVersion: 'bayn.paper-order.v1' as const,
+  schemaVersion: 'bayn.order.v3' as const,
   accountId: account.accountId,
   brokerOrderId: 'broker-order-1',
   clientOrderId: 'client-order-1',
@@ -83,14 +83,14 @@ const order = {
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
-  filledQuantityMicros: '500000',
+  quantityAtoms: '1000000000',
+  filledQuantityAtoms: '500000000',
   status: OrderStatus.PartiallyFilled,
   observedAt: later,
 }
 
 const fill = {
-  schemaVersion: 'bayn.paper-fill.v1' as const,
+  schemaVersion: 'bayn.fill.v2' as const,
   accountId: account.accountId,
   fillId: 'fill-1',
   brokerOrderId: order.brokerOrderId,
@@ -98,8 +98,8 @@ const fill = {
   intentId: order.intentId,
   symbol: order.symbol,
   side: order.side,
-  quantityMicros: '500000',
-  priceMicros: '125000000',
+  quantityAtoms: '500000000',
+  priceAtoms: '125000000000',
   feeMicros: '10000',
   occurredAt: instant,
 }
@@ -148,7 +148,7 @@ const intent = {
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   notionalLimitMicros: '200000000',
   state: IntentState.Planned,
   createdAt: instant,
@@ -190,21 +190,21 @@ describe('execution contracts', () => {
   })
 
   test('enforces order and rate-limit invariants', async () => {
-    await expectFailure(decodeOrder({ ...order, filledQuantityMicros: '1000001' }))
-    await expectFailure(decodeOrder({ ...order, filledQuantityMicros: '0' }))
-    await expectFailure(decodeOrder({ ...order, filledQuantityMicros: order.quantityMicros }))
-    await expectFailure(decodeOrder({ ...order, status: OrderStatus.Filled, filledQuantityMicros: '0' }))
+    await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: '1000001000' }))
+    await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: '0' }))
+    await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: order.quantityAtoms }))
+    await expectFailure(decodeOrder({ ...order, status: OrderStatus.Filled, filledQuantityAtoms: '0' }))
     expect(
       await Effect.runPromise(
-        decodeOrder({ ...order, status: OrderStatus.Filled, filledQuantityMicros: order.quantityMicros }),
+        decodeOrder({ ...order, status: OrderStatus.Filled, filledQuantityAtoms: order.quantityAtoms }),
       ),
     ).toMatchObject({ status: OrderStatus.Filled })
     await expectFailure(decodeOrder({ ...order, status: OrderStatus.New }))
     expect(
-      await Effect.runPromise(decodeOrder({ ...order, status: OrderStatus.New, filledQuantityMicros: '0' })),
+      await Effect.runPromise(decodeOrder({ ...order, status: OrderStatus.New, filledQuantityAtoms: '0' })),
     ).toMatchObject({ status: OrderStatus.New })
     await expectFailure(
-      decodeOrder({ ...order, status: OrderStatus.Canceled, filledQuantityMicros: order.quantityMicros }),
+      decodeOrder({ ...order, status: OrderStatus.Canceled, filledQuantityAtoms: order.quantityAtoms }),
     )
     await expectFailure(decodeOrder({ ...order, limitPriceMicros: '125000000' }))
     await expectFailure(decodeOrder({ ...order, orderType: OrderType.Limit }))
@@ -212,23 +212,23 @@ describe('execution contracts', () => {
       await Effect.runPromise(decodeOrder({ ...order, orderType: OrderType.Limit, limitPriceMicros: '125000000' })),
     ).toMatchObject({ orderType: OrderType.Limit })
 
-    const { quantityMicros: _omittedQuantityMicros, ...notionalOrderBase } = order
+    const { quantityAtoms: _omittedQuantityAtoms, ...notionalOrderBase } = order
     const notionalOrder = {
       ...notionalOrderBase,
-      schemaVersion: 'bayn.paper-order.v2' as const,
+      schemaVersion: 'bayn.order.v3' as const,
       notionalMicros: '200000000',
-      filledQuantityMicros: '0',
+      filledQuantityAtoms: '0',
       status: OrderStatus.New,
     }
     expect(await Effect.runPromise(decodeOrder(notionalOrder))).toEqual(notionalOrder)
-    await expectFailure(decodeOrder({ ...notionalOrder, quantityMicros: '1000000' }))
-    await expectFailure(decodeOrder({ ...notionalOrderBase, schemaVersion: 'bayn.paper-order.v2' }))
+    await expectFailure(decodeOrder({ ...notionalOrder, quantityAtoms: '1000000000' }))
+    await expectFailure(decodeOrder({ ...notionalOrderBase, schemaVersion: 'bayn.order.v3' }))
     await expectFailure(decodeOrder({ ...order, notionalMicros: '200000000' }))
     await expectFailure(decodeOrder({ ...notionalOrder, orderType: OrderType.Limit, limitPriceMicros: '125000000' }))
     await expectFailure(decodeOrder({ ...notionalOrder, status: OrderStatus.Filled }))
     expect(
       await Effect.runPromise(
-        decodeOrder({ ...notionalOrder, status: OrderStatus.Filled, filledQuantityMicros: '1999999' }),
+        decodeOrder({ ...notionalOrder, status: OrderStatus.Filled, filledQuantityAtoms: '1999999000' }),
       ),
     ).toMatchObject({ status: OrderStatus.Filled })
     await expectFailure(decodeRateLimit({ ...rateLimit, remaining: '201' }))
@@ -257,7 +257,7 @@ describe('execution contracts', () => {
   test('binds risk evidence to every intent state', async () => {
     expect(await Effect.runPromise(decodeIntent(intent))).toEqual(intent)
     await expectFailure(decodeIntent({ ...intent, riskDecisionId: hash('5') }))
-    await expectFailure(decodeIntent({ ...intent, quantityMicros: '01' }))
+    await expectFailure(decodeIntent({ ...intent, quantityAtoms: '0' }))
     await expectFailure(decodeIntent({ ...intent, terminalOutcome: TerminalOutcome.Filled }))
 
     const approved = { ...intent, state: IntentState.Approved, riskDecisionId: hash('5') }

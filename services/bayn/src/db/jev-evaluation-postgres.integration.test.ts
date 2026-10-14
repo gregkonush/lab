@@ -1,3 +1,4 @@
+import { jevRequestForSnapshot } from '../jev/native.test-support'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -18,12 +19,12 @@ import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt, makeJevEvaluati
 import { JevClient } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { tradingSignalInferenceFixture } from '../jev/trading-signal.test-support'
-import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from '../jev/trading-signals'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { evaluationRequestFixture, inferenceFixture } from '../jev/test-support'
 import { decodeJevResolution, JevResolutionStatus, makeJevResolution } from '../jev/resolution'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
+import { nativeJevFixture } from '../jev/native.test-support'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { CandidateObservationStoreLive } from './candidate-observation-postgres'
 import { JevEvaluationStoreLive } from './jev-evaluation-postgres'
@@ -46,10 +47,8 @@ const makeRuntime = () =>
       Layer.provideMerge(NodeServices.layer),
     ),
   )
-const fixture = candidateObservationFixture()
-const prepared = Result.getOrThrow(
-  makeJevTradingSignalRequest(fixture.snapshot, 'AAPL', fixture.protocol.benchmarkSymbol),
-)
+const fixture = nativeJevFixture()
+const prepared = Result.getOrThrow(jevRequestForSnapshot(fixture.snapshot, 'AAPL'))
 const request = Result.getOrThrow(
   makeJevEvaluationRequest({
     schemaVersion: 'bayn.jev-evaluation-request.v1',
@@ -59,8 +58,10 @@ const request = Result.getOrThrow(
     request: prepared.request,
     cycleId: fixture.draft.identity.cycleId,
     snapshotId: fixture.snapshot.manifest.snapshotId,
-    observedAt: fixture.input.observedAt,
-    expiresAt: new Date(Date.parse(fixture.input.observedAt) + 5000).toISOString(),
+    observedAt: fixture.observation.payload.observedAt,
+    expiresAt: new Date(
+      Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+    ).toISOString(),
   }),
 )
 const receipt = Result.getOrThrow(
@@ -79,7 +80,7 @@ const batch = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: request.expiresAt,
-    planVersion: JevBatchPlanVersion.V1,
+    planVersion: JevBatchPlanVersion.V4,
   }),
 )
 const recorded = Result.getOrThrow(
@@ -107,11 +108,15 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
-        yield* (yield* CycleStore).acquire(fixture.draft, fixture.cycle.createdAt)
-        yield* (yield* CandidateObservationStore).record(fixture.observation)
+        yield* (yield* CycleStore).acquire(fixture.draft, fixture.snapshot.manifest.observedAt)
         yield* sql`INSERT INTO authority_generations (
         generation_hash, schema_version, maximum, authority_version, activated_at
       ) VALUES (${request.authorityGenerationHash}, 'bayn.authority-generation-history.v1', ${Authority.Observe}, 1, ${request.observedAt})`
+        const r = fixture.portfolio.brokerState.reconciliation
+        yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash, status, discrepancies, reconciled_at)
+          VALUES (${r.reconciliationId}, ${r.schemaVersion}, ${r.accountId}, ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
+        yield* (yield* CandidateObservationStore).record(fixture.observation)
+
         yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
           Effect.andThen((yield* JevBatchStore).begin(batch)),
           Effect.provide(TestClock.layer()),

@@ -162,7 +162,7 @@ const TargetPlannerInputFields = {
   referencePrices: SignalSessionReferencePricesSchema,
   brokerState: TargetPlannerBrokerStateSchema,
   precision: Schema.Struct({
-    quantityIncrementMicros: PositiveMicrosSchema,
+    quantityIncrementAtoms: PositiveMicrosSchema,
     priceIncrementMicros: PositiveMicrosSchema,
     minimumBuyNotionalMicros: PositiveMicrosSchema,
   }),
@@ -190,7 +190,7 @@ const FractionalCloseExecutionIdentityFields = {
 const ReconciledPositionCloseExecutionIdentityFields = {
   executionPurpose: Schema.Literal('forced-close'),
   orderType: Schema.Literal(OrderType.Market),
-  timeInForce: Schema.Literal(TimeInForce.Day),
+  timeInForce: Schema.Union([Schema.Literal(TimeInForce.Day), Schema.Literal(TimeInForce.GoodUntilCanceled)]),
   priceReference: Schema.Literal('reconciled-broker-position-mark'),
 } as const
 
@@ -203,24 +203,24 @@ const QuoteBoundLimitExecutionTermsSchema = Schema.Struct({
   ...QuoteBoundLimitExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
-  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumBuyQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 const FractionalCloseExecutionTermsSchema = Schema.Struct({
   ...FractionalCloseExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
-  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumBuyQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 const ReconciledPositionCloseExecutionTermsSchema = Schema.Struct({
   ...ReconciledPositionCloseExecutionIdentityFields,
   snapshotId: Sha256Schema,
   snapshotContentHash: Sha256Schema,
-  maximumBuyQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
-  maximumSellQuantityMicros: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumBuyQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
+  maximumSellQuantityAtoms: Schema.Record(SymbolSchema, UnsignedMicrosSchema),
 })
 
 export const QuoteBoundExecutionTermsSchema = Schema.Union([
@@ -252,7 +252,7 @@ const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   ...TargetPlannerInputFields,
   referencePrices: ExecutionReferencePricesSchema,
   precision: Schema.Struct({
-    quantityIncrementMicros: Schema.Union([Schema.Literal('1'), Schema.Literal('1000000')]),
+    quantityIncrementAtoms: PositiveMicrosSchema,
     priceIncrementMicros: PositiveMicrosSchema,
     minimumBuyNotionalMicros: PositiveMicrosSchema,
   }),
@@ -275,8 +275,8 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
     issues.push({ path: ['executionTerms', 'priceReference'], issue: 'must match the bound reference-price source' })
   }
   const targetSymbols = Object.keys(input.targetWeights).sort()
-  const buyQuantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityMicros).sort()
-  const sellQuantitySymbols = Object.keys(input.executionTerms.maximumSellQuantityMicros).sort()
+  const buyQuantitySymbols = Object.keys(input.executionTerms.maximumBuyQuantityAtoms).sort()
+  const sellQuantitySymbols = Object.keys(input.executionTerms.maximumSellQuantityAtoms).sort()
   if (
     targetSymbols.length !== buyQuantitySymbols.length ||
     targetSymbols.length !== sellQuantitySymbols.length ||
@@ -287,27 +287,14 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
       issue: 'must contain one buy and sell quantity limit for every target symbol',
     })
   }
-  const quantityIncrement = BigInt(input.precision.quantityIncrementMicros)
-  const marketClose = input.executionTerms.orderType === OrderType.Market
+  const quantityIncrement = BigInt(input.precision.quantityIncrementAtoms)
   const forcedClose = input.executionTerms.executionPurpose !== undefined
-  if (marketClose && input.precision.quantityIncrementMicros !== '1') {
-    issues.push({
-      path: ['precision', 'quantityIncrementMicros'],
-      issue: 'market close must preserve the exact reconciled broker quantity',
-    })
-  }
-  if (!marketClose && input.precision.quantityIncrementMicros !== '1000000') {
-    issues.push({
-      path: ['precision', 'quantityIncrementMicros'],
-      issue: 'quote-bound LIMIT/IOC execution requires whole-share quantity precision',
-    })
-  }
   if (forcedClose) {
     if (Object.values(input.targetWeights).some((weight) => weight !== 0)) {
       issues.push({ path: ['targetWeights'], issue: 'forced close must target a flat account' })
     }
     const positionQuantities = new Map(
-      input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityMicros)]),
+      input.brokerState.positions.map((position) => [position.symbol, BigInt(position.quantityAtoms)]),
     )
     if (
       targetSymbols.some((symbol) => {
@@ -315,8 +302,8 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
         const expectedMaximumBuy = currentQuantity < 0n ? -currentQuantity : 0n
         const expectedMaximumSell = currentQuantity > 0n ? currentQuantity : 0n
         return (
-          BigInt(input.executionTerms.maximumBuyQuantityMicros[symbol] ?? '0') !== expectedMaximumBuy ||
-          BigInt(input.executionTerms.maximumSellQuantityMicros[symbol] ?? '0') !== expectedMaximumSell
+          BigInt(input.executionTerms.maximumBuyQuantityAtoms[symbol] ?? '0') !== expectedMaximumBuy ||
+          BigInt(input.executionTerms.maximumSellQuantityAtoms[symbol] ?? '0') !== expectedMaximumSell
         )
       })
     ) {
@@ -328,8 +315,8 @@ const quoteBoundInputIssues = (input: typeof QuoteBoundTargetPlannerInputBase.Ty
   }
   if (
     [
-      ...Object.values(input.executionTerms.maximumBuyQuantityMicros),
-      ...Object.values(input.executionTerms.maximumSellQuantityMicros),
+      ...Object.values(input.executionTerms.maximumBuyQuantityAtoms),
+      ...Object.values(input.executionTerms.maximumSellQuantityAtoms),
     ].some((quantity) => BigInt(quantity) % quantityIncrement !== 0n)
   ) {
     issues.push({
@@ -364,8 +351,8 @@ export interface PlannedTargetQuantity {
   readonly symbol: string
   readonly targetWeight: number
   readonly referencePriceMicros: string
-  readonly currentQuantityMicros: string
-  readonly targetQuantityMicros: string
+  readonly currentQuantityAtoms: string
+  readonly targetQuantityAtoms: string
 }
 
 export type ReferenceTargetIntent = Omit<IntentPlan, 'schemaVersion' | 'notionalLimitMicros'>
@@ -493,8 +480,8 @@ export const PlannedTargetQuantitySchema = Schema.Struct({
   symbol: SymbolSchema,
   targetWeight: UnitIntervalSchema,
   referencePriceMicros: PositiveMicrosSchema,
-  currentQuantityMicros: SignedMicrosSchema,
-  targetQuantityMicros: UnsignedMicrosSchema,
+  currentQuantityAtoms: SignedMicrosSchema,
+  targetQuantityAtoms: UnsignedMicrosSchema,
 })
 
 export const ReferenceTargetIntentSchema = Schema.Struct({
@@ -507,7 +494,7 @@ export const ReferenceTargetIntentSchema = Schema.Struct({
   side: IntentPlanSchema.fields.side,
   orderType: IntentPlanSchema.fields.orderType,
   timeInForce: IntentPlanSchema.fields.timeInForce,
-  quantityMicros: IntentPlanSchema.fields.quantityMicros,
+  quantityAtoms: IntentPlanSchema.fields.quantityAtoms,
   createdAt: IntentPlanSchema.fields.createdAt,
 })
 

@@ -11,24 +11,17 @@ export {
 } from './alpaca-mutations/model'
 export {
   OrderRequestError,
-  alpacaBuyNotionalMicros,
   authorizeMutationAccess,
   cancelRequestHash,
-  compatibleOrderRequestBody,
-  historicalMarketOrderRequestBody,
-  legacyBoundedLimitOrderRequestBody,
+  recordedOrderRequestBody,
   limitIocOrderRequestBody,
   orderPriceBoundaryMicros,
   orderRequestBody,
-  orderRequestNotionalMicros,
   resolveMutationCapability,
   submitBody,
-  type HistoricalMarketOrderRequestBody,
-  type CompatibleOrderRequestBody,
-  type LegacyBoundedLimitOrderRequestBody,
+  type OrderRequestBody,
   type LimitIocOrderRequestBody,
   type OrderRequestIntent,
-  type OrderRequestBody,
   type ResolvedMutationCapability,
 } from './alpaca-mutations/decisions'
 export { makeMutation } from './alpaca-mutations/interpreter'

@@ -416,10 +416,11 @@ describe('closing market-data fallback boundaries', () => {
                     report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } },
                   }
                 : fresh
+        if (fresh.riskContext.authority === null) throw new Error('fixture authority missing')
         const terminalReconciliation = yield* reconciliationForPreparation(
           preflight,
           refreshReconciliation,
-          Effect.succeed(fresh.riskContext.authority ?? undefined),
+          Effect.succeed(fresh.riskContext.authority),
           30_000,
         )
         const recoverClose = ensureExecutionCycleClosure({
@@ -552,7 +553,7 @@ describe('closing market-data fallback boundaries', () => {
           if (!closeSettled || terminalOutcome !== TerminalOutcome.Canceled) return facts
           const positions = facts.brokerState.positions.map((position) => ({
             ...position,
-            quantityMicros: (BigInt(position.quantityMicros) / positionDivisor).toString(),
+            quantityAtoms: (BigInt(position.quantityAtoms) / positionDivisor).toString(),
             marketValueMicros: (BigInt(position.marketValueMicros) / positionDivisor).toString(),
           }))
           const releasedValue = facts.brokerState.positions.reduce(
@@ -683,7 +684,12 @@ describe('closing market-data fallback boundaries', () => {
         const residualReconciliation = yield* reconciliationForPreparation(
           yield* reconcile,
           refreshResidual,
-          Effect.suspend(() => reconcile.pipe(Effect.map((facts) => facts.riskContext.authority ?? undefined))),
+          reconcile.pipe(
+            Effect.map((facts) => {
+              if (facts.riskContext.authority === null) throw new Error('fixture authority missing')
+              return facts.riskContext.authority
+            }),
+          ),
           30_000,
         )
         const recoverResidual = ensureExecutionCycleClosure({
@@ -733,19 +739,19 @@ describe('closing market-data fallback boundaries', () => {
         expect(next.document.bindings.authorityGenerationHash).toBe(first.document.bindings.authorityGenerationHash)
         expect(next.document.orderedIntentIds).not.toEqual(first.document.orderedIntentIds)
         expect(
-          next.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
+          next.document.targetPlan.intentTargets.map(({ symbol, side, quantityAtoms }) => ({
             symbol,
             side,
-            quantityMicros,
+            quantityAtoms,
           })),
         ).toEqual(
-          first.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
+          first.document.targetPlan.intentTargets.map(({ symbol, side, quantityAtoms }) => ({
             symbol,
             side,
-            quantityMicros:
+            quantityAtoms:
               terminalOutcome === TerminalOutcome.Canceled
-                ? (BigInt(quantityMicros) / positionDivisor).toString()
-                : quantityMicros,
+                ? (BigInt(quantityAtoms) / positionDivisor).toString()
+                : quantityAtoms,
           })),
         )
         expect(yield* prepare(next.document)).toMatchObject({
