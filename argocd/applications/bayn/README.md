@@ -386,8 +386,9 @@ exact reconciliation, and no broker-ledger advance before replacing the mandate.
 invoke the activation handler manually.
 
 The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
-`lab-delivery/bayn` Warehouse correlates that tag with its exact main commit; the automatic Stage copies that source,
-updates the status, worker, and activation bindings, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also
+`lab-delivery/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
+The automatic Stage checks out that image revision,
+updates the status, worker, and activation bindings from the same image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also
 updates the activation endpoint of the existing research build lineage while preserving its authored request and
 build. The native hook still verifies the exact controller binding before the status service rolls out.
 
