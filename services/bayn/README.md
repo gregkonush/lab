@@ -101,6 +101,16 @@ values. See the [migration and performance evidence](../../docs/bayn/valkey-cach
 
 ## Broker observation owner
 
+Broker position symbols must agree with their asset class before entering
+reconciliation. A canonical crypto pair labeled as an equity, or an equity symbol
+labeled as crypto, fails the read contract without changing the original response evidence.
+
+Broker capture preserves typed read and session-acquisition failures across its
+managed runtime boundary. Poll warnings retain the operation, failure kind,
+retryability and HTTP status without logging response payloads. Defects and
+interruption are not converted to timeouts or settled as completed work. Every
+failed capture disposes its lazy broker runtime before any known-work quota settlement.
+
 `BaynBrokerObservations` is an independent, private, account-keyed Restate Virtual Object. Its exclusive delayed
 handlers poll without overlap and publish full and compact snapshots in Valkey before committing their fenced
 references in PostgreSQL `broker_observations`. Execution and status processes read those shared materializations; they do not start local pollers. Endpoint registration remains separate
