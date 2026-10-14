@@ -101,7 +101,11 @@ test('normal broker polling emits diagnostics while native deployment activation
             execute(
               Effect.gen(function* () {
                 const snapshot = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000)
-                return { _tag: 'Published', snapshotHash: canonicalHashV1(snapshot), nextPollNotBeforeMs: 0 } as const
+                return {
+                  poll: { _tag: 'Published', snapshotHash: canonicalHashV1(snapshot), nextPollNotBeforeMs: 0 },
+                  startedAtMs: Date.parse(snapshot.startedAt),
+                  completedAtMs: Date.parse(snapshot.completedAt),
+                } as const
               }),
               { signal },
             ),
@@ -110,6 +114,9 @@ test('normal broker polling emits diagnostics while native deployment activation
       const observationContext = {
         key: controllerKey,
         get: async (key: string) => durable.get(key) ?? null,
+        clear: (key: string) => {
+          durable.delete(key)
+        },
         set: (key: string, value: unknown) => {
           durable.set(key, value)
         },

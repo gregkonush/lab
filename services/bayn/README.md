@@ -65,8 +65,9 @@ source rotation, so a repeated or late invocation cannot repeat its capture. Pub
 atomically with their existing database update. Replaying an unfinished claim invalidates and fences its generation;
 a published lost result and a newer cut remain usable. A reserved quota window schedules a
 successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
-before capturing the fresh snapshot required to start execution. Only a returned journaled result releases the conservative
-unknown-work quota reservation. The database generation continues to fence publication after mutations and rotation.
+before capturing the fresh snapshot required to start execution. The same database transaction reserves the account quota before HTTP. Publication or failure replaces that reservation
+with measured request debt in PostgreSQL, so losing the Restate result cannot repeat HTTP or discard outstanding quota.
+The database generation continues to fence publication after mutations and rotation.
 
 The observation owner's child runtimes share the worker's configured logger and tracer. The polling span inherits
 the native Restate attempt's trace, allowing scheduling, capture and publication delays to be inspected together. The
@@ -149,31 +150,29 @@ at the default cadence. The background client's transport counts every actual at
 pagination and transient retries. Each attempt charges at least 600 milliseconds to the next scheduled poll, targeting
 100 background calls per minute on average, or half a smaller reported account limit. The three independent history endpoints run concurrently; individual captures can burst. Response headers showing one-quarter or less of account quota
 remaining, and HTTP 429 responses, defer further background reads until the later of reset and `Retry-After`; missing
-or unusable reset evidence causes a conservative sixty-second wait. The budget survives background client replacement, and Restate
-journals and retains the next permissible poll time in durable account state for successful, invalidated and failed
-captures, so worker replacement and source rotation preserve outstanding cost. Larger captures extend the
-poll cadence rather than adding artificial delays inside a full history scan. Before each capture, including repeated
-activation, Restate journals the budget deadline and waits with a durable timer before starting the bounded capture
-and its database ticket. It also journals a single-use worker ticket and reserves one quota window beyond the latest
-allowed capture start and invocation abort bound before issuing requests. A lost or spent ticket, or one whose start
-deadline elapsed, returns unavailable without repeating broker I/O. When the same worker atomically consumes a
-matching unused expired ticket, successful invalidation and the existing journaled poll result prove that capture
-never started. Only then can the owner replace speculative debt with the existing measured HTTP/quota deadline;
-it logs the reason and capture-start lateness without ticket contents. A lost result before journaling still retains
-the full reservation. A journaled result replays without another claim or a reset capture clock.
-A completed capture replaces the reservation with
-its measured request cost; interruption or an unreturned result retains the conservative reservation. With default
-timeouts that reservation is three minutes, while completed ordinary captures retain the ten-second target.
-Completed, typed persistence failures inside a claimed worker also retain the measured request cost, including any
-quota-reset deadline. They return unavailable without publishing a snapshot and retry on the ordinary polling cadence.
-Failed captures dispose their broker runtime before recording failure or sampling the settled request budget, so a lazy
-client acquisition cannot continue issuing requests after recovery returns. Defects, interruption, mixed failure causes,
-and missing, mismatched, already claimed or replaced-worker capture tickets retain the conservative reservation.
-Failure or interruption before the unused-ticket result is journaled also retains that reservation.
-Long quota waits suspend the invocation without using its inactivity timeout. Interruption during
-the wait preserves the outstanding budget. Existing capture deadlines and cache expiry still apply; an incomplete
-capture cannot publish. Execution requests use their existing client and consume the remaining shared account quota;
-the background budget does not impose a global limit on other account callers.
+or unusable reset evidence causes a conservative sixty-second wait.
+
+The account's PostgreSQL observation row owns the next permissible poll time. The capture claim and its conservative
+unknown-work deadline commit atomically before HTTP. At default timeouts that deadline is three minutes. Completed
+captures atomically settle their claim and replace the reservation with measured HTTP debt, including rate-limit
+reset evidence. Snapshot invalidation and quota ownership use separate generations, so a mutation racing capture
+cannot strand the quota reservation or let an older capture shorten a newer reservation. A failed settlement leaves
+the conservative database deadline in force. No process-local budget or Restate result is authority to bypass it.
+
+Ordinary native polls issue one journaled worker command and use eight journal entries rather than thirteen. They
+no longer journal separate clock and quota state updates. A quota-blocked poll returns its database deadline and
+schedules a successor without holding the exclusive owner. Deployment activation uses a durable timer to wait for
+quota before obtaining its required fresh cut. On the first activation of the new revision, the exclusive owner copies
+any old Restate quota deadline into PostgreSQL with `GREATEST`, then deletes the old key. There is no second runtime
+quota owner or compatibility polling path.
+
+The worker starts its bounded capture clock immediately before the durable claim. A claim that commits after its
+start deadline is invalidated without HTTP, and its unused reservation is settled only by the matching database
+owner. Clock regression fails closed. Lost, spent and replaced-worker claims cannot repeat HTTP. Failed captures
+dispose their broker runtime before recording failure or sampling request debt, so lazy client acquisition cannot
+continue issuing requests after recovery returns. Defects and interruption preserve unknown-work debt. Execution
+requests use their existing client and consume the remaining shared account quota; the background budget does not
+impose a global limit on other account callers.
 
 One serialized execution pass reads its unfinished cycle once and advances acquisition, activation and decision
 binding from their durable receipts. It stops at unavailable evidence, a terminal transition or one broker mutation;

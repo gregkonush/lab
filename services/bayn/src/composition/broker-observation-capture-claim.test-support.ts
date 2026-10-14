@@ -14,18 +14,40 @@ const logs: { message: unknown; annotations: unknown }[] = []
 const logger = Logger.make(({ message, fiber }) => {
   logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) })
 })
-const claims = new Set<unknown>()
+let now = 1_800_000_000_000
+const liveClock = Clock.Clock.defaultValue()
+const clock: Clock.Clock = {
+  currentTimeMillis: Effect.sync(() => now),
+  currentTimeMillisUnsafe: () => now,
+  currentTimeNanos: Effect.sync(() => BigInt(now) * 1_000_000n),
+  currentTimeNanosUnsafe: () => BigInt(now) * 1_000_000n,
+  monotonicTimeNanos: liveClock.monotonicTimeNanos,
+  monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
+  sleep: (duration) => liveClock.sleep(duration),
+}
+const claims = new Map<unknown, number>()
 const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
-  Effect.suspend(() => {
+  Effect.suspend<readonly unknown[], Error, never>(() => {
     if (strings.join('').includes('RETURNING broker_observations.generation')) {
-      if (claims.has(values[2])) return Effect.succeed([])
-      claims.add(values[2])
+      if (claims.has(values[2]))
+        return Effect.succeed([
+          { status: 'ALREADY_CLAIMED', generation: null, startedAt: null, nextPollNotBeforeMs: claims.get(values[2]) },
+        ])
+      claims.set(values[2], Number(values[3]))
+      now += values[2] === 'clock-regression' ? -1 : 47_000
       return Clock.currentTimeMillis.pipe(
-        Effect.map((now) => [{ generation: 1, startedAt: new Date(now).toISOString() }]),
+        Effect.map((now) => [
+          {
+            status: 'RESERVED',
+            generation: 1,
+            startedAt: new Date(now).toISOString(),
+            nextPollNotBeforeMs: Number(values[3]),
+          },
+        ]),
       )
     }
     if (
-      !strings.join('').includes('SET available = false') &&
+      !strings.join('').includes('WITH failed AS') &&
       !strings.join('').includes('SET generation = generation + 1, available = false')
     )
       return Effect.die('unexpected observation query')
@@ -67,11 +89,8 @@ const result = await Effect.runPromise(
       } as unknown as ApplicationPlanFor<'AutonomousService'>
       const { runtime } = yield* acquireBrokerObservationRuntime(plan)
       const signal = new AbortController().signal
-      const now = yield* Clock.currentTimeMillis
       const reservation = {
         captureId: 'test-capture',
-        captureStartDeadlineMs: now - 17_000,
-        interruptedNotBeforeMs: now + 133_000,
       }
       const expired = yield* Effect.promise(() => runtime.poll(signal, reservation))
       const duplicate = yield* Effect.promise(() => runtime.poll(signal, reservation))
@@ -89,8 +108,25 @@ const result = await Effect.runPromise(
         const retry = yield* Effect.promise(() => runtime.poll(signal, { ...reservation, captureId }))
         failures.push({ outcome, completion: completion._tag, retry })
       }
-      return { expired, duplicate, replaced, failures, reservation, attempts, invalidations, claims: claims.size }
+      const regression = yield* Effect.tryPromise({
+        try: () => runtime.poll(signal, { captureId: 'clock-regression' }),
+        catch: () => 'not completed',
+      }).pipe(Effect.result)
+      const regressionRetry = yield* Effect.promise(() => runtime.poll(signal, { captureId: 'clock-regression' }))
+      return {
+        regression: regression._tag,
+        regressionRetry: regressionRetry.poll,
+        regressionDeadline: claims.get('clock-regression'),
+        expired: expired.poll,
+        duplicate: duplicate.poll,
+        replaced: replaced.poll,
+        failures: failures.map((f) => ({ ...f, retry: f.retry.poll, deadline: claims.get(`failed-${f.outcome}`) })),
+        reservation: { ...reservation, interruptedNotBeforeMs: claims.get(reservation.captureId) },
+        attempts,
+        invalidations,
+        claims: claims.size,
+      }
     }),
-  ).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger]))),
+  ).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])), Effect.provideService(Clock.Clock, clock)),
 )
 process.stdout.write(`CAPTURE_CLAIM_RESULT=${JSON.stringify({ ...result, logs })}\n`)
