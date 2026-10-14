@@ -114,7 +114,7 @@ export async function handleTengriAuth(request: Request) {
   try {
     const env = environment()
     const url = new URL(request.url)
-    if (url.origin !== env.base.origin) throw new OfzError(403)
+    if (request.headers.get('host') !== env.base.host) throw new OfzError(403)
     switch (`${request.method} ${url.pathname}`) {
       case 'POST /api/auth/login':
       case 'POST /api/auth/step-up': {
