@@ -1,6 +1,7 @@
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
+import { instrumentMarket, MarketKind } from './instruments'
 import { notionalMicros } from './execution-model'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import {
@@ -864,14 +865,15 @@ const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvalu
     ),
   )
 
-const isBrokerSupportedFractionalCloseOrder = (facts: RiskFacts): boolean =>
+const isBrokerSupportedMarketCloseOrder = (facts: RiskFacts): boolean =>
   isPositionReducingCloseOrder(facts) &&
   facts.intent.orderType === OrderType.Market &&
-  facts.intent.timeInForce === TimeInForce.Day
+  facts.intent.timeInForce ===
+    (instrumentMarket(facts.intent.symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day)
 
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts
-  const fractionalCloseOrder = isBrokerSupportedFractionalCloseOrder(facts)
+  const brokerSupportedMarketClose = isBrokerSupportedMarketCloseOrder(facts)
   const closeOnlyPositionReduction = state.closeOnly === true && isPositionReducingCloseOrder(facts)
   return [
     makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
@@ -911,18 +913,18 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
       Gate.OrderType,
-      policyAllowsOrderType(policy, intent.orderType) || fractionalCloseOrder,
+      policyAllowsOrderType(policy, intent.orderType) || brokerSupportedMarketClose,
       intent.orderType,
-      fractionalCloseOrder
+      brokerSupportedMarketClose
         ? `${policy.allowedOrderTypes.join(',')}|MARKET_CLOSE_ONLY`
         : policy.allowedOrderTypes.join(','),
     ),
     makeGate(
       Gate.TimeInForce,
-      policy.allowedTimeInForce.includes(intent.timeInForce) || fractionalCloseOrder,
+      policy.allowedTimeInForce.includes(intent.timeInForce) || brokerSupportedMarketClose,
       intent.timeInForce,
-      fractionalCloseOrder
-        ? `${policy.allowedTimeInForce.join(',')}|DAY_MARKET_CLOSE_ONLY`
+      brokerSupportedMarketClose
+        ? `${policy.allowedTimeInForce.join(',')}|${intent.timeInForce}_MARKET_CLOSE_ONLY`
         : policy.allowedTimeInForce.join(','),
     ),
   ]
