@@ -1,4 +1,10 @@
-import { isContinuousMarket, tradingWindow, continuousExecutionPolicy, type MarketHours } from '../../market-hours'
+import {
+  isContinuousMarket,
+  tradingWindow,
+  continuousExecutionPolicy,
+  continuousMarketHours,
+  type MarketHours,
+} from '../../market-hours'
 import { DateTime, Option, Result } from 'effect'
 
 import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
@@ -193,31 +199,45 @@ export const nextIntradayEntryAttemptOrdinal = (
 }
 
 /**
- * Authority rollover can terminalize an unused pre-submission cycle without a decision document. Reconstruct its
+ * An authority rollover or expired continuous entry lease can leave an unused cycle without a decision. Reconstruct its
  * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
  * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
  * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
  */
-export const canRearmUnboundPreSubmissionCycle = (
+export const canRearmUnusedCycle = (
   cycle: AutonomousCycle,
   candidate: IntradayCycleCandidate,
   observation: MarketHours,
   executionSession: MarketCalendarSession,
+  observedAt: string,
 ): boolean => {
   if (
     !isIntradayAutonomousCycle(cycle) ||
     cycle.state !== CycleState.Blocked ||
-    cycle.terminalReason !== CycleTerminalReason.ProvenanceMismatch ||
     cycle.bindings.snapshotId !== undefined ||
     cycle.bindings.decisionHash !== undefined ||
-    cycle.terminalAt === undefined ||
-    cycle.terminalAt >= cycle.window.submissionOpenAt
+    cycle.terminalAt === undefined
   )
     return false
+  const expiredContinuousLease =
+    cycle.window.executionCalendarSchemaVersion === continuousMarketHours.schemaVersion &&
+    cycle.terminalReason === CycleTerminalReason.MissedSubmission &&
+    cycle.terminalAt >= cycle.window.submissionCutoffAt &&
+    observedAt >= cycle.window.submissionCutoffAt
+  const preSubmissionRollover =
+    cycle.terminalReason === CycleTerminalReason.ProvenanceMismatch && cycle.terminalAt < cycle.window.submissionOpenAt
+  if (!expiredContinuousLease && !preSubmissionRollover) return false
+  const originalSession = expiredContinuousLease
+    ? {
+        date: cycle.identity.executionSessionDate,
+        openAt: cycle.window.executionOpenAt,
+        closeAt: cycle.window.executionCloseAt,
+      }
+    : executionSession
   const originalDraft = makeIntradayCycleDraft(
     candidate,
-    observation,
-    executionSession,
+    expiredContinuousLease ? continuousMarketHours : observation,
+    originalSession,
     intradayCycleEntryAttemptOrdinal(cycle.identity),
   )
   if (Result.isFailure(originalDraft)) return false
