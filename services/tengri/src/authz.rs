@@ -44,6 +44,11 @@ pub(crate) enum WorkspaceAuthorization {
     ControlledFixture(Arc<std::sync::atomic::AtomicU8>),
     #[cfg(test)]
     SynchronizedFixture(Arc<tokio::sync::Barrier>),
+    #[cfg(test)]
+    ExactFixture {
+        action: Action,
+        target: String,
+    },
 }
 
 #[derive(Clone)]
@@ -57,6 +62,32 @@ pub(crate) struct WorkspaceAccess {
 }
 
 impl WorkspaceAuthorization {
+    pub(crate) async fn guest_maintenance(
+        &self,
+        uid: &str,
+        epoch: &str,
+        purpose: ofz::proto::GuestMaintenancePurpose,
+        target: &str,
+    ) -> Result<ofz::proto::CheckResponse, Status> {
+        match self {
+            Self::Ofz(client) => client.guest_maintenance(uid, epoch, purpose, target).await,
+            #[cfg(test)]
+            Self::ControlledFixture(mode)
+                if mode.load(std::sync::atomic::Ordering::SeqCst) != 0 =>
+            {
+                Err(Status::unavailable("Ofz maintenance unavailable"))
+            }
+            #[cfg(test)]
+            _ => Ok(ofz::proto::CheckResponse {
+                allowed: true,
+                revision: "fixture".into(),
+                audit_receipt_id: "66666666-6666-4666-8666-666666666666".into(),
+                valid_until_unix_ms: ofz::now_ms()? + 2000,
+                recovery_generation: 1,
+                effective_scope: None,
+            }),
+        }
+    }
     pub(crate) fn new(client: Client) -> Self {
         Self::Ofz(Arc::new(client))
     }
@@ -81,6 +112,9 @@ impl WorkspaceAuthorization {
         }
         if !ofz::canonical_uuid(uid) {
             return Err(Status::unavailable("workspace UID unavailable"));
+        }
+        if context.runtime_epoch.is_empty() {
+            context.runtime_epoch = epoch.into();
         }
         Ok(WorkspaceAccess {
             authorization: self.clone(),
@@ -398,6 +432,55 @@ impl WorkspaceAuthorization {
 
 impl WorkspaceAccess {
     pub(crate) async fn require(&self) -> Result<(), Status> {
+        self.decision().await.map(|_| ())
+    }
+
+    pub(crate) async fn guest_decision(
+        &self,
+        action: Action,
+        target: &str,
+        uid: &str,
+        epoch: &str,
+    ) -> Result<(RequestContext, ofz::proto::CheckResponse), Status> {
+        if self.context.workspace_uid != uid || self.context.runtime_epoch != epoch {
+            return Err(Status::permission_denied(
+                "guest runtime differs from its Ofz authority",
+            ));
+        }
+        let parent = self.decision().await?;
+        if self.action == action && self.target == target {
+            return Ok((self.context.clone(), parent));
+        }
+        // A compound controller operation does not confer authority for its guest sub-operations.
+        let mut context = self.context.clone();
+        context.deadline_unix_ms = parent.valid_until_unix_ms;
+        let operation = Self {
+            context: context.clone(),
+            action,
+            target: target.into(),
+            receipt: Arc::new(Mutex::new(String::new())),
+            ..self.clone()
+        };
+        let mut decision = operation.decision().await?;
+        decision.valid_until_unix_ms = decision.valid_until_unix_ms.min(parent.valid_until_unix_ms);
+        Ok((context, decision))
+    }
+
+    pub(crate) async fn probe(
+        &self,
+        uid: &str,
+        epoch: &str,
+    ) -> Result<ofz::proto::CheckResponse, Status> {
+        if self.context.workspace_uid != uid || self.context.runtime_epoch != epoch {
+            return Err(Status::permission_denied("guest probe runtime changed"));
+        }
+        self.require().await?;
+        self.authorization
+            .guest_maintenance(uid, epoch, ofz::proto::GuestMaintenancePurpose::Probe, "")
+            .await
+    }
+
+    async fn decision(&self) -> Result<ofz::proto::CheckResponse, Status> {
         match &self.authorization {
             WorkspaceAuthorization::Ofz(client) => {
                 let mut receipt = self.receipt.lock().await;
@@ -421,24 +504,45 @@ impl WorkspaceAccess {
                         self.recovery_generation,
                     )
                     .await?;
-                *receipt = decision.audit_receipt_id;
+                *receipt = decision.audit_receipt_id.clone();
+                Ok(decision)
             }
             #[cfg(test)]
             WorkspaceAuthorization::ControlledFixture(mode) => {
                 match mode.load(std::sync::atomic::Ordering::SeqCst) {
-                    0 => {}
-                    1 => return Err(Status::permission_denied("workspace action denied")),
-                    _ => return Err(Status::unavailable("Ofz authority unavailable")),
+                    0 => self.fixture_decision(),
+                    1 => Err(Status::permission_denied("workspace action denied")),
+                    _ => Err(Status::unavailable("Ofz authority unavailable")),
                 }
             }
             #[cfg(test)]
             WorkspaceAuthorization::SynchronizedFixture(barrier) => {
                 barrier.wait().await;
+                self.fixture_decision()
             }
             #[cfg(test)]
-            WorkspaceAuthorization::Fixture => {}
+            WorkspaceAuthorization::Fixture => self.fixture_decision(),
+            #[cfg(test)]
+            WorkspaceAuthorization::ExactFixture { action, target } => {
+                if self.action == *action && self.target == *target {
+                    self.fixture_decision()
+                } else {
+                    Err(Status::permission_denied("workspace operation denied"))
+                }
+            }
         }
-        Ok(())
+    }
+
+    #[cfg(test)]
+    fn fixture_decision(&self) -> Result<ofz::proto::CheckResponse, Status> {
+        Ok(ofz::proto::CheckResponse {
+            allowed: true,
+            revision: "fixture".into(),
+            audit_receipt_id: "66666666-6666-4666-8666-666666666666".into(),
+            valid_until_unix_ms: ofz::now_ms()? + 2000,
+            recovery_generation: self.recovery_generation,
+            effective_scope: None,
+        })
     }
 
     pub(crate) async fn revoked(&self) -> Status {
@@ -472,6 +576,64 @@ impl WorkspaceAccess {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn guest_suboperations_require_both_parent_and_exact_operation_permissions() {
+        let uid = "11111111-1111-4111-8111-111111111111";
+        let principal = Principal::fixture(&"a".repeat(64), uid, Action::TerminalControl);
+        let epoch = &principal.context.runtime_epoch;
+        for (action, target) in [
+            (Action::TerminalControl, "terminal-parent"),
+            (Action::TerminalObserve, ""),
+            (Action::TerminalControl, "terminal-other"),
+        ] {
+            let authorization = WorkspaceAuthorization::ExactFixture {
+                action,
+                target: target.into(),
+            };
+            let access = authorization
+                .access(&principal, uid, epoch, "terminal-parent")
+                .unwrap();
+            for (action, target) in [
+                (Action::TerminalObserve, ""),
+                (Action::TerminalControl, "terminal-other"),
+            ] {
+                assert_eq!(
+                    access
+                        .guest_decision(action, target, uid, epoch)
+                        .await
+                        .unwrap_err()
+                        .code(),
+                    tonic::Code::PermissionDenied,
+                    "a permission for only the parent or only its sub-operation cannot authorize a compound operation"
+                );
+            }
+        }
+        let access = WorkspaceAuthorization::Fixture
+            .access(&principal, uid, epoch, "terminal-parent")
+            .unwrap();
+        let (context, decision) = access
+            .guest_decision(Action::TerminalObserve, "", uid, epoch)
+            .await
+            .unwrap();
+        assert_eq!(context.actor, principal.context.actor);
+        assert_eq!(context.session_id, principal.context.session_id);
+        assert!(decision.valid_until_unix_ms <= context.deadline_unix_ms);
+        for (uid, epoch) in [
+            ("22222222-2222-4222-8222-222222222222", epoch.as_str()),
+            (uid, "33333333-3333-4333-8333-333333333333"),
+        ] {
+            assert_eq!(
+                access
+                    .guest_decision(Action::TerminalObserve, "", uid, epoch)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::PermissionDenied
+            );
+        }
+    }
+
     pub struct OfzFixture {
         pub authorization: WorkspaceAuthorization,
         pub mode: Arc<std::sync::atomic::AtomicU8>,

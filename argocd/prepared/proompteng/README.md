@@ -1,13 +1,13 @@
-# Ofz BFF cutover configuration
+# Prepared Ofz BFF
 
-Render with `kustomize build argocd/prepared/proompteng`. The active application excludes this overlay until Ofz,
-Keycloak, the migrated TLS database and namespace-local credentials are ready for the coordinated image cutover.
-It supplies the complete required auth configuration and network paths; there is no runtime fallback.
+The active parent excludes this overlay. It renders two BFF replicas on different hosts with a one-replica disruption
+minimum. Removing the ARM64 selector permits the existing multi-architecture image to use all three cluster hosts;
+the cluster has only one ARM64 host. A rolling surge can therefore schedule without co-locating the two serving replicas.
 
-Required Secrets are `tengri-internal-request-key` (`TENGRI_INTERNAL_HMAC_SECRET`), `tengri-oidc-client`
-(`client-secret`), `tengri-bff-db` (`password`), and `ofz-database-ca` (`ca.crt`). The request key must match the
-controller, and the OIDC client credential must match Keycloak's confidential Tengri client. The fixed ingress
-address is only the connection target; TLS still verifies `auth.proompteng.ai`.
+Cutover requires namespace-local `tengri-internal-request-key` with `TENGRI_INTERNAL_HMAC_SECRET`, `tengri-oidc-client`
+with `client-secret`, `tengri-bff-db` with `password`, and `ofz-database-ca` with `ca.crt`. The OIDC credential must equal
+Keycloak's reviewed confidential Tengri client secret. The old Better Auth/GitHub secret is excluded from the target.
+The pinned ingress address is reached while TLS verifies `auth.proompteng.ai`; it does not replace the issuer identity.
 
-Move this configuration into the existing Kargo-managed parent when the dependencies and reviewed images are ready.
-Remove the old Better Auth secret through that change. Verify sign-in and fresh workspace creation after deployment.
+Render with `kustomize build argocd/prepared/proompteng`. P8 moves this configuration into the existing
+Kargo-owned parent during the coordinated release. Independent recovery and deployed browser acceptance remain gates.

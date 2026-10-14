@@ -179,7 +179,7 @@ export const makeBaynBrokerObservations = (
     },
     options: {
       ingressPrivate: true,
-      enableLazyState: true,
+      enableLazyState: false,
       hooks: [...hooks],
       retryPolicy: { maxAttempts: 3, onMaxAttempts: 'pause', initialInterval: 1_000, maxInterval: 10_000 },
       inactivityTimeout: { milliseconds: config.operationTimeoutMs * 2 },

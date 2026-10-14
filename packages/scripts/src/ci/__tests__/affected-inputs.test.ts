@@ -59,6 +59,50 @@ test('native Tengri images do not consume Bun metadata', () => {
   }
 })
 
+test('Ofz implementation keeps runtime qualification while packaging and docs skip guest images', () => {
+  const workflow = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
+    for (const file of ['services/ofz/README.md', 'nix/images/ofz.nix']) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
+    }
+    for (const file of [
+      'services/ofz/src/lib.rs',
+      'services/ofz/src/main.rs',
+      'services/ofz/Cargo.toml',
+      'services/ofz/Cargo.lock',
+      'services/ofz/build.rs',
+      'services/ofz/migrations/0001_control.sql',
+      'services/ofz/schema.zed',
+      'services/ofz/operations.json',
+      'services/ofz/test-control.sh',
+      'proto/proompteng/authz/v1/authz.proto',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
+test('Ofz image qualification follows its shared publication helpers', () => {
+  const workflow = Bun.YAML.parse(readFileSync('.github/workflows/ofz.yaml', 'utf8'))
+  for (const event of ['pull_request', 'push']) {
+    const paths = property(property(property(workflow, 'on'), event), 'paths')
+    if (!Array.isArray(paths)) throw new Error('Missing Ofz image trigger paths')
+    for (const file of [
+      'packages/scripts/src/shared/oci.ts',
+      'packages/scripts/src/shared/cli.ts',
+      'nix/oci-push.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-release-contract.sh',
+      'nix/ci-run-timed.sh',
+      '.github/actions/setup-nix-toolchain/action.yml',
+    ]) {
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(true)
+    }
+  }
+})
+
 test('a changed transitive dependency still runs its consumers', () => {
   const upgraded = { ...before, packages: { ...before.packages, dayjs: after.packages.dayjs } }
   expect(selectAffectedInputs(['bun.lock'], targets, before, upgraded)).toEqual({ bayn: true, landing: false })
