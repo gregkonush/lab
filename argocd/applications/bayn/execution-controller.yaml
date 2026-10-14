@@ -191,7 +191,7 @@ spec:
             tcpSocket:
               port: restate
             periodSeconds: 2
-            failureThreshold: 180
+            failureThreshold: 600
           readinessProbe:
             tcpSocket:
               port: restate

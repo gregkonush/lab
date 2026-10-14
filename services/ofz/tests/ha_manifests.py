@@ -76,6 +76,134 @@ def validate(targets):
         <= maximum_connections - 30,
         "ofz: simultaneous rolling surges exhaust the SQL connection budget",
     )
+    roles = {
+        item["name"]: item
+        for item in resource(targets, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+            "roles"
+        ]
+    }
+    limits = {
+        "ofz_migrator": 2,
+        "ofz_api": 42,
+        "ofz_archiver": 4,
+        "tengri_migrator": 2,
+        "tengri_controller": 36,
+        "tengri_bff": 24,
+        "tengri_supervisor": 12,
+    }
+    require(
+        roles.keys() == limits.keys(),
+        "ofz: every control database caller needs its own role",
+    )
+    for item in targets["ofz"]:
+        if item and item["kind"] == "SealedSecret":
+            require(
+                item["metadata"]
+                .get("annotations", {})
+                .get("argocd.argoproj.io/sync-wave")
+                == "-9",
+                "ofz: Argo must create each outer SealedSecret before database and native consumers",
+            )
+        if item and item["kind"] == "NetworkPolicy":
+            require(
+                item["metadata"]
+                .get("annotations", {})
+                .get("argocd.argoproj.io/sync-wave")
+                == "-5",
+                "ofz: network isolation must precede owner jobs and serving workloads",
+            )
+    for name, limit in limits.items():
+        role = roles[name]
+        require(
+            role["connectionLimit"] == limit
+            and role["login"] is True
+            and all(
+                role[key] is False
+                for key in [
+                    "inherit",
+                    "superuser",
+                    "createdb",
+                    "createrole",
+                    "replication",
+                    "bypassrls",
+                ]
+            ),
+            f"ofz: {name} exceeds its database authority or connection budget",
+        )
+        require(
+            role["passwordSecret"]["name"] == name.replace("_", "-") + "-db-auth",
+            f"ofz: {name} credential binding changed",
+        )
+    for name, database, owner, command in [
+        ("ofz-control-migrate", "ofz_control", "ofz_migrator", "migrate"),
+        (
+            "tengri-control-migrate",
+            "tengri_control",
+            "tengri_migrator",
+            "migrate-runtime",
+        ),
+    ]:
+        job = resource(targets, "ofz", "Job", name)
+        app = next(iter(job["spec"]["template"]["spec"]["containers"]))
+        require(
+            app["args"] == [command]
+            and f"dbname={database} user={owner}" in values(app)["OFZ_DATABASE_DSN"],
+            f"ofz: {name} must use its schema owner",
+        )
+        require(
+            job["metadata"]["annotations"].get("argocd.argoproj.io/sync-wave") == "-4",
+            "ofz: schema migration must precede serving workloads",
+        )
+    export = resource(targets, "ofz", "Deployment", "ofz-audit-export")["spec"]
+    bootstrap = resource(targets, "ofz", "Job", "ofz-platform-bootstrap")
+    bootstrap_pod = bootstrap["spec"]["template"]["spec"]
+    bootstrap_app = bootstrap_pod["containers"][0]
+    require(
+        bootstrap_app["args"] == ["bootstrap", "/var/run/ofz/bootstrap/manifest.json"]
+        and "dbname=ofz_control user=ofz_migrator"
+        in values(bootstrap_app)["OFZ_DATABASE_DSN"]
+        and bootstrap["metadata"]["annotations"].get("argocd.argoproj.io/sync-wave")
+        == "-3",
+        "ofz: approved owner bootstrap must follow migration and retain the platform fence",
+    )
+    require(
+        {
+            item["name"]: item.get("secret", {}).get("secretName")
+            for item in bootstrap_pod["volumes"]
+        }.get("bootstrap")
+        == "ofz-bootstrap-manifest",
+        "ofz: bootstrap requires the protected approved manifest",
+    )
+    require(
+        export["replicas"] == 2
+        and export["strategy"]["rollingUpdate"]["maxSurge"] == 0,
+        "ofz: archive leadership must fit its four-connection budget",
+    )
+    export_pod = export["template"]["spec"]
+    export_app = export_pod["containers"][0]
+    require(
+        "user=ofz_archiver" in values(export_app)["OFZ_DATABASE_DSN"],
+        "ofz: exporter requires the restricted archive role",
+    )
+    require(
+        not any(
+            item.get("secret", {}).get("secretName") == "ofz-spicedb-key"
+            for item in export_pod["volumes"]
+        ),
+        "ofz: exporter must not hold native policy authority",
+    )
+    export_network = resource(targets, "ofz", "NetworkPolicy", "ofz-audit-export")[
+        "spec"
+    ]
+    require(
+        export_network["ingress"] == []
+        and export_network["egress"][-1]
+        == {
+            "to": [{"ipBlock": {"cidr": "100.78.240.108/32"}}],
+            "ports": [{"protocol": "TCP", "port": 9444}],
+        },
+        "ofz: exporter egress requires the approved private NUC destination",
+    )
     for target, kind, name in workloads:
         spec = resource(targets, target, kind, name)["spec"]
         require(spec["replicas"] == 2, f"{target}: two serving replicas required")
@@ -353,6 +481,36 @@ def main():
     ]
     mutations.extend(
         [
+            lambda data: resource(data, "ofz", "SealedSecret", "ofz-api-db-auth")[
+                "metadata"
+            ].pop("annotations"),
+            lambda data: resource(data, "ofz", "NetworkPolicy", "ofz-migrate")[
+                "metadata"
+            ].pop("annotations"),
+            lambda data: resource(data, "ofz", "Job", "ofz-platform-bootstrap")["spec"][
+                "template"
+            ]["spec"]["containers"][0].update(
+                args=["activate", "/var/run/ofz/bootstrap/manifest.json"]
+            ),
+            lambda data: resource(data, "ofz", "Job", "ofz-platform-bootstrap")["spec"][
+                "template"
+            ]["spec"]["volumes"][-1]["secret"].update(
+                secretName="unapproved-bootstrap"
+            ),
+            lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ][1].update(superuser=True),
+            lambda data: resource(data, "ofz", "Job", "ofz-control-migrate")["spec"][
+                "template"
+            ]["spec"]["containers"][0]["env"][0].update(
+                value="dbname=ofz_control user=ofz_api sslmode=require"
+            ),
+            lambda data: resource(data, "ofz", "Deployment", "ofz-audit-export")[
+                "spec"
+            ]["strategy"]["rollingUpdate"].update(maxSurge=2),
+            lambda data: resource(data, "ofz", "NetworkPolicy", "ofz-audit-export")[
+                "spec"
+            ]["egress"][-1]["to"][0]["ipBlock"].update(cidr="0.0.0.0/0"),
             lambda data: resource(
                 data, "proompteng", "NetworkPolicy", "proompteng-web"
             )["spec"].update(
