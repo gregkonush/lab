@@ -40,7 +40,9 @@ assumptions to primary research and define which hypotheses still require an unt
 The scoped `ValkeyCache` service provides namespaced reads, bounded-TTL writes and
 deletion over authenticated TLS. Bayn's API and execution worker receive the
 existing connection ConfigMap, password Secret and client certificate mount.
-Cache acquisition is explicit; existing execution paths do not read Valkey.
+Configuration, TLS material and the connection are acquired only on the first
+valid cache operation. Missing cache artifacts do not fail layer construction;
+existing execution paths do not read Valkey.
 
 After building, `bun run valkey:verify` runs synthetic miss, write/read, deletion
 and expiry checks and exits after closing the client. See the

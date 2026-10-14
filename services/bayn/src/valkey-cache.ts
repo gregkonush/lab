@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 
-import { NodeRedis } from '@effect/platform-node'
-import { Config, Context, Data, Effect, Layer, Option, Redacted, Schema } from 'effect'
+import { Config, Context, Data, Effect, Layer, Option, Redacted, Schema, Semaphore } from 'effect'
+import { createClient } from 'redis'
 
 export class ValkeyCacheError extends Data.TaggedError('ValkeyCacheError')<{
   readonly operation: string
@@ -41,107 +41,135 @@ export const valkeyConfig = Config.all({
   ),
 })
 
-export const makeValkeyCache = Effect.gen(function* () {
-  const { client } = yield* NodeRedis.NodeRedis
-  const destroy = Effect.sync(() => {
-    if (client.isOpen) client.destroy()
-  })
-  yield* Effect.addFinalizer(() => destroy)
+type ValkeyClientOptions = NonNullable<Parameters<typeof createClient>[0]>
 
-  const command = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
-    Effect.tryPromise({
-      try: async (signal) => {
-        if (!client.isOpen) await client.connect()
-        return run(signal)
-      },
-      catch: (cause) => new ValkeyCacheError({ operation, message: 'Valkey command failed', cause }),
-    }).pipe(
-      Effect.onInterrupt(() => destroy),
-      Effect.timeoutOrElse({
-        duration: '1 second',
-        orElse: () => Effect.fail(new ValkeyCacheError({ operation, message: 'Valkey command exceeded its deadline' })),
+export const makeValkeyCache = (options: Effect.Effect<ValkeyClientOptions, ValkeyCacheError>) =>
+  Effect.gen(function* () {
+    let client: ReturnType<typeof createClient> | undefined
+    const connecting = yield* Semaphore.make(1)
+    const log = Effect.runSyncWith(yield* Effect.context<never>())
+    const destroy = Effect.sync(() => {
+      if (client !== undefined && client.isOpen) client.destroy()
+    })
+    yield* Effect.addFinalizer(() => destroy)
+
+    const acquire = connecting.withPermit(
+      Effect.gen(function* () {
+        if (client === undefined) {
+          const config = yield* options
+          client = yield* Effect.try({
+            try: () => {
+              const value = createClient(config)
+              value.on('error', (cause) => log(Effect.logWarning('Valkey connection error', cause)))
+              return value
+            },
+            catch: (cause) =>
+              new ValkeyCacheError({ operation: 'connect', message: 'Cannot create Valkey client', cause }),
+          })
+        }
+        const current = client
+        if (!current.isReady) {
+          yield* destroy
+          yield* Effect.tryPromise({
+            try: () => current.connect(),
+            catch: (cause) =>
+              new ValkeyCacheError({ operation: 'connect', message: 'Cannot connect to Valkey', cause }),
+          })
+        }
+        return current
       }),
-      Effect.withSpan(`bayn.valkey.${operation}`),
     )
 
-  const key = (operation: string, input: string) =>
-    Schema.decodeUnknownEffect(ValkeyKey)(input).pipe(
-      Effect.mapError(() => new ValkeyCacheInputError({ operation, message: 'Cache keys must use the bayn: prefix' })),
-    )
+    const command = <A>(
+      operation: string,
+      run: (client: ReturnType<typeof createClient>, signal: AbortSignal) => Promise<A>,
+    ) =>
+      acquire.pipe(
+        Effect.flatMap((client) =>
+          Effect.tryPromise({
+            try: (signal) => run(client, signal),
+            catch: (cause) => new ValkeyCacheError({ operation, message: 'Valkey command failed', cause }),
+          }),
+        ),
+        Effect.onInterrupt(() => destroy),
+        Effect.timeoutOrElse({
+          duration: '1 second',
+          orElse: () =>
+            Effect.fail(new ValkeyCacheError({ operation, message: 'Valkey command exceeded its deadline' })),
+        }),
+        Effect.withSpan(`bayn.valkey.${operation}`),
+      )
 
-  return ValkeyCache.of({
-    get: (input) =>
-      key('get', input).pipe(
-        Effect.flatMap((key) => command('get', (signal) => client.withAbortSignal(signal).get(key))),
-        Effect.map(Option.fromNullishOr),
-      ),
-    put: (input) =>
-      Schema.decodeUnknownEffect(ValkeyWrite)(input).pipe(
+    const key = (operation: string, input: string) =>
+      Schema.decodeUnknownEffect(ValkeyKey)(input).pipe(
         Effect.mapError(
-          () =>
-            new ValkeyCacheInputError({
-              operation: 'put',
-              message: 'Cache writes require a bayn: key, bounded value and TTL of 1–300000 ms',
-            }),
+          () => new ValkeyCacheInputError({ operation, message: 'Cache keys must use the bayn: prefix' }),
         ),
-        Effect.flatMap(({ key, value, ttlMs }) =>
-          command('put', (signal) => client.withAbortSignal(signal).set(key, value, { PX: ttlMs })),
+      )
+
+    return ValkeyCache.of({
+      get: (input) =>
+        key('get', input).pipe(
+          Effect.flatMap((key) => command('get', (client, signal) => client.withAbortSignal(signal).get(key))),
+          Effect.map(Option.fromNullishOr),
         ),
-        Effect.asVoid,
-      ),
-    remove: (input) =>
-      key('remove', input).pipe(
-        Effect.flatMap((key) => command('remove', (signal) => client.withAbortSignal(signal).del(key))),
-        Effect.asVoid,
-      ),
+      put: (input) =>
+        Schema.decodeUnknownEffect(ValkeyWrite)(input).pipe(
+          Effect.mapError(
+            () =>
+              new ValkeyCacheInputError({
+                operation: 'put',
+                message: 'Cache writes require a bayn: key, bounded value and TTL of 1–300000 ms',
+              }),
+          ),
+          Effect.flatMap(({ key, value, ttlMs }) =>
+            command('put', (client, signal) => client.withAbortSignal(signal).set(key, value, { PX: ttlMs })),
+          ),
+          Effect.asVoid,
+        ),
+      remove: (input) =>
+        key('remove', input).pipe(
+          Effect.flatMap((key) => command('remove', (client, signal) => client.withAbortSignal(signal).del(key))),
+          Effect.asVoid,
+        ),
+    })
   })
+
+const clientOptions = Effect.gen(function* () {
+  const config = yield* valkeyConfig.pipe(
+    Effect.mapError(
+      (cause) =>
+        new ValkeyCacheError({ operation: 'configure', message: 'Valkey configuration is unavailable', cause }),
+    ),
+  )
+  const readTls = (name: string) =>
+    Effect.tryPromise({
+      try: (signal) => readFile(`${config.tlsDirectory}/${name}`, { encoding: 'utf8', signal }),
+      catch: (cause) =>
+        new ValkeyCacheError({ operation: 'configure', message: 'Cannot read Valkey TLS material', cause }),
+    })
+  const { ca, cert, key } = yield* Effect.all({
+    ca: readTls('ca.crt'),
+    cert: readTls('tls.crt'),
+    key: readTls('tls.key'),
+  })
+  return {
+    username: config.username,
+    password: Redacted.value(config.password),
+    disableOfflineQueue: true,
+    commandOptions: { timeout: 250 },
+    socket: {
+      host: config.host,
+      port: config.port,
+      tls: true,
+      servername: config.serverName,
+      ca,
+      cert,
+      key,
+      connectTimeout: 1000,
+      reconnectStrategy: false,
+    },
+  } satisfies ValkeyClientOptions
 })
 
-export const ValkeyCacheLive = Layer.unwrap(
-  Effect.gen(function* () {
-    const config = yield* valkeyConfig.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ValkeyCacheError({ operation: 'configure', message: 'Valkey configuration is unavailable', cause }),
-      ),
-    )
-    const readTls = (name: string) =>
-      Effect.tryPromise({
-        try: (signal) => readFile(`${config.tlsDirectory}/${name}`, { encoding: 'utf8', signal }),
-        catch: (cause) =>
-          new ValkeyCacheError({ operation: 'configure', message: 'Cannot read Valkey TLS material', cause }),
-      })
-    const { ca, cert, key } = yield* Effect.all({
-      ca: readTls('ca.crt'),
-      cert: readTls('tls.crt'),
-      key: readTls('tls.key'),
-    })
-    return Layer.effect(ValkeyCache, makeValkeyCache).pipe(
-      Layer.provide(
-        NodeRedis.layer({
-          username: config.username,
-          password: Redacted.value(config.password),
-          disableOfflineQueue: true,
-          commandOptions: { timeout: 250 },
-          socket: {
-            host: config.host,
-            port: config.port,
-            tls: true,
-            servername: config.serverName,
-            ca,
-            cert,
-            key,
-            connectTimeout: 1000,
-            reconnectStrategy: false,
-          },
-        }).pipe(
-          Layer.catch((cause) =>
-            Layer.effectContext(
-              Effect.fail(new ValkeyCacheError({ operation: 'connect', message: 'Cannot connect to Valkey', cause })),
-            ),
-          ),
-        ),
-      ),
-    )
-  }),
-)
+export const ValkeyCacheLive = Layer.effect(ValkeyCache, makeValkeyCache(clientOptions))
