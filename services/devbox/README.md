@@ -51,6 +51,16 @@ must upload successfully before the Kargo discovery tag is exposed. Publication
 uses the shared Docker retry helper and the registry's
 [shared upload budget](../../argocd/applications/registry/README.md).
 
+Builds use Docker's native image store instead of exporting and reloading the
+whole image through a separate BuildKit container. Validated main builds publish
+an inline cache at `cache-amd64` and `cache-arm64`. PRs can read those caches but
+cannot replace them. Cache tags are excluded from Kargo discovery. Main releases
+finish publishing when newer commits arrive; superseded PR builds are cancelled.
+Boot files and the source revision are applied after dependency installation, so
+boot-only changes reuse the Nix, Rust, workspace dependency, and browser layers.
+Codex version changes reuse those layers too. The dependency installer itself
+remains an input to its installation layer.
+
 The `devbox` Warehouse and Stage bind the image to its source commit and successful
 workflow run. Kargo updates `argocd/applications/devbox` on `kargo/devbox`; the
 `devbox` Application follows that branch. The source template on `main` retains an
