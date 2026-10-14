@@ -40,6 +40,7 @@ const context: CycleRunContext = {
   authorityGenerationHash: '4'.repeat(64),
   executionPolicy: policy,
   buildDecision: forbidden,
+  buildDecisionEvidence: forbidden,
 }
 const session = { date: '2026-09-18', openAt: '2026-09-18T13:30:00.000Z', closeAt: '2026-09-18T20:00:00.000Z' }
 const calendar: MarketCalendarObservation = {

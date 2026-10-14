@@ -17,7 +17,7 @@ import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.te
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
 import type { CycleDecisionDocument } from './shadow-decision-contract'
-import { CycleDecisionBuildError, runAutonomousCyclePass } from './cycle/runner'
+import { CycleDecisionBuildError, CycleRunnerError, runAutonomousCyclePass } from './cycle/runner'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
 import {
   makeRecoveryFirstCycleDriver,
@@ -5623,6 +5623,11 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
                       )
                     : Effect.succeed(fixture.document)
                 }),
+              buildDecisionEvidence: () =>
+                Effect.sync(() => {
+                  operations.push('verify')
+                  return {}
+                }),
             },
             {
               read: Effect.succeed(reconciliationResultAt(evaluatedAt)),
@@ -5684,8 +5689,91 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
           ? ['activate', 'build']
           : kind === 'activation-expired'
             ? ['activate', 'block']
-            : [...(kind === 'discovery' ? ['acquire'] : []), 'activate', 'build', 'bind', 'read-bound'],
+            : [...(kind === 'discovery' ? ['acquire'] : []), 'activate', 'build', 'verify', 'bind', 'read-bound'],
       )
+    }
+  },
+)
+
+test.each(['verified', 'empty', 'contract', 'not-ready'] as const)(
+  'decision evidence %s result is required before durable binding',
+  async (kind) => {
+    const fixture = await executionLifecycleFixture()
+    const services = makeExactReconciliationServices(Authority.Execution)
+    const operations: string[] = []
+    const evidence = kind === 'empty' ? {} : { streamingSnapshotReferences: [] }
+    const failure = new CycleDecisionBuildError({
+      failure: kind === 'not-ready' ? 'not-ready' : 'contract',
+      message: 'canonical market evidence unavailable',
+    })
+    const forbidden = () => Effect.die(new Error('unexpected decision-binding operation'))
+    const store: CycleStoreShape = {
+      acquire: forbidden,
+      read: forbidden,
+      readAuthoritySlot: forbidden,
+      readOldestUnfinished: forbidden,
+      readDecisionDocument: forbidden,
+      bindSnapshot: forbidden,
+      activate: forbidden,
+      finish: forbidden,
+      block: forbidden,
+      bindDecision: (_id, document, _at, verified) =>
+        Effect.sync(() => {
+          operations.push('bind')
+          expect(document).toBe(fixture.document)
+          expect(verified).toBe(evidence)
+          return { cycle, changed: true }
+        }),
+    }
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        return yield* Effect.exit(
+          runAutonomousCyclePass(
+            {
+              cycleBindingId: cycle.identity.qualificationRunId,
+              accountId,
+              strategyName: 'jev',
+              strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+              executionPolicy: fixture.preparation.executionPolicy,
+              buildDecision: () =>
+                Effect.sync(() => {
+                  operations.push('build')
+                  return fixture.document
+                }),
+              buildDecisionEvidence: (document) =>
+                Effect.suspend(() => {
+                  operations.push('verify')
+                  expect(document).toBe(fixture.document)
+                  return kind === 'contract' || kind === 'not-ready' ? Effect.fail(failure) : Effect.succeed(evidence)
+                }),
+            },
+            cycle,
+          ),
+        )
+      }).pipe(
+        Effect.provideService(BrokerRead, services.brokerRead),
+        Effect.provideService(CycleStore, store),
+        Effect.provide(TestClock.layer()),
+      ),
+    )
+    if (kind === 'contract' || kind === 'not-ready') {
+      expect(operations).toEqual(['build', 'verify'])
+      if (Exit.isSuccess(result)) throw new Error('failed evidence must not bind a decision')
+      expect(Cause.findErrorOption(result.cause)).toEqual(
+        Option.some(
+          new CycleRunnerError({
+            operation: 'build-decision',
+            failure: 'contract',
+            message: failure.message,
+            cause: failure,
+          }),
+        ),
+      )
+    } else {
+      expect(operations).toEqual(['build', 'verify', 'bind'])
+      if (Exit.isFailure(result)) throw new Error(Cause.pretty(result.cause))
+      expect(result.value).toMatchObject({ outcome: 'RECOVERED', action: 'BOUND_DECISION' })
     }
   },
 )
@@ -5741,6 +5829,7 @@ test('reads the execution closure once without weakening completion evidence', a
             strategyProtocolHash: fixture.preparation.strategyProtocolHash,
             executionPolicy: fixture.preparation.executionPolicy,
             buildDecision: forbidden,
+            buildDecisionEvidence: forbidden,
           },
           { read: Effect.succeed(reconciliationResultAt(at)), refresh: Effect.succeed(reconciliationResultAt(at)) },
           { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
@@ -5895,6 +5984,7 @@ test('recovery preserves the open session for a real next strategy decision', as
           strategyProtocolHash: fixture.preparation.strategyProtocolHash,
           executionPolicy: fixture.preparation.executionPolicy,
           buildDecision: () => unavailable('build decision before submission opens'),
+          buildDecisionEvidence: () => unavailable('verify decision before submission opens'),
         },
         stored,
       )
