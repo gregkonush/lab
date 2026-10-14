@@ -1,6 +1,6 @@
 # Turin maintenance and service recovery on October 14, 2026
 
-Status: recovery in progress. Evidence updated through approximately `11:27Z` on October 14.
+Status: recovery in progress. Evidence updated through approximately `12:03Z` on October 14.
 This report does not declare the incident closed or all applications recovered.
 
 ## What happened
@@ -68,7 +68,7 @@ All timestamps below are UTC on October 14. Pacific daylight time is seven hours
 | About 10:27    | Full registry read-only filesystem check completed with exit 0 after repair.                                        |
 | 10:34:26       | Restored registry front door returned HTTP 200 from `/v2/`.                                                         |
 | About 10:40    | The current Bayn source image finished normal immutable publication after registry recovery.                        |
-| About 10:54    | Hermes toolchain Kargo promotion reported `Succeeded`.                                                              |
+| 10:46:26       | Hermes toolchain Kargo promotion finished with `Succeeded`.                                                         |
 | About 10:56    | Registry cleanup and Argo reconciliation restored after the missed cleanup deadline had expired.                    |
 | 11:08:48       | Bayn committed migrations 97, 98, and 99 in the native PostgreSQL migration table.                                  |
 | 11:17:00       | Sealed Secrets web architecture placement fix merged.                                                               |
@@ -156,12 +156,52 @@ completed migrations 97–99 at `11:08:48Z`. Both exact-image controllers then b
 Kafka projections, zero offset lag, and recent BTC, ETH, and SOL quotes. A proposed 30-minute migration budget,
 45-minute startup probe, and 60-minute promotion timeout passed isolated tests, but was withdrawn after native
 migration completion made it unnecessary for recovery. None of those proposed changes was committed or deployed.
-The activation hook still awaits proof of the expected durable controller plan and successor pass. Public Bayn
-availability, accounting reconciliation, and trading readiness remain separate acceptance requirements.
+After migration, native Restate inspection found three obsolete paused calls: a broker-observation poll and two
+controller calls. The poll held its exclusive object lock, preventing the new observation activation from proceeding.
+The controller calls had only input journal entries. The poll journal contained input, an eager state read, and the
+read/publish operation. Its pinned historical worker had no Ready endpoints because it required the removed legacy
+configuration. Native database guards confirmed OBSERVE authority, an active kill switch, no open orders or
+nonterminal intents, and flat broker and accounted positions before intervention.
 
-The reviewed cash-spot cutover deliberately has no capital activation request and clamps the previous PAPER
-authority. Its documented next step is a separately reviewed PAPER mandate bound to the verified account, image,
-and current strategy/risk identities. Infrastructure recovery does not supply that mandate or grant live authority.
+Graceful cancellation completed the obsolete controller calls but could not finish the poll against the unavailable
+historical endpoint. Only that exact read/publish invocation was then stopped through Restate's native kill API.
+No service registration, durable object state, financial row, or PVC was deleted. The previous poll's terminal
+`[409] killed` result and the controller-call outcomes remained queryable. The financial event counts stayed at
+731 order events, 1,620 mutation events, and 412 accounting transactions. These controls follow
+[Restate's cancellation and kill semantics](https://docs.restate.dev/services/invocation/managing-invocations).
+
+The next automatically published Bayn source, `e8e2e9ba0b144b6ea5f547903f770fafbc9d03cf`, deployed through Kargo
+at digest `sha256:5e41072927a18ae52ecae1012e3c9d1e66425f48c4c4e11fee496f85d2d19a11`.
+Two current activation invocations completed successfully, and native controller sequence numbers began advancing.
+At `11:42:37Z`, `/readyz` and `/v1/status` returned HTTP 200. Status reported exact accounting: all 412 fills had
+matching transactions and receipts, with zero unaccounted fills or unreceipted transactions. This was a recovery
+point, not sustained acceptance: readiness subsequently returned 503 for broker and cycle-runner unavailability.
+
+### Bayn cache connection race
+
+A fresh production diagnostic passed authenticated Valkey primary writes, replica reads, deletion, key-prefix
+rejection, and unauthenticated rejection. Native server readback showed an online replica and no pending AOF fsync.
+The application nevertheless failed broker publication. A retained Tempo trace identified `ValkeyCacheError` caused
+by `The client is offline`.
+
+A local TCP regression reproduced the failure: after a command abort closes the shared client, two concurrent callers
+race through reconnect. One observes an open but unready socket, fails, and destroys the other caller's connection.
+This repeatedly prevents full and compact broker materializations from publishing. It is an application connection
+ownership defect, distinct from Valkey server readiness and Ceph's residual warnings.
+
+[PR #15047](https://github.com/proompteng/lab/pull/15047) gives each command ownership of that scoped connection
+through reconnect, execution, and cancellation. It preserves the one-second overall deadline, TLS, ACLs and replica
+acknowledgement; queued cancellation cannot close the active command's socket. Reconnect happens on the next command
+instead of in a competing background retry. The new regression failed before the fix and passed afterward. All 14
+Valkey transport/boundary tests, the full Bayn suite (2,949 passed, 394 skipped, zero failures), type checks, linters,
+and build passed. Remote CI, immutable publication, Kargo rollout, and sustained native acceptance remain outstanding.
+
+The reviewed cash-spot cutover deliberately has no capital activation request and includes a PAPER-to-OBSERVE clamp.
+This account was already OBSERVE with its kill switch active at `07:09:59Z`, before maintenance. Fresh native
+reconciliation cleared the kill switch at `11:40:32Z`; maximum and effective authority remained OBSERVE, broker access
+remained read-only, and no capital mandate was created. The documented next step for trading is a separately reviewed
+PAPER mandate bound to the verified account, image, and current strategy/risk identities. Infrastructure recovery does
+not supply that mandate or grant live authority.
 
 ### Market-data archive and Sealed Secrets web
 
@@ -206,8 +246,9 @@ restored the proxy. [PR #15039](https://github.com/proompteng/lab/pull/15039), m
 container process. Image publication and Kargo deployment were still blocked by the registry when this source fix merged.
 
 The normal Hermes toolchain publisher and Kargo promotion later succeeded. Production readback confirmed
-`pid_filename none` and no PID file. A restart within the same Pod still needs proof before claiming the PID-file
-recurrence is disproved. [PR #15041](https://github.com/proompteng/lab/pull/15041) also fixed placement of the existing disposable
+`pid_filename none` and no PID file. A disposable container using that pinned image and configuration then started
+with a retained stale PID 1 file, survived SIGKILL and restart with the same directory, and continued rejecting a
+private CONNECT destination. This proves the retained-directory restart behavior without interrupting the serving proxy. [PR #15041](https://github.com/proompteng/lab/pull/15041) also fixed placement of the existing disposable
 Hermes network-policy probe by admitting the second amd64 node's existing compute taint. Required cross-node
 anti-affinity remained in place. The native probe completed with `network_policy_enforced=true`: baseline access,
 denied access after policy enforcement, and restored access after the allow rule, using a fresh private image pull.
@@ -229,7 +270,30 @@ No acceptance window was weakened, offset reset, or synthetic backfill performed
 
 [PR #15043](https://github.com/proompteng/lab/pull/15043), merged as
 `010a9096f726efa75b26897691c5195036bd7082` at `11:17:00Z`, pins only Sealed Secrets web to amd64. The rendered
-manifests and server dry run passed before merge; the normal Argo rollout produced a Ready web replica.
+manifests and server dry run passed before merge; the normal Argo rollout produced a Ready web replica and native HTTP 200.
+
+The Ofz audit exporter failed against the NUC archive's previous unencrypted backend. The already reviewed
+`2ad3b50412db8b0d4d0ba4896ca072faf9599b61` source and successfully published Ofz tool image
+`sha256:19e448288b6c11cc499c2ab85c75f3b268b5b57ec96c7214db63a5d415609511` were deployed through the existing
+NUC deployment procedure. The same credential manifest, backend data, and archive versions were preserved.
+The first wrapping key was atomically persisted and its identity pinned. Repeating deployment from the retained
+`/var/lib/ofz-recovery/source/<commit>` archive preserved that identity and left all container bind mounts under
+the persistent data root. No running service depends on a temporary source directory.
+
+Native verification proved AES256 encryption, version-specific readback, ninety-day COMPLIANCE retention, writer
+and custodian deletion denial, and retention-shortening denial. Both production exporters recovered naturally.
+The control database showed one audit receipt and one archive acknowledgement after independent TLS readback;
+Ofz became `Synced` and `Healthy`. Its SQL platform fence and the separate workspace-creation fence remained intact.
+
+NUC's existing direct SSH key worked for alias `nuc`, while its canonical DNS name still selected the global
+1Password agent. The existing Host patterns and the global rule's exclusions were extended only to the verified
+NUC DNS name and Tailscale IP. All three names now select the same existing key and `kalmyk` account with
+`IdentityAgent none`; canonical-host SSH returned UID 1000 and the deployed source SHA without an approval prompt.
+
+Altra's BMC reports its last restart cause as `chassis power control command`. Its clock reads January 2012, and
+its latest SEL entries contain old voltage events, so these records cannot establish a dated October 14 actor or
+command. The overlapping kernel boot remains confirmed, while attribution and its exact availability impact remain open.
+No Altra power command was issued during this forensic readback.
 
 The requested Turin case-fan setting was restored and read back at 1120 RPM on FAN1, FAN3, FANA, and FANB.
 The CPU fan and full-speed pump remained separately controlled; the pump read 3780 RPM. These are observed values,
@@ -237,24 +301,26 @@ not a promise of identical RPM under every future thermal condition.
 
 ## Recovery state at this revision
 
-The latest checked inventory contained 91 Argo Applications. 87 reported `Synced` and `Healthy`, but three of those
-had reconciliation paused, so only 84 met both the health/sync and active-reconciliation acceptance criteria.
-Those holds must be resolved against their current owner and intended release before treating cached health as proof.
+At approximately `12:03Z`, the inventory contained 91 Argo Applications. 88 reported `Synced` and `Healthy`, but
+three of those had reconciliation paused, leaving 85 with both current health/sync and active reconciliation.
+The three non-green Applications were Bayn, Home Stash, and Rook-Ceph. The Cloudflare, Keycloak, and Tengri holds
+belong to the separate ongoing identity/runtime cutover and must be resolved against that owner's reviewed release;
+their cached Argo health is not fresh acceptance. Incident-owned registry and observability holds were removed.
 
-| Service or dependency | Verified state                                                                                              | Remaining acceptance                                                                                             |
-| --------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Physical Turin        | Ready, schedulable, original node and four NVMe identities; Kata/GPU checks passed                          | Next boot with committed growth prevention; NVMe disappearance cause                                             |
-| Ceph                  | Six original OSDs up/in, three monitors in quorum, all 601 PGs active                                       | 706,079 degraded objects, 32 undersized PGs, two BlueStore slow-operation warnings at approximately 11:27Z       |
-| Registry              | Original claim mounted, HTTP 200, immutable publication and fresh pulls restored; maintenance holds removed | Full retained-catalog integrity audit                                                                            |
-| Kafka                 | Broker 3 restarted naturally; no unavailable partitions in post-restart native query                        | Continued production replication and input freshness; old RF1 simulation topic configuration is a separate issue |
-| Observability         | Mimir and Tempo replicas Ready; original volumes and reconciliation restored                                | Quantify late-sample rejection gap; do not assume complete historical telemetry                                  |
-| Market data           | Both Flink jobs running from retained savepoints, with fresh completed checkpoints                          | Session-specific source freshness and archive progress                                                           |
-| Bayn                  | Migrations 97–99 committed; exact-image controllers Ready with fresh crypto projections                     | Durable activation completion, public runtime, exact reconciliation, and reviewed PAPER mandate                  |
-| External Secrets      | Two controller replicas Ready without OOM recurrence; canary and all 30 ExternalSecrets Ready               | Routine observation at the deployed memory limit                                                                 |
-| Sealed Secrets        | Web replica Ready after amd64 placement; controller unchanged                                               | Native web HTTP proof                                                                                            |
-| Hermes                | Toolchain publication/promotion and cross-node policy probe succeeded                                       | Same-Pod restart proof                                                                                           |
-| Ofz                   | API and playground replicas Ready after their separately owned release                                      | Audit-export replicas crash-looping; coordinate with the release owner                                           |
-| Home Stash            | Importer continues processing an existing active Job                                                        | Normal completion; an active CronJob legitimately reports `Progressing`                                          |
+| Service or dependency | Verified state                                                                                                                | Remaining acceptance                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Physical Turin        | Ready, schedulable, original node and four NVMe identities; Kata/GPU checks passed                                            | Next boot with committed growth prevention; NVMe disappearance cause                                                        |
+| Ceph                  | Six original OSDs up/in, three monitors in quorum, all 601 PGs active                                                         | 277,415 degraded objects, 13 undersized PGs, two BlueStore slow-operation warnings at approximately 12:03Z                  |
+| Registry              | Original claim mounted, HTTP 200, immutable publication and fresh pulls restored; incident holds removed                      | Full retained-catalog integrity audit                                                                                       |
+| Kafka                 | Broker 3 restarted naturally; no unavailable partitions in post-restart native query                                          | Final production replication and input freshness; old RF1 simulation topics are separate                                    |
+| Observability         | Mimir and Tempo Ready; original volumes and reconciliation restored; publication error trace retrieved                        | Quantify late-sample rejection gap; historical telemetry completeness is unproven                                           |
+| Market data           | Both Flink jobs running from retained savepoints, with fresh completed checkpoints                                            | Session-specific source freshness and archive progress                                                                      |
+| Bayn                  | Migrations 97–99, successful activation, natural sequence progress, exact 412-fill accounting verified                        | Cache reconnect fix #15047, sustained readiness, final session checks; trading separately requires a reviewed PAPER mandate |
+| External Secrets      | Two main controllers Ready without OOM recurrence; canary and all 30 ExternalSecrets Ready                                    | Routine observation at the deployed memory limit                                                                            |
+| Sealed Secrets        | Web Ready and HTTP 200 after amd64 placement; controller unchanged                                                            | Upstream packaging defect remains outside the deployed workaround                                                           |
+| Hermes                | Published/promoted toolchain, production PID-file fix, retained-directory SIGKILL regression and cross-node policy proof pass | No outstanding incident-specific check at this revision                                                                     |
+| Ofz                   | API/playground/exporters Ready, encrypted immutable NUC archive and production acknowledgement verified                       | Separate identity/runtime migration and its deliberate fences remain owned by that work                                     |
+| Home Stash            | Importer continues its normal active Job                                                                                      | Normal completion; active CronJobs legitimately report `Progressing`                                                        |
 
 Ceph redundancy is improving, but a healthy host and active PGs are not equivalent to complete replication.
 No Ceph profile, scrub concurrency, media I/O throttle, OSD identity, or health-warning mute was changed to force
@@ -262,26 +328,31 @@ acceptance. No recovery ETA is inferred from object count alone.
 
 ## Follow-up actions
 
-| Action                                                                              | State and closure evidence                                                                         |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Preserve Turin project quotas and prevent the repeated startup growth mount         | Delivered in PR #15034 with active and persistent readback; validate at a future authorized boot   |
-| Bind CSI errors to exact storage ownership before repair                            | Required recovery procedure; this incident's incorrect registry attribution is explicitly recorded |
-| Preserve snapshots and require exclusive offline ownership before filesystem repair | Applied to the registry and both Mimir claims; corrected and clean exit codes retained             |
-| Restore registry crash recovery                                                     | Journal added and verified on the original claim; root cause of its missing journal remains open   |
-| Remove foreground Squid stale PID-file failure                                      | Source delivered in PR #15039; final production restart proof outstanding                          |
-| Fix External Secrets startup OOM                                                    | Delivered and deployed in PR #15040 with native canary proof                                       |
-| Restore the existing Hermes policy test on two amd64 nodes                          | Delivered in PR #15041 and native deny/allow proof passed                                          |
-| Constrain the mispackaged Sealed Secrets web artifact to its actual architecture    | Delivered and deployed in PR #15043; report upstream packaging defect separately                   |
-| Finish Bayn's native activation and verify exact accounting                         | In progress; retain fail-closed checks and current capital authority                               |
-| Establish Altra's overlapping reboot cause                                          | Open; its boot timestamp is confirmed, but no causal attribution is justified                      |
-| Quantify registry integrity and telemetry gaps                                      | Open; current artifact pulls and replica readiness do not prove historical completeness            |
-| Close the incident only after all applications and service-level checks pass        | In progress; keep this report explicit about remaining work                                        |
+| Action                                                                      | State and closure evidence                                                                                                   |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Preserve Turin quotas and prevent the repeated startup growth mount         | Delivered in PR #15034 with active and persistent readback; validate at a future authorized boot                             |
+| Bind CSI errors to exact storage ownership before repair                    | Required recovery procedure; this incident's incorrect registry attribution is explicitly recorded                           |
+| Preserve snapshots and exclusive offline ownership before filesystem repair | Applied to the registry and both Mimir claims; corrected and clean exit codes retained                                       |
+| Restore registry crash recovery                                             | Journal added and verified on the original claim; its original absence remains unexplained                                   |
+| Remove foreground Squid stale PID-file failure                              | Delivered/deployed in PR #15039; production config and pinned-container retained-directory SIGKILL proof passed              |
+| Fix External Secrets startup OOM                                            | Delivered/deployed in PR #15040 with native canary proof                                                                     |
+| Restore existing Hermes policy test on two amd64 nodes                      | Delivered in PR #15041; native deny/allow proof passed                                                                       |
+| Constrain Sealed Secrets web to its executable's architecture               | Delivered/deployed in PR #15043 with HTTP 200; upstream defect remains open                                                  |
+| Clear obsolete Bayn object ownership and verify accounting                  | Native controls completed; exact accounting and unchanged financial-event counts verified; no capital grant created          |
+| Fix Bayn's concurrent cache reconnect ownership                             | PR #15047 passes local regression/full checks; remote gates, immutable rollout and sustained runtime proof pending           |
+| Complete the reviewed independent Ofz archive update                        | Deployed from retained source; original credentials and wrapping-key identity preserved; production acknowledgement verified |
+| Make NUC canonical-host SSH use its working direct key                      | Scoped host patterns/exclusions and native UID/source readback verified                                                      |
+| Establish Altra's overlapping reboot cause                                  | Kernel boot confirmed; BMC last-cause result and stale clock recorded; actor and exact impact unresolved                     |
+| Quantify registry integrity and telemetry gaps                              | Open; current pulls and replica readiness do not prove historical completeness                                               |
+| Close the incident after all application and service-level checks pass      | In progress; intentional cutover holds and residual failures stay explicit                                                   |
 
 ## Acceptance still required
 
-- Every Argo CD Application must report `Synced` and `Healthy`, with no temporary reconciliation pause left behind.
-- Bayn must expose its deployed status, native reconciliation, controller progress, and session readiness.
-- Kafka must have no unavailable partitions, and the market-data pipeline must resume with verified timestamps.
-- The registry must serve image manifests after a clean offline filesystem check and owner restoration.
-- Ceph recovery, residual warnings, and original OSD identities must be recorded explicitly.
-- The final report must include service recovery timestamps, remaining uncertainty, and delivered corrective changes.
+- Deploy and verify the reviewed Bayn cache fix through successful publication, exact Freight/commit, native broker
+  materialization reads and sustained readiness. Preserve OBSERVE authority until a separately reviewed mandate exists.
+- Recheck Kafka unavailable partitions and session-specific market-data freshness after the final application rollout.
+- Let Ceph complete redundancy recovery and clear its remaining native warnings; retain all original OSD identities.
+- Confirm Home Stash's active Job completes normally and Argo returns to green between scheduled runs.
+- Resolve the separately owned Cloudflare, Keycloak, and Tengri reconciliation holds through their intended release.
+- Update this report with final application counts, runtime acceptance times, remaining data-integrity uncertainty,
+  and the final disposition of each corrective action before declaring the incident closed.
