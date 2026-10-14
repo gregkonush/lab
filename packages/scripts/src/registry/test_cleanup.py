@@ -181,6 +181,17 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(self.store.blob(self.image).exists())
         self.assertTrue(self.store.blob(self.layer).exists())
 
+    def test_reuploaded_untagged_manifest_rescues_prepared_layers(self):
+        layer = self.blob(b"layer from a reuploaded manifest")
+        image = self.image_manifest(layer, recent=True)
+        raw = self.store.blob(image).read_bytes()
+        self.store.blob(image).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [layer])
+        self.blob(raw)
+        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
+        self.assertTrue(self.store.blob(layer).exists())
+
     def test_missing_recent_tagged_manifest_still_fails_closed(self):
         deleted = self.image_manifest(self.blob(b"tagged layer"), recent=True)
         self.tag("release", deleted)
