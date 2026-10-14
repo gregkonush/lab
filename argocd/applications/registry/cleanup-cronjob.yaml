@@ -22,7 +22,7 @@ spec:
         spec:
           serviceAccountName: registry-cleanup
           restartPolicy: Never
-          terminationGracePeriodSeconds: 180
+          terminationGracePeriodSeconds: 420
           nodeSelector:
             kubernetes.io/arch: amd64
           securityContext:
