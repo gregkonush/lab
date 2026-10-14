@@ -34,6 +34,7 @@ services:
     volumes:
       - ${OFZ_RECOVERY_DATA_ROOT:?set the dedicated recovery data root}/data:/data
       - ${OFZ_RECOVERY_DATA_ROOT:?set the dedicated recovery data root}/secrets/s3.json:/run/secrets/s3.json:ro
+      - ${OFZ_RECOVERY_DATA_ROOT:?set the dedicated recovery data root}/secrets/security.toml:/etc/seaweedfs/security.toml:ro
       - ./filer.toml:/etc/seaweedfs/filer.toml:ro
     logging:
       driver: json-file

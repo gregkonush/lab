@@ -7,7 +7,15 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is the dedicated identity rollout on `codex/ofz-identity-rollout`.
+The active source frontier is encrypted independent recovery on `codex/ofz-recovery-encryption`.
+The dedicated identity source merged in [#15038](https://github.com/proompteng/lab/pull/15038) at
+`7b520e8d8827b9fb4d32e9a9f4503763579a25a1`, after every exact-head check passed and its actionable review was resolved.
+Keycloak and Cloudflare retain their existing workloads, with reconciliation temporarily paused until independent
+backup/restore permits the coordinated identity rollout. Ofz reconciliation is also paused until a successfully
+published image produces its first reviewed `kargo/ofz` commit. Its initial main-source migration hooks attempted the
+inert `unpromoted` reference and did not execute. The control databases exist; the owner schema/bootstrap and serving
+API still require the image release. The retired native key is denied, and both old Tengri native types have zero
+relationships, so installing the new schema does not require retaining old grants.
 The fenced API/exporter and approved owner bootstrap merged in [#15026](https://github.com/proompteng/lab/pull/15026)
 at `971f5874970c7ce5453bff0f11a8cb822c03740f`. Its exact-head validation and both image builds pass; main image
 publication and the Kargo/Argo rollout are pending. The live registry is stopped during a filesystem check of its
@@ -18,6 +26,14 @@ instances pass the real API-server dry run. The exact database toleration admits
 Ryzen's compute-local taint. Five rendered targets and thirty-one rejected regressions pass. The real Keycloak 26.7.4,
 Chromium, BFF, controller, Ofz and SQL fixture passes all eighty-one assertions in 81.84 seconds. This is isolated
 evidence; independent backup/restore, live deployment, the real OAuth callback switch and passkeys remain pending.
+
+The NUC encryption preflight reproduces a failed encrypted upload because the earlier server has no wrapping key.
+The correction persists and fingerprints one key, supplies it through a private file, enables bucket encryption,
+and requires encrypted version readback before SQL acknowledgement. The prior exporter fails the new unencrypted
+version regression; the corrected full archive/bootstrap fixture passes three tests in 22.644 seconds. It proves
+eight-MiB multipart encryption, absence of the plaintext marker in the backing files, crash/restart readback,
+immutable retention and key-loss/corruption rejection. This change is locally qualified and not deployed. NUC SSH
+currently refuses the existing agent signature; the owner has been asked to unlock that agent again.
 The independent archive merged in [#15020](https://github.com/proompteng/lab/pull/15020) at
 `1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6`. Its main image is published and its NUC service is deployed and verified.
 The owner-only bootstrap/activation commands merged in [#15014](https://github.com/proompteng/lab/pull/15014) at
