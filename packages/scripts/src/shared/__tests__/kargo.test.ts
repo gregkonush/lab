@@ -160,6 +160,14 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  ofz: {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('ofz')],
+    apps: ['ofz'],
+    includePaths: [],
+  },
   devbox: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -1171,6 +1179,23 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
     expect(torghutVerifierWorkflow).not.toContain('torghut-options')
     expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
+  })
+
+  it('predeclares every Ofz scalar that its Kargo promotion updates', () => {
+    const source = YAML.parse(readRepoFile('argocd/applications/ofz/kustomization.yaml')) as {
+      commonAnnotations?: Record<string, unknown>
+    }
+    const ofz = byName(stages).get('ofz')
+    const steps = ofz?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
+    const update = steps.find((step) => step.uses === 'yaml-update')
+    expect(update?.config?.path).toBe('./out/argocd/applications/ofz/kustomization.yaml')
+    expect(update?.config?.updates).toHaveLength(3)
+    for (const change of update?.config?.updates ?? []) {
+      expect(change.key).toStartWith('commonAnnotations.')
+      const key = String(change.key).slice('commonAnnotations.'.length).replaceAll('\\.', '.')
+      expect(typeof source.commonAnnotations?.[key]).toBe('string')
+      expect(source.commonAnnotations?.[key]).not.toBe('')
+    }
   })
 
   it('uses Kargo to write image and provenance data, never live Argo image overrides', () => {

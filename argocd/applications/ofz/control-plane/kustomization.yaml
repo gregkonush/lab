@@ -3,5 +3,11 @@ kind: Kustomization
 namespace: ofz
 resources:
   - api.yaml
+  - audit-export.yaml
+  - migrations.yaml
+  - bootstrap.yaml
+  - bootstrap-manifest-sealedsecret.yaml
+  - database-credentials-sealedsecret.yaml
+  - audit-archive-sealedsecret.yaml
   - databases.yaml
   - network-policy.yaml
