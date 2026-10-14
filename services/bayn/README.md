@@ -60,6 +60,9 @@ Each command owns that connection through reconnect, its request, and cancellati
 `SET` and its replica `WAIT` stay together. Queued commands retain the one-second
 deadline, and interrupting a queued caller does not close an active caller's socket.
 Reconnect happens on the next command rather than in a competing background retry.
+If the first 250 ms replica wait returns no acknowledgement, the same command retries
+that wait once on its owned connection without repeating `SET`. Both waits remain
+inside the unchanged one-second command deadline; publication still requires a replica acknowledgement.
 
 The broker observation owner publishes an immutable full snapshot and compact
 state in Valkey. PostgreSQL `broker_observations` stores their content hashes and
