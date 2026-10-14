@@ -62,7 +62,10 @@ The native schema read/write calls follow the [Authzed schema API](https://githu
 The journal records the server's installed schema hash and rejects a changed schema during initialization or activation.
 
 Activation requires acknowledgement of the bootstrap and all prior audit receipts, a healthy archive checkpoint,
-unchanged initial administrator/workload authority and the installed schema. It rechecks archive health after its own
+unchanged initial administrator/workload authority and the installed schema. A fully consistent bounded read must
+match exactly the eight approved platform relationships; surplus principals, cross-role assignments and retired
+platform objects keep activation fenced. The final authority check repeats that comparison after the audit insertion.
+It rechecks archive health after its own
 audit insertion before removing the platform fence. Completed retries return their original receipt and report current
 fence, version, recovery generation and archive health. They cannot re-add an offboarded administrator or undo a later
 recovery fence. Bootstrap markers use a separate namespace from ordinary policy-command UUIDs. Audit identifies the

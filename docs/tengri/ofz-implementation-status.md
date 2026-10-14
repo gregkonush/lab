@@ -7,7 +7,11 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is the owner-only bootstrap/activation implementation on `codex/ofz-bootstrap`.
+The active source frontier is the bootstrap activation correction on `codex/ofz-bootstrap-clean-graph`.
+The owner-only bootstrap/activation commands merged in [#15014](https://github.com/proompteng/lab/pull/15014) at
+`3b78559173e6a5dd25b514f28a12b08bacfe0a9f`. Automatic review found that expected relationship checks permitted surplus
+native authority. The correction requires the complete platform relationship set to match the approved manifest and
+workload bindings, including during final activation. Publication and production activation remain separate gates.
 Its protocol dependency, [#14923](https://github.com/proompteng/lab/pull/14923), merged at
 `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0` after its exact published head passed every check with no unresolved review
 findings. Its paired main images pass native KVM acceptance on both architectures in run `38491598949`.
@@ -47,7 +51,7 @@ the new VMM/protocol. Fresh workspaces must use the final contract. No legacy au
 | Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2` | Bounded observers and coordinated activation                            |
 | Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c` | Deployed UI acceptance                                                  |
 | Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0` | Fifty-sample qualification and coordinated activation                   |
-| Initial administrator bootstrap and activation                                    | Local implementation on `codex/ofz-bootstrap`               | Current-head CI/review, protected inputs, archive and activation        |
+| Initial administrator bootstrap and activation                                    | #15014 merged; exact native-set correction in progress      | Correction CI/review, protected inputs, archive and activation          |
 | Bounded file observers                                                            | Local implementation, unpublished                           | Finish controller/BFF wiring and full scoped acceptance                 |
 
 The verified API factory receipt is main run `38397202365`. Its two-platform index is
@@ -57,6 +61,10 @@ That receipt proves publication of the factory revision, not deployment or compl
 
 ## Current isolated evidence
 
+- The surplus-platform-authority regression fails before the correction. The corrected real bootstrap fixture rejects
+  an unapproved administrator, a cross-role workload binding, a retired platform and authority added during the final
+  activation check. The fence and SQL version remain unchanged. Eleven units, Clippy and the full 81-assertion browser
+  identity fixture pass; the browser fixture takes 78.39 seconds.
 - The owner-only bootstrap/activation continuation passes eleven Ofz units, Clippy and the actual CLI against real TLS
   PostgreSQL and SpiceDB. It rejects an API-role caller, existing unapproved control state, changed input/schema and
   a corrupted stored manifest. DDL and its mandatory checksum are atomic across cancellation; a null checksum is
