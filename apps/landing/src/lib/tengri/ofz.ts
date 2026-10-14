@@ -81,7 +81,7 @@ async function getClient() {
   })
   client = new grpc.Client(target, credentials, {
     'grpc.max_receive_message_length': 1_048_576,
-    'grpc.max_send_message_length': 65536,
+    'grpc.max_send_message_length': 128 * 1024,
   })
   const current = client
   setTimeout(() => current.close(), Math.max(0, material.expiresAt - Date.now())).unref()

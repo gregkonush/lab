@@ -17,96 +17,69 @@ rules:
   - apiGroups: [batch]
     resources: [cronjobs, jobs]
     verbs: [list]
-  - apiGroups: [apiextensions.k8s.io]
-    resources: [customresourcedefinitions]
+  - apiGroups: [actions.github.com]
+    resources: [autoscalingrunnersets, ephemeralrunnersets, ephemeralrunners]
     verbs: [list]
-  # Explicit non-core CRD groups; never grant access to Kubernetes Secrets.
-  # A newly served group requires a reviewed addition or discovery fails closed.
-  - apiGroups:
-      - acme.cert-manager.io
-      - actions.github.com
-      - agents.proompteng.ai
-      - approvals.proompteng.ai
-      - argocd-image-updater.argoproj.io
-      - argoproj.io
-      - artifacts.proompteng.ai
-      - authzed.com
-      - autoscaling.internal.knative.dev
-      - backup.kubevirt.io
-      - barmancloud.cnpg.io
-      - bitnami.com
-      - budgets.proompteng.ai
-      - caching.internal.knative.dev
-      - cdi.kubevirt.io
-      - ceph.rook.io
-      - cert-manager.io
-      - clickhouse-keeper.altinity.com
-      - clickhouse.altinity.com
-      - clone.kubevirt.io
-      - core.openfeature.dev
-      - core.strimzi.io
-      - crdb.cockroachlabs.com
-      - csi.ceph.io
-      - eventing.knative.dev
-      - export.kubevirt.io
-      - extensions.istio.io
-      - external-secrets.io
-      - flink.apache.org
-      - flows.knative.dev
-      - forklift.cdi.kubevirt.io
-      - gateway.networking.k8s.io
-      - generators.external-secrets.io
-      - groupsnapshot.storage.k8s.io
-      - hub.traefik.io
-      - instancetype.kubevirt.io
-      - internal.kafka.eventing.knative.dev
-      - jetstream.nats.io
-      - k8s.cni.cncf.io
-      - kafka.strimzi.io
-      - kargo.akuity.io
-      - kubevirt.io
-      - messaging.knative.dev
-      - metallb.io
-      - migrations.kubevirt.io
-      - networking.internal.knative.dev
-      - networking.istio.io
-      - nfd.k8s-sigs.io
-      - nvidia.com
-      - objectbucket.io
-      - operator.knative.dev
-      - orchestration.proompteng.ai
-      - plugin.kubevirt.io
-      - pool.kubevirt.io
-      - postgresql.cnpg.io
-      - redis.redis.opstreelabs.in
-      - resource.nvidia.com
-      - restate.dev
-      - runtime.proompteng.ai
-      - schedules.proompteng.ai
-      - security.istio.io
-      - security.proompteng.ai
-      - serving.knative.dev
-      - signals.proompteng.ai
-      - sinks.knative.dev
-      - snapshot.kubevirt.io
-      - snapshot.storage.k8s.io
-      - sources.knative.dev
-      - spire.spiffe.io
-      - swarm.proompteng.ai
-      - tailscale.com
-      - telemetry.istio.io
-      - template.kubevirt.io
-      - tigerbeetle.proompteng.ai
-      - tools.proompteng.ai
-      - traefik.io
-      - whereabouts.cni.cncf.io
-      - workspaces.proompteng.ai
-    resources: ["*"]
+  - apiGroups: [agents.proompteng.ai]
+    resources: [agentproviders, agentruns]
     verbs: [list]
+  - apiGroups: [argoproj.io]
+    resources:
+      - applications
+      - workflows
+      - workflowtemplates
+      - clusterworkflowtemplates
+      - cronworkflows
+      - analysistemplates
+      - clusteranalysistemplates
+      - analysisruns
+    verbs: [list]
+  - apiGroups: [caching.internal.knative.dev]
+    resources: [images]
+    verbs: [list]
+  - apiGroups: [flink.apache.org]
+    resources: [flinkdeployments]
+    verbs: [list]
+  - apiGroups: [kargo.akuity.io]
+    resources: [freights, stages, promotions]
+    verbs: [list]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, imagecatalogs, clusterimagecatalogs]
+    verbs: [list]
+  - apiGroups: [restate.dev]
+    resources: [restatedeployments]
+    verbs: [list]
+  - apiGroups: [serving.knative.dev]
+    resources: [services, configurations, revisions]
+    verbs: [list]
+  - apiGroups: [tools.proompteng.ai]
+    resources: [tools]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: registry-cleanup
+  namespace: argocd
+rules:
   - apiGroups: [argoproj.io]
     resources: [applications]
     resourceNames: [registry]
     verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: registry-cleanup
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: registry-cleanup
+    namespace: registry
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: registry-cleanup
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -125,6 +98,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: registry-cleanup
+  namespace: registry
 rules:
   - apiGroups: [""]
     resources: [pods]
@@ -145,6 +119,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: registry-cleanup
+  namespace: registry
 subjects:
   - kind: ServiceAccount
     name: registry-cleanup

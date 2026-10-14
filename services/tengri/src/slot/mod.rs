@@ -1,3 +1,4 @@
+mod admission;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
@@ -16,19 +17,19 @@ use tokio::{
 };
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.2";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.3";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Claim {
+pub struct Allocation {
     pub microvm_id: String,
     pub microvm_uid: String,
     pub epoch: u64,
 }
 
-impl Claim {
+impl Allocation {
     pub fn validate(&self) -> anyhow::Result<()> {
         for value in [&self.microvm_id, &self.microvm_uid] {
             ensure!(
@@ -41,6 +42,34 @@ impl Claim {
             );
         }
         ensure!(self.epoch > 0, "slot epoch must be positive");
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Claim {
+    pub microvm_id: String,
+    pub microvm_uid: String,
+    pub epoch: u64,
+    pub runtime_epoch: String,
+}
+
+impl Claim {
+    pub fn allocation(&self) -> Allocation {
+        Allocation {
+            microvm_id: self.microvm_id.clone(),
+            microvm_uid: self.microvm_uid.clone(),
+            epoch: self.epoch,
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.allocation().validate()?;
+        ensure!(
+            crate::ofz::canonical_uuid(&self.runtime_epoch),
+            "invalid runtime epoch"
+        );
         Ok(())
     }
 }
@@ -116,7 +145,7 @@ impl SlotState {
             Self::Sleeping {
                 claim: owner,
                 snapshot,
-            } if owner == claim => Ok(snapshot),
+            } if owner.allocation() == claim.allocation() => Ok(snapshot),
             _ => bail!("slot has no committed snapshot for this owner and epoch"),
         }
     }
@@ -1337,6 +1366,7 @@ mod tests {
             microvm_id: "agent-test".into(),
             microvm_uid: uid.into(),
             epoch,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         }
     }
 
@@ -1348,6 +1378,19 @@ mod tests {
             snapshot: Snapshot { generation: 2 },
         };
         assert!(sleeping.restore_snapshot(&owner).is_ok());
+        let mut next_runtime = owner.clone();
+        next_runtime.runtime_epoch = "55555555-5555-4555-8555-555555555555".into();
+        assert!(sleeping.restore_snapshot(&next_runtime).is_ok());
+        assert!(
+            !SlotState::Awake {
+                claim: owner.clone()
+            }
+            .serves(&next_runtime)
+        );
+        for invalid in ["", "not-a-runtime", "44444444-4444-4444-8444-44444444444A"] {
+            next_runtime.runtime_epoch = invalid.into();
+            assert!(sleeping.restore_snapshot(&next_runtime).is_err());
+        }
         assert!(sleeping.restore_snapshot(&claim("owner-b", 1)).is_err());
         assert!(sleeping.restore_snapshot(&claim("owner-a", 2)).is_err());
         for state in [

@@ -30,8 +30,6 @@ spec:
       ports:
         - port: 6379
           protocol: TCP
-        - port: 16379
-          protocol: TCP
     - from:
         - namespaceSelector:
             matchLabels:
@@ -49,8 +47,6 @@ spec:
               buf.red/name: bayn-valkey
       ports:
         - port: 6379
-          protocol: TCP
-        - port: 16379
           protocol: TCP
     - to:
         - namespaceSelector:
