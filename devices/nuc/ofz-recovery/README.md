@@ -10,6 +10,12 @@ and inspect retention. It cannot delete objects, change bucket configuration or 
 independent custodian credentials stay on NUC. Publish only the separate exporter credentials to its managed
 Kubernetes Secret through the existing sealed-secret workflow.
 
+New objects require AES256 encryption. A private, atomically persisted 256-bit wrapping key supplies SeaweedFS's
+per-object encryption. Its fingerprint prevents preparation from replacing a missing or changed key. Repeated
+deployments retain that identity. The key and generated `security.toml` stay on NUC; neither belongs in Kubernetes.
+The bucket default encrypts new writes, and the exporter also explicitly requests encryption and checks the returned
+immutable version before acknowledging it. Unencrypted versions remain unacknowledged.
+
 ## Reviewed deployment
 
 Deploy an archive of a reviewed `main` commit, not a worktree. Include `devices/nuc/ofz-recovery`,
@@ -33,6 +39,10 @@ Tailscale port `9444` and compares every other route before and after. Evidence 
 The storage proof uses NUC loopback. Host-originated connections to NUC's own Tailscale address can bypass Serve.
 Verify certificate identity and authenticated S3 read/write from a different tailnet peer before activating Ofz.
 Then qualify the real exporter from its Kubernetes workload, including archive loss, backlog, retry and recovery.
+Complete the reviewed NUC encryption update before starting the first production exporter. The earlier storage
+release has no wrapping key configured. Its historical qualification versions remain immutable; they are not
+production audit checkpoints. The real encryption fixture verifies an eight-MiB multipart object, absence of its
+plaintext marker in the backing volume and SQLite, and unchanged readback after SIGKILL.
 
 The server stops accepting data writes when free space falls below 10 GiB. NUC currently has a single 256 GB disk;
 measure retained audit and backup growth against available capacity before admitting the full fleet storage budget.
@@ -42,6 +52,8 @@ database WAL/base backups, home backup schedules and clean-environment restore r
 ## Recovery and updates
 
 Keep the private credential manifest and the backend data together. `prepare` never rotates an existing identity.
+Recovery also requires the original `secrets/sse_kek` and its `sse_kek.sha256` fingerprint. Restore the approved key
+when either is lost or corrupt; do not generate a replacement for existing encrypted data.
 An interrupted upload is verified by immutable version and SHA-256 before the control database acknowledges it.
 Existing archive versions stay readable after a backend crash; the real fixture kills and restarts the process using
 the same disks and client endpoint. A readback or retention mismatch stops acknowledgement and lets Ofz's archive
