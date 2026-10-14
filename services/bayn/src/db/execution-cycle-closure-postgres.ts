@@ -190,14 +190,16 @@ const makeStore = Effect.gen(function* () {
       sql<{ readonly contains: boolean }>`
         SELECT EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_closures AS closure,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(closure.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) OR EXISTS (
           SELECT 1
-          FROM autonomous_cycle_paper_close_replans AS replan,
+          FROM intents AS target
+          JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = target.cycle_id,
           LATERAL jsonb_array_elements_text(replan.document #> '{document,orderedIntentIds}') AS intent(value)
-          WHERE intent.value = ${intentId}
+          WHERE target.intent_id = ${intentId} AND intent.value = target.intent_id
         ) AS contains
       `.pipe(
         Effect.flatMap((rows) => {
