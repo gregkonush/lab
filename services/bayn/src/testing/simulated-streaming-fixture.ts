@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
 import { historicalStreamingFixture } from './historical-streaming-fixture'
@@ -22,7 +23,7 @@ export const simulationFixture = (
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
       tieBreak: 'availability-topic-partition-offset' as const,
     },
-    featureTopic: protocol.streamingInput.featureTopic,
+    featureTopic: equityMarketProfile.streamingInput.featureTopic,
     ...(technicalFeatureTopic === undefined ? {} : { technicalFeatureTopic }),
     ...(regeneratedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs: regeneratedAtMs }),
   }
@@ -30,11 +31,11 @@ export const simulationFixture = (
     createHistoricalMarketCursor(
       source.runId,
       {
-        universeId: protocol.universeId,
-        universeSymbolHash: protocol.universeSymbolHash,
+        universeId: equityMarketProfile.universeId,
+        universeSymbolHash: equityMarketProfile.universeSymbolHash,
         symbols: protocol.universe,
         topics: {
-          ...protocol.sourceTopics,
+          ...equityMarketProfile.sourceTopics,
           features: source.featureTopic,
           ...(technicalFeatureTopic === undefined ? {} : { technicalFeatures: technicalFeatureTopic }),
         },

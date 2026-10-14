@@ -22,7 +22,6 @@ import {
   MutationFailure,
   MutationOperation,
   authorizeMutationAccess,
-  legacyBoundedLimitOrderRequestBody,
   makeMutation,
   orderPriceBoundaryMicros,
   orderRequestBody,
@@ -178,7 +177,7 @@ const intent: Intent = {
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1250000',
+  quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
   state: IntentState.IoStarted,
   createdAt: '2026-07-22T12:00:00.000Z',
@@ -200,8 +199,8 @@ const orderResponse = {
   asset_id: assetId,
   symbol: intent.symbol,
   asset_class: 'us_equity',
-  notional: '200',
-  qty: null,
+  notional: null,
+  qty: '1.25',
   filled_qty: '0',
   filled_avg_price: null,
   order_class: '',
@@ -312,46 +311,43 @@ describe('Alpaca broker mutations', () => {
     ).toMatchObject({
       _tag: 'OrderRequestError',
       failure: 'invalid-order',
-      quantityMicros: intent.quantityMicros,
+      quantityAtoms: intent.quantityAtoms,
     })
     expect(assertFailure(orderRequestBody({ ...intent, timeInForce: TimeInForce.GoodUntilCanceled }))).toMatchObject({
       _tag: 'OrderRequestError',
       failure: 'invalid-order',
     })
-    const malformedQuantity = assertFailure(orderRequestBody({ ...intent, quantityMicros: 'not-an-integer' }))
+    const malformedQuantity = assertFailure(orderRequestBody({ ...intent, quantityAtoms: 'not-an-integer' }))
     expect(malformedQuantity).toMatchObject({
       _tag: 'OrderRequestError',
       failure: 'invalid-order',
-      quantityMicros: 'not-an-integer',
+      quantityAtoms: 'not-an-integer',
     })
   })
 
-  test('preserves legacy price boundaries while current BUY and SELL market requests stay broker-bounded', () => {
+  test('keeps BUY and SELL market requests inside their current broker bounds', () => {
     const boundaryIntent = {
       ...intent,
-      quantityMicros: '3000000',
+      quantityAtoms: '3000000000',
       notionalLimitMicros: '100000001',
     }
 
     expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Buy })).toEqual(Result.succeed(33_330_000n))
     expect(orderPriceBoundaryMicros({ ...boundaryIntent, side: OrderSide.Sell })).toEqual(Result.succeed(33_340_000n))
-    expect(legacyBoundedLimitOrderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
-      Result.succeed({ type: 'limit', limit_price: '33.34', side: 'sell' }),
-    )
     expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Buy })).toMatchObject(
-      Result.succeed({ type: 'market', notional: '100', side: 'buy' }),
+      Result.succeed({ type: 'market', qty: '3', side: 'buy' }),
     )
     expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Sell })).toMatchObject(
       Result.succeed({ type: 'market', qty: '3', side: 'sell' }),
     )
-    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Buy }, true)).toMatchObject(
+    expect(orderRequestBody({ ...boundaryIntent, side: OrderSide.Buy })).toMatchObject(
       Result.succeed({ type: 'market', qty: '3', side: 'buy' }),
     )
     expect(
       orderRequestBody({
         ...boundaryIntent,
         side: OrderSide.Sell,
-        quantityMicros: '500000',
+        quantityAtoms: '500000000',
         notionalLimitMicros: '50000000',
       }),
     ).toMatchObject(Result.succeed({ type: 'market', time_in_force: 'day', qty: '0.5', side: 'sell' }))
@@ -368,7 +364,7 @@ describe('Alpaca broker mutations', () => {
     expect(
       orderRequestBody({
         ...intent,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         notionalLimitMicros: '101240000',
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
@@ -379,7 +375,7 @@ describe('Alpaca broker mutations', () => {
     expect(
       orderRequestBody({
         ...intent,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         notionalLimitMicros: '101235000',
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
@@ -393,7 +389,7 @@ describe('Alpaca broker mutations', () => {
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: '3000000',
+      quantityAtoms: '3000000000',
       notionalLimitMicros: '300420000',
     }
     const sellIntent = {
@@ -408,25 +404,12 @@ describe('Alpaca broker mutations', () => {
     expect(orderRequestBody(sellIntent)).toMatchObject(Result.succeed({ side: 'sell', limit_price: '100.12' }))
   })
 
-  test('quantizes BUY notionals down to broker cent precision and rejects sub-dollar requests', () => {
-    expect(
-      orderRequestBody({
-        ...intent,
-        notionalLimitMicros: '26253492098',
-      }),
-    ).toMatchObject(Result.succeed({ type: 'market', notional: '26253.49', side: 'buy' }))
-    expect(
-      assertFailure(
-        orderRequestBody({
-          ...intent,
-          notionalLimitMicros: '999999',
-        }),
-      ),
-    ).toMatchObject({
-      _tag: 'OrderRequestError',
-      failure: 'invalid-order',
-      notionalLimitMicros: '999999',
-    })
+  test('encodes the same quantity regardless of the notional risk cap', () => {
+    for (const notionalLimitMicros of ['26253492098', '999999']) {
+      expect(orderRequestBody({ ...intent, notionalLimitMicros })).toMatchObject(
+        Result.succeed({ type: 'market', qty: '1.25', side: 'buy' }),
+      )
+    }
   })
 
   test('preserves typed order-request detail at the broker boundary', async () => {
@@ -446,7 +429,7 @@ describe('Alpaca broker mutations', () => {
       cause: {
         tag: 'OrderRequestError',
         failure: 'invalid-order',
-        message: 'fractional market orders require DAY time in force',
+        message: 'market order duration does not match the instrument',
       },
     })
   })
@@ -633,7 +616,7 @@ describe('Alpaca broker mutations', () => {
 
     const body = {
       symbol: 'AMD',
-      notional: '200',
+      qty: '1.25',
       side: 'buy',
       type: 'market',
       time_in_force: 'day',
@@ -648,7 +631,7 @@ describe('Alpaca broker mutations', () => {
         brokerOrderId: orderId,
         clientOrderId: intent.clientOrderId,
         status: OrderStatus.Accepted,
-        notionalMicros: intent.notionalLimitMicros,
+        quantityAtoms: intent.quantityAtoms,
       },
       evidence: {
         requestId: 'req-123',
@@ -684,30 +667,24 @@ describe('Alpaca broker mutations', () => {
         brokerOrderId: orderId,
         clientOrderId: intent.clientOrderId,
         status: OrderStatus.Accepted,
-        quantityMicros: intent.quantityMicros,
+        quantityAtoms: intent.quantityAtoms,
       },
     })
   })
 
-  test('accepts Alpaca confirmation of the cent-quantized BUY notional', async () => {
-    const roundedIntent = { ...intent, notionalLimitMicros: '26253492098' }
+  test('rejects Alpaca confirmation using a retired BUY notional', async () => {
     const requests: unknown[] = []
     const client = HttpClient.make((request) => {
       requests.push(requestBody(request))
-      return Effect.succeed(response(request, { ...orderResponse, notional: '26253.49' }))
+      return Effect.succeed(response(request, { ...orderResponse, qty: null, notional: '200' }))
     })
-
-    const receipt = await Effect.runPromise(withMutation(client, (mutation) => mutation.submit(roundedIntent)))
-
-    expect(requests).toEqual([
-      expect.objectContaining({
-        symbol: roundedIntent.symbol,
-        notional: '26253.49',
-        client_order_id: roundedIntent.clientOrderId,
-      }),
-    ])
-    expect(receipt.order.notionalMicros).toBe('26253490000')
-    expect(receipt.requestHash).toBe(canonicalHashV1(requests[0]))
+    const failure = await Effect.runPromise(Effect.flip(withMutation(client, (mutation) => mutation.submit(intent))))
+    expect(requests).toEqual([Result.getOrThrow(orderRequestBody(intent))])
+    expect(failure).toMatchObject({
+      failure: MutationFailure.Unknown,
+      outcome: MutationOutcome.Unknown,
+      brokerOrderId: orderId,
+    })
   })
 
   test('submits a SELL as an exact quantity market order and verifies the accepted order', async () => {
@@ -744,7 +721,7 @@ describe('Alpaca broker mutations', () => {
         brokerOrderId: orderId,
         clientOrderId: intent.clientOrderId,
         status: OrderStatus.Accepted,
-        quantityMicros: intent.quantityMicros,
+        quantityAtoms: intent.quantityAtoms,
       },
     })
   })
@@ -754,7 +731,7 @@ describe('Alpaca broker mutations', () => {
       ...intent,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: '3000000',
+      quantityAtoms: '3000000000',
       notionalLimitMicros: '303690000',
     }
     const requests: unknown[] = []
@@ -791,7 +768,7 @@ describe('Alpaca broker mutations', () => {
       order: {
         orderType: 'limit',
         timeInForce: 'ioc',
-        quantityMicros: '3000000',
+        quantityAtoms: '3000000000',
         limitPriceMicros: '101230000',
       },
     })
@@ -802,7 +779,7 @@ describe('Alpaca broker mutations', () => {
       ...intent,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: '3000000',
+      quantityAtoms: '3000000000',
       notionalLimitMicros: '303690000',
     }
     const mismatched = {
@@ -912,7 +889,7 @@ describe('Alpaca broker mutations', () => {
     const approved = { ...intent, state: IntentState.Approved }
     const fractionalGtc = { ...intent, timeInForce: TimeInForce.GoodUntilCanceled }
     const limit = { ...intent, orderType: OrderType.Limit, timeInForce: TimeInForce.Day }
-    const malformed = { ...intent, quantityMicros: 'not-micros' } as Intent
+    const malformed = { ...intent, quantityAtoms: 'not-micros' } as Intent
 
     const failures = await Effect.runPromise(
       Effect.all([

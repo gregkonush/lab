@@ -1,16 +1,19 @@
-import type { MarketCalendarObservation } from '../broker/alpaca/model'
+import { jevMarketForSymbol, jevBenchmarkSymbol } from './markets'
+import type { MarketHours } from '../market-hours'
+
 import type { IntradaySnapshotQuery } from '../market-data'
 import { utcInstantFromEpochMillis } from '../time'
 import type { JevProtocol } from './protocol'
 
 export const makeJevEntryQuery = (input: {
   readonly protocol: JevProtocol
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly sessionDate: IntradaySnapshotQuery['sessionDate']
   readonly observedAtMs: number
   readonly candidates: readonly string[]
 }): IntradaySnapshotQuery => {
   const { protocol, candidates } = input
+  const market = jevMarketForSymbol(candidates[0] ?? 'SPY')
   const rangeEndMs = Math.floor((input.observedAtMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
   return {
     sessionDate: input.sessionDate,
@@ -18,17 +21,17 @@ export const makeJevEntryQuery = (input: {
     observedAt: utcInstantFromEpochMillis(input.observedAtMs),
     rangeStartAt: utcInstantFromEpochMillis(rangeEndMs - protocol.lookbackMinutes * 60_000),
     rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    universe: protocol.universe,
-    symbols: [...candidates, protocol.benchmarkSymbol].sort(),
+    universeId: market.universeId,
+    universeSymbolHash: market.universeSymbolHash,
+    universe: market.universe,
+    symbols: [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort(),
     candidateSymbols: candidates,
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-    feed: protocol.feed,
-    delayClass: protocol.delayClass,
-    sourceTopics: protocol.sourceTopics,
+    feed: market.feed,
+    delayClass: market.delayClass,
+    sourceTopics: market.sourceTopics,
     maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
     minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
   }

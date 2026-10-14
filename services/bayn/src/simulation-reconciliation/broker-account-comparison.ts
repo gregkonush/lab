@@ -29,8 +29,8 @@ const comparePosition = (
 ): ReconciliationDecision<PositionComparison> => {
   const expectedPosition = Option.getOrUndefined(HashMap.get(projected, symbol))
   const observedPosition = Option.getOrUndefined(HashMap.get(observed, symbol))
-  const expectedQuantityText = expectedPosition?.quantityMicros ?? '0'
-  const observedQuantityText = observedPosition?.quantityMicros ?? '0'
+  const expectedQuantityText = expectedPosition?.quantityAtoms ?? '0'
+  const observedQuantityText = observedPosition?.quantityAtoms ?? '0'
   const expectedCostText = expectedPosition?.costBasisMicros ?? '0'
   return pipe(
     Result.all({
@@ -42,7 +42,7 @@ const comparePosition = (
           ? Result.succeed(0n)
           : observedPosition.schemaVersion === 'bayn.position.v2'
             ? integer('position-cost-basis', symbol, observedPosition.costBasisMicros)
-            : roundMicrosProduct(symbol, observedPosition.quantityMicros, observedPosition.averageEntryPriceMicros),
+            : roundMicrosProduct(symbol, observedPosition.quantityAtoms, observedPosition.averageEntryPriceMicros),
     }),
     Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity }) =>
       pipe(
@@ -151,7 +151,7 @@ export const compareEquity = (snapshot: ReconciliationSnapshot): ReconciliationD
     Result.flatMap(({ expected, observed }) =>
       pipe(
         // Separate responses are not atomic, even when their receipt timestamps coincide.
-        snapshot.positions.some((position) => position.quantityMicros !== '0')
+        snapshot.positions.some((position) => position.quantityAtoms !== '0')
           ? Result.succeed<readonly DiscrepancyInput[]>([])
           : compareValue(
               snapshot.accountId,

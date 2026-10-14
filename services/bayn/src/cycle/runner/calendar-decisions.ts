@@ -1,6 +1,7 @@
+import { isContinuousMarket, tradingWindow, continuousExecutionPolicy, type MarketHours } from '../../market-hours'
 import { DateTime, Option, Result } from 'effect'
 
-import type { MarketCalendarObservation, MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
+import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
 import { intradayDecisionDelaySeconds, intradayLookbackMinutes } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
@@ -93,13 +94,17 @@ export const marketCalendarQueryFromSession = (
   )
 
 export const selectIntradayExecutionSession = (
-  observation: MarketCalendarObservation,
+  observation: MarketHours,
   executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }
   >,
   observedAt: string,
 ): MarketCalendarSession | undefined => {
+  if (isContinuousMarket(observation)) {
+    const window = tradingWindow(observation, observedAt, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 })
+    return Result.isSuccess(window) && window.success !== null ? window.success : undefined
+  }
   const observedAtMillis = Date.parse(observedAt)
   if (!Number.isFinite(observedAtMillis)) return undefined
 
@@ -129,7 +134,7 @@ export interface IntradayCycleCandidate {
 
 export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,
-  observation: MarketCalendarObservation,
+  observation: MarketHours,
   executionSession: MarketCalendarSession,
   entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinal = 1,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
@@ -137,7 +142,9 @@ export const makeIntradayCycleDraft = (
     const executionCalendar = yield* makeExecutionCalendarObservation({
       schemaVersion: observation.schemaVersion,
       source: observation.source,
-      ...executionSession,
+      date: executionSession.date,
+      openAt: executionSession.openAt,
+      closeAt: executionSession.closeAt,
     })
     const identity = yield* makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v4',
@@ -159,20 +166,22 @@ export const makeIntradayCycleDraft = (
 export const nextIntradayEntryAttemptOrdinal = (
   cycle: AutonomousCycle,
   observedAt: string,
+  submissionCutoffAt: string,
   recoveredBlockedCycle = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
     (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
-    (cycle.state !== CycleState.Completed && !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
+    (cycle.state !== CycleState.Completed &&
+      cycle.state !== CycleState.NoTrade &&
+      !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
     cycle.terminalAt === undefined ||
     cycle.window.schemaVersion !== 'bayn.autonomous-cycle-window.v3' ||
-    observedAt >= cycle.window.submissionCutoffAt
+    observedAt >= submissionCutoffAt
   )
     return undefined
   const currentAttempt =
-    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v3' ||
     cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4'
-      ? intradayCycleEntryAttemptOrdinal(cycle.identity)
+      ? cycle.identity.entryAttemptOrdinal
       : undefined
   const rearmAt = Date.parse(cycle.terminalAt) + intradayEntryRearmDelayMs
   return currentAttempt !== undefined &&
@@ -192,7 +201,7 @@ export const nextIntradayEntryAttemptOrdinal = (
 export const canRearmUnboundPreSubmissionCycle = (
   cycle: AutonomousCycle,
   candidate: IntradayCycleCandidate,
-  observation: MarketCalendarObservation,
+  observation: MarketHours,
   executionSession: MarketCalendarSession,
 ): boolean => {
   if (
@@ -212,16 +221,8 @@ export const canRearmUnboundPreSubmissionCycle = (
     intradayCycleEntryAttemptOrdinal(cycle.identity),
   )
   if (Result.isFailure(originalDraft)) return false
-  if (cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4') {
-    return cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
-  }
-  const identity = originalDraft.success.identity
-  if (identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') return false
-  // V3 has an implicit first ordinal. Reconstruct that original version solely for comparison;
-  // acquisition still creates a new v4 attempt and never rewrites the retained v3 record.
-  const { cycleId: _cycleId, schemaVersion: _schemaVersion, entryAttemptOrdinal: _ordinal, ...material } = identity
-  const legacyDraft = makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' }).pipe(
-    Result.flatMap((legacyIdentity) => makeCycleDraft(legacyIdentity, originalDraft.success.window)),
+  return (
+    cycle.identity.schemaVersion === 'bayn.autonomous-cycle-identity.v4' &&
+    cycleDraftMatches(cycleDraftOf(cycle), originalDraft.success)
   )
-  return Result.isSuccess(legacyDraft) && cycleDraftMatches(cycleDraftOf(cycle), legacyDraft.success)
 }

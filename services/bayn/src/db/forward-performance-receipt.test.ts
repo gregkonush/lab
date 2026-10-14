@@ -504,11 +504,11 @@ test('round trips native archive provenance and rejects a rehashed nested source
           symbol: request.symbol,
           windowOpenedAt: request.windowOpenedAt,
           windowClosedAt: request.windowClosedAt,
-          filledQuantityMicros: '18000000',
-          marketVolumeQuantityMicros: evidence.quantityMicros,
+          filledQuantityAtoms: '18000000000',
+          marketVolumeQuantityAtoms: evidence.quantityAtoms,
           participationRate: {
-            numeratorQuantityMicros: '18000000',
-            denominatorQuantityMicros: evidence.quantityMicros,
+            numeratorQuantityAtoms: '18000000000',
+            denominatorQuantityAtoms: evidence.quantityAtoms,
             decimal: '0.000461538461',
           },
           intradaySource: {

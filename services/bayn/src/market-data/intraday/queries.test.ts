@@ -1,3 +1,4 @@
+import { exchangeSessions } from '../../market-hours'
 import { describe, expect, test } from 'bun:test'
 
 import type { ClickhouseClient } from '@effect/sql-clickhouse'
@@ -58,15 +59,15 @@ describe('intraday archive queries', () => {
     expect(capture).toContain('FROM signal.intraday_trades_v1')
     expect(capture).not.toContain('has(')
     expect(capture).toContain(
-      `event_ts >= parseDateTime64BestEffort("${request.calendar.sessions[0]!.openAt}", 3, 'UTC')`,
+      `event_ts >= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.openAt}", 3, 'UTC')`,
     )
     expect(capture).toContain(
-      `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 3, 'UTC')`,
+      `event_ts <= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.closeAt}", 3, 'UTC')`,
     )
     expect(
       capture.match(
         new RegExp(
-          `event_ts >= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.openAt}", 9, 'UTC'\\)`,
+          `event_ts >= parseDateTime64BestEffort\\("${exchangeSessions(request.calendar)[0]!.openAt}", 9, 'UTC'\\)`,
           'g',
         ),
       ),
@@ -74,7 +75,7 @@ describe('intraday archive queries', () => {
     expect(
       capture.match(
         new RegExp(
-          `event_ts <= parseDateTime64BestEffort\\("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC'\\)`,
+          `event_ts <= parseDateTime64BestEffort\\("${exchangeSessions(request.calendar)[0]!.closeAt}", 9, 'UTC'\\)`,
           'g',
         ),
       ),
@@ -100,7 +101,7 @@ describe('intraday archive queries', () => {
     for (const query of [quotes, trades]) {
       expect(query).toContain(`event_ts >= parseDateTime64BestEffort("${request.rangeStartAt}", 9, 'UTC')`)
       expect(query).toContain(
-        `event_ts <= parseDateTime64BestEffort("${request.calendar.sessions[0]!.closeAt}", 9, 'UTC')`,
+        `event_ts <= parseDateTime64BestEffort("${exchangeSessions(request.calendar)[0]!.closeAt}", 9, 'UTC')`,
       )
       expect(query).not.toContain(`event_ts < parseDateTime64BestEffort("${request.rangeEndAt}", 9, 'UTC')`)
       expect(query).toContain(`ingest_ts <= parseDateTime64BestEffort("${request.observedAt}", 9, 'UTC')`)

@@ -17,12 +17,18 @@ const FiniteNumericStringSchema = Schema.String.check(
 const NumericSchema = Schema.Union([Schema.Finite, FiniteNumericStringSchema])
 const numericValue = (value: number | string): number => (typeof value === 'number' ? value : Number(value))
 const hasExpectedDelayClass = (row: {
-  readonly feed: 'iex' | 'sip' | 'delayed_sip'
+  readonly feed: 'iex' | 'sip' | 'delayed_sip' | 'us'
   readonly delay_class: string
+  readonly market_session: string
+  readonly native_payload?: string
 }): boolean =>
-  (row.feed === 'iex' && row.delay_class === 'real_time_exchange_only') ||
-  (row.feed === 'sip' && row.delay_class === 'real_time_consolidated') ||
-  (row.feed === 'delayed_sip' && row.delay_class === 'delayed_15m_consolidated')
+  (row.market_session === 'regular' && row.feed === 'iex' && row.delay_class === 'real_time_exchange_only') ||
+  (row.market_session === 'regular' && row.feed === 'sip' && row.delay_class === 'real_time_consolidated') ||
+  (row.market_session === 'regular' && row.feed === 'delayed_sip' && row.delay_class === 'delayed_15m_consolidated') ||
+  (row.feed === 'us' &&
+    row.delay_class === 'real_time_crypto' &&
+    row.market_session === 'continuous' &&
+    row.native_payload !== undefined)
 const BooleanIntegerSchema = Schema.Union([Schema.Literals([0, 1]), Schema.Literals(['0', '1'])])
 const PartitionSchema = Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), DigitsSchema])
 const SchemaVersionSchema = Schema.Union([Schema.Literal(1), Schema.Literal('1')])
@@ -31,9 +37,15 @@ const identityFields = {
   provider: Schema.Literal('alpaca'),
   universe_id: StrictNonEmptyStringSchema,
   universe_symbol_hash: Schema.String,
-  feed: Schema.Literals(['iex', 'sip', 'delayed_sip']),
-  market_session: Schema.Literal('regular'),
-  delay_class: Schema.Literals(['real_time_exchange_only', 'real_time_consolidated', 'delayed_15m_consolidated']),
+  feed: Schema.Literals(['iex', 'sip', 'delayed_sip', 'us']),
+  market_session: Schema.Literals(['regular', 'continuous']),
+  native_payload: Schema.optionalKey(Schema.String),
+  delay_class: Schema.Literals([
+    'real_time_exchange_only',
+    'real_time_consolidated',
+    'delayed_15m_consolidated',
+    'real_time_crypto',
+  ]),
   symbol: Schema.String,
   event_at: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
   ingested_at: Schema.Union([UtcInstantSchema, UtcOrderTimestampSchema]),
@@ -80,9 +92,6 @@ export const IntradayBarRowSchema = Schema.Struct({
 
 const IntradayQuoteRowSchema = Schema.Struct({
   ...identityFields,
-  // Compatibility only: releases before the Kafka offset tie-break persisted
-  // this derived marker. Decode and ignore it; new rows never emit it.
-  latest_payload_variants: Schema.optional(DigitsSchema),
   bid_price: NumericSchema,
   bid_size: NumericSchema,
   ask_price: NumericSchema,
@@ -102,7 +111,6 @@ const IntradayQuoteRowSchema = Schema.Struct({
 
 const IntradayTradeRowSchema = Schema.Struct({
   ...identityFields,
-  latest_payload_variants: Schema.optional(DigitsSchema),
   price: NumericSchema,
   size: NumericSchema,
 }).check(

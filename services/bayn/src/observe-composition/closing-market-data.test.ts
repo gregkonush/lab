@@ -552,7 +552,7 @@ describe('closing market-data fallback boundaries', () => {
           if (!closeSettled || terminalOutcome !== TerminalOutcome.Canceled) return facts
           const positions = facts.brokerState.positions.map((position) => ({
             ...position,
-            quantityMicros: (BigInt(position.quantityMicros) / positionDivisor).toString(),
+            quantityAtoms: (BigInt(position.quantityAtoms) / positionDivisor).toString(),
             marketValueMicros: (BigInt(position.marketValueMicros) / positionDivisor).toString(),
           }))
           const releasedValue = facts.brokerState.positions.reduce(
@@ -733,19 +733,19 @@ describe('closing market-data fallback boundaries', () => {
         expect(next.document.bindings.authorityGenerationHash).toBe(first.document.bindings.authorityGenerationHash)
         expect(next.document.orderedIntentIds).not.toEqual(first.document.orderedIntentIds)
         expect(
-          next.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
+          next.document.targetPlan.intentTargets.map(({ symbol, side, quantityAtoms }) => ({
             symbol,
             side,
-            quantityMicros,
+            quantityAtoms,
           })),
         ).toEqual(
-          first.document.targetPlan.intentTargets.map(({ symbol, side, quantityMicros }) => ({
+          first.document.targetPlan.intentTargets.map(({ symbol, side, quantityAtoms }) => ({
             symbol,
             side,
-            quantityMicros:
+            quantityAtoms:
               terminalOutcome === TerminalOutcome.Canceled
-                ? (BigInt(quantityMicros) / positionDivisor).toString()
-                : quantityMicros,
+                ? (BigInt(quantityAtoms) / positionDivisor).toString()
+                : quantityAtoms,
           })),
         )
         expect(yield* prepare(next.document)).toMatchObject({

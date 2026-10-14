@@ -1,3 +1,5 @@
+import { equityMarketProfile } from '../jev/markets'
+
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
 import { utcInstantFromEpochMillis } from '../time'
 import { PgClient } from '@effect/sql-pg'
@@ -101,7 +103,7 @@ export const BacktestInputSchema = Schema.Struct({
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
     model: Schema.Literal(jevModel),
-    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v2'),
+    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v3'),
     costs: ReplayJevCostModelSchema,
   }),
   allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,
@@ -165,12 +167,12 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const protocol = baselineProtocol
     const parameterHash = baselineParameterHash
     const universe = {
-      universeId: protocol.universeId,
-      universeSymbolHash: protocol.universeSymbolHash,
-      symbols: protocol.universe,
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      symbols: equityMarketProfile.universe,
       topics: {
-        ...protocol.sourceTopics,
-        features: protocol.streamingInput.featureTopic,
+        ...equityMarketProfile.sourceTopics,
+        features: equityMarketProfile.streamingInput.featureTopic,
         ...(decoded.source.universe.topics.technicalFeatures === undefined
           ? {}
           : { technicalFeatures: decoded.source.universe.topics.technicalFeatures }),
@@ -237,8 +239,8 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const assetSymbols = decoded.assets.map((asset) => asset.symbol)
     if (
       new Set(assetSymbols).size !== assetSymbols.length ||
-      assetSymbols.length !== protocol.universe.length ||
-      protocol.universe.some((symbol) => !assetSymbols.includes(symbol))
+      assetSymbols.length !== equityMarketProfile.universe.length ||
+      equityMarketProfile.universe.some((symbol) => !assetSymbols.includes(symbol))
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay asset metadata is duplicated or misses source symbols' }),
@@ -267,7 +269,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       input: decoded,
       sourceReceipt,
       runId,
-      protocol,
+      protocol: { ...protocol, ...equityMarketProfile },
       assets,
       identity,
       sessions,

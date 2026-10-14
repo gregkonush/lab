@@ -857,8 +857,8 @@ const makeCycleObservability = Effect.gen(function* () {
                   'targetCount', (
                     SELECT count(*)::integer
                     FROM jsonb_array_elements(coalesce(decision.document #> '{targetPlan,targets}', '[]'::jsonb)) AS target
-                    WHERE (target ->> 'currentQuantityMicros')::numeric <>
-                      (target ->> 'targetQuantityMicros')::numeric
+                    WHERE (target ->> 'currentQuantityAtoms')::numeric <>
+                      (target ->> 'targetQuantityAtoms')::numeric
                   ),
                   'orderedIntentCount', coalesce(jsonb_array_length(decision.document -> 'orderedIntentIds'), 0),
                   'dispatchable', coalesce((decision.document ->> 'dispatchable')::boolean, false),
@@ -937,7 +937,7 @@ const makeCycleObservability = Effect.gen(function* () {
               ),
               'positionCount', CASE
                 WHEN EXISTS (SELECT 1 FROM latest_position_snapshot)
-                THEN (SELECT count(*)::integer FROM current_positions WHERE quantity_micros <> 0)
+                THEN (SELECT count(*)::integer FROM current_positions WHERE quantity_atoms <> 0)
                 ELSE NULL
               END,
               'grossExposureMicros', CASE
