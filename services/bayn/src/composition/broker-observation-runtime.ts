@@ -1,3 +1,4 @@
+import { isNativeError } from 'node:util/types'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
@@ -27,8 +28,44 @@ import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
 import { withObservedSpan } from '../telemetry'
-import { ValkeyCache } from '../valkey-cache'
+import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
+
+export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): Readonly<Record<string, string>> => {
+  const unknown = {
+    'broker.publication_dependency': 'unknown',
+    'broker.publication_operation': 'unknown',
+    'broker.publication_failure_category': 'unknown',
+    'broker.publication_cause_category': 'unknown',
+  }
+  if (!isNativeError(failure)) return unknown
+  try {
+    // The persistence wrapper retains the original cache error as its direct cause.
+    const cause: unknown = Object.getOwnPropertyDescriptor(failure, 'cause')?.value
+    if (!isNativeError(cause) || Object.getPrototypeOf(cause) !== ValkeyCacheError.prototype) return unknown
+    const operation: unknown = Object.getOwnPropertyDescriptor(cause, 'operation')?.value
+    const category: unknown = Object.getOwnPropertyDescriptor(cause, 'category')?.value
+    const causeCategory: unknown = Object.getOwnPropertyDescriptor(cause, 'causeCategory')?.value
+    return {
+      'broker.publication_dependency': 'valkey',
+      'broker.publication_operation':
+        typeof operation === 'string' && ['get', 'put', 'remove', 'configure', 'connect'].includes(operation)
+          ? operation
+          : 'unknown',
+      'broker.publication_failure_category':
+        typeof category === 'string' && Object.values(ValkeyFailureCategory).some((value) => value === category)
+          ? category
+          : 'unknown',
+      'broker.publication_cause_category':
+        typeof causeCategory === 'string' &&
+        Object.values(ValkeyFailureCategory).some((value) => value === causeCategory)
+          ? causeCategory
+          : 'unknown',
+    }
+  } catch {
+    return unknown
+  }
+}
 
 export const settleCompletedBrokerObservationPoll = <R>(
   poll: Effect.Effect<BrokerObservationPoll, BrokerReadError, R>,
@@ -189,7 +226,9 @@ export const acquireBrokerObservationRuntime = (
                   .pipe(withObservedSpan('bayn.broker.observation.publish'), Effect.result)
                 if (Result.isFailure(publication)) {
                   yield* persistence.failed(ticket, nextPollNotBeforeMs)
-                  yield* Effect.logWarning('Broker observation publication failed')
+                  yield* Effect.logWarning('Broker observation publication failed').pipe(
+                    Effect.annotateLogs(brokerPublicationFailureAnnotations(publication.failure)),
+                  )
                   return { _tag: 'Unavailable', nextPollNotBeforeMs } as const
                 }
                 if (!publication.success) {

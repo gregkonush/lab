@@ -17,7 +17,12 @@ An unused native admission retains its expiry classification at the equity cutof
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
 evidence and cooldown guards before acquiring a successor.
 
-Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros. Migration 97
+Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Alpaca response decoding converts compact crypto pair identifiers such as `ETHUSD` to the canonical `ETH/USD`
+symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
+outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
+
+Migration 97
 requires flat, settled inventory and complete accounting, archives the original projections and preserves existing
 ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
 published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).
@@ -70,6 +75,14 @@ Replica acknowledgement uses 250 ms waits on the owned connection for the remain
 one-second command budget, without repeating `SET`. Missing acknowledgement at that
 deadline cancels the outstanding work and fails publication. A deadline after a
 negative acknowledgement retains that replication failure as its cause.
+
+Publication-failure logs report only allowlisted dependency, operation, failure-category
+and cause-category fields. An operation deadline remains distinct from a previously
+observed missing replica acknowledgement; the latter does not identify a later stall's cause.
+Verified native timeout/socket-close errors have their own categories. Other command
+failures use `command_failed`; unrecognized publication metadata uses `unknown`.
+Raw causes stay attached internally and are not included in this publication log.
+This does not change the native NodeRedis dependency's separate logging behavior.
 
 The broker observation owner publishes an immutable full snapshot and compact
 state in Valkey. PostgreSQL `broker_observations` stores their content hashes and

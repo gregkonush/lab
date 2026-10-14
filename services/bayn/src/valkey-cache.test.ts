@@ -1,14 +1,33 @@
 import { describe, expect, test } from 'bun:test'
 import { NodeRedis } from '@effect/platform-node'
 import { ConfigProvider, Effect, Fiber, Layer, Option, Result } from 'effect'
+import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 
-import { makeValkeyCache, ValkeyCache, ValkeyCacheError, ValkeyCacheInputError, ValkeyCacheLive } from './valkey-cache'
+import {
+  makeValkeyCache,
+  ValkeyCache,
+  ValkeyCacheError,
+  ValkeyCacheInputError,
+  ValkeyCacheLive,
+  ValkeyFailureCategory,
+} from './valkey-cache'
 
 const transportFixture = async (
-  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated' | 'delayed-replica' | 'replica-timeout',
+  mode:
+    | 'miss'
+    | 'hold'
+    | 'error'
+    | 'handshake-hold'
+    | 'write'
+    | 'unreplicated'
+    | 'delayed-replica'
+    | 'replica-timeout'
+    | 'first-wait-timeout'
+    | 'set-timeout'
+    | 'disconnect',
 ) => {
   const { createServer } = await import('node:net')
-  const outerDeadline = mode === 'replica-timeout' || mode === 'unreplicated'
+  const outerDeadline = ['replica-timeout', 'unreplicated', 'first-wait-timeout', 'set-timeout'].includes(mode)
   let response = mode
   const received = Promise.withResolvers<void>()
   let closed = Promise.withResolvers<void>()
@@ -48,16 +67,17 @@ const transportFixture = async (
             socket.write(value === undefined ? '$-1\r\n' : `$${Buffer.byteLength(value)}\r\n${value}\r\n`)
           }
           if (response === 'error') socket.write('-WRONGTYPE fixture\r\n')
+          if (response === 'disconnect') socket.end()
         } else if (args[0]?.toUpperCase() === 'SET') {
           writes++
           values.set(args[1] ?? '', args[2] ?? '')
-          socket.write('+OK\r\n')
+          if (response !== 'set-timeout') socket.write('+OK\r\n')
         } else if (args[0]?.toUpperCase() === 'DEL') {
           values.delete(args[1] ?? '')
           socket.write(':1\r\n')
         } else if (args[0]?.toUpperCase() === 'WAIT') {
           waits.push(args.slice(1))
-          if (response !== 'replica-timeout' || waits.length === 1)
+          if (response !== 'first-wait-timeout' && (response !== 'replica-timeout' || waits.length === 1))
             socket.write(
               response === 'unreplicated' ||
                 response === 'replica-timeout' ||
@@ -66,7 +86,13 @@ const transportFixture = async (
                 : ':1\r\n',
             )
         } else if (args[0]?.toUpperCase() === 'PING') {
-          if (response !== 'hold' && response !== 'handshake-hold' && response !== 'replica-timeout')
+          if (
+            response !== 'hold' &&
+            response !== 'handshake-hold' &&
+            response !== 'replica-timeout' &&
+            response !== 'first-wait-timeout' &&
+            response !== 'set-timeout'
+          )
             socket.write('+PONG\r\n')
         } else socket.write('-ERR unsupported fixture command\r\n')
       }
@@ -110,7 +136,7 @@ const transportFixture = async (
 }
 
 const runTransport = async <A, E>(
-  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated' | 'delayed-replica',
+  mode: 'miss' | 'hold' | 'error' | 'handshake-hold' | 'write' | 'unreplicated' | 'delayed-replica' | 'disconnect',
   effect: Effect.Effect<A, E, ValkeyCache>,
 ) => {
   const fixture = await transportFixture(mode)
@@ -180,7 +206,7 @@ describe('required native Effect Valkey binding', () => {
       await fixture.stop()
     }
   })
-  test('a missing replica acknowledgement fails at the command deadline', async () => {
+  test('a missing replica acknowledgement fails at the command deadline with a separate typed cause', async () => {
     const fixture = await transportFixture('unreplicated')
     try {
       const result = await operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })).pipe(
@@ -189,10 +215,12 @@ describe('required native Effect Valkey binding', () => {
         Effect.runPromise,
       )
       expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
-        expect(result.failure.message).toBe('Valkey command exceeded its deadline')
-      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
         expect(String(result.failure.cause)).toContain('replica')
+        expect(result.failure.message).toBe('Valkey command exceeded its deadline')
+        expect(result.failure.category).toBe(ValkeyFailureCategory.OperationDeadline)
+        expect(result.failure.causeCategory).toBe(ValkeyFailureCategory.ReplicaAcknowledgement)
+      }
       expect(fixture.writes()).toBe(1)
       expect(fixture.waits().length).toBeGreaterThan(2)
       expect(fixture.waits().every((args) => args.length === 2 && args[0] === '1' && args[1] === '250')).toBe(true)
@@ -211,10 +239,12 @@ describe('required native Effect Valkey binding', () => {
         Effect.runPromise,
       )
       expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
         expect(result.failure.message).toBe('Valkey command exceeded its deadline')
-      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError)
+        expect(result.failure.category).toBe(ValkeyFailureCategory.OperationDeadline)
+        expect(result.failure.causeCategory).toBe(ValkeyFailureCategory.ReplicaAcknowledgement)
         expect(String(result.failure.cause)).toContain('replica')
+      }
       expect(fixture.writes()).toBe(1)
       expect(fixture.waits()).toEqual([
         ['1', '250'],
@@ -226,6 +256,34 @@ describe('required native Effect Valkey binding', () => {
       await fixture.stop()
     }
   })
+  test.each(['first-wait-timeout', 'set-timeout'] as const)(
+    '%s cannot invent a missing acknowledgement cause',
+    async (mode) => {
+      const fixture = await transportFixture(mode)
+      try {
+        const result = await operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })).pipe(
+          Effect.provide(fixture.layer),
+          Effect.result,
+          Effect.runPromise,
+        )
+        expect(Result.isFailure(result)).toBe(true)
+        if (Result.isFailure(result)) {
+          expect(result.failure).toBeInstanceOf(ValkeyCacheError)
+          if (result.failure instanceof ValkeyCacheError) {
+            expect(result.failure.category).toBe(ValkeyFailureCategory.OperationDeadline)
+            expect(result.failure.causeCategory).toBeUndefined()
+            expect(result.failure.cause).toBeUndefined()
+          }
+        }
+        expect(fixture.writes()).toBe(1)
+        expect(fixture.waits()).toEqual(mode === 'set-timeout' ? [] : [['1', '250']])
+        await fixture.closed()
+        expect(fixture.closes()).toBe(1)
+      } finally {
+        await fixture.stop()
+      }
+    },
+  )
   test('the next operation reconnects after an aborted command without a legacy client', async () => {
     const fixture = await transportFixture('hold')
     try {
@@ -282,7 +340,7 @@ describe('required native Effect Valkey binding', () => {
       await fixture.stop()
     }
   })
-  test('a transport error remains a failure and retains its cause', async () => {
+  test('a server command error remains unclassified and retains its cause', async () => {
     const result = await runTransport(
       'error',
       operation((cache) => cache.get('bayn:test')),
@@ -290,6 +348,7 @@ describe('required native Effect Valkey binding', () => {
     expect(Result.isFailure(result)).toBe(true)
     if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
       expect(result.failure.operation).toBe('get')
+      expect(result.failure.category).toBe(ValkeyFailureCategory.CommandFailed)
       expect(String(result.failure.cause)).toContain('WRONGTYPE')
     }
   })
@@ -299,6 +358,21 @@ describe('required native Effect Valkey binding', () => {
       operation((cache) => cache.get('bayn:test')),
     )
     expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
+      expect(result.failure.category).toBe(ValkeyFailureCategory.NativeTimeout)
+      expect(result.failure.cause).toBeInstanceOf(SocketTimeoutError)
+    }
+  })
+  test('an actual socket close has the verified native transport category', async () => {
+    const result = await runTransport(
+      'disconnect',
+      operation((cache) => cache.get('bayn:test')),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
+      expect(result.failure.category).toBe(ValkeyFailureCategory.Transport)
+      expect(result.failure.cause).toBeInstanceOf(SocketClosedUnexpectedlyError)
+    }
   })
   test('a stalled startup handshake fails and closes the socket', async () => {
     const result = await runTransport(
@@ -312,6 +386,80 @@ describe('required native Effect Valkey binding', () => {
       ),
     )
     expect(Result.isFailure(result)).toBe(true)
+  })
+
+  test('classification uses native identities and never reads unknown cause details', async () => {
+    let detailReads = 0
+    const hostile = Object.defineProperties(
+      {},
+      Object.fromEntries(
+        ['name', 'message', 'stack', 'code', 'cause', 'toString'].map((name) => [
+          name,
+          {
+            get: () => {
+              detailReads++
+              throw new Error('private fixture detail')
+            },
+          },
+        ]),
+      ),
+    )
+    const revoked = Proxy.revocable({}, {})
+    revoked.revoke()
+    const hostilePrototype = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          detailReads++
+          throw new Error('private prototype detail')
+        },
+        get: () => {
+          detailReads++
+          throw new Error('private property detail')
+        },
+      },
+    )
+    const cases = [
+      [new TimeoutError(), ValkeyFailureCategory.NativeTimeout],
+      [new ConnectionTimeoutError(), ValkeyFailureCategory.NativeTimeout],
+      [new SocketTimeoutError(100), ValkeyFailureCategory.NativeTimeout],
+      [new SocketClosedUnexpectedlyError(), ValkeyFailureCategory.Transport],
+      [new Error('Valkey replica did not acknowledge publication'), ValkeyFailureCategory.CommandFailed],
+      [
+        { name: 'TimeoutError', code: 'ETIMEDOUT', message: 'private fixture detail' },
+        ValkeyFailureCategory.CommandFailed,
+      ],
+      ['private fixture detail', ValkeyFailureCategory.CommandFailed],
+      [hostile, ValkeyFailureCategory.CommandFailed],
+      [revoked.proxy, ValkeyFailureCategory.CommandFailed],
+      [hostilePrototype, ValkeyFailureCategory.CommandFailed],
+      [
+        Object.setPrototypeOf(new Error('private native detail'), hostilePrototype),
+        ValkeyFailureCategory.CommandFailed,
+      ],
+    ] as const
+    for (const [cause, category] of cases) {
+      const client = {
+        isOpen: true,
+        destroy: () => {},
+        withAbortSignal: () => ({ get: () => Promise.reject(cause) }),
+      } as unknown as NodeRedis.NodeRedis['Service']['client']
+      const result = await operation((cache) => cache.get('bayn:private-fixture')).pipe(
+        Effect.provide(
+          Layer.effect(ValkeyCache, makeValkeyCache).pipe(
+            Layer.provide(Layer.succeed(NodeRedis.NodeRedis, { client, use: () => Effect.die('unused') })),
+          ),
+        ),
+        Effect.result,
+        Effect.runPromise,
+      )
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result) && result.failure instanceof ValkeyCacheError) {
+        expect(result.failure.category).toBe(category)
+        expect(result.failure.cause).toBe(cause)
+      }
+    }
+    expect(detailReads).toBe(0)
   })
   test('interruption unwinds the native scope and cancels pending work', async () => {
     const fixture = await transportFixture('hold')
