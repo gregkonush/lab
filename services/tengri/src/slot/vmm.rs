@@ -291,7 +291,15 @@ pub async fn connect_vsock(path: &Path, port: u32) -> anyhow::Result<UnixStream>
 pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value> {
     timeout(Duration::from_secs(30), async {
         let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
-        let mut bytes = serde_json::to_vec(command)?;
+        let mut command = command.clone();
+        if command["action"] == "resume" {
+            command["unixTimeNanos"] = json!(
+                chrono::Utc::now()
+                    .timestamp_nanos_opt()
+                    .context("host clock overflow")?
+            );
+        }
+        let mut bytes = serde_json::to_vec(&command)?;
         bytes.push(b'\n');
         stream.write_all(&bytes).await?;
         let mut reader = BufReader::new(stream);
@@ -379,6 +387,40 @@ pub fn evict_memory(_: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resume_clock_is_sampled_after_the_vsock_handshake() {
+        let path = std::env::temp_dir().join(format!(
+            "tg-{}.sock",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        ));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut handshake = String::new();
+            reader.read_line(&mut handshake).await.unwrap();
+            assert_eq!(handshake, format!("CONNECT {GUEST_CONTROL_PORT}\n"));
+            let connected_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            let mut command = String::new();
+            reader.read_line(&mut command).await.unwrap();
+            let command: Value = serde_json::from_str(&command).unwrap();
+            reader
+                .get_mut()
+                .write_all(b"{\"ok\":true}\n")
+                .await
+                .unwrap();
+            (connected_at, command)
+        });
+        let stale = chrono::Utc::now().timestamp_nanos_opt().unwrap() - 10_000_000_000;
+        guest_command(&path, &json!({"action": "resume", "unixTimeNanos": stale}))
+            .await
+            .unwrap();
+        let (connected_at, command) = peer.await.unwrap();
+        fs::remove_file(path).await.unwrap();
+        assert!(command["unixTimeNanos"].as_i64().unwrap() >= connected_at);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
