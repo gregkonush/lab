@@ -7,8 +7,17 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is the fenced API/exporter GitOps enrollment on `codex/ofz-control-plane-rollout`.
-The fenced API/exporter and approved owner bootstrap are in [#15026](https://github.com/proompteng/lab/pull/15026).
+The active source frontier is the dedicated identity rollout on `codex/ofz-identity-rollout`.
+The fenced API/exporter and approved owner bootstrap merged in [#15026](https://github.com/proompteng/lab/pull/15026)
+at `971f5874970c7ce5453bff0f11a8cb822c03740f`. Its exact-head validation and both image builds pass; main image
+publication and the Kargo/Argo rollout are pending. The live registry is stopped during a filesystem check of its
+detached RBD volume. Preserve that recovery hold until its owner completes the check.
+The Keycloak configuration now has one active GitOps source, with the obsolete prepared overlay removed. Its dedicated
+realm credentials, verified issuer certificate and tunnel route, two serving replicas and three host-spread database
+instances pass the real API-server dry run. The exact database toleration admits the third host without removing
+Ryzen's compute-local taint. Five rendered targets and thirty-one rejected regressions pass. The real Keycloak 26.7.4,
+Chromium, BFF, controller, Ofz and SQL fixture passes all eighty-one assertions in 81.84 seconds. This is isolated
+evidence; independent backup/restore, live deployment, the real OAuth callback switch and passkeys remain pending.
 The independent archive merged in [#15020](https://github.com/proompteng/lab/pull/15020) at
 `1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6`. Its main image is published and its NUC service is deployed and verified.
 The owner-only bootstrap/activation commands merged in [#15014](https://github.com/proompteng/lab/pull/15014) at
@@ -46,21 +55,21 @@ Activate only the new VMM/protocol. Fresh workspaces must use the final contract
 
 ## Service delivery
 
-| Service or contract                                                               | Source delivery                                                          | Remaining release boundary                                              |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                                            | Bootstrap, independent exporter, delivery enrollment and API activation |
-| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                                 | Coordinated activation and fresh-workspace browser proof                |
-| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                                            | Live host loss and three-node CNPG qualification                        |
-| Physical database promotion                                                       | #14910 merged                                                            | Native CNPG and independent restore                                     |
-| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727`              | Coordinated runtime/guest activation                                    |
-| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda`              | Warehouse/Stage enrollment and API deployment                           |
-| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b`              | Native performance, independent execution fencing and activation        |
-| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2`              | Bounded observers and coordinated activation                            |
-| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c`              | Deployed UI acceptance                                                  |
-| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0`              | Fifty-sample qualification and coordinated activation                   |
-| Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                                 | Protected inputs, independent archive and production activation         |
-| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), merged | Kubernetes exporter adoption and full recovery qualification                |
-| Bounded file observers                                                            | Local implementation, unpublished                                        | Finish controller/BFF wiring and full scoped acceptance                 |
+| Service or contract                                                               | Source delivery                                                | Remaining release boundary                                              |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                                  | Bootstrap, independent exporter, delivery enrollment and API activation |
+| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                       | Coordinated activation and fresh-workspace browser proof                |
+| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                                  | Live host loss and three-node CNPG qualification                        |
+| Physical database promotion                                                       | #14910 merged                                                  | Native CNPG and independent restore                                     |
+| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727`    | Coordinated runtime/guest activation                                    |
+| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda`    | Warehouse/Stage enrollment and API deployment                           |
+| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b`    | Native performance, independent execution fencing and activation        |
+| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2`    | Bounded observers and coordinated activation                            |
+| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c`    | Deployed UI acceptance                                                  |
+| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0`    | Fifty-sample qualification and coordinated activation                   |
+| Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                       | Protected inputs, independent archive and production activation         |
+| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), merged | Kubernetes exporter adoption and full recovery qualification            |
+| Bounded file observers                                                            | Local implementation, unpublished                              | Finish controller/BFF wiring and full scoped acceptance                 |
 
 The latest verified API factory receipt is main run `38521111594`. Its two-platform index is
 `registry.ide-newton.ts.net/lab/ofz@sha256:23168c8fc76893a4bd9313d221045a4fe8b39b316dd0a5d7338ec143d28a2d03`,
