@@ -410,9 +410,13 @@ impl Slot {
             "real KVM runner resumed: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let reply = vmm::guest_command(&self.config.vsock(), &serde_json::json!({
-            "action": "resume", "claim": claim, "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt().context("host clock overflow")?
-        })).await?;
+        let reply = vmm::guest_command(
+            &self.config.vsock(),
+            &serde_json::json!({
+                "action": "resume", "claim": claim
+            }),
+        )
+        .await?;
         ensure!(
             reply.get("claim") == Some(&serde_json::to_value(claim)?),
             "restored guest claim does not match its slot"
@@ -478,8 +482,7 @@ impl Slot {
                             && vmm::guest_command(
                                 &self.config.vsock(),
                                 &serde_json::json!({
-                                    "action": "resume", "claim": claim,
-                                    "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt()
+                                    "action": "resume", "claim": claim
                                 }),
                             )
                             .await
