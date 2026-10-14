@@ -15,6 +15,15 @@ spec.loader.exec_module(cleanup)
 
 
 class CleanupTest(unittest.TestCase):
+    def test_cooperative_deadline_reports_unfinished_quarantine(self):
+        orphan = self.blob(b"deadline candidate")
+        plan = self.prepare()
+        with patch.object(cleanup.time, "monotonic", side_effect=[0, 0.5, 2]):
+            result = self.collect(plan, seconds=1)
+        self.assertEqual(result["quarantinedBlobs"], 0)
+        self.assertTrue(result["collectionTimedOut"])
+        self.assertTrue(self.store.blob(orphan).exists())
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

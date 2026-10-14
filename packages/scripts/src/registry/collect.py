@@ -407,7 +407,6 @@ class Collection:
                 if result.returncode:
                     raise RuntimeError("Collection failed: " + result.stderr[-2000:])
                 collection_result = json.loads(result.stdout)
-                collection_result["collectionTimedOut"] = False
         finally:
             try:
                 self.restore(

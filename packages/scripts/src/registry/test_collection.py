@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -131,6 +132,27 @@ class FakeCollection(collect.Collection):
 
 
 class CollectionTest(unittest.TestCase):
+    def test_cooperative_collector_deadline_is_preserved_in_the_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "plan.json"
+            plan.write_text('{"pvcUid":"claim","pv":"volume"}')
+            refs = Path(directory) / "refs.json"
+            refs.write_text('["fixture"]')
+            operation = FakeCollection()
+            result = {
+                "quarantineId": operation.name,
+                "collectionTimedOut": True,
+                "remainingCandidates": 1,
+            }
+            with patch.object(
+                collect.subprocess,
+                "run",
+                return_value=SimpleNamespace(
+                    returncode=0, stdout=json.dumps(result), stderr=""
+                ),
+            ):
+                self.assertEqual(operation.run(plan, refs), result)
+
     def test_invalid_receipt_does_not_recover_a_timed_out_collection(self):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / "plan.json"
