@@ -8,11 +8,11 @@ metadata:
     argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   version: "9.1"
-  arch: cluster
+  arch: replica
   replicas:
-    shards: 3
+    shards: 1
     replicasOfShard: 2
-  affinityPolicy: AntiAffinityInShard
+  affinityPolicy: AntiAffinity
   nodeSelector:
     network.proompteng.ai/100g: "true"
   securityContext:

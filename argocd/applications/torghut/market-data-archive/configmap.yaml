@@ -4,6 +4,10 @@ metadata:
   name: market-data-archive-config
   namespace: torghut
 data:
+  ARCHIVE_CRYPTO_TOPIC: "bayn.market-data.crypto.v1"
+  ARCHIVE_CRYPTO_FEATURES_TOPIC: "bayn.market-data.crypto.features.v1"
+  ARCHIVE_CRYPTO_LOCATION: "us"
+  ARCHIVE_CRYPTO_SYMBOLS: "BTC/USD,ETH/USD"
   ARCHIVE_TECHNICAL_FEATURES_TOPIC: "torghut.technical-features.v1"
   ARCHIVE_FEATURES_TOPIC: "torghut.market-features.v1"
   ARCHIVE_KAFKA_BOOTSTRAP: "kafka-kafka-bootstrap.kafka:9092"
