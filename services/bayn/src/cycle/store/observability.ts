@@ -11,7 +11,7 @@ import {
   type DurableAuthorityObservation,
   type ReconciliationObservation,
 } from '../observability'
-import { CycleState, CycleTerminalReason } from '../model'
+import { CycleState, CycleTerminalReason, ExecutionCalendarObservationMaterialSchema } from '../model'
 import { describeEntryAllocation, EntryAllocationFactsSchema } from '../entry-allocation-observation'
 import { lastEntryAllocationQuery } from './entry-allocation-query'
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
@@ -123,6 +123,9 @@ const ProjectionRowSchema = Schema.Struct({
   current_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   current_signal_session_date: Schema.NullOr(IsoDateSchema),
   current_execution_session_date: Schema.NullOr(IsoDateSchema),
+  current_execution_calendar_schema_version: Schema.NullOr(
+    ExecutionCalendarObservationMaterialSchema.fields.executionCalendarSchemaVersion,
+  ),
   current_state: NullableCycleState,
   current_snapshot_id: NullableSha256,
   current_decision_hash: NullableSha256,
@@ -139,6 +142,9 @@ const ProjectionRowSchema = Schema.Struct({
   last_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   last_signal_session_date: Schema.NullOr(IsoDateSchema),
   last_execution_session_date: Schema.NullOr(IsoDateSchema),
+  last_execution_calendar_schema_version: Schema.NullOr(
+    ExecutionCalendarObservationMaterialSchema.fields.executionCalendarSchemaVersion,
+  ),
   last_state: NullableCycleState,
   last_snapshot_id: NullableSha256,
   last_decision_hash: NullableSha256,
@@ -236,6 +242,7 @@ const snapshotFromRow = (
   const accountId = row[`${prefix}_account_id`]
   const signalSessionDate = row[`${prefix}_signal_session_date`]
   const executionSessionDate = row[`${prefix}_execution_session_date`]
+  const executionCalendarSchemaVersion = row[`${prefix}_execution_calendar_schema_version`]
   const authoritySessionDate = signalSessionDate ?? executionSessionDate
   const phase = row[`${prefix}_state`]
   const submissionOpenAt = row[`${prefix}_submission_open_at`]
@@ -248,6 +255,7 @@ const snapshotFromRow = (
     accountId === null ||
     authoritySessionDate === null ||
     executionSessionDate === null ||
+    executionCalendarSchemaVersion === null ||
     phase === null ||
     submissionOpenAt === null ||
     submissionCutoffAt === null ||
@@ -263,6 +271,7 @@ const snapshotFromRow = (
     accountId,
     signalSessionDate: authoritySessionDate,
     executionSessionDate,
+    executionCalendarSchemaVersion,
     phase,
     snapshotId: row[`${prefix}_snapshot_id`],
     decisionHash: row[`${prefix}_decision_hash`],
@@ -756,6 +765,7 @@ const makeCycleObservability = Effect.gen(function* () {
             current.account_id AS current_account_id,
             current.signal_session_date::text AS current_signal_session_date,
             current.execution_session_date::text AS current_execution_session_date,
+            current.execution_calendar_schema_version AS current_execution_calendar_schema_version,
             current.state AS current_state,
             current.snapshot_id AS current_snapshot_id,
             current.decision_hash AS current_decision_hash,
@@ -772,6 +782,7 @@ const makeCycleObservability = Effect.gen(function* () {
             last.account_id AS last_account_id,
             last.signal_session_date::text AS last_signal_session_date,
             last.execution_session_date::text AS last_execution_session_date,
+            last.execution_calendar_schema_version AS last_execution_calendar_schema_version,
             last.state AS last_state,
             last.snapshot_id AS last_snapshot_id,
             last.decision_hash AS last_decision_hash,
