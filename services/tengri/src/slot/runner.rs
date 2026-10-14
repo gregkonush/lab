@@ -3,6 +3,7 @@ use std::{
 };
 
 use anyhow::{Context, ensure};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -303,12 +304,24 @@ pub(super) async fn stage_root_disk(
     let token = fs::read_to_string(token_file)
         .await
         .context("read guest bootstrap token")?;
+    let verification_key_path = env::var("TENGRI_GUEST_VERIFICATION_KEY_FILE")
+        .context("TENGRI_GUEST_VERIFICATION_KEY_FILE is required")?;
+    let verification_key = tengri::guest_authorization::GuestVerifier::from_file(
+        std::path::Path::new(&verification_key_path),
+    )?;
+    let recovery_generation =
+        tengri::guest_authorization::recovery_generation_from_file(std::path::Path::new(
+            &env::var("TENGRI_GUEST_RECOVERY_GENERATION_FILE")
+                .context("TENGRI_GUEST_RECOVERY_GENERATION_FILE is required")?,
+        ))?;
     let config_file = directory.join("guest-config.json");
     fs::write(
         &config_file,
         serde_json::to_vec(&json!({
             "podUid": identity.pod_uid, "token": token,
-            "initializeHome": initialize_home
+            "initializeHome": initialize_home,
+            "verificationKey": STANDARD.encode(verification_key.public_key()),
+            "recoveryGeneration": recovery_generation
         }))?,
     )
     .await?;

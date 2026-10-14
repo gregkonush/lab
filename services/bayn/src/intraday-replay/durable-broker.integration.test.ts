@@ -161,7 +161,7 @@ durableTest.each(['ioc', 'fractional'] as const)(
           side,
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: '3000000',
+          quantityAtoms: '3000000000',
           notionalLimitMicros: '300000000',
           state: IntentState.IoStarted,
           createdAt: '2026-09-04T14:31:00.000Z',
@@ -171,10 +171,10 @@ durableTest.each(['ioc', 'fractional'] as const)(
             ? [order(OrderSide.Buy), order(OrderSide.Sell)]
             : [
                 order(OrderSide.Buy),
-                ...['500000', '2500000'].map((quantityMicros, index) => ({
+                ...['500000', '2500000'].map((quantityAtoms, index) => ({
                   ...order(OrderSide.Sell),
                   clientOrderId: `fractional-${index}`,
-                  quantityMicros,
+                  quantityAtoms,
                   orderType: OrderType.Market,
                   timeInForce: TimeInForce.Day,
                 })),

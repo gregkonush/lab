@@ -33,6 +33,85 @@ During the regular IEX session, the core forwarder reconnects if no provider mar
 `ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS` of the subscription or the last event. This check also runs when the WebSocket
 keeps sending control frames. REST recovery cannot reset the provider-event clock.
 
+## Crypto source events
+
+The forwarder opens the Alpaca `v1beta3/crypto/{location}` websocket with the same `ALPACA_KEY_ID` and
+`ALPACA_SECRET_KEY` used by the equity connection. `ALPACA_CRYPTO_SYMBOLS` supplies unique `BASE/QUOTE` pairs,
+`ALPACA_CRYPTO_LOCATION` selects `us`, `us-1`, or `eu-1`, and `TOPIC_CRYPTO_EVENTS` names the Kafka topic.
+The committed configuration collects `BTC/USD`, `ETH/USD`, and `SOL/USD` from `us`. It subscribes to trades, quotes,
+minute bars, updated bars, and order books. Authentication, subscription acknowledgement, Kafka delivery,
+freshness, and reconnect checks run on weekends and holidays. Sparse trades and updated bars require subscription
+acknowledgement without inventing a minimum event rate. Quotes, minute bars, and order books require fresh delivery.
+
+Crypto events use their native payload shape, independently of the equity decoder. The decoder validates pair
+identity, timestamps, positive prices, fractional quantities, unsigned 64-bit trade IDs, taker side, bar consistency,
+and order-book levels. Zero-volume midpoint bars may have zero VWAP. Order-book reset flags and zero-size deletions
+remain intact. Numeric JSON literals retain their original text through Kafka serialization, including decimals
+that cannot pass through `Double` exactly. Control frames do not advance the provider-event clock.
+
+All crypto channels share one topic keyed by pair. Envelopes bind `provider=alpaca`, the location as `feed`,
+`marketSession=continuous`, and `delayClass=real_time_crypto`. Sequence numbers order a pair's events within a process;
+Kafka topic, partition, and offset identify retained records across restarts. The producer retains every validated
+provider event, including repeated book snapshots. It does not reconstruct a book or supply REST replacements.
+
+The existing archive job consumes this topic through its independent crypto source and checkpoint identities.
+`ARCHIVE_CRYPTO_TOPIC`, `ARCHIVE_CRYPTO_LOCATION`, and `ARCHIVE_CRYPTO_SYMBOLS` bind the allowed source.
+Its initial read starts at the earliest retained crypto offset. Existing archive sources keep their offsets and
+restore identities. The archive revalidates the envelope and native payload before inserting into
+`signal.crypto_market_events_v1`. The table stores nanosecond event and ingestion timestamps, native JSON,
+sequence, and Kafka coordinates. Use `FINAL` or deduplicate by source coordinates when reading retries from the
+at-least-once JDBC sink. Kafka retains seven days; ClickHouse retains thirty days.
+
+Roll out the Kafka topic first. The Torghut schema hook creates the table, and the existing `signal_publisher` user
+receives `INSERT` on that table. Reviewed image publication and Kargo promotion then deliver the archive and producer.
+The production credentials remain in the existing secret references. To prove ingestion, compare native Kafka
+records with ClickHouse rows by source coordinates and check both pairs, all channels, exact payloads, and timestamp
+precision. Readiness and a completed checkpoint alone do not prove this path.
+
+The shared synthetic fixture is `fixtures/alpaca-crypto-v1.json`. `ForwarderCryptoTest` drives real local equity and
+crypto websockets through the production forwarder and checks its Kafka sends and shared authentication.
+`CryptoMarketDataArchiveTest` checks source binding, JDBC parameters, and savepoint identities.
+`CryptoMarketDataClickhouseIntegrationTest` uses the existing guarded disposable ClickHouse service to exercise
+the production schema and JDBC statement, including exact decimal payloads, nanosecond timestamps, and retry deduplication.
+The provider contract is [Alpaca's real-time crypto data reference](https://docs.alpaca.markets/us/docs/real-time-crypto-pricing-data).
+
+## Crypto Flink features
+
+The raw crypto archive and derived features have separate contracts. The existing TA Flink job consumes
+`bayn.market-data.crypto.v1` through its crypto feature branch. Native minute bars and updated bars drive rolling
+price/volume features, EMA 12/26, MACD, RSI 14, Bollinger bands, five- and thirty-minute weighted closes and source VWAP,
+and volatility over sixty log returns. Quotes, trades, and order books remain available in the raw archive; this
+feature definition does not derive indicators from those channels.
+
+`TA_CRYPTO_TOPIC`, `TA_CRYPTO_LOCATION`, and `TA_CRYPTO_SYMBOLS` bind the source. `TA_CRYPTO_FEATURES_TOPIC` selects
+`bayn.market-data.crypto.features.v1`. The branch uses the existing TA Kafka credentials and starts at the retained
+beginning on its first deployment. Its own source, keyed state, and sink IDs preserve the currently deployed equity
+graph's checkpoint identities. The branch adds no Flink deployment or brokerage account.
+
+`dorvud.crypto-continuous-1m.v1` runs across UTC midnight, weekends, and holidays. Recursive indicators keep their
+original seed as the bounded bar buffer advances. The last 61 canonical bars remain correctable; older corrections
+are rejected and counted, while their raw records remain retained. A missing minute resets recursive warmup and makes
+affected rolling windows unavailable. No missing bars are invented. Newer native updated bars replace their minute
+by ingestion nanoseconds and then Kafka partition/offset, recomputing the current feature. Checkpoints retain the
+recursive seed, canonical bars, hash chain, and last emitted semantic ID.
+
+Feature messages contain readiness for each value, exact decimal rolling OHLC and fractional volume, technical
+scalars in integer-string micros or ppm, actual computation time, producer revision, and raw source references.
+Each reference binds nanosecond event/ingestion time, Kafka coordinates, and a native JSON content hash. A history
+hash chain binds earlier canonical inputs that contribute to the recursive seed. The feature ID hashes canonical
+material and excludes computation time and producer revision, so equivalent recovery produces the same semantic ID.
+
+The archive consumes the derived topic with `ARCHIVE_CRYPTO_FEATURES_TOPIC`, validates its definition, source,
+availability, and hashes, and writes the original message to `signal.crypto_market_features_v1`. The existing
+`signal_publisher` identity receives only `INSERT` on the new table. Derived Kafka messages retain seven days and
+ClickHouse retains thirty days. Readers deduplicate at-least-once retries by derived topic, partition, and offset,
+using `FINAL` for the replicated replacing table.
+
+Roll out the feature topic, then the schema/grant, then the Kargo-promoted TA and archive images. Acceptance requires
+actual derived Kafka messages for both pairs, raw-input joins and feature recomputation, exact ClickHouse payloads
+on both replicas, and completed checkpoints after savepoint restore. A ready Pod or raw archive row does not prove
+the derived path.
+
 ## Latest quote and trade observations
 
 The producer can supply missing IEX quotes and trades with Alpaca's bulk

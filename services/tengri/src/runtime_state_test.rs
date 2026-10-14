@@ -34,6 +34,49 @@ fn principal(action: Action) -> Principal {
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_replay_guard_tolerates_clock_lead_without_expiry_grace() {
+    let (database, _, _) = fixture().await;
+    let client = database.connection().await.unwrap();
+    let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    let accepted: bool = client
+        .query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5500)",
+            &[&nonce],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        accepted,
+        "a verified five-second request may lead the database clock by 500 ms"
+    );
+    let replay: bool = client
+        .query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5500)",
+            &[&nonce],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(!replay);
+    for offset in [-1_i64, 6500] {
+        let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+        let error = client
+            .query_one(
+                "SELECT tengri.consume_nonce($1,tengri.now_ms()+$2)",
+                &[&nonce, &offset],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            crate::control::sql_error(error).code(),
+            Code::Unauthenticated
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_backend_reconnection_does_not_forget_an_accepted_nonce() {
     let (database, _, _) = fixture().await;
     let other = Database::shared_fixture().await;
@@ -256,6 +299,10 @@ async fn runtime_shared_state_preview_rotation_revocation_and_identity_isolation
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_capacity_expiry_and_workspace_cleanup_are_global() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init();
     let (database, a, b) = fixture().await;
     let owners = (0..8)
         .map(|_| principal(Action::PreviewAccess))
@@ -403,6 +450,19 @@ async fn runtime_shared_state_signed_nonce_is_shared_and_payload_bound() {
     );
     let fresh = signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
     assert!(b.authorize(&fresh, path).await.is_ok());
+    for deadline in [
+        crate::ofz::now_ms().unwrap() - 1,
+        crate::ofz::now_ms().unwrap() + 5500,
+    ] {
+        let mut invalid = owner.clone();
+        invalid.context.deadline_unix_ms = deadline;
+        let request =
+            signed_fixture_request(GetAgentRequest { id: "agent".into() }, &invalid, path);
+        assert_eq!(
+            a.authorize(&request, path).await.unwrap_err().code(),
+            Code::Unauthenticated
+        );
+    }
     let mut duplicated =
         signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
     let nonce = duplicated.metadata().get("x-tengri-nonce").unwrap().clone();
@@ -459,6 +519,18 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     .unwrap();
     supervisor.verify_schema().await.unwrap();
     assert!(supervisor.require_fence(second).await.is_ok());
+    let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    supervisor
+        .consume_nonce(&nonce, (crate::ofz::now_ms().unwrap() + 2000) as i64)
+        .await
+        .unwrap();
+    assert_eq!(
+        b.consume_nonce(&nonce, (crate::ofz::now_ms().unwrap() + 2000) as i64)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
     assert!(supervisor.acquire(Uuid::new_v4()).await.is_err());
     let client = supervisor.connection().await.unwrap();
     for query in [
@@ -486,4 +558,269 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     let third = a.acquire(one).await.unwrap().unwrap();
     assert!(third.generation > second.generation);
     a.release(third).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the synchronous physical fixture from test-database-failover.sh"]
+async fn physical_database_promotion_preserves_authority_and_consumed_capabilities() {
+    use serde_json::{Value, json};
+
+    async fn native(
+        client: &reqwest::Client,
+        endpoint: &str,
+        path: &str,
+        body: Value,
+    ) -> Result<Value, reqwest::Error> {
+        client
+            .post(format!("{endpoint}{path}"))
+            .bearer_auth("ofz-policy-fixture")
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+    }
+    fn relationship(
+        kind: &str,
+        id: &str,
+        relation: &str,
+        subject_kind: &str,
+        subject: &str,
+    ) -> Value {
+        json!({"resource":{"objectType":kind,"objectId":id},"relation":relation,
+            "subject":{"object":{"objectType":subject_kind,"objectId":subject}}})
+    }
+    fn check(uid: &str, human: &str) -> Value {
+        json!({"consistency":{"fullyConsistent":true},"resource":{"objectType":"workspace","objectId":uid},
+            "permission":"view_metadata","subject":{"object":{"objectType":"human","objectId":human}}})
+    }
+    assert_eq!(
+        std::env::var("TENGRI_DATABASE_FAILOVER_FIXTURE").as_deref(),
+        Ok("1")
+    );
+    let (database, a, b) = fixture().await;
+    let peer = Database::shared_fixture().await;
+    let endpoint = std::env::var("OFZ_TEST_NATIVE_ENDPOINT").unwrap();
+    assert!(endpoint.starts_with("http://127.0.0.1:"));
+    let native_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .no_proxy()
+        .build()
+        .unwrap();
+    let uid = Uuid::new_v4().to_string();
+    let owner = "b".repeat(64);
+    let revoked = "c".repeat(64);
+    let relationships = [
+        relationship("platform", "lab", "member", "human", &owner),
+        relationship("platform", "lab", "member", "human", &revoked),
+        relationship("workspace", &uid, "platform", "platform", "lab"),
+        relationship("workspace", &uid, "owner", "human", &owner),
+        relationship("workspace", &uid, "viewer", "human", &revoked),
+    ];
+    native(
+        &native_client,
+        &endpoint,
+        "/v1/relationships/write",
+        json!({"updates":relationships.into_iter().map(|relationship|
+        json!({"operation":"OPERATION_TOUCH","relationship":relationship})).collect::<Vec<_>>()}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        native(
+            &native_client,
+            &endpoint,
+            "/v1/permissions/check",
+            check(&uid, &revoked)
+        )
+        .await
+        .unwrap()["permissionship"],
+        "PERMISSIONSHIP_HAS_PERMISSION"
+    );
+    native(
+        &native_client,
+        &endpoint,
+        "/v1/relationships/write",
+        json!({"updates":[{"operation":"OPERATION_DELETE",
+        "relationship":relationship("workspace", &uid, "viewer", "human", &revoked)}]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        native(
+            &native_client,
+            &endpoint,
+            "/v1/permissions/check",
+            check(&uid, &revoked)
+        )
+        .await
+        .unwrap()["permissionship"],
+        "PERMISSIONSHIP_NO_PERMISSION"
+    );
+
+    let terminal_owner = principal(Action::TerminalControl);
+    let spent = a
+        .issue_terminal(&terminal_owner, "agent", "spent")
+        .await
+        .unwrap();
+    b.consume(&spent.token).await.unwrap();
+    let pending = a
+        .issue_terminal(&terminal_owner, "agent", "pending")
+        .await
+        .unwrap();
+    let editor_owner = principal(Action::EditorOpen);
+    let live_ticket = a
+        .issue_editor(&editor_owner, "agent", "live")
+        .await
+        .unwrap();
+    let live_preview = b.consume_preview(&live_ticket.token).await.unwrap();
+    let revoked_ticket = a
+        .issue_editor(&editor_owner, "agent", "revoked")
+        .await
+        .unwrap();
+    let revoked_preview = b.consume_preview(&revoked_ticket.token).await.unwrap();
+    a.revoke_preview_lease(
+        &editor_owner,
+        "agent",
+        &revoked_ticket.id,
+        &revoked_ticket.token,
+    )
+    .await
+    .unwrap();
+    let fence = database.acquire(Uuid::new_v4()).await.unwrap().unwrap();
+    let nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    let deadline = (crate::ofz::now_ms().unwrap() + 5000) as i64;
+    database.consume_nonce(&nonce, deadline).await.unwrap();
+
+    let started = tokio::time::Instant::now();
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new("bash")
+            .arg(std::env::var("TENGRI_DATABASE_FAILOVER_COMMAND").unwrap())
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "physical promotion failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    eprintln!("{}", String::from_utf8_lossy(&output.stdout).trim());
+    loop {
+        match database.verify_schema().await {
+            Ok(()) => break,
+            Err(error)
+                if error.code() == Code::Unavailable
+                    && started.elapsed() < Duration::from_secs(30) =>
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            result => panic!("shared state did not recover on the unchanged client: {result:?}"),
+        }
+    }
+    let now: i64 = database
+        .connection()
+        .await
+        .unwrap()
+        .query_one("SELECT tengri.now_ms()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        now < deadline,
+        "replay proof must run before the original nonce expires"
+    );
+    assert_eq!(
+        database
+            .consume_nonce(&nonce, deadline)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    assert_eq!(
+        b.consume(&spent.token).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+    b.consume(&pending.token).await.unwrap();
+    assert_eq!(
+        a.consume(&pending.token).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+    let recovered = a
+        .preview_session(&live_preview.id, &live_preview.token)
+        .await
+        .unwrap();
+    assert_eq!(
+        recovered.principal.context.runtime_epoch,
+        editor_owner.context.runtime_epoch
+    );
+    assert_eq!(
+        recovered.principal.context.workspace_uid,
+        editor_owner.context.workspace_uid
+    );
+    assert_eq!(
+        recovered.principal.context.session_id,
+        editor_owner.context.session_id
+    );
+    assert_eq!(
+        a.preview_session(&revoked_preview.id, &revoked_preview.token)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+    database.require_fence(fence).await.unwrap();
+    assert!(peer.acquire(Uuid::new_v4()).await.unwrap().is_none());
+    database.release(fence).await.unwrap();
+    let (left, right) = tokio::join!(
+        database.acquire(Uuid::new_v4()),
+        peer.acquire(Uuid::new_v4())
+    );
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert_eq!(
+        usize::from(left.is_some()) + usize::from(right.is_some()),
+        1
+    );
+    let replacement = left.or(right).unwrap();
+    assert!(replacement.generation > fence.generation);
+    assert_eq!(
+        peer.require_fence(fence).await.unwrap_err().code(),
+        Code::PermissionDenied
+    );
+    peer.release(replacement).await.unwrap();
+    for (human, expected) in [
+        (&owner, "PERMISSIONSHIP_HAS_PERMISSION"),
+        (&revoked, "PERMISSIONSHIP_NO_PERMISSION"),
+    ] {
+        loop {
+            match native(
+                &native_client,
+                &endpoint,
+                "/v1/permissions/check",
+                check(&uid, human),
+            )
+            .await
+            {
+                Ok(value) => {
+                    assert_eq!(value["permissionship"], expected);
+                    break;
+                }
+                Err(_) if started.elapsed() < Duration::from_secs(30) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await
+                }
+                Err(error) => {
+                    panic!("native policy did not recover after physical promotion: {error}")
+                }
+            }
+        }
+    }
+    assert!(started.elapsed() < Duration::from_secs(30));
+    eprintln!(
+        "Physical promotion proof passed in {:?}: unexpired nonce, atomic tickets, previews, fencing and current policy",
+        started.elapsed()
+    );
 }

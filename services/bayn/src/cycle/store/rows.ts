@@ -58,8 +58,11 @@ const StoredCycleRowSchema = Schema.Struct({
     'bayn.autonomous-cycle-window.v2',
     'bayn.autonomous-cycle-window.v3',
   ]),
-  execution_calendar_schema_version: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
-  execution_calendar_source: Schema.Literal('alpaca-v2-calendar'),
+  execution_calendar_schema_version: Schema.Literals([
+    'bayn.alpaca-market-calendar-observation.v1',
+    'bayn.continuous-market-hours.v1',
+  ]),
+  execution_calendar_source: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
   execution_calendar_hash: Sha256Schema,
   execution_session_date: IsoDateSchema,
   signal_close_at: Schema.NullOr(Schema.Date),

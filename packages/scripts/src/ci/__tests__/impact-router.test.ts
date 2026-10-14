@@ -192,6 +192,14 @@ describe('impact router', () => {
     expect(plan.validationTargets).toEqual(['kubeconform'])
   })
 
+  test.each([
+    'services/ofz/test-ha-manifests.sh',
+    'services/ofz/tests/ha_manifests.py',
+    '.github/workflows/pull-request.yml',
+  ])('routes the HA render checker through schema validation: %s', (file) => {
+    expect(selectImpactPlan([file], map).validationTargets).toContain('kubeconform')
+  })
+
   test('routes Argo CD application changes through scripts contract tests', () => {
     const plan = selectImpactPlan(['argocd/applications/argocd/overlays/argocd-cm.yaml'], map)
     expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])
@@ -244,7 +252,7 @@ describe('impact router', () => {
       ['argocd/applicationsets/platform.yaml', ['argo-lint', 'kubeconform', 'root-scripts']],
       ['docs/runbooks/hermes-production-rollout.md', ['root-scripts']],
       ['.github/ci/impact-map.yml', ['root-scripts', 'workflow-lint']],
-      ['.github/workflows/pull-request.yml', ['root-scripts', 'workflow-lint']],
+      ['.github/workflows/pull-request.yml', ['kubeconform', 'root-scripts', 'workflow-lint']],
       ['.github/workflows/hermes-agent-mirror.yml', ['root-scripts', 'workflow-lint']],
     ] as const
 

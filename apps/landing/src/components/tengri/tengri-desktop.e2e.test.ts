@@ -164,6 +164,7 @@ type MockOptions = {
   preserveDraftStorageOnReload?: boolean
   terminalStore?: TerminalStore
   supersedeSleepOnce?: boolean
+  supersededCreationId?: string
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -472,6 +473,13 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
     const action = request.postDataJSON() as Record<string, unknown>
     actions.push(action)
+    if (action.action === 'create-agent' && action.operationId === options.supersededCreationId) {
+      await route.fulfill({
+        status: 409,
+        json: { error: 'Workspace removed', code: 'lifecycle_superseded' },
+      })
+      return
+    }
     if (action.action === 'create-agent' && failCreate) {
       failCreate = false
       if (options.commitFailedCreate) {
@@ -3651,6 +3659,30 @@ for (const timing of ['concurrently', 'after the first response'] as const) {
     expect(secondCreates[0].operationId).toBe(firstCreates[0].operationId)
   })
 }
+
+test('creates with a new name after its workspace is deleted on another device', async ({ page }) => {
+  const first = await mockTengri(page, { agent: null, preserveDraftStorageOnReload: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const creationId = String(first.actions.find((action) => action.action === 'create-agent')?.operationId)
+  await page.unrouteAll({ behavior: 'wait' })
+  const replacement = await mockTengri(page, {
+    agent: null,
+    supersededCreationId: creationId,
+    preserveDraftStorageOnReload: true,
+  })
+  await page.reload()
+  await create.getByLabel('Agent name').fill('Replacement workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const creates = replacement.actions.filter((action) => action.action === 'create-agent')
+  expect(creates.map((action) => action.displayName)).toEqual(['Original workspace', 'Replacement workspace'])
+  expect(creates[0].operationId).toBe(creationId)
+  expect(creates[1].operationId).not.toBe(creationId)
+})
 
 test('creates with a new name after deleting a workspace whose creation reply was lost', async ({ page }) => {
   const mock = await mockTengri(page, { agent: null, failCreateOnce: true, commitFailedCreate: true })

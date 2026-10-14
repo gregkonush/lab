@@ -66,9 +66,9 @@ const ForwardPerformanceExecutionQualitySchema = Schema.Struct({
     Schema.Struct({
       plannedOrderCount: NonNegativeIntegerSchema,
       fillCount: NonNegativeIntegerSchema,
-      plannedQuantityMicros: SignedMicrosSchema,
-      filledQuantityMicros: SignedMicrosSchema,
-      unfilledQuantityMicros: SignedMicrosSchema,
+      plannedQuantityAtoms: SignedMicrosSchema,
+      filledQuantityAtoms: SignedMicrosSchema,
+      unfilledQuantityAtoms: SignedMicrosSchema,
       plannedReferenceNotionalMicros: SignedMicrosSchema,
       executedNotionalMicros: SignedMicrosSchema,
       executionPriceShortfallMicros: SignedMicrosSchema,
@@ -115,8 +115,8 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       symbol: ReceiptStringSchema,
       windowOpenedAt: UtcInstantSchema,
       windowClosedAt: UtcInstantSchema,
-      filledQuantityMicros: SignedMicrosSchema,
-      marketVolumeQuantityMicros: SignedMicrosSchema,
+      filledQuantityAtoms: SignedMicrosSchema,
+      marketVolumeQuantityAtoms: SignedMicrosSchema,
       intradaySource: Schema.optionalKey(
         Schema.Struct({
           feed: Schema.Literal('iex'),
@@ -125,8 +125,8 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
         }),
       ),
       participationRate: Schema.Struct({
-        numeratorQuantityMicros: SignedMicrosSchema,
-        denominatorQuantityMicros: SignedMicrosSchema,
+        numeratorQuantityAtoms: SignedMicrosSchema,
+        denominatorQuantityAtoms: SignedMicrosSchema,
         decimal: DecimalSchema,
       }),
     }),
@@ -135,8 +135,8 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
   boundedObservedExecutedNotionalMicros: Schema.NullOr(SignedMicrosSchema),
   maximumParticipationRate: Schema.NullOr(
     Schema.Struct({
-      numeratorQuantityMicros: SignedMicrosSchema,
-      denominatorQuantityMicros: SignedMicrosSchema,
+      numeratorQuantityAtoms: SignedMicrosSchema,
+      denominatorQuantityAtoms: SignedMicrosSchema,
       decimal: DecimalSchema,
     }),
   ),
@@ -155,7 +155,7 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
         source.symbol === observation.symbol &&
         source.windowOpenedAt === observation.windowOpenedAt &&
         source.windowClosedAt === observation.windowClosedAt &&
-        source.quantityMicros === observation.marketVolumeQuantityMicros
+        source.quantityAtoms === observation.marketVolumeQuantityAtoms
       )
     }),
   ),

@@ -75,6 +75,9 @@ const fixture = (
                     ? pendingEquity.value
                     : equityMicros
                 return {
+                  cryptoStatus: null,
+                  nonMarginableBuyingPowerMicros: null,
+
                   id: accountId,
                   status: AccountStatus.Active,
                   currency: 'USD',

@@ -167,7 +167,7 @@ describe('Bayn resource lifecycle', () => {
             : url.pathname === '/v2/orders' ||
                 url.pathname === '/v2/positions' ||
                 url.pathname === '/v2/account/activities/FILL' ||
-                url.pathname === '/v2/account/activities/FEE' ||
+                url.pathname === '/v2/account/activities' ||
                 url.pathname === '/v2/calendar'
               ? []
               : { code: 40410000, message: 'order not found' }

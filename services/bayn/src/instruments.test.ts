@@ -1,0 +1,95 @@
+import { expect, test } from 'bun:test'
+import { Result, Schema } from 'effect'
+
+import {
+  decodeInstrument,
+  InstrumentSymbolSchema,
+  instrumentOrderQuantity,
+  MarketKind,
+  validateInstrumentOrder,
+} from './instruments'
+
+test('the same instrument contract admits equities and all supported crypto pairs', () => {
+  for (const symbol of ['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'])
+    expect(Schema.is(InstrumentSymbolSchema)(symbol)).toBe(true)
+  for (const symbol of ['BTCUSD', 'ETHUSD', 'SOLUSD', 'BTC/ETH', 'btc/usd', 'BTC//USD'])
+    expect(Schema.is(InstrumentSymbolSchema)(symbol)).toBe(false)
+  const equity = Result.getOrThrow(
+    decodeInstrument({
+      symbol: 'AAPL',
+      assetClass: 'us_equity',
+      minimumOrderSize: null,
+      quantityIncrement: null,
+      priceIncrement: null,
+    }),
+  )
+  expect(equity.market).toBe(MarketKind.Equity)
+  expect(instrumentOrderQuantity(equity, 1_900_000_000n)).toBe(1_000_000_000n)
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+    const crypto = Result.getOrThrow(
+      decodeInstrument({
+        symbol,
+        assetClass: 'crypto',
+        minimumOrderSize: '0.00001215',
+        quantityIncrement: '0.000000001',
+        priceIncrement: '0.000000001',
+      }),
+    )
+    expect(crypto.market).toBe(MarketKind.Crypto)
+    expect(crypto.minimumQuantityAtoms).toBe(12_150n)
+    expect(instrumentOrderQuantity(crypto, 12_151n)).toBe(12_151n)
+  }
+})
+
+test('instrument metadata rejects missing crypto increments and mixed identities', () => {
+  for (const input of [
+    {
+      symbol: 'BTC/USD',
+      assetClass: 'crypto' as const,
+      minimumOrderSize: null,
+      quantityIncrement: null,
+      priceIncrement: null,
+    },
+    {
+      symbol: 'AAPL',
+      assetClass: 'crypto' as const,
+      minimumOrderSize: '1',
+      quantityIncrement: '1',
+      priceIncrement: '0.01',
+    },
+    {
+      symbol: 'BTC/USD',
+      assetClass: 'crypto' as const,
+      minimumOrderSize: '0',
+      quantityIncrement: '0.000000001',
+      priceIncrement: '0.000000001',
+    },
+  ])
+    expect(Result.isFailure(decodeInstrument(input))).toBe(true)
+})
+
+test('the shared instrument guard enforces minimums, steps, prices and continuous market durations', () => {
+  const instrument = Result.getOrThrow(
+    decodeInstrument({
+      symbol: 'SOL/USD',
+      assetClass: 'crypto',
+      minimumOrderSize: '0.009492168',
+      quantityIncrement: '0.000000010',
+      priceIncrement: '0.000000010',
+    }),
+  )
+  const order = { symbol: 'SOL/USD', quantityAtoms: '9492170', orderType: 'LIMIT', timeInForce: 'IOC' }
+  const terms = { closeOnly: false, fractionable: true, limitPriceAtoms: 100_000_000_010n }
+  expect(Result.isSuccess(validateInstrumentOrder(instrument, order, terms))).toBe(true)
+  for (const changed of [{ quantityAtoms: '9492160' }, { quantityAtoms: '9492171' }, { timeInForce: 'DAY' }])
+    expect(Result.isFailure(validateInstrumentOrder(instrument, { ...order, ...changed }, terms))).toBe(true)
+  expect(
+    Result.isFailure(validateInstrumentOrder(instrument, order, { ...terms, limitPriceAtoms: 100_000_000_011n })),
+  ).toBe(true)
+  expect(
+    Result.isSuccess(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'GTC' }, terms)),
+  ).toBe(true)
+  expect(
+    Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'DAY' }, terms)),
+  ).toBe(true)
+})

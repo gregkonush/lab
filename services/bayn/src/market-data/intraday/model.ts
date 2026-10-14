@@ -6,10 +6,14 @@ import { Context, Data, Effect } from 'effect'
 
 import type { OperationalError } from '../../errors'
 import type { IsoDate } from '../../schemas'
-import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import type { MarketHours } from '../../market-hours'
 
-export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip'
-export type IntradayDelayClass = 'real_time_exchange_only' | 'real_time_consolidated' | 'delayed_15m_consolidated'
+export type IntradayFeed = 'iex' | 'sip' | 'delayed_sip' | 'us'
+export type IntradayDelayClass =
+  | 'real_time_exchange_only'
+  | 'real_time_consolidated'
+  | 'delayed_15m_consolidated'
+  | 'real_time_crypto'
 export enum IntradaySnapshotPurpose {
   EntryPricing = 'ENTRY_PRICING',
   Liquidation = 'LIQUIDATION',
@@ -21,7 +25,7 @@ export enum IntradayCandidateEvidencePolicy {
 
 export interface IntradaySnapshotQuery {
   readonly sessionDate: IsoDate
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string
@@ -78,7 +82,8 @@ export interface IntradayRecordIdentity {
   readonly universeId: string
   readonly universeSymbolHash: string
   readonly feed: IntradayFeed
-  readonly marketSession: 'regular'
+  readonly marketSession: 'regular' | 'continuous'
+  readonly nativePayload?: string
   readonly delayClass: IntradayDelayClass
   readonly symbol: string
   readonly eventAt: string
@@ -122,7 +127,7 @@ export interface IntradayCandidateExclusion {
 export interface IntradaySnapshotManifest {
   readonly schemaVersion: 'bayn.intraday-market-snapshot.v1'
   readonly sessionDate: IsoDate
-  readonly calendar: MarketCalendarObservation
+  readonly calendar: MarketHours
   readonly rangeStartAt: string
   readonly rangeEndAt: string
   readonly observedAt: string

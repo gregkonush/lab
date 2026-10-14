@@ -240,6 +240,14 @@ describe('durable Jev evaluation', () => {
     )
     expect(Result.isFailure(result)).toBe(true)
     expect(calls).toBe(0)
+    expect(memory.receipt()?.outcome).toEqual({
+      status: JevOutcome.Failed,
+      failure: JevFailure.NotDispatched,
+      httpStatus: null,
+      responseHash: null,
+      rejectedResponse: null,
+    })
+    expect(memory.recordings()).toBe(1)
   })
 
   test('cancels inference at the remaining request deadline and durably records the timeout', async () => {

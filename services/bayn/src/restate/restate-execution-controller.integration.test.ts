@@ -3,7 +3,6 @@ import { createServer } from 'node:http2'
 import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Config, ConfigProvider, Effect, Option, Result } from 'effect'
-import type { CaptureInvalidation, ResearchCaptureEvent } from '../research-capture/capture'
 
 import { decodeExecutionControllerState } from '../execution/controller'
 import { ExecutionControllerOutcome } from '../execution/controller-status'
@@ -43,21 +42,9 @@ describeRestate('Real Restate execution deployment activation', () => {
     let failedPollNotBeforeMs = 0
     let controllerActivations = 0
     const advanced: number[] = []
-    const issuedAtBySequence = new Map<number, string>()
-    const captured: ResearchCaptureEvent[] = []
-    const invalidations: CaptureInvalidation[] = []
     const controller = makeBaynExecutionController(config, {
-      capture: {
-        record: (event) => {
-          captured.push(event)
-        },
-        invalidate: (reason) => {
-          invalidations.push(reason)
-        },
-      },
       advance: async (command) => {
         advanced.push(command.sequence)
-        issuedAtBySequence.set(command.sequence, command.issuedAt)
         return {
           completedAt: command.issuedAt,
           observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
@@ -75,13 +62,24 @@ describeRestate('Real Restate execution deployment activation', () => {
         activate: async () => {
           brokerActivations += 1
         },
-        poll: async (_signal, reservation) => {
+        poll: async () => {
+          const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+          if (failedPollNotBeforeMs > now)
+            return {
+              poll: { _tag: 'QuotaWait', nextPollNotBeforeMs: failedPollNotBeforeMs },
+              startedAtMs: now,
+              completedAtMs: now,
+            }
           brokerPolls += 1
           if (!brokerReady) {
-            failedPollNotBeforeMs = reservation.interruptedNotBeforeMs
+            failedPollNotBeforeMs = now + 5_000
             throw new Error('Broker observation dependency is temporarily unavailable')
           }
-          return { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 }
+          return {
+            poll: { _tag: 'Published', snapshotHash: 'e'.repeat(64), nextPollNotBeforeMs: 0 },
+            startedAtMs: now,
+            completedAtMs: now,
+          }
         },
       },
     )
@@ -239,28 +237,6 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(state.nextSequence).toBe((state.lastCompletion?.sequence ?? -1) + 1)
           expect(advanced.length).toBeGreaterThanOrEqual(2)
           expect(new Set(advanced).size).toBe(advanced.length)
-          const starts = captured.filter((event) => event.kind === 'controller-pass' && event.phase === 'STARTED')
-          expect(starts.map((event) => (event.kind === 'controller-pass' ? event.tick.sequence : undefined))).toEqual(
-            advanced,
-          )
-          const completions = captured.filter(
-            (event) => event.kind === 'controller-pass' && event.phase === 'COMPLETED',
-          )
-          expect(completions.length).toBeGreaterThanOrEqual(2)
-          for (const event of completions) {
-            if (event.kind !== 'controller-pass') throw new Error('Missing native controller receipt')
-            expect(event.runtimeAttempted).toBe(true)
-            expect(event.commandIssuedAt).toBe(issuedAtBySequence.get(event.tick.sequence))
-            expect(event.sourceRevision).toBe(config.sourceRevision)
-            expect(event.receiptHash).toBe('d'.repeat(64))
-          }
-          expect(
-            captured.some(
-              (event) =>
-                event.kind === 'controller-pass' && event.phase === 'SCHEDULED' && event.idempotencyKey !== undefined,
-            ),
-          ).toBe(true)
-          expect(invalidations).toEqual([])
           expect(brokerPolls).toBeGreaterThanOrEqual(1)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
@@ -269,7 +245,12 @@ describeRestate('Real Restate execution deployment activation', () => {
               const response = await fetch(`${admin}/query`, {
                 method: 'POST',
                 body: JSON.stringify({
-                  query: `SELECT COUNT(*) AS journal_entries FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
+                  query: `SELECT COUNT(*) AS journal_entries,
+                    (SELECT COUNT(*) FROM sys_journal WHERE entry_type = 'Command: GetLazyState'
+                      AND id IN (SELECT id FROM sys_invocation
+                        WHERE target_service_name = 'BaynExecutionController'
+                          AND target_service_key = '${config.controllerKey}' AND target_handler_name = 'tick')) AS lazy_tick_state_reads
+                    FROM sys_journal WHERE id IN ('${failed.invocationId}', '${accepted.invocationId}')`,
                 }),
                 headers: { 'content-type': 'application/json', accept: 'application/json' },
                 signal,
@@ -279,7 +260,7 @@ describeRestate('Real Restate execution deployment activation', () => {
             },
             catch: (cause) => cause,
           })
-          expect(journal).toMatchObject({ rows: [{ journal_entries: 0 }] })
+          expect(journal).toMatchObject({ rows: [{ journal_entries: 0, lazy_tick_state_reads: 0 }] })
           const replay = yield* sendRestateInvocation(url, body, options)
           expect(replay.invocationId).toBe(accepted.invocationId)
           expect(

@@ -1,8 +1,11 @@
+import { equityMarketProfile } from '../jev/markets'
+import { isContinuousMarket } from '../market-hours'
+import { exchangeSessions } from '../market-hours'
 import { Effect, FileSystem, Result, Schema } from 'effect'
 import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca/model'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
-import { EntryTimingReceiptSchema } from '../research-capture/entry-timing'
+import { EntryTimingReceiptSchema } from './entry-timing'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { JevPurpose } from '../jev/portfolio'
 import { intradayInstantNanos } from '../market-data/intraday/time'
@@ -326,7 +329,7 @@ export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => 
     maximumQuoteAgeMs: snapshot.manifest.maximumQuoteAgeMs,
     candidateSymbols: snapshot.manifest.candidateSymbols ?? [],
     candidateEvidencePolicy: snapshot.manifest.candidateEvidencePolicy ?? null,
-    session: snapshot.manifest.calendar.sessions
+    session: exchangeSessions(snapshot.manifest.calendar)
       .filter((session) => session.date === snapshot.manifest.sessionDate)
       .map((session) => ({
         date: session.date,
@@ -451,7 +454,12 @@ export const runMatchedEntryStudy = (
     const scheduled = yield* Effect.fromResult(
       matchedCalendarSessions(
         registration,
-        batches.map((batch) => batch.snapshot.manifest.calendar),
+        batches
+          .map((batch) => batch.snapshot.manifest.calendar)
+          .filter(
+            (calendar): calendar is import('../broker/alpaca/model').MarketCalendarObservation =>
+              !isContinuousMarket(calendar),
+          ),
       ),
     )
     const inventories = new Set<string>()
@@ -576,7 +584,7 @@ export const runMatchedEntryStudy = (
           const reproduced = yield* Effect.fromResult(
             constructSimulatedSnapshot(yield* source.cursor, source.source, {
               ...manifest,
-              universe: batch.observation.protocol.universe,
+              universe: equityMarketProfile.universe,
             }),
           )
           const expected = yield* Effect.fromResult(canonicalHashV1Result(matchedObservationMaterial(batch.snapshot)))
