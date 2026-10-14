@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Config, Effect, Exit, Option, Redacted, Schedule } from 'effect'
 import { acquireRestateHttp2Server } from './restate-http2-server'
-import { awaitRestateInvocation, sendRestateInvocation } from './restate-invocation-client'
+import { awaitRestateInvocation, RestateSendStatus, sendRestateInvocation } from './restate-invocation-client'
 import {
   approvePublicInformation,
   makePublicInformationServices,
@@ -76,7 +76,7 @@ describeRestate('Real Restate independent public information jobs', () => {
             },
             { timeoutMs: 5000 },
           )
-          expect(incorrectlyAccepted.status).toBe('Accepted')
+          expect(incorrectlyAccepted.status).toBe(RestateSendStatus.Accepted)
           const rejected = yield* awaitRestateInvocation(ingress, incorrectlyAccepted.invocationId, {
             maximumAttempts: 5,
             pollIntervalMs: 50,
