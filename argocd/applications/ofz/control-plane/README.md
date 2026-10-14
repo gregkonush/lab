@@ -16,6 +16,11 @@ The API uses `ofz_api`; only `ofz_archiver` can acknowledge audit exports. BFF, 
 separate credentials and table grants. None of these roles can create roles or databases, replicate, bypass RLS or
 act as superuser. The fixed connection limits cover simultaneous serving surges and preserve the existing SQL budget.
 
+The namespace-local `ofz-ca-source` SecretStore publishes only `ca.crt` into `ofz-db-public-ca` through the existing
+External Secrets controller. The shared `ofz-database-ca` ClusterSecretStore can read only that public bundle and serves
+only Tengri and the BFF namespaces. It cannot read the CNPG Secret containing `ca.key`. Ofz database callers project
+only `ca.crt` into their mounts. Certificate refresh uses the existing one-minute reconciliation intervals.
+
 SpiceDB's qualified read/write pool limits and disabled dispatch caches now live in the active application.
 The obsolete prepared Ofz overlay is removed. `bash services/ofz/test-ha-manifests.sh` renders this source alongside
 the active Tengri, BFF and Keycloak targets and checks their shared contracts. The prepared application overlays are removed.

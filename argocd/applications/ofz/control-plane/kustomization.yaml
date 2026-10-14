@@ -12,4 +12,5 @@ resources:
   - databases.yaml
   - network-policy.yaml
   - database-ca-reader.yaml
+  - database-ca-publisher.yaml
   - activation.yaml

@@ -90,6 +90,9 @@ spec:
         - name: database-ca
           secret:
             secretName: ofz-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
             defaultMode: 288
         - name: archive
           secret:

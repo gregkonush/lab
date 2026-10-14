@@ -15,5 +15,5 @@ spec:
   data:
     - secretKey: ca.crt
       remoteRef:
-        key: ofz-db-ca
+        key: ofz-db-public-ca
         property: ca.crt
