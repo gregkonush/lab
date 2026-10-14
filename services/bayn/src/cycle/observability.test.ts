@@ -17,6 +17,7 @@ const projection: CycleOperationsProjection = {
     accountId: 'sandbox-account',
     signalSessionDate: '2026-08-31',
     executionSessionDate: '2026-08-31',
+    executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     phase: CycleState.Blocked,
     snapshotId: null,
     decisionHash: null,
