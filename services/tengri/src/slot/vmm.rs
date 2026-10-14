@@ -293,6 +293,7 @@ pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value
         loop {
             let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
             let mut command = command.clone();
+            let sent = Instant::now();
             if command["action"] == "resume" {
                 command["unixTimeNanos"] = json!(
                     chrono::Utc::now()
@@ -302,7 +303,6 @@ pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value
             }
             let mut bytes = serde_json::to_vec(&command)?;
             bytes.push(b'\n');
-            let sent = Instant::now();
             stream.write_all(&bytes).await?;
             let mut reader = BufReader::new(stream);
             let mut reply = String::new();
@@ -413,8 +413,9 @@ mod tests {
                 let command: Value = serde_json::from_str(&line).unwrap();
                 assert_eq!(command["action"], "resume");
                 if round == 1 {
-                    sleep(Duration::from_millis(650)).await;
+                    sleep(Duration::from_millis(1100)).await;
                     ready_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+                    assert!(ready_at - command["unixTimeNanos"].as_i64().unwrap() > 1_000_000_000);
                 } else {
                     assert!(command["unixTimeNanos"].as_i64().unwrap() >= ready_at);
                 }
