@@ -13,7 +13,7 @@ import (
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 )
 
-//go:embed testdata/ofz-guest-request-v3.json
+//go:embed testdata/ofz-guest-request-v4.json
 var vectorJSON []byte
 
 type vector struct {
@@ -115,6 +115,16 @@ func TestAllActorKindsAndScopesRoundTripAcrossLanguages(t *testing.T) {
 			}
 			if _, err := verifier.VerifyFor(accepted.Proof, binding(c, []byte(accepted.Body)), v.NowUnixMS); err != nil {
 				t.Fatal(err)
+			}
+			if c.Observation != nil {
+				if len(accepted.Payload) > MaxContextBytes {
+					t.Fatal("maximum canonical target exceeds the bounded proof")
+				}
+				retargeted := binding(c, []byte(accepted.Body))
+				retargeted.Target = "/workspace/another-authorized-root/report.txt"
+				if _, err := verifier.VerifyFor(accepted.Proof, retargeted, v.NowUnixMS); err == nil {
+					t.Fatal("a request budget authorized another target")
+				}
 			}
 		})
 	}

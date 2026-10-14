@@ -385,7 +385,8 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         client.status().await?.state.serves(&claim),
         "disk error lost the current owner"
     );
-    rpc.verify_identity("interop-agent").await?;
+    rpc.verify_identity("33333333-3333-4333-8333-333333333333")
+        .await?;
     client.lifecycle("stop", &claim, fence).await?;
     timings.sort_by(f64::total_cmp);
     let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
@@ -747,6 +748,10 @@ async fn uring_workers() -> anyhow::Result<usize> {
 
 async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
     let mut terminal = TerminalProbe::open(rpc, "fixture-disk-error").await?;
+    terminal
+        .input(b"printf '\\036TENGRI_DISK_READY\\037'\n")
+        .await?;
+    terminal.marker(b"\x1eTENGRI_DISK_READY\x1f").await?;
     // Fault only the disposable fixture disk, after continuity and browser acceptance.
     fs::OpenOptions::new()
         .write(true)

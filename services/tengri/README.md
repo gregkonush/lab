@@ -1,11 +1,16 @@
 # Tengri control plane
 
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
-`internal/guestauth` package. Protocol 3 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
+`internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
 signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
 cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
-`node services/tengri/fixtures/generate-ofz-guest-request-v3.mjs` from the repository root.
+`node services/tengri/fixtures/generate-ofz-guest-request-v4.mjs` from the repository root.
+
+Ofz checks the complete observation policy before the controller signs the exact request. Scoped proofs carry only
+the per-request byte/item budget, with no reusable root or ID lists. The decoded proof remains bounded at 16 KiB,
+including JSON escaping of a maximum 4096-byte target. Protocol 3, its full-policy scope and its signing domain are
+rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
@@ -40,8 +45,9 @@ before acknowledging completion. The stable slot Pod, home PVC, TAP, and small h
 resource requests still reserve resume capacity even while resident guest RAM is released.
 
 This source uses one runtime. The previous Kata Pod lifecycle and guest SPIRE/token-refresh implementation are
-removed. The hard cutover is separately authorized and must preserve existing home PVC UIDs. Source and local tests
-do not establish a deployed migration or the authenticated p95 latency target.
+removed. The authorized hard cutover deleted the old workspaces and homes. Retire the old unclaimed prepared pool
+before activating the new contract; fresh workspaces receive new homes and grants. Source and local tests do not
+establish a deployed migration or the authenticated p95 latency target.
 
 ## Slot ownership and failure handling
 
@@ -60,8 +66,8 @@ without creating a runtime claim. Termination observes the current claim under t
 slot receives a deterministic retirement identity solely for stop acknowledgement.
 
 Runtime epochs are mandatory in private lifecycle claims and owned journals. Paired controller/guest artifacts and
-new root disks are required at the coordinated hard cutover; retain the existing home PVCs. Scoped observers and the
-independent host execution deadline remain separate authorization work.
+new root disks are required at the coordinated hard cutover. No old home or journal is imported. Scoped observers and
+the independent host execution deadline remain separate authorization work.
 
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
