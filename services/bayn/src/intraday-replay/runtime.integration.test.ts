@@ -98,6 +98,8 @@ durableTest.each(
       'approved-expiry-recovery',
       'approved-expiry-manual-hold',
       'approved-expiry-rollback',
+      'entry-lease-expires-during-bind',
+      'entry-lease-expires-at-commit',
       'fill',
       'fallback',
       'missing-benchmark',
@@ -133,6 +135,7 @@ durableTest.each(
   '$label: $scenario',
   async ({ scenario }) => {
     const untouchedExpiry = scenario.startsWith('approved-expiry-')
+    const admissionRace = scenario.startsWith('entry-lease-')
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing replay test databases')
     const url = new URL(baynTestPostgresUrl)
@@ -163,11 +166,13 @@ durableTest.each(
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
-    const fixture = { ...simulationFixture(undefined, undefined, noTrade ? {} : undefined), protocol }
+    const fixture = { ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
-    const reentryAtMs = initialAtMs + 120_000
-    const lifecycleObservations =
-      scenario === 'partial-exit-reentry'
+    const cryptoAdmissionAtMs = initialAtMs + 120_000
+    const reentryAtMs = initialAtMs + 240_100
+    const lifecycleObservations = admissionRace
+      ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+      : scenario === 'partial-exit-reentry'
         ? [
             { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 40, premium: 0.02 },
             ...Array.from({ length: 25 }, (_, index) => ({
@@ -560,6 +565,63 @@ durableTest.each(
           })),
         )
         const runtime = yield* createRuntime
+        if (scenario === 'entry-lease-expires-during-bind' || scenario === 'entry-lease-expires-at-commit') {
+          yield* sql`CREATE FUNCTION expire_fixture_admission() RETURNS trigger LANGUAGE plpgsql AS $function$
+            BEGIN
+              UPDATE simulated_execution_clocks SET observed_at = (
+                SELECT LEAST(submission_cutoff_at,GREATEST(created_at,submission_open_at)+interval '1 minute')
+                FROM autonomous_cycles WHERE cycle_id=NEW.cycle_id
+              ) WHERE account_id=(SELECT account_id FROM autonomous_cycles WHERE cycle_id=NEW.cycle_id);
+              RETURN NEW;
+            END
+            $function$`
+          if (scenario === 'entry-lease-expires-during-bind')
+            yield* sql`CREATE TRIGGER expire_fixture_admission AFTER INSERT ON autonomous_cycle_shadow_decisions
+              FOR EACH ROW EXECUTE FUNCTION expire_fixture_admission()`
+          else
+            yield* sql`CREATE TRIGGER zz_expire_fixture_admission BEFORE UPDATE ON autonomous_cycles
+              FOR EACH ROW WHEN (OLD.decision_hash IS NULL AND NEW.decision_hash IS NOT NULL)
+              EXECUTE FUNCTION expire_fixture_admission()`
+        }
+        const passUnavailableCryptoAdmission = (driver: Pick<typeof runtime, 'advance'>) =>
+          Effect.gen(function* () {
+            const ordersBefore = (yield* broker.snapshot).orders.length
+            yield* advanceMarketTo(cryptoAdmissionAtMs)
+            yield* driver.advance
+            const [lease] = yield* sql<{ cycle_id: string; submission_cutoff_at: string; hours: string }>`
+              SELECT cycle_id,submission_cutoff_at::text,execution_calendar_schema_version AS hours
+              FROM autonomous_cycles ORDER BY created_at DESC LIMIT 1`
+            if (lease === undefined) throw new Error('Expected the intervening crypto admission')
+            expect(lease.hours).toBe('bayn.continuous-market-hours.v1')
+            yield* advanceMarketTo(Date.parse(lease.submission_cutoff_at) + 1)
+            yield* driver.advance
+            expect(
+              yield* sql`SELECT state,decision_hash IS NULL AS unbound FROM autonomous_cycles WHERE cycle_id=${lease.cycle_id}`,
+            ).toEqual([{ state: 'BLOCKED', unbound: true }])
+            expect((yield* broker.snapshot).orders).toHaveLength(ordersBefore)
+            yield* advanceMarketTo(reentryAtMs)
+          })
+        if (scenario.startsWith('entry-lease-')) {
+          yield* advanceMarketTo(initialAtMs + 30_000)
+          yield* runtime.advance
+          expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
+            { unbound: true },
+          ])
+          yield* advanceMarketTo(initialAtMs + 60_000)
+          const advanced = yield* runtime.advance
+          expect(advanced.observation.result).toBe('FAILURE')
+          expect((yield* broker.snapshot).orders).toEqual([])
+          expect((yield* broker.snapshot).fills).toEqual([])
+          expect(yield* sql`SELECT decision_hash IS NULL AS unbound FROM autonomous_cycles`).toEqual([
+            { unbound: true },
+          ])
+          expect(
+            yield* sql`SELECT (SELECT count(*)::int FROM autonomous_cycle_shadow_decisions) AS decisions,
+            (SELECT count(*)::int FROM intents) AS intents,
+            ((SELECT count(*)::int FROM streaming_snapshot_references)+(SELECT count(*)::int FROM simulated_snapshot_references)) AS references`,
+          ).toEqual([{ decisions: 0, intents: 0, references: 0 }])
+          return { _tag: 'Coverage' as const }
+        }
         if (untouchedExpiry) {
           for (let attempt = 0; attempt < 20 && !expiredApprovedIntent; attempt++) {
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
@@ -794,7 +856,7 @@ durableTest.each(
           const restarted = yield* createRuntime.pipe(Effect.provideService(JevClient, timing?.client ?? provider))
           expect(restarted.authorityGenerationHash).toBe(recovered.generationHash)
           if (timing === undefined) throw new Error('Missing measured timing')
-          yield* advanceMarketTo(reentryAtMs)
+          yield* passUnavailableCryptoAdmission(restarted)
           for (let attempt = 0; attempt < 8; attempt++) {
             yield* restarted.advance
             if ((yield* broker.snapshot).fills.length > 0) break
@@ -806,7 +868,7 @@ durableTest.each(
             yield* sql`SELECT state, count(*)::int AS count FROM autonomous_cycles GROUP BY state ORDER BY state`,
           ).toEqual([
             { state: 'ACTIVE', count: 1 },
-            { state: 'BLOCKED', count: 1 },
+            { state: 'BLOCKED', count: 2 },
           ])
           return { _tag: 'ExpiredSubmitRecovered' as const }
         }
@@ -838,7 +900,7 @@ durableTest.each(
           expect(state.ledger.positions).toEqual([])
           expect(
             yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v1'`,
-          ).toEqual([{ state: 'NO_TRADE', bound: true }])
+          ).toEqual([{ state: 'BLOCKED', bound: false }])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
           const successor = yield* runtime.advance
@@ -1203,7 +1265,7 @@ durableTest.each(
           expect(first.ledger.positions).toHaveLength(0)
           yield* runtime.advance
           expect((yield* broker.snapshot).orders).toHaveLength(1)
-          yield* advanceMarketTo(reentryAtMs)
+          yield* passUnavailableCryptoAdmission(runtime)
           yield* completeCycle
           const final = yield* broker.snapshot
           expect(final.orders).toHaveLength(2)
@@ -1212,6 +1274,7 @@ durableTest.each(
           expect(final.ledger.positions).toHaveLength(0)
           expect(yield* sql`SELECT state FROM autonomous_cycles ORDER BY created_at`).toEqual([
             { state: 'COMPLETED' },
+            { state: 'BLOCKED' },
             { state: 'COMPLETED' },
           ])
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
@@ -1279,7 +1342,7 @@ durableTest.each(
             expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['40000000000', '40000000000'])
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
-            yield* advanceMarketTo(reentryAtMs)
+            yield* passUnavailableCryptoAdmission(restarted)
             for (let attempt = 0; attempt < 12; attempt++) {
               const advanced = yield* restarted.advance
               if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
@@ -1296,6 +1359,7 @@ durableTest.each(
             expect((yield* restarted.reconcile).report.reconciliation.status).toBe(ReconciliationStatus.Exact)
             expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
               { state: 'COMPLETED' },
+              { state: 'BLOCKED' },
               { state: 'COMPLETED' },
             ])
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
@@ -1355,7 +1419,7 @@ durableTest.each(
             expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
             yield* restarted.advance
             expect((yield* broker.snapshot).fills).toHaveLength(4)
-            yield* advanceMarketTo(reentryAtMs)
+            yield* passUnavailableCryptoAdmission(restarted)
             for (let attempt = 0; attempt < 12; attempt++) {
               const advanced = yield* restarted.advance
               if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
@@ -1375,6 +1439,7 @@ durableTest.each(
             expect(final.brokerState.unknownOrderCount).toBe(0)
             expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
               { state: 'COMPLETED' },
+              { state: 'BLOCKED' },
               { state: 'COMPLETED' },
             ])
             expect(
@@ -1384,7 +1449,7 @@ durableTest.each(
                 WHERE payload #>> '{portfolio,purpose}' = 'ENTRY'
                 ORDER BY observed_at
               `,
-            ).toEqual([{ window_end: '2026-09-04T14:30:00.000Z' }, { window_end: '2026-09-04T14:32:00.000Z' }])
+            ).toEqual([{ window_end: '2026-09-04T14:30:00.000Z' }, { window_end: '2026-09-04T14:34:00.000Z' }])
             expect(
               yield* sql`
                 SELECT count(*)::integer AS plans,

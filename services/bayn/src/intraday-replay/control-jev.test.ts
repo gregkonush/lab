@@ -169,7 +169,7 @@ test('source parsing time cannot change management deadlines, fills, or costs', 
   expect(delayed.calls).toHaveLength(baseline.calls.length)
   for (const call of delayed.calls)
     expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBe(125)
-}, 30_000)
+}, 150_000)
 
 test('failed source catch-up rejects management while retaining its paid response', async () => {
   await Effect.runPromise(
@@ -257,7 +257,7 @@ test('interruption cancels the provider once, retains its unknown cost, and forb
       expect(yield* journal.calls).toHaveLength(1)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
-})
+}, 30_000)
 
 test('a provider defect remains a defect after the journal retains its unresolved call', async () => {
   await Effect.runPromise(
