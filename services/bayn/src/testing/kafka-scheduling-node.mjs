@@ -99,7 +99,7 @@ const exit = await Effect.runPromiseExit(
           bootstrapTimeoutMs: 60_000,
           timestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
         },
-        universe,
+        [universe],
         () => transport,
       )
       yield* Effect.promise(() => done.promise)

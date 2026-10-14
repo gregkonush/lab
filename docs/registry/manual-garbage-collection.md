@@ -34,6 +34,9 @@ Secrets or Valkey resources. Installing an unrelated CRD does not change cleanup
 Before introducing a new private-image owner, add its resource to the protection
 contract and the matching list-only RBAC rule. Tests require the rules to match.
 Missing retained manifests or blobs also fail preparation before uploads are stopped.
+Online preparation has a 45-minute execution budget. The Job retains its two-hour
+deadline; seven minutes of termination grace covers helper deletion and the
+five-minute restoration wait if it is interrupted during collection.
 Resolve a stale reference at its owning resource rather than bypassing protection.
 
 The manual phases below use the same committed implementation for recovery or
@@ -116,10 +119,14 @@ revision/layer links can remain; they do not retain the removed blob payloads.
 The collection deadline includes read-only rollout and frozen validation. On
 completion, failure or timeout, the controller deletes its helper and confirms
 deletion **before** restoring uploads and removing its owned Argo hold. Deployment
-restoration has a separate readiness timeout. If helper deletion cannot be
+restoration has a separate five-minute readiness timeout. If helper deletion cannot be
 confirmed, it leaves writes disabled and the hold intact. Never infer process
 exit from an exec disconnect. A timeout can leave a partial quarantine batch;
-its receipt remains valid for online deletion.
+its receipt remains valid for online deletion. After a collector deadline, the
+controller first confirms helper deletion and complete upload restoration, then
+checks its own durable receipt. A valid receipt permits online purge of the partial
+batch with `collectionTimedOut: true` in the completion log. A missing or invalid
+receipt still fails the run; failed validation never authorizes deletion.
 
 The result records the quarantine identifier and moved bytes. The controller
 checks the PVC UID/PV is unchanged. Verify a completed push and a full retained-image

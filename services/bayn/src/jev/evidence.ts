@@ -139,6 +139,16 @@ export const makeJevEvaluationReceipt = (request: JevEvaluationRequest, input: u
           return invalid('Rejected Jev response differs from its recorded hash')
         }
       }
+      if (
+        outcome.status === JevOutcome.Failed &&
+        outcome.failure === JevFailure.NotDispatched &&
+        (outcome.httpStatus !== null ||
+          outcome.responseHash !== null ||
+          outcome.rejectedResponse !== null ||
+          material.startedAt >= request.expiresAt ||
+          material.completedAt < request.expiresAt)
+      )
+        return invalid('Undispatched Jev evidence must prove pre-HTTP deadline expiry without a response')
       return canonicalHashV1Result(material).pipe(
         Result.mapError(() => new JevEvidenceError({ message: 'Jev evaluation receipt cannot be hashed' })),
         Result.map((receiptHash) => ({ ...material, receiptHash })),

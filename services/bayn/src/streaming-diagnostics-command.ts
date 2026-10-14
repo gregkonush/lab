@@ -1,3 +1,4 @@
+import { nativeFeatureMatchesBars, rollingWindowStartMs } from './market-data/features/native-feature'
 import { observedBarsAt, type StreamingProjection } from './market-data/streaming/projection'
 import { compressionsAlgorithms } from '@platformatic/kafka'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
@@ -9,7 +10,7 @@ import { verifyIntradaySnapshotQuery } from './market-data/intraday/verification
 import type { IntradaySnapshotQuery } from './market-data'
 import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
-import { featureMatchesBars } from './market-data/features/contract'
+
 import { technicalFeatureMatchesBars } from './market-data/features/technical-contract'
 import { technicalReceiptAvailableAt } from './market-data/streaming/technical-projection'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
@@ -31,11 +32,11 @@ export const summarizeStreamingSymbol = (projection: StreamingProjection, symbol
     const bars = observedBarsAt(
       projection,
       symbol,
-      BigInt(value.material.windowStartMs) * 1_000_000n,
+      BigInt(rollingWindowStartMs(value)) * 1_000_000n,
       BigInt(value.material.windowEndMs) * 1_000_000n,
       observedAtMs,
     ).map(({ value: bar }) => bar)
-    const match = featureMatchesBars(value, bars)
+    const match = nativeFeatureMatchesBars(value, bars)
     return Result.isSuccess(match) && match.success
   })
   const technicalMatches = technicalFeatures.filter((candidate) => {
@@ -186,18 +187,20 @@ const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
         })
       const market = yield* makeKafkaMarketProjection(
         { ...config, bootstrapTimeoutMs: args.bootstrapTimeoutMs },
-        {
-          universeId: query.universeId,
-          universeSymbolHash: query.universeSymbolHash,
-          symbols: query.universe,
-          topics: {
-            ...query.sourceTopics,
-            features: intradayMomentumFeatureTopic,
-            ...(config.technicalFeaturesTopic === undefined
-              ? {}
-              : { technicalFeatures: config.technicalFeaturesTopic }),
+        [
+          {
+            universeId: query.universeId,
+            universeSymbolHash: query.universeSymbolHash,
+            symbols: query.universe,
+            topics: {
+              ...query.sourceTopics,
+              features: intradayMomentumFeatureTopic,
+              ...(config.technicalFeaturesTopic === undefined
+                ? {}
+                : { technicalFeatures: config.technicalFeaturesTopic }),
+            },
           },
-        },
+        ],
         undefined,
         Date.parse(query.rangeStartAt),
       )

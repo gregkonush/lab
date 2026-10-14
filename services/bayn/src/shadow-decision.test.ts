@@ -140,7 +140,8 @@ const activeCycle = (account = accountId): IntradayAutonomousCycle => {
   }
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
       strategyName: 'intraday-momentum',
       qualificationRunId: hash('1'),
       strategyProtocolHash: hash('2'),
@@ -208,7 +209,7 @@ const brokerState = (
             schemaVersion: 'bayn.paper-position.v1',
             accountId: selectedAccountId,
             symbol: heldSymbol,
-            quantityMicros: '1000000',
+            quantityAtoms: '1000000000',
             averageEntryPriceMicros: '100000000',
             marketPriceMicros: '100000000',
             marketValueMicros: '100000000',
@@ -350,7 +351,7 @@ const fixture = (
   const broker = brokerState(account, heldSymbol)
   const planningTargetWeights = intradayMomentumPlanningTargetWeights(
     compiledDecision,
-    broker.positions.filter(({ quantityMicros }) => BigInt(quantityMicros) !== 0n).map(({ symbol }) => symbol),
+    broker.positions.filter(({ quantityAtoms }) => BigInt(quantityAtoms) !== 0n).map(({ symbol }) => symbol),
   )
   const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets = compiledDecision.selectedSymbols.length > 0
@@ -418,7 +419,7 @@ const fixture = (
     },
     precision: {
       ...intradayMomentumExecutionModel.precision,
-      quantityIncrementMicros: '1000000',
+      quantityIncrementAtoms: '1000000000',
     },
     allocationCapitalMicros: '2000000000',
     executionTerms: {
@@ -427,8 +428,8 @@ const fixture = (
       priceReference: 'verified-adverse-quote-boundary',
       snapshotId: marketData.snapshotId,
       snapshotContentHash: marketData.contentHash,
-      maximumBuyQuantityMicros: Object.fromEntries(planningSymbols.map((symbol) => [symbol, '1000000'])),
-      maximumSellQuantityMicros: Object.fromEntries(planningSymbols.map((symbol) => [symbol, '1000000'])),
+      maximumBuyQuantityAtoms: Object.fromEntries(planningSymbols.map((symbol) => [symbol, '1000000000'])),
+      maximumSellQuantityAtoms: Object.fromEntries(planningSymbols.map((symbol) => [symbol, '1000000000'])),
     },
     maximumInputAgeMs: 120_000,
     submissionCutoffAt: cycle.window.submissionCutoffAt,
@@ -450,8 +451,8 @@ const fixture = (
     return {
       symbol: target.symbol,
       notionalLimitMicros: (
-        (BigInt(target.quantityMicros) * BigInt(plannedTarget.referencePriceMicros)) /
-        1_000_000n
+        (BigInt(target.quantityAtoms) * BigInt(plannedTarget.referencePriceMicros)) /
+        1_000_000_000n
       ).toString(),
       state: Effect.runSync(
         decodeState({
@@ -1746,8 +1747,8 @@ describe('intraday shadow decision', () => {
           target.symbol === targetForForgery.symbol
             ? {
                 ...target,
-                currentQuantityMicros: (BigInt(target.currentQuantityMicros) + quantityShift).toString(),
-                targetQuantityMicros: (BigInt(target.targetQuantityMicros) + quantityShift).toString(),
+                currentQuantityAtoms: (BigInt(target.currentQuantityAtoms) + quantityShift).toString(),
+                targetQuantityAtoms: (BigInt(target.targetQuantityAtoms) + quantityShift).toString(),
               }
             : target,
         ),

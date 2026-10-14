@@ -1,3 +1,4 @@
+import { MarketKind } from '../../instruments'
 import { randomUUID } from 'node:crypto'
 import { sha256 } from '../../hash'
 import { CaptureDisposition } from './transport-evidence'
@@ -32,7 +33,7 @@ import {
   topicPartitionKey,
   type StreamingProjection,
 } from './projection'
-import type { KafkaMarketRecord, StreamingUniverse } from './raw-events'
+import { marketSourceForTopic, marketSourceKind, type KafkaMarketRecord, type MarketSources } from './raw-events'
 
 export interface KafkaMarketConfig {
   readonly technicalFeaturesTopic?: string | undefined
@@ -296,14 +297,17 @@ export class KafkaMarketProjection extends Context.Service<
 
 export const makeKafkaMarketProjection = (
   config: KafkaMarketConfig,
-  universe: StreamingUniverse,
+  universe: MarketSources,
   factory: KafkaProjectionTransportFactory = platformaticProjectionTransport,
   diagnosticStartMs?: number,
 ) =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
     const owner = yield* Effect.scope
-    let projection = emptyStreamingProjection('starting', universe.topics.technicalFeatures)
+    let projection = emptyStreamingProjection(
+      'starting',
+      universe.find((source) => source.topics.technicalFeatures !== undefined)?.topics.technicalFeatures,
+    )
     let projectionConsumerSequence = 0
     let deliveredPositions = new Map<string, KafkaPartitionPosition>()
     let bootstrap: KafkaBootstrapEvidence | undefined
@@ -329,7 +333,10 @@ export const makeKafkaMarketProjection = (
             arrivalEnvelope: arrivals.measurement(),
           }),
         )
-        projection = emptyStreamingProjection(epoch, universe.topics.technicalFeatures)
+        projection = emptyStreamingProjection(
+          epoch,
+          universe.find((source) => source.topics.technicalFeatures !== undefined)?.topics.technicalFeatures,
+        )
         projectionConsumerSequence = 0
         deliveredPositions = new Map()
         ready = false
@@ -367,9 +374,22 @@ export const makeKafkaMarketProjection = (
         const observedAtMs = yield* Clock.currentTimeMillis
         const lowerTimestampMs =
           diagnosticStartMs ?? Math.floor((observedAtMs - 2000) / 60_000) * 60_000 - 30 * 60_000 - 5000
-        const topics = Object.values(universe.topics).filter((topic) => topic !== undefined)
-        if (new Set(topics).size !== topics.length)
-          return yield* failure('bootstrap', 'Market input topics must be distinct')
+        const owners = new Map<string, string>()
+        for (const source of universe) {
+          const raw = [source.topics.bars, source.topics.quotes, source.topics.trades]
+          const sourceTopics = Object.values(source.topics).filter((topic) => topic !== undefined)
+          const unique = new Set(sourceTopics)
+          if (
+            (marketSourceKind(source) === MarketKind.Equity && unique.size !== sourceTopics.length) ||
+            (marketSourceKind(source) === MarketKind.Crypto && (new Set(raw).size !== 1 || unique.size !== 2))
+          )
+            return yield* failure('bootstrap', 'Market source topics violate their channel contract')
+          for (const topic of unique) {
+            if (owners.has(topic)) return yield* failure('bootstrap', 'Market sources cannot share topics')
+            owners.set(topic, source.universeId)
+          }
+        }
+        const topics = [...owners.keys()]
         const starts = yield* operation('bootstrap', () => transport.offsets(topics, -2n))
         const ends = yield* operation('bootstrap', () => transport.offsets(topics, -1n))
         const seek =
@@ -451,8 +471,12 @@ export const makeKafkaMarketProjection = (
                   partition: record.partition,
                   offset: String(BigInt(record.offset) + 1n),
                 })
-              if (invalidation === undefined && record.tombstone !== true)
-                projection = incorporateMarketRecord(projection, record, universe, availableAtMs)
+              if (invalidation === undefined && record.tombstone !== true) {
+                const source = marketSourceForTopic(universe, record.topic)
+                if (source === undefined)
+                  return yield* failure('consume', 'Consumer delivered an unconfigured market topic')
+                projection = incorporateMarketRecord(projection, record, source, availableAtMs)
+              }
               projectionConsumerSequence = consumerSequence
 
               if (invalidation !== undefined) return
@@ -479,7 +503,10 @@ export const makeKafkaMarketProjection = (
                   definitionId: projection.technicalFeatureArrival.value.material.definitionId,
                   consumerPurpose: diagnosticStartMs === undefined ? 'execution-worker' : 'retained-input-diagnostic',
                 })
-              if (record.topic === universe.topics.features && projection.sequence !== previousSequence) {
+              if (
+                universe.some((source) => record.topic === source.topics.features) &&
+                projection.sequence !== previousSequence
+              ) {
                 const incorporatedFeature = projection.featureArrival
                 if (incorporatedFeature !== null)
                   yield* Effect.logInfo('Kafka feature incorporated', {
@@ -578,7 +605,11 @@ export const makeKafkaMarketProjection = (
               endOffsetLookupFailure: Result.isFailure(ends) ? ends.failure.message : null,
               endOffsetLookupFailureCodes: Result.isFailure(ends) ? safeKafkaFailureCodes(ends.failure.cause) : null,
               partitions: partitionLagMeasurements(positions, Result.isSuccess(ends) ? ends.success : undefined),
-              ...projectionCoverageMeasurements(projection, universe.symbols, measuredAtMs),
+              ...projectionCoverageMeasurements(
+                projection,
+                universe.flatMap((source) => source.symbols),
+                measuredAtMs,
+              ),
             })
           }
         })
@@ -678,5 +709,5 @@ export const makeKafkaMarketProjection = (
       })),
     }
   })
-export const KafkaMarketProjectionLive = (config: KafkaMarketConfig, universe: StreamingUniverse) =>
+export const KafkaMarketProjectionLive = (config: KafkaMarketConfig, universe: MarketSources) =>
   Layer.effect(KafkaMarketProjection, makeKafkaMarketProjection(config, universe))

@@ -1,3 +1,4 @@
+import { quantityFromDecimal } from '../quantity'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import type { WriterFenceService } from '../execution/writer-fence'
@@ -228,9 +229,13 @@ const projectForwardPerformanceMarketVolumeEvidence = (
   )
   const row = matchingBars.length === 1 ? matchingBars[0] : undefined
   if (row === undefined) return Result.succeed(undefined)
-  const quantityMicros = fixedDecimalMicros(row.adjusted_volume)
+  const quantity = quantityFromDecimal(row.adjusted_volume)
+  const quantityAtoms =
+    Result.isSuccess(quantity) && quantity.success > 0n && quantity.success <= SIGNED_I128_MAX
+      ? quantity.success.toString()
+      : undefined
   const closePriceMicros = fixedDecimalMicros(row.adjusted_close)
-  if (quantityMicros === undefined || closePriceMicros === undefined) return Result.succeed(undefined)
+  if (quantityAtoms === undefined || closePriceMicros === undefined) return Result.succeed(undefined)
   const source = verified.snapshot.manifest.finalizedSnapshot
   const material = {
     schemaVersion: 'bayn.forward-performance-market-volume-evidence.v1' as const,
@@ -242,7 +247,7 @@ const projectForwardPerformanceMarketVolumeEvidence = (
     windowOpenedAt: request.windowOpenedAt,
     windowClosedAt: request.windowClosedAt,
     evidenceCutoffAt: request.evidenceCutoffAt,
-    quantityMicros,
+    quantityAtoms,
     closePriceMicros,
     snapshotId: source.snapshotId,
     manifestContentHash: source.publicationId,
@@ -516,9 +521,9 @@ const bindForwardPerformanceTerminalReferencePricesDataFirst = (
   return Result.all(
     executionEvidence.map((execution) => {
       const order = execution.terminalOrder
-      const orderQuantity = order?.quantityMicros === undefined ? undefined : canonicalUnsigned(order.quantityMicros)
+      const orderQuantity = order?.quantityAtoms === undefined ? undefined : canonicalUnsigned(order.quantityAtoms)
       const orderNotional = order?.notionalMicros === undefined ? undefined : canonicalUnsigned(order.notionalMicros)
-      const filledQuantity = order === undefined ? undefined : canonicalUnsigned(order.filledQuantityMicros)
+      const filledQuantity = order === undefined ? undefined : canonicalUnsigned(order.filledQuantityAtoms)
       const blockedAt =
         execution.intent?.terminalOutcome === 'BLOCKED' && order === undefined && execution.fills.length === 0
           ? execution.intent.updatedAt
@@ -675,7 +680,10 @@ const readForwardPerformanceInput = (
         : {}),
       brokerFees: feeRecords
         .filter((record) => generationFeeIds.has(record.data.activityId))
-        .map((record) => record.data),
+        .map((record) => ({
+          ...record.data,
+          ...(record.coin_cost_basis_micros === null ? {} : { inventoryCostMicros: record.coin_cost_basis_micros }),
+        })),
       executionEvidence,
       ...(postgres.unverifiedDecisionHashes === undefined
         ? {}

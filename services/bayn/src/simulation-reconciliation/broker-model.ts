@@ -24,11 +24,11 @@ export interface IntentExpectation {
   readonly side: Order['side']
   readonly orderType: Order['orderType']
   readonly submittedOrderType: Order['orderType']
-  readonly submittedQuantityMicros?: string
+  readonly submittedQuantityAtoms?: string
   readonly submittedNotionalMicros?: string
   readonly submittedLimitPriceMicros?: string
   readonly timeInForce: Order['timeInForce']
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly state: IntentState
   readonly terminalOutcome?: TerminalOutcome
   readonly expectsBrokerOrder: boolean
@@ -44,7 +44,7 @@ export interface DurableFill {
 
 export interface ProjectedPosition {
   readonly symbol: string
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly costBasisMicros: string
 }
 
@@ -173,7 +173,7 @@ export type ReconciliationDecisionError =
   | {
       readonly _tag: 'FixedPointRoundingFailed'
       readonly symbol: string
-      readonly quantityMicros: string
+      readonly quantityAtoms: string
       readonly averageEntryPriceMicros: string
       readonly cause: unknown
     }
@@ -257,22 +257,22 @@ export const integer = Pipeable.dual(3, integerDataFirst)
 
 const roundMicrosProductDataFirst = (
   symbol: string,
-  quantityMicros: string,
+  quantityAtoms: string,
   averageEntryPriceMicros: string,
 ): ReconciliationDecision<bigint> =>
   pipe(
     Result.all({
-      quantity: integer('position-quantity', symbol, quantityMicros),
+      quantity: integer('position-quantity', symbol, quantityAtoms),
       averageEntryPrice: integer('position-average-price', symbol, averageEntryPriceMicros),
     }),
     Result.flatMap(({ averageEntryPrice, quantity }) =>
       pipe(
-        roundUnsignedHalfUp(absolute(quantity) * averageEntryPrice, 1_000_000n),
+        roundUnsignedHalfUp(absolute(quantity) * averageEntryPrice, 1_000_000_000n),
         Result.mapError(
           (cause): ReconciliationDecisionError => ({
             _tag: 'FixedPointRoundingFailed',
             symbol,
-            quantityMicros,
+            quantityAtoms,
             averageEntryPriceMicros,
             cause,
           }),
@@ -396,7 +396,7 @@ export const renderReconciliationDecisionError = (error: ReconciliationDecisionE
     case 'CanonicalizationFailed':
       return `reconciliation ${error.operation} canonicalization failed${error.identity === undefined ? '' : ` for ${error.identity}`}`
     case 'FixedPointRoundingFailed':
-      return `position ${error.symbol} cost could not be rounded from quantity ${error.quantityMicros} and price ${error.averageEntryPriceMicros}`
+      return `position ${error.symbol} cost could not be rounded from quantity ${error.quantityAtoms} and price ${error.averageEntryPriceMicros}`
     case 'InvalidInstant':
       return `reconciliation ${error.field} for ${error.identity} is invalid: ${error.value}`
     case 'InvalidInteger':

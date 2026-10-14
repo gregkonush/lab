@@ -39,7 +39,7 @@ export interface FillTerms {
 
 const makeFillTermsDataFirst = (
   side: 'buy' | 'sell',
-  quantityMicros: bigint,
+  quantityAtoms: bigint,
   referencePrice: bigint,
   model: ExecutionModel,
   costMultiplierMicros: bigint,
@@ -50,12 +50,12 @@ const makeFillTermsDataFirst = (
     fail({
       _tag: 'InvalidFillTerms',
       side,
-      quantityMicros,
+      quantityAtoms,
       referencePriceMicros: referencePrice,
       costMultiplierMicros,
       reason,
     })
-  if (quantityMicros <= 0n || referencePrice <= 0n) return invalid('invalid-quantity-or-price')
+  if (quantityAtoms <= 0n || referencePrice <= 0n) return invalid('invalid-quantity-or-price')
   if (costMultiplierMicros <= 0n) return invalid('invalid-cost-multiplier')
 
   return pipe(
@@ -88,15 +88,15 @@ const makeFillTermsDataFirst = (
               if (fillPrice <= 0n) return invalid<FillTerms>('costs-consume-reference-price')
               return pipe(
                 Result.all({
-                  notional: notionalMicros(quantityMicros, fillPrice),
+                  notional: notionalMicros(quantityAtoms, fillPrice),
                   spreadCost: notionalMicros(
-                    quantityMicros,
+                    quantityAtoms,
                     quantizedSpreadPrice > referencePrice
                       ? quantizedSpreadPrice - referencePrice
                       : referencePrice - quantizedSpreadPrice,
                   ),
                   slippageCost: notionalMicros(
-                    quantityMicros,
+                    quantityAtoms,
                     fillPrice > quantizedSpreadPrice
                       ? fillPrice - quantizedSpreadPrice
                       : quantizedSpreadPrice - fillPrice,
@@ -123,8 +123,8 @@ const makeFillTermsDataFirst = (
 export const makeFillTerms = Pipeable.dual(5, makeFillTermsDataFirst)
 
 export interface OrderOutcome {
-  readonly requestedQuantityMicros: bigint
-  readonly filledQuantityMicros: bigint
+  readonly requestedQuantityAtoms: bigint
+  readonly filledQuantityAtoms: bigint
   readonly status: OrderStatus
   readonly rejectionReason: OrderRejectionReason | null
   readonly unfilledRemainder: 'none' | 'canceled'
@@ -133,7 +133,7 @@ export interface OrderOutcome {
 export interface OrderOutcomeInput {
   readonly identity: unknown
   readonly side: 'buy' | 'sell'
-  readonly requestedQuantityMicros: bigint
+  readonly requestedQuantityAtoms: bigint
   readonly referencePriceMicros: bigint
   readonly model: ExecutionModel
   readonly forceFullFill?: boolean
@@ -141,17 +141,17 @@ export interface OrderOutcomeInput {
 
 export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<OrderOutcome> =>
   pipe(
-    ensureUnsigned(input.model.precision.quantityIncrementMicros, 'quantity increment', 1n),
+    ensureUnsigned(input.model.precision.quantityIncrementAtoms, 'quantity increment', 1n),
     Result.flatMap((quantityIncrement) =>
       pipe(
-        quantizeDown(input.requestedQuantityMicros, quantityIncrement),
+        quantizeDown(input.requestedQuantityAtoms, quantityIncrement),
         Result.map((requested) => ({ quantityIncrement, requested })),
       ),
     ),
     Result.flatMap(({ quantityIncrement, requested }) => {
       const reject = (reason: OrderRejectionReason): OrderOutcome => ({
-        requestedQuantityMicros: requested,
-        filledQuantityMicros: 0n,
+        requestedQuantityAtoms: requested,
+        filledQuantityAtoms: 0n,
         status: 'rejected',
         rejectionReason: reason,
         unfilledRemainder: 'canceled',
@@ -190,8 +190,8 @@ export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<Orde
                   const bucket = BigInt(`0x${identityHash.slice(0, 16)}`) % PPM
                   if (input.forceFullFill === true || bucket >= probability) {
                     return Result.succeed({
-                      requestedQuantityMicros: requested,
-                      filledQuantityMicros: requested,
+                      requestedQuantityAtoms: requested,
+                      filledQuantityAtoms: requested,
                       status: 'filled',
                       rejectionReason: null,
                       unfilledRemainder: 'none',
@@ -207,8 +207,8 @@ export const makeOrderOutcome = (input: OrderOutcomeInput): ExecutionResult<Orde
                         filled === 0n
                           ? reject('zero-after-rounding')
                           : {
-                              requestedQuantityMicros: requested,
-                              filledQuantityMicros: filled,
+                              requestedQuantityAtoms: requested,
+                              filledQuantityAtoms: filled,
                               status: 'partially-filled',
                               rejectionReason: null,
                               unfilledRemainder: 'canceled',

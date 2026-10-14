@@ -1,8 +1,6 @@
-BEGIN;
 CREATE SCHEMA IF NOT EXISTS ofz;
 REVOKE ALL ON SCHEMA ofz FROM PUBLIC;
-CREATE TABLE ofz.schema_version (version integer PRIMARY KEY CHECK (version = 1), checksum bytea CHECK (octet_length(checksum) = 32));
-INSERT INTO ofz.schema_version(version) VALUES (1);
+CREATE TABLE ofz.schema_version (version integer PRIMARY KEY CHECK (version = 1), checksum bytea NOT NULL CHECK (octet_length(checksum) = 32));
 CREATE FUNCTION ofz.now_ms() RETURNS bigint LANGUAGE sql VOLATILE
 AS $$ SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint $$;
 
@@ -17,6 +15,20 @@ CREATE TABLE ofz.platform_state (
     fleet_bytes bigint NOT NULL DEFAULT 206158430208 CHECK (fleet_bytes > 0)
 );
 INSERT INTO ofz.platform_state DEFAULT VALUES;
+CREATE TABLE ofz.bootstrap (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    fingerprint bytea NOT NULL CHECK (octet_length(fingerprint) = 32),
+    manifest jsonb NOT NULL,
+    schema_hash bytea CHECK (octet_length(schema_hash) = 32),
+    bootstrap_audit_id uuid UNIQUE NOT NULL,
+    activation_audit_id uuid UNIQUE NOT NULL,
+    phase text NOT NULL CHECK (phase IN ('initializing', 'initialized', 'activating', 'active')),
+    bootstrap_receipt jsonb,
+    activation_receipt jsonb,
+    CHECK ((phase = 'initializing') = (bootstrap_receipt IS NULL)),
+    CHECK ((phase = 'active') = (activation_receipt IS NOT NULL)),
+    CHECK (phase = 'initializing' OR schema_hash IS NOT NULL)
+);
 CREATE TABLE ofz.humans (
     id text PRIMARY KEY CHECK (id ~ '^[0-9a-f]{64}$'),
     github_id text UNIQUE NOT NULL CHECK (github_id ~ '^[1-9][0-9]{0,19}$')
@@ -175,4 +187,3 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA ofz TO ofz_api;
 GRANT SELECT ON ofz.audit, ofz.audit_outbox, ofz.archive_state TO ofz_archiver;
 GRANT UPDATE (acknowledged_at_ms, archive_receipt) ON ofz.audit_outbox TO ofz_archiver;
 GRANT UPDATE ON ofz.archive_state TO ofz_archiver;
-COMMIT;

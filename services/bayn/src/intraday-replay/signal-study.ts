@@ -1,3 +1,8 @@
+import { quantityFromNumber } from '../quantity'
+import { equityMarketProfile } from '../jev/markets'
+import { equityRollingValues } from '../market-data/features/native-feature'
+
+import { exchangeSessions } from '../market-hours'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
@@ -20,7 +25,7 @@ import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
 import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
-import { calculateSessionFees, numberToMicros, MICROS } from '../execution-model'
+import { calculateSessionFees, numberToMicros } from '../execution-model'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from '../time'
@@ -119,17 +124,18 @@ export const prepareSignalStudyBatch = (input: unknown) =>
           .at(-1)
         if (rolling === undefined || quote === undefined || trade === undefined)
           return yield* Result.fail(new SignalStudyFailure({ message: `Missing verified signal for ${symbol}` }))
+        const values = yield* equityRollingValues(rolling.value)
         return {
-          reference: BigInt(rolling.value.material.values.referencePriceMicros),
-          high: BigInt(rolling.value.material.values.rangeHighPriceMicros),
-          low: BigInt(rolling.value.material.values.rangeLowPriceMicros),
+          reference: BigInt(values.referencePriceMicros),
+          high: BigInt(values.rangeHighPriceMicros),
+          low: BigInt(values.rangeLowPriceMicros),
           bid: yield* numberToMicros(quote.bidPrice),
           ask: yield* numberToMicros(quote.askPrice),
           trade: yield* numberToMicros(trade.price),
           quote,
         }
       })
-    const benchmark = yield* prices(observation.protocol.benchmarkSymbol)
+    const benchmark = yield* prices('SPY')
     const signals = []
     for (const candidate of plan.candidates) {
       if (candidate.status === 'EXCLUDED') continue
@@ -273,7 +279,7 @@ export const summarizeSignalFactorOutcomes = (
 export const studyIoc = (input: {
   readonly symbol: string
   readonly side: OrderSide
-  readonly quantityMicros: bigint
+  readonly quantityAtoms: bigint
   readonly decisionQuote: Quote
   readonly arrivalQuote: Quote
   readonly decisionAtMs: number
@@ -288,7 +294,7 @@ export const studyIoc = (input: {
       [input.decisionQuote, input.decisionAtMs],
       [input.arrivalQuote, input.arrivalAtMs],
     ] as const) {
-      const reason = replayQuoteRejection(quote, input.symbol, at, input.protocol)
+      const reason = replayQuoteRejection(quote, input.symbol, at, { ...input.protocol, ...equityMarketProfile })
       if (reason !== null || quote === undefined)
         return { status: 'UNRESOLVED' as const, reason: reason ?? 'missing-quote' }
     }
@@ -299,10 +305,11 @@ export const studyIoc = (input: {
     const buy = input.side === OrderSide.Buy
     const price = yield* numberToMicros(buy ? decision.value.askPrice : decision.value.bidPrice)
     const terms = yield* deriveExecutionIntentPricing({
+      symbol: input.symbol,
       side: input.side,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: input.quantityMicros,
+      quantityAtoms: input.quantityAtoms,
       referencePriceMicros: price,
       executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
@@ -310,12 +317,14 @@ export const studyIoc = (input: {
     const outcome = yield* simulateIntradayReplayIocCore({
       order: {
         side: input.side,
-        quantityMicros: input.quantityMicros,
+        quantityAtoms: input.quantityAtoms,
         limitPriceMicros: terms.expectedExecutionPriceMicros,
       },
       quote: {
         priceMicros: yield* numberToMicros(buy ? arrival.value.askPrice : arrival.value.bidPrice),
-        displayedQuantityMicros: yield* numberToMicros(buy ? arrival.value.askSize : arrival.value.bidSize),
+        displayedQuantityAtoms: yield* quantityFromNumber(buy ? arrival.value.askSize : arrival.value.bidSize).pipe(
+          Result.mapError((cause) => new SignalStudyFailure({ message: 'invalid displayed quantity', cause })),
+        ),
       },
       executionModel: input.protocol.executionModel,
       assumptions: input.assumptions,
@@ -327,7 +336,7 @@ export const studyIoc = (input: {
         symbol: input.symbol,
         side: buy ? ('buy' as const) : ('sell' as const),
         observedAt: utcInstantFromEpochMillis(input.arrivalAtMs),
-        quantityMicros: String(outcome.filledQuantityMicros),
+        quantityAtoms: String(outcome.filledQuantityAtoms),
         priceMicros: String(outcome.fillPriceMicros),
         notionalMicros: String(outcome.fillNotionalMicros),
       },
@@ -337,6 +346,7 @@ export const studyIoc = (input: {
   }).pipe(Result.mapError((cause) => new SignalStudyFailure({ message: 'Cannot simulate study IOC', cause })))
 
 export const studyEntryQuantity = (input: {
+  readonly symbol: string
   readonly entryBudgetMicros: string
   readonly referencePrice: number
   readonly protocol: PreparedBatch['observation']['protocol']
@@ -346,10 +356,11 @@ export const studyEntryQuantity = (input: {
     const budget = BigInt(input.entryBudgetMicros)
     if (budget <= 0n) return yield* Result.fail(new SignalStudyFailure({ message: 'Entry budget must be positive' }))
     const sizing = yield* deriveExecutionIntentPricing({
+      symbol: input.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: MICROS,
+      quantityAtoms: 1_000_000_000n,
       referencePriceMicros: yield* numberToMicros(input.referencePrice),
       executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
@@ -360,14 +371,14 @@ export const studyEntryQuantity = (input: {
       const shares = (affordableShares + maximumShares + 1n) / 2n
       const notionalMicros = shares * sizing.expectedExecutionPriceMicros
       const fees = yield* calculateSessionFees(
-        [{ side: 'buy', quantityMicros: shares * MICROS, notionalMicros }],
+        [{ side: 'buy', quantityAtoms: shares * 1_000_000_000n, notionalMicros }],
         input.protocol.executionModel,
         BigInt(input.assumptions.feeMultiplierPpm),
       )
       if (notionalMicros + fees.totalMicros <= budget) affordableShares = shares
       else maximumShares = shares - 1n
     }
-    return affordableShares * MICROS
+    return affordableShares * 1_000_000_000n
   })
 
 type HypothesisOutcome =
@@ -411,7 +422,7 @@ export const studyRoundTrip = (input: {
     const entry = yield* studyIoc({
       ...input,
       side: OrderSide.Buy,
-      quantityMicros: quantity,
+      quantityAtoms: quantity,
       decisionQuote: input.entryDecisionQuote,
       arrivalQuote: input.entryArrivalQuote,
       decisionAtMs: input.decidedAtMs,
@@ -430,7 +441,7 @@ export const studyRoundTrip = (input: {
     const exit = yield* studyIoc({
       ...input,
       side: OrderSide.Sell,
-      quantityMicros: BigInt(entry.fill.quantityMicros),
+      quantityAtoms: BigInt(entry.fill.quantityAtoms),
       decisionQuote: input.exitDecisionQuote,
       arrivalQuote: input.exitArrivalQuote,
       decisionAtMs: exitDecisionAtMs,
@@ -441,7 +452,7 @@ export const studyRoundTrip = (input: {
     ledger = yield* applyReplayFill(
       ledger,
       exit.fill,
-      entry.fill.quantityMicros,
+      entry.fill.quantityAtoms,
       input.protocol.executionModel,
       input.assumptions.feeMultiplierPpm,
     )
@@ -501,7 +512,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
           const snapshot = yield* Effect.fromResult(
             constructSimulatedSnapshot(yield* source.cursor, source.source, {
               ...manifest,
-              universe: protocol.universe,
+              universe: equityMarketProfile.universe,
             }),
           )
           if (
@@ -519,7 +530,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       const entryAtMs = decisionAtMs + input.assumptions.latencyMs
       const exitDecisionAtMs = entryAtMs + signalStudyDefinition.horizonMs
       const exitAtMs = exitDecisionAtMs + input.assumptions.latencyMs
-      const session = manifest.calendar.sessions.find((value) => value.date === manifest.sessionDate)
+      const session = exchangeSessions(manifest.calendar).find((value) => value.date === manifest.sessionDate)
       if (session === undefined) return yield* new SignalStudyFailure({ message: 'Missing study session' })
       for (const signal of batch.signals) {
         const identity = {
