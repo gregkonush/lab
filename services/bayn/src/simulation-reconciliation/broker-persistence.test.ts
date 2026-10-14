@@ -26,6 +26,9 @@ const evidence = (identity: string): ReadEvidence => ({
 })
 
 const account: Account = {
+  cryptoStatus: null,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',

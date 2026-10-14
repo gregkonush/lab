@@ -1,3 +1,5 @@
+import { continuousMarketHours, isContinuousMarket, snapshotMarketCloseAt } from '../../market-hours'
+import { InstrumentSymbolSchema } from '../../instruments'
 import { BarPublicationPolicy, maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 
@@ -44,6 +46,7 @@ const maximumUniverseSize = 64
 const numericStringPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
 const sourceTopicPattern = /^[A-Za-z0-9._-]+$/
 const isIsoDate = Schema.is(IsoDateSchema)
+const isInstrumentSymbol = Schema.is(InstrumentSymbolSchema)
 const isIntradaySnapshotPurpose = Schema.is(Schema.Enum(IntradaySnapshotPurpose))
 const maximumNonNegativeInt32 = 2_147_483_647
 const maximumNonNegativeInt64 = 9_223_372_036_854_775_807n
@@ -149,7 +152,9 @@ const isCanonicalInstant = (value: string): boolean => {
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value
 }
 
-const calendarMaterial = (calendar: IntradaySnapshotQuery['calendar']) => ({
+const calendarMaterial = (
+  calendar: Exclude<IntradaySnapshotQuery['calendar'], { readonly schedule: 'CONTINUOUS' }>,
+) => ({
   schemaVersion: calendar.schemaVersion,
   source: calendar.source,
   requestedRange: calendar.requestedRange,
@@ -159,6 +164,16 @@ const calendarMaterial = (calendar: IntradaySnapshotQuery['calendar']) => ({
 
 const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, IntradaySnapshotFailure> => {
   const { calendar } = request
+  if (isContinuousMarket(calendar)) {
+    return request.feed === 'us' &&
+      calendar.source === continuousMarketHours.source &&
+      calendar.schedule === continuousMarketHours.schedule
+      ? Result.succeed(undefined)
+      : Result.fail(
+          failure('request', 'continuous market hours require the crypto feed and observation accounting date'),
+        )
+  }
+  if (request.feed === 'us') return Result.fail(failure('request', 'crypto data cannot bind an exchange calendar'))
   if (
     calendar.schemaVersion !== marketCalendarSchemaVersion ||
     calendar.source !== marketCalendarSource ||
@@ -208,11 +223,13 @@ const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, I
 }
 
 const freezeCalendar = (calendar: IntradaySnapshotQuery['calendar']): IntradaySnapshotQuery['calendar'] =>
-  Object.freeze({
-    ...calendar,
-    requestedRange: Object.freeze({ ...calendar.requestedRange }),
-    sessions: Object.freeze(calendar.sessions.map((session) => Object.freeze({ ...session }))),
-  })
+  isContinuousMarket(calendar)
+    ? Object.freeze({ ...calendar })
+    : Object.freeze({
+        ...calendar,
+        requestedRange: Object.freeze({ ...calendar.requestedRange }),
+        sessions: Object.freeze(calendar.sessions.map((session) => Object.freeze({ ...session }))),
+      })
 
 const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Result<T, IntradaySnapshotFailure> => {
   const start = epoch(request.rangeStartAt)
@@ -223,9 +240,10 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   }
   if (
     !isIsoDate(request.sessionDate) ||
-    request.rangeStartAt.slice(0, 10) !== request.sessionDate ||
-    request.rangeEndAt.slice(0, 10) !== request.sessionDate ||
-    request.observedAt.slice(0, 10) !== request.sessionDate
+    (!isContinuousMarket(request.calendar) &&
+      (request.rangeStartAt.slice(0, 10) !== request.sessionDate ||
+        request.rangeEndAt.slice(0, 10) !== request.sessionDate ||
+        request.observedAt.slice(0, 10) !== request.sessionDate))
   ) {
     return Result.fail(failure('request', 'intraday range and observation must remain within the declared session'))
   }
@@ -265,7 +283,7 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
     canonicalUniverse.length > maximumUniverseSize ||
     canonicalUniverse.length !== request.universe.length ||
     canonicalUniverse.some((symbol, index) => symbol !== request.universe[index]) ||
-    request.universe.some((symbol) => !/^[A-Z][A-Z0-9.-]{0,15}$/.test(symbol))
+    request.universe.some((symbol) => !isInstrumentSymbol(symbol) || (request.feed === 'us') !== symbol.includes('/'))
   ) {
     return Result.fail(failure('request', 'intraday universe must be non-empty, unique, sorted, and canonical'))
   }
@@ -321,16 +339,18 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   const sourceTopics = Object.values(request.sourceTopics)
   if (
     sourceTopics.some((topic) => !sourceTopicPattern.test(topic)) ||
-    new Set(sourceTopics).size !== sourceTopics.length
+    new Set(sourceTopics).size !== (request.feed === 'us' ? 1 : sourceTopics.length)
   ) {
     return Result.fail(failure('request', 'intraday source topics must be non-empty, canonical, and distinct'))
   }
   const expectedDelayClass =
-    request.feed === 'iex'
-      ? 'real_time_exchange_only'
-      : request.feed === 'sip'
-        ? 'real_time_consolidated'
-        : 'delayed_15m_consolidated'
+    request.feed === 'us'
+      ? 'real_time_crypto'
+      : request.feed === 'iex'
+        ? 'real_time_exchange_only'
+        : request.feed === 'sip'
+          ? 'real_time_consolidated'
+          : 'delayed_15m_consolidated'
   if (request.delayClass !== expectedDelayClass) {
     return Result.fail(failure('request', 'intraday feed and delay class do not match'))
   }
@@ -478,6 +498,7 @@ const recordIdentity = (
     sourcePartition,
     sourceOffset: row.source_offset,
     schemaVersion: 1,
+    ...(row.native_payload === undefined ? {} : { nativePayload: row.native_payload }),
   })
 }
 
@@ -573,6 +594,7 @@ export const validateIdentity = (
       record.universeId !== request.universeId ||
       record.universeSymbolHash !== request.universeSymbolHash ||
       record.feed !== request.feed ||
+      record.marketSession !== (request.feed === 'us' ? 'continuous' : 'regular') ||
       record.delayClass !== request.delayClass ||
       !symbols.has(record.symbol)
     ) {
@@ -1023,8 +1045,12 @@ export const verifyIntradaySnapshot = (
       quotes: decodeIntradayQuoteRows(rows.quotes),
       trades: decodeIntradayTradeRows(rows.trades),
     })
-    const session = verifiedRequest.calendar.sessions.find(({ date }) => date === verifiedRequest.sessionDate)
-    if (session === undefined) {
+    const marketCloseAt = snapshotMarketCloseAt(
+      verifiedRequest.calendar,
+      verifiedRequest.sessionDate,
+      verifiedRequest.observedAt,
+    )
+    if (marketCloseAt === undefined) {
       return yield* Result.fail(failure('request', 'intraday snapshot has no bound exchange session'))
     }
     const bars = Object.freeze((yield* Result.all(decoded.bars.map(normalizeBar))).toSorted(compareRecords))
@@ -1036,7 +1062,7 @@ export const verifyIntradaySnapshot = (
     yield* validateIdentity(
       verifiedRequest,
       [...quotes, ...trades],
-      session.closeAt,
+      marketCloseAt,
       true,
       verifiedRequest.archiveWatermarks,
     )
@@ -1130,6 +1156,7 @@ const archiveIdentityRow = (record: IntradayRecordIdentity) => ({
   source_partition: record.sourcePartition,
   source_offset: record.sourceOffset,
   schema_version: record.schemaVersion,
+  ...(record.nativePayload === undefined ? {} : { native_payload: record.nativePayload }),
 })
 
 const validateReplayEventTimestamp = (

@@ -1,3 +1,4 @@
+import { equityMarketProfile } from './jev/markets'
 import { CandidateObservationStore } from './observe-composition/candidate-observation'
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
@@ -931,6 +932,9 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
     observedAt: reconciledAt,
   })
   const brokerAccount: BrokerAccount = {
+    cryptoStatus: null,
+    nonMarginableBuyingPowerMicros: null,
+
     id: accountId,
     status: BrokerAccountStatus.Active,
     currency: 'USD',
@@ -1561,63 +1565,63 @@ describe('OBSERVE runtime composition', () => {
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.ShortPositionNotAllowed),
-        [{ symbol: 'AAPL', quantityMicros: '-1000000' }],
+        [{ symbol: 'AAPL', quantityAtoms: '-1000000000' }],
         ['AAPL'],
       ),
     ).toBe(true)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InputMismatch),
-        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        [{ symbol: 'AAPL', quantityAtoms: '500000000' }],
         ['AAPL'],
       ),
     ).toBe(true)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.IdentityMismatch),
-        [{ symbol: 'TSLA', quantityMicros: '1000000' }],
+        [{ symbol: 'TSLA', quantityAtoms: '1000000000' }],
         strategyUniverse,
       ),
     ).toBe(true)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InsufficientBuyLiquidity),
-        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        [{ symbol: 'AAPL', quantityAtoms: '500000000' }],
         ['AAPL'],
       ),
     ).toBe(true)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InsufficientBuyLiquidity),
-        [{ symbol: 'AAPL', quantityMicros: '0' }],
+        [{ symbol: 'AAPL', quantityAtoms: '0' }],
         ['AAPL'],
       ),
     ).toBe(false)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InsufficientSellLiquidity),
-        [{ symbol: 'AAPL', quantityMicros: '1000000' }],
+        [{ symbol: 'AAPL', quantityAtoms: '1000000000' }],
         ['AAPL'],
       ),
     ).toBe(true)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InsufficientSellLiquidity),
-        [{ symbol: 'AAPL', quantityMicros: '0' }],
+        [{ symbol: 'AAPL', quantityAtoms: '0' }],
         ['AAPL'],
       ),
     ).toBe(false)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InputStale),
-        [{ symbol: 'AAPL', quantityMicros: '500000' }],
+        [{ symbol: 'AAPL', quantityAtoms: '500000000' }],
         ['AAPL'],
       ),
     ).toBe(false)
     expect(
       blockedEntryRequiresCloseOnlyContainment(
         blocked(TargetPlanReason.InputMismatch),
-        [{ symbol: 'AAPL', quantityMicros: '1000000' }],
+        [{ symbol: 'AAPL', quantityAtoms: '1000000000' }],
         ['AAPL'],
       ),
     ).toBe(false)
@@ -1625,8 +1629,8 @@ describe('OBSERVE runtime composition', () => {
 
   test('closes external holdings before quote-bound in-universe holdings', () => {
     const positions = [
-      { symbol: 'AAPL', quantityMicros: '1000000' },
-      { symbol: 'TSLA', quantityMicros: '2000000' },
+      { symbol: 'AAPL', quantityAtoms: '1000000000' },
+      { symbol: 'TSLA', quantityAtoms: '2000000000' },
     ]
 
     expect(selectClosingSymbolPass(positions, ['AAPL'])).toEqual({
@@ -1643,8 +1647,8 @@ describe('OBSERVE runtime composition', () => {
 
   test('uses the fractional pass only after external holdings are flat', () => {
     const positions = [
-      { symbol: 'AAPL', quantityMicros: '500000' },
-      { symbol: 'TSLA', quantityMicros: '250000' },
+      { symbol: 'AAPL', quantityAtoms: '500000000' },
+      { symbol: 'TSLA', quantityAtoms: '250000000' },
     ]
 
     expect(selectClosingSymbolPass(positions, ['AAPL'])).toEqual({
@@ -1675,7 +1679,7 @@ describe('OBSERVE runtime composition', () => {
       side: OrderSide.Buy,
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000001',
       state: IntentState.Acknowledged,
       createdAt: evaluatedAt,
@@ -1701,9 +1705,9 @@ describe('OBSERVE runtime composition', () => {
       clientOrderId: intent.clientOrderId,
       intentId: intent.intentId,
       orderType: OrderType.Market,
-      notionalMicros: '100000000',
+      quantityAtoms: intent.quantityAtoms,
       status: OrderStatus.New,
-      filledQuantityMicros: '0',
+      filledQuantityAtoms: '0',
     })
     const projected = appendPendingMutationOrder([], decision.order)
     expect(projected).toEqual([decision.order])
@@ -1720,7 +1724,7 @@ describe('OBSERVE runtime composition', () => {
     expect(
       Result.getOrThrow(
         decidePendingMutationObservation(decision.order, [
-          { ...reconciledOrder, status: OrderStatus.Filled, filledQuantityMicros: intent.quantityMicros },
+          { ...reconciledOrder, status: OrderStatus.Filled, filledQuantityAtoms: intent.quantityAtoms },
         ]),
       ),
     ).toMatchObject({ _tag: 'Recover', reason: 'terminal' })
@@ -1864,7 +1868,7 @@ describe('OBSERVE runtime composition', () => {
       side: OrderSide.Buy,
       orderType: OrderType.Market,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
       state: IntentState.Planned,
       createdAt: evaluatedAt,
@@ -2220,7 +2224,7 @@ describe('OBSERVE runtime composition', () => {
       _tag: 'Wait',
       reason: 'intent-unsuccessful',
     })
-    expect(countOpenPositions([{ quantityMicros: '0' }, { quantityMicros: '-1' }, { quantityMicros: '2' }])).toBe(2)
+    expect(countOpenPositions([{ quantityAtoms: '0' }, { quantityAtoms: '-1000' }, { quantityAtoms: '2000' }])).toBe(2)
   })
 
   test('completes an entry after an exact zero-fill LIMIT/IOC cancellation without containing authority', () => {
@@ -2229,7 +2233,7 @@ describe('OBSERVE runtime composition', () => {
       clientOrderId: `b1_${'Z'.repeat(43)}`,
       intentId: '9'.repeat(64),
       orderType: OrderType.Limit,
-      quantityMicros: '3000000',
+      quantityAtoms: '3000000000',
       side: OrderSide.Buy,
       state: IntentState.Terminal,
       symbol: 'AMD',
@@ -2240,10 +2244,10 @@ describe('OBSERVE runtime composition', () => {
       accountId,
       brokerOrderId: 'zero-fill-ioc-order',
       clientOrderId: intent.clientOrderId,
-      filledQuantityMicros: '0',
+      filledQuantityAtoms: '0',
       intentId: intent.intentId,
       orderType: intent.orderType,
-      quantityMicros: intent.quantityMicros,
+      quantityAtoms: intent.quantityAtoms,
       side: intent.side,
       status: OrderStatus.Canceled,
       symbol: intent.symbol,
@@ -2262,24 +2266,24 @@ describe('OBSERVE runtime composition', () => {
       decideExecutionIntentTerminalDisposition({
         ...dispositionInput,
         phase: 'ENTRY',
-        orders: [{ ...order, filledQuantityMicros: '1' }],
+        orders: [{ ...order, filledQuantityAtoms: '1000' }],
       }),
     ).toBe('PARTIAL_FILL_IOC')
     expect(decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'CLOSE' })).toBe('UNSUCCESSFUL')
-    for (const filledQuantityMicros of ['-1', intent.quantityMicros, '4000000']) {
+    for (const filledQuantityAtoms of ['-1', intent.quantityAtoms, '4000000000']) {
       expect(
         decideExecutionIntentTerminalDisposition({
           ...dispositionInput,
           phase: 'ENTRY',
-          orders: [{ ...order, filledQuantityMicros }],
+          orders: [{ ...order, filledQuantityAtoms }],
         }),
       ).toBe('UNSUCCESSFUL')
     }
     for (const divergent of [
-      { ...order, filledQuantityMicros: '1000000', brokerOrderId: 'other-order' },
-      { ...order, filledQuantityMicros: '1000000', intentId: '8'.repeat(64) },
-      { ...order, filledQuantityMicros: '1000000', accountId: 'other-account' },
-      { ...order, filledQuantityMicros: '1000000', status: OrderStatus.PartiallyFilled },
+      { ...order, filledQuantityAtoms: '1000000000', brokerOrderId: 'other-order' },
+      { ...order, filledQuantityAtoms: '1000000000', intentId: '8'.repeat(64) },
+      { ...order, filledQuantityAtoms: '1000000000', accountId: 'other-account' },
+      { ...order, filledQuantityAtoms: '1000000000', status: OrderStatus.PartiallyFilled },
     ]) {
       expect(
         decideExecutionIntentTerminalDisposition({ ...dispositionInput, phase: 'ENTRY', orders: [divergent] }),
@@ -2339,7 +2343,7 @@ describe('OBSERVE runtime composition', () => {
     expect(
       isExecutionCycleReconciledFlat({
         ...flat,
-        brokerState: { ...flat.brokerState, positions: [{ quantityMicros: '1' }] },
+        brokerState: { ...flat.brokerState, positions: [{ quantityAtoms: '1000' }] },
       }),
     ).toBe(false)
     expect(isExecutionCycleReconciledFlat({ ...flat, riskContext: { unknownMutationCount: 1 } })).toBe(false)
@@ -2379,7 +2383,7 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol: 'AAPL',
-      quantityMicros: '100000000',
+      quantityAtoms: '100000000000',
       averageEntryPriceMicros: '100000000',
       marketPriceMicros: '100000000',
       marketValueMicros: '10000000000',
@@ -2392,8 +2396,8 @@ describe('OBSERVE runtime composition', () => {
         symbol: 'AAPL',
         targetWeight: 0.2,
         referencePriceMicros: '100000000',
-        currentQuantityMicros: '100000000',
-        targetQuantityMicros: '20000000',
+        currentQuantityAtoms: '100000000000',
+        targetQuantityAtoms: '20000000000',
       },
       accountId,
       observedAt,
@@ -2404,17 +2408,17 @@ describe('OBSERVE runtime composition', () => {
         symbol: 'AMD',
         targetWeight: 0.6,
         referencePriceMicros: '50000000',
-        currentQuantityMicros: '0',
-        targetQuantityMicros: '60000000',
+        currentQuantityAtoms: '0',
+        targetQuantityAtoms: '60000000000',
       },
       accountId,
       observedAt,
     )
 
     expect(afterSell).toEqual([existing])
-    expect(afterLaterBuy.map(({ symbol, quantityMicros }) => ({ symbol, quantityMicros }))).toEqual([
-      { symbol: 'AAPL', quantityMicros: '100000000' },
-      { symbol: 'AMD', quantityMicros: '60000000' },
+    expect(afterLaterBuy.map(({ symbol, quantityAtoms }) => ({ symbol, quantityAtoms }))).toEqual([
+      { symbol: 'AAPL', quantityAtoms: '100000000000' },
+      { symbol: 'AMD', quantityAtoms: '60000000000' },
     ])
   })
 
@@ -3458,7 +3462,7 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol: fixture.intent.symbol,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       averageEntryPriceMicros: '100000000',
       marketPriceMicros: '100000000',
       marketValueMicros: '100000000',
@@ -3548,7 +3552,7 @@ describe('OBSERVE runtime composition', () => {
       {
         symbol: fixture.intent.symbol,
         side: OrderSide.Sell,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
       },
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
@@ -3741,7 +3745,7 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol: 'IWM',
-      quantityMicros: '34000000',
+      quantityAtoms: '34000000000',
       averageEntryPriceMicros: '100000000',
       marketPriceMicros: '100000000',
       marketValueMicros: '3400000000',
@@ -3796,13 +3800,13 @@ describe('OBSERVE runtime composition', () => {
     expect(close.bindings.executionMarketData).toMatchObject({
       schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
       symbols: ['IWM'],
-      positions: [{ symbol: 'IWM', quantityMicros: '34000000' }],
+      positions: [{ symbol: 'IWM', quantityAtoms: '34000000000' }],
     })
     expect(close.targetPlan.intentTargets).toMatchObject([
       {
         symbol: 'IWM',
         side: OrderSide.Sell,
-        quantityMicros: '34000000',
+        quantityAtoms: '34000000000',
         orderType: OrderType.Market,
         timeInForce: TimeInForce.Day,
       },
@@ -3813,26 +3817,26 @@ describe('OBSERVE runtime composition', () => {
 
     const residual = await buildClose(
       reconciliationResultAt(observedAt, 0, 0, [
-        { ...position, quantityMicros: '1000000', marketValueMicros: '100000000' },
+        { ...position, quantityAtoms: '1000000000', marketValueMicros: '100000000' },
       ]),
       archiveFailure,
       observedAt,
       close.contentHash,
     )
     expect(residual.targetPlan.intentTargets).toMatchObject([
-      { symbol: 'IWM', side: OrderSide.Sell, quantityMicros: '1000000' },
+      { symbol: 'IWM', side: OrderSide.Sell, quantityAtoms: '1000000000' },
     ])
     expect(residual.orderedIntentIds).not.toEqual(close.orderedIntentIds)
     const fractional = await buildClose(
       reconciliationResultAt(observedAt, 0, 0, [
-        { ...position, quantityMicros: '500000', marketValueMicros: '50000000' },
+        { ...position, quantityAtoms: '500000000', marketValueMicros: '50000000' },
       ]),
       archiveFailure,
       observedAt,
       residual.contentHash,
     )
     expect(fractional.targetPlan.intentTargets).toMatchObject([
-      { symbol: 'IWM', side: OrderSide.Sell, quantityMicros: '500000' },
+      { symbol: 'IWM', side: OrderSide.Sell, quantityAtoms: '500000000' },
     ])
 
     for (const reason of ['identity', 'ordering', 'hash', 'lineage', 'rows', 'coverage'] as const) {
@@ -3890,7 +3894,7 @@ describe('OBSERVE runtime composition', () => {
                 schemaVersion: 'bayn.paper-position.v1',
                 accountId,
                 symbol: 'IWM',
-                quantityMicros: '1000000',
+                quantityAtoms: '1000000000',
                 averageEntryPriceMicros: '100000000',
                 marketPriceMicros: '100000000',
                 marketValueMicros: '100000000',
@@ -4093,7 +4097,7 @@ describe('OBSERVE runtime composition', () => {
           schemaVersion: 'bayn.paper-position.v1',
           accountId,
           symbol: fixture.intent.symbol,
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           averageEntryPriceMicros: '100000000',
           marketPriceMicros: '100000000',
           marketValueMicros: '100000000',
@@ -4120,7 +4124,7 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1' as const,
       accountId,
       symbol,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       averageEntryPriceMicros: '100000000',
       marketPriceMicros: '100000000',
       marketValueMicros: '100000000',
@@ -4309,7 +4313,7 @@ describe('OBSERVE runtime composition', () => {
       occurredAt: observedAt,
     }
     const partialOrder: Order = {
-      schemaVersion: 'bayn.paper-order.v1',
+      schemaVersion: 'bayn.order.v3',
       accountId,
       brokerOrderId: accepted.brokerOrderId ?? 'single-partial-canceled-order',
       clientOrderId: fixture.intent.clientOrderId,
@@ -4318,8 +4322,8 @@ describe('OBSERVE runtime composition', () => {
       side: fixture.intent.side,
       orderType: fixture.intent.orderType,
       timeInForce: fixture.intent.timeInForce,
-      quantityMicros: fixture.intent.quantityMicros,
-      filledQuantityMicros: '1',
+      quantityAtoms: fixture.intent.quantityAtoms,
+      filledQuantityAtoms: '1000',
       status: OrderStatus.Canceled,
       observedAt,
     }
@@ -4522,10 +4526,10 @@ describe('OBSERVE runtime composition', () => {
     expect(bounded.document.dispatchable).toBe(true)
     expect(bounded.risk.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
     if (limit === 'maxOrderNotionalMicros') {
-      expect(BigInt(bounded.intent.quantityMicros)).toBeLessThan(BigInt(baseline.intent.quantityMicros))
+      expect(BigInt(bounded.intent.quantityAtoms)).toBeLessThan(BigInt(baseline.intent.quantityAtoms))
       expect(BigInt(bounded.risk.notionalLimitMicros)).toBeLessThanOrEqual(BigInt(cap))
     } else {
-      expect(bounded.intent.quantityMicros).toBe(baseline.intent.quantityMicros)
+      expect(bounded.intent.quantityAtoms).toBe(baseline.intent.quantityAtoms)
     }
     expect(bounded.policy[limit]).toBe(cap)
   })
@@ -4693,7 +4697,7 @@ describe('OBSERVE runtime composition', () => {
                 schemaVersion: 'bayn.paper-position.v1',
                 accountId,
                 symbol: 'NVDA',
-                quantityMicros: '1000000',
+                quantityAtoms: '1000000000',
                 averageEntryPriceMicros: '10000000',
                 marketPriceMicros: '10000000',
                 marketValueMicros: '10000000',
@@ -4803,7 +4807,7 @@ describe('OBSERVE runtime composition', () => {
   test('binds a native Jev entry to its full signal batch and independent execution pricing', async () => {
     const fixture = await executionLifecycleFixture()
     expect(fixture.snapshotRequests).toHaveLength(2)
-    expect(fixture.snapshotRequests[0]).toMatchObject({ symbols: fixtureProtocol.universe })
+    expect(fixture.snapshotRequests[0]).toMatchObject({ symbols: equityMarketProfile.universe })
     expect(fixture.snapshotRequests[1]).toMatchObject({
       symbols: ['NVDA'],
       purpose: IntradaySnapshotPurpose.EntryPricing,
@@ -4815,7 +4819,7 @@ describe('OBSERVE runtime composition', () => {
         strategyName: 'jev',
         accountId,
         cycleId: cycle.identity.cycleId,
-        decisionMarketData: { symbols: fixtureProtocol.universe },
+        decisionMarketData: { symbols: equityMarketProfile.universe },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
       strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v1', selectedSymbols: ['NVDA'] },
@@ -4853,7 +4857,7 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       averageEntryPriceMicros: '10000000',
       marketPriceMicros: '10000000',
       marketValueMicros: '10000000',
@@ -4896,7 +4900,7 @@ describe('OBSERVE runtime composition', () => {
       schemaVersion: 'bayn.paper-position.v1',
       accountId,
       symbol: fixture.intent.symbol,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       averageEntryPriceMicros: '10000000',
       marketPriceMicros: '10000000',
       marketValueMicros: '10000000',
@@ -5218,6 +5222,9 @@ describe('OBSERVE runtime composition', () => {
       observedAt: reconciledAt,
     })
     const brokerAccount: BrokerAccount = {
+      cryptoStatus: null,
+      nonMarginableBuyingPowerMicros: null,
+
       id: accountId,
       status: BrokerAccountStatus.Active,
       currency: 'USD',
@@ -5532,7 +5539,7 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
     }
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        yield* TestClock.setTime(Date.parse(evaluatedAt) + (kind === 'discovery' ? 60_000 : 0))
         return yield* Effect.exit(
           runRecoveryFirstCyclePass(
             fixture.input,
@@ -5569,7 +5576,10 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         )
       }).pipe(
         Effect.provideService(CycleStore, store),
-        Effect.provideService(BrokerRead, { ...services.brokerRead, marketCalendar: calendarRead([]) }),
+        Effect.provideService(BrokerRead, {
+          ...services.brokerRead,
+          marketCalendar: calendarRead([...calendar.sessions]),
+        }),
         Effect.provideService(IntentStore, {
           commit: forbidden,
           read: (id) =>

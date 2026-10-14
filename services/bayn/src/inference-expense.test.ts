@@ -21,6 +21,32 @@ const quote = (options: Parameters<typeof expenseSourceFixture>[0] = {}) =>
   Result.getOrThrow(makeInferenceExpenseQuote(expenseSourceFixture(options), expenseRateFixture))
 
 describe('inference expense quote and deterministic plan', () => {
+  test('verifies an undispatched zero expense without sending a zero transfer to TigerBeetle', () => {
+    const source = expenseSourceFixture({ notDispatched: true })
+    const priced = Result.getOrThrow(
+      makeInferenceExpenseQuote(source, { schemaVersion: 'bayn.inference-rate-card.v1', rates: [] }),
+    )
+    expect(priced.line.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
+    expect(priced.line.estimatedCostPicoUsd).toBe('0')
+    expect(priced.rate).toBeNull()
+    const plan = Result.getOrThrow(buildInferenceExpensePlan([priced]))
+    expect(plan.accounts).toHaveLength(2)
+    expect(plan.transfers).toHaveLength(0)
+    expect(Result.isSuccess(verifyInferenceExpenseQuote(source, priced))).toBe(true)
+    for (const change of [
+      { inputTokens: '1' },
+      { outputTokens: '1' },
+      { estimatedCostPicoUsd: '1' },
+      { receiptHash: null },
+      { rateHash: 'a'.repeat(64) },
+    ]) {
+      const { quoteHash: _hash, ...material } = { ...priced, line: { ...priced.line, ...change } }
+      expect(Result.isFailure(decodeInferenceExpenseQuote({ ...material, quoteHash: canonicalHashV1(material) }))).toBe(
+        true,
+      )
+    }
+  })
+
   test('records each sub-micro expense exactly without touching broker cash accounts', () => {
     const first = quote()
     const second = quote({ key: 'b' })

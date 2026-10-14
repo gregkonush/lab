@@ -11,24 +11,24 @@ import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
-import { candidateObservationFixture } from '../testing/candidate-observation-fixture'
+import { nativeJevFixture } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeJevBatchStore } from './jev-batch-postgres'
 
 test.each([
-  { elapsedMs: 5000, corrupt: false, expectedTag: 'JevBatchExpired', queries: 2 },
-  { elapsedMs: 5001, corrupt: false, expectedTag: 'JevBatchExpired', queries: 2 },
+  { elapsedMs: 10000, corrupt: false, expectedTag: 'JevBatchExpired', queries: 2 },
+  { elapsedMs: 10001, corrupt: false, expectedTag: 'JevBatchExpired', queries: 2 },
   { elapsedMs: 16000, corrupt: false, expectedTag: 'JevBatchExpired', queries: 2 },
   { elapsedMs: -1, corrupt: false, expectedTag: 'OperationalError', queries: 2 },
   { elapsedMs: 16000, corrupt: true, expectedTag: 'OperationalError', queries: 1 },
 ])('unrecorded batch admission at $elapsedMs ms preserves $expectedTag (corrupt=$corrupt)', async (scenario) => {
-  const fixture = candidateObservationFixture()
-  const observed = Date.parse(fixture.input.observedAt)
+  const fixture = nativeJevFixture()
+  const observed = Date.parse(fixture.observation.payload.observedAt)
   const plan = Result.getOrThrow(
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
-      expiresAt: utcInstantFromEpochMillis(observed + 5000),
-      planVersion: JevBatchPlanVersion.V1,
+      expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const statements: string[] = []
@@ -102,13 +102,13 @@ test.each([
 })
 
 test('batch finalization binds its observation lookup to the indexed cycle and millisecond timestamp', async () => {
-  const fixture = candidateObservationFixture()
-  const observed = Date.parse(fixture.input.observedAt)
+  const fixture = nativeJevFixture()
+  const observed = Date.parse(fixture.observation.payload.observedAt)
   const plan = Result.getOrThrow(
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
-      expiresAt: utcInstantFromEpochMillis(observed + 5000),
-      planVersion: JevBatchPlanVersion.V1,
+      expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const symbols = plan.candidates.flatMap((candidate) =>

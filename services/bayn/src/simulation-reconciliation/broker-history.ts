@@ -336,11 +336,11 @@ const decideStableHistoryDataFirst = (
     }
     const filledByOrder = new Map<string, bigint>()
     for (const { value: fill } of after.fills) {
-      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityMicros))
+      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
     if (
       after.orders.rows.some(
-        ({ value: order }) => BigInt(order.filledQuantityMicros) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+        ({ value: order }) => BigInt(order.filledQuantityAtoms) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
       )
     ) {
       return yield* Result.fail(

@@ -37,50 +37,50 @@ export const elapsedCalendarDays = Pipeable.dual(2, elapsedCalendarDaysDataFirst
 
 const saleCostBasisMicrosDataFirst = (
   positionCostBasisMicros: bigint,
-  soldQuantityMicros: bigint,
-  positionQuantityMicros: bigint,
+  soldQuantityAtoms: bigint,
+  positionQuantityAtoms: bigint,
 ): ExecutionResult<bigint> => {
-  if (positionCostBasisMicros < 0n || soldQuantityMicros < 0n || positionQuantityMicros <= 0n) {
+  if (positionCostBasisMicros < 0n || soldQuantityAtoms < 0n || positionQuantityAtoms <= 0n) {
     return fail({
       _tag: 'InvalidSaleCostBasis',
       positionCostBasisMicros,
-      soldQuantityMicros,
-      positionQuantityMicros,
+      soldQuantityAtoms,
+      positionQuantityAtoms,
       reason: 'invalid-position',
     })
   }
-  if (soldQuantityMicros > positionQuantityMicros) {
+  if (soldQuantityAtoms > positionQuantityAtoms) {
     return fail({
       _tag: 'InvalidSaleCostBasis',
       positionCostBasisMicros,
-      soldQuantityMicros,
-      positionQuantityMicros,
+      soldQuantityAtoms,
+      positionQuantityAtoms,
       reason: 'quantity-exceeds-position',
     })
   }
-  return roundDiv(positionCostBasisMicros * soldQuantityMicros, positionQuantityMicros)
+  return roundDiv(positionCostBasisMicros * soldQuantityAtoms, positionQuantityAtoms)
 }
 
 export const saleCostBasisMicros = Pipeable.dual(3, saleCostBasisMicrosDataFirst)
 
-const scaleQuantityMicrosDataFirst = (
-  quantityMicros: bigint,
+const scaleQuantityAtomsDataFirst = (
+  quantityAtoms: bigint,
   scalePpm: bigint,
   model: ExecutionModel,
 ): ExecutionResult<bigint> => {
   if (scalePpm < 0n || scalePpm > PPM) {
     return fail({
       _tag: 'InvalidQuantityScale',
-      quantityMicros,
+      quantityAtoms,
       scalePpm,
       minimumScalePpm: 0n,
       maximumScalePpm: PPM,
     })
   }
   return pipe(
-    ensureUnsigned(model.precision.quantityIncrementMicros, 'quantity increment'),
-    Result.flatMap((increment) => quantizeDown((quantityMicros * scalePpm) / PPM, increment)),
+    ensureUnsigned(model.precision.quantityIncrementAtoms, 'quantity increment'),
+    Result.flatMap((increment) => quantizeDown((quantityAtoms * scalePpm) / PPM, increment)),
   )
 }
 
-export const scaleQuantityMicros = Pipeable.dual(3, scaleQuantityMicrosDataFirst)
+export const scaleQuantityAtoms = Pipeable.dual(3, scaleQuantityAtomsDataFirst)

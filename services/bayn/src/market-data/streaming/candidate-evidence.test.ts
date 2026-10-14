@@ -1,7 +1,8 @@
+import { jevRequestForSnapshot } from '../../jev/native.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeJevTradingSignalRequest, jevStalePricingSymbols } from '../../jev/trading-signals'
+import { jevStalePricingSymbols } from '../../jev/trading-signals'
 import { streamingFixture, streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../intraday/model'
 import { persistIntradayRecordRows, verifyIntradaySnapshotQuery } from '../intraday/verification'
@@ -25,9 +26,9 @@ const withTimes = (symbol: string, quoteAt: string, tradeAt: string) => ({
     trade.symbol === symbol ? { ...trade, eventAt: tradeAt, ingestedAt: tradeAt } : trade,
   ),
 })
-const exclusion = (snapshot: typeof fixture.snapshot) =>
+const exclusion = (snapshot: import('./snapshot').StreamingVerifiedMarketSnapshot) =>
   snapshot.manifest.candidateExclusions?.find((entry) => entry.symbol === 'AAPL')
-const replay = (snapshot: typeof fixture.snapshot) =>
+const replay = (snapshot: import('./snapshot').StreamingVerifiedMarketSnapshot) =>
   Result.getOrThrow(
     reproduceStreamingSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
   )
@@ -68,7 +69,7 @@ describe('candidate executable quote and window trade evidence', () => {
     )
     expect(exclusion(snapshot)).toBeUndefined()
     expect(jevStalePricingSymbols(snapshot)).not.toContain('AAPL')
-    const state = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).body).state
+    const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).body).state
     expect(state.candidate.quote.ageMs).toBe(1000)
     expect(state.candidate.latestTrade.ageMs).toBe(602_000)
     expect(state.units.latestTrade).toContain('not an executable price')
@@ -81,7 +82,7 @@ describe('candidate executable quote and window trade evidence', () => {
       query,
     )
     expect(exclusion(snapshot)).toBeUndefined()
-    expect(Result.isSuccess(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isSuccess(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
 
@@ -92,7 +93,7 @@ describe('candidate executable quote and window trade evidence', () => {
     )
     expect(exclusion(snapshot)?.reason).toBe('freshness')
     expect(snapshot.manifest.streaming.features.some((receipt) => receipt.value.material.symbol === 'AAPL')).toBe(true)
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
 
@@ -107,7 +108,7 @@ describe('candidate executable quote and window trade evidence', () => {
         query,
       )
       expect(exclusion(snapshot)?.message).toBe(`rolling window lacks 1 of 30 required minute bars: ${missingAt}`)
-      expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+      expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
       expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
     },
   )
@@ -127,7 +128,7 @@ describe('candidate executable quote and window trade evidence', () => {
       query,
     )
     expect(exclusion(snapshot)?.reason).toBe('freshness')
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
 
@@ -144,7 +145,7 @@ describe('candidate executable quote and window trade evidence', () => {
       ),
     )
     expect(exclusion(snapshot)?.message).toBe('no observed rolling feature matches the complete bar window')
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })
 
@@ -167,7 +168,7 @@ describe('candidate executable quote and window trade evidence', () => {
         query,
       )
       expect(exclusion(snapshot)?.message).toBe('intraday snapshot lacks a trade for candidate symbol')
-      expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+      expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     }
   })
 
@@ -183,7 +184,7 @@ describe('candidate executable quote and window trade evidence', () => {
       query,
     )
     expect(exclusion(snapshot)?.reason).toBe('freshness')
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
   })
 
   test('keeps required benchmark post-range evidence strict', () => {
@@ -212,7 +213,7 @@ describe('candidate executable quote and window trade evidence', () => {
     ] as const) {
       const { snapshot } = streamingFixtureFromRaw(withTimes('AAPL', quoteAt, '2026-09-04T14:20:00.000Z'), query)
       expect(exclusion(snapshot) === undefined).toBe(allowed)
-      expect(Result.isSuccess(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(allowed)
+      expect(Result.isSuccess(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(allowed)
     }
   })
 
@@ -222,7 +223,7 @@ describe('candidate executable quote and window trade evidence', () => {
       ['2026-09-04T14:30:01.000Z', '2026-09-04T14:30:02.001Z'],
     ] as const) {
       const { snapshot } = streamingFixtureFromRaw(withTimes('AAPL', quoteAt, tradeAt), query)
-      expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+      expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     }
   })
 
@@ -245,7 +246,7 @@ describe('candidate executable quote and window trade evidence', () => {
       ),
     )
     expect(exclusion(snapshot)?.message).toBe('no observed rolling feature matches the complete bar window')
-    expect(Result.isFailure(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
   })
 
   test('keeps the evidence policy out of quote-only pricing and binds it to replay identity', () => {
@@ -273,6 +274,6 @@ describe('candidate executable quote and window trade evidence', () => {
       reproduceSimulatedSnapshot(snapshot.manifest, Result.getOrThrow(persistIntradayRecordRows(snapshot))),
     )
     expect(restored.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
-    expect(Result.isSuccess(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY'))).toBe(true)
+    expect(Result.isSuccess(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
   })
 })

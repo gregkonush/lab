@@ -100,10 +100,10 @@ export const measurePositionEpisodes = (
         historyById.has(transaction.transactionId) ||
         brokerEvents.has(transaction.brokerEventId) ||
         transaction.occurredAt > reconciliation.reconciledAt ||
-        !/^[1-9][0-9]*$/.test(transaction.quantityMicros) ||
-        !/^-?[1-9][0-9]*$/.test(transaction.quantityDeltaMicros) ||
-        BigInt(transaction.quantityDeltaMicros) !==
-          BigInt(transaction.quantityMicros) * (transaction.side === 'BUY' ? 1n : -1n)
+        !/^[1-9][0-9]*$/.test(transaction.quantityAtoms) ||
+        !/^-?[1-9][0-9]*$/.test(transaction.quantityDeltaAtoms) ||
+        BigInt(transaction.quantityDeltaAtoms) !==
+          BigInt(transaction.quantityAtoms) * (transaction.side === 'BUY' ? 1n : -1n)
       )
         return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
       const instantKey = JSON.stringify([transaction.symbol, transaction.occurredAt])
@@ -125,7 +125,7 @@ export const measurePositionEpisodes = (
         selected.brokerEventId !== transaction.brokerEventId ||
         selected.symbol !== transaction.symbol ||
         selected.side !== transaction.side ||
-        selected.quantityMicros !== transaction.quantityMicros ||
+        selected.quantityAtoms !== transaction.quantityAtoms ||
         selected.occurredAt !== transaction.occurredAt
       )
         return unavailable(PositionEpisodeReason.ScopeMismatch, evidenceHash)
@@ -138,7 +138,7 @@ export const measurePositionEpisodes = (
     for (const transaction of ordered) {
       const previous = positions.get(transaction.symbol)
       const selected = selectedIds.has(transaction.transactionId)
-      const quantity = (previous?.quantity ?? 0n) + BigInt(transaction.quantityDeltaMicros)
+      const quantity = (previous?.quantity ?? 0n) + BigInt(transaction.quantityDeltaAtoms)
       if (quantity < 0n) return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
       const touchesScope = (previous?.touchesScope ?? false) || selected
       const whollyInScope = (previous?.whollyInScope ?? true) && selected

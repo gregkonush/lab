@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -283,7 +284,7 @@ export const runControlSession = (input: {
         (input.ridge !== undefined ||
           input.management !== null ||
           input.targetWeight !== 1 ||
-          !protocol.candidateSymbols.includes(input.training.candidateSymbol)))
+          !equityMarketProfile.candidateSymbols.some((symbol) => symbol === input.training?.candidateSymbol)))
     )
       return yield* new ControlStudyFailure({
         message: 'Training requires a fixed native candidate and mechanical fixed-budget execution',
@@ -414,7 +415,7 @@ export const runControlSession = (input: {
       arrivedAt: string
       side: OrderSide
       symbol: string
-      requestedQuantityMicros: string
+      requestedQuantityAtoms: string
       outcome: unknown
     }[] = []
     const trainingAttempts: RidgeTrainingAttempt[] = []
@@ -459,7 +460,7 @@ export const runControlSession = (input: {
         const rejection =
           position === undefined
             ? null
-            : (replayQuoteRejection(quote, position.symbol, atMs, protocol) ??
+            : (replayQuoteRejection(quote, position.symbol, atMs, { ...protocol, ...equityMarketProfile }) ??
               (quote !== undefined && Number.isFinite(quote.value.bidSize) && quote.value.bidSize > 0
                 ? null
                 : 'no-displayed-bid-liquidity'))
@@ -476,8 +477,8 @@ export const runControlSession = (input: {
         const brokerEquity =
           BigInt(portfolio.ledger.cashMicros) +
           (position !== undefined && quote !== undefined
-            ? (BigInt(position.quantityMicros) * (yield* Effect.fromResult(numberToMicros(quote.value.bidPrice)))) /
-              1_000_000n
+            ? (BigInt(position.quantityAtoms) * (yield* Effect.fromResult(numberToMicros(quote.value.bidPrice)))) /
+              1_000_000_000n
             : 0n)
         const netEquity = brokerEquity - accruedExternalCost - BigInt((yield* modelCosts(atMs)).knownCostMicros)
         if (brokerEquity > peakBrokerEquity) peakBrokerEquity = brokerEquity
@@ -545,17 +546,17 @@ export const runControlSession = (input: {
           observedAt,
           rangeStartAt: utcInstantFromEpochMillis(rangeEndMs - protocol.lookbackMinutes * 60_000),
           rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
-          universeId: protocol.universeId,
-          universeSymbolHash: protocol.universeSymbolHash,
-          universe: protocol.universe,
-          symbols: [held.symbol, protocol.benchmarkSymbol].sort(),
+          universeId: equityMarketProfile.universeId,
+          universeSymbolHash: equityMarketProfile.universeSymbolHash,
+          universe: equityMarketProfile.universe,
+          symbols: [held.symbol, 'SPY'].sort(),
           candidateSymbols: [held.symbol],
           ...(protocol.candidateEvidencePolicy === undefined
             ? {}
             : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-          feed: protocol.feed,
-          delayClass: protocol.delayClass,
-          sourceTopics: protocol.sourceTopics,
+          feed: equityMarketProfile.feed,
+          delayClass: equityMarketProfile.delayClass,
+          sourceTopics: equityMarketProfile.sourceTopics,
           maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
           minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
         })
@@ -813,7 +814,7 @@ export const runControlSession = (input: {
               : ControlPollDisposition.EntryCutoff
       if (symbol !== null && atMs + assumptions.latencyMs < closeMs) {
         const decisionQuote = yield* market.quoteAt(symbol, atMs)
-        const rejection = replayQuoteRejection(decisionQuote, symbol, atMs, protocol)
+        const rejection = replayQuoteRejection(decisionQuote, symbol, atMs, { ...protocol, ...equityMarketProfile })
         if (rejection !== null || decisionQuote === undefined) {
           missingExecutionQuotes += 1
           decisions.push({
@@ -832,7 +833,7 @@ export const runControlSession = (input: {
           const quantity = riskBlocked
             ? 0n
             : side === OrderSide.Sell
-              ? BigInt(held?.quantityMicros ?? '0')
+              ? BigInt(held?.quantityAtoms ?? '0')
               : yield* Effect.fromResult(
                   controlEntryQuantity({
                     portfolio,
@@ -856,7 +857,7 @@ export const runControlSession = (input: {
             const entryOrder: Parameters<typeof applyControlOrder>[1] = {
               symbol,
               side,
-              quantityMicros: quantity,
+              quantityAtoms: quantity,
               protocol,
               assumptions,
               decisionQuote,
@@ -878,7 +879,7 @@ export const runControlSession = (input: {
               arrivedAt: utcInstantFromEpochMillis(atMs),
               side,
               symbol,
-              requestedQuantityMicros: String(quantity),
+              requestedQuantityAtoms: String(quantity),
               outcome: result.outcome,
             })
             if (side === OrderSide.Buy && result.outcome.status !== 'FILLED')
@@ -1049,7 +1050,7 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry or management requires exactly one measured provider binding',
       })
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, prepared.protocol.universe)
+    const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
     const firstDate = prepared.input.sessionDates[0]
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)

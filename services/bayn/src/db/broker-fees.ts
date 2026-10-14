@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
-import { brokerFeeLedgerPlan } from '../accounting/domain'
+import { brokerFeeLedgerPlan, coinFeeLedgerPlan } from '../accounting/domain'
 import type { FeeActivity } from '../broker/alpaca'
 import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
@@ -67,7 +67,7 @@ export const accountBrokerFees = (
         'broker fee history predates the opening cash baseline; earlier baseline evidence is required',
       )
     const rows = yield* sql<Record<string, unknown>>`
-    SELECT data, read_evidence, content_hash, ledger_plan_hash, tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+    SELECT data, coin_cost_basis_micros::text AS coin_cost_basis_micros, read_evidence, content_hash, ledger_plan_hash, tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
       tigerbeetle_ledger::integer AS tigerbeetle_ledger, posted_at IS NOT NULL AS posted
     FROM broker_fee_accounting WHERE account_id = ${accountId} ORDER BY activity_id COLLATE "C"
   `
@@ -78,6 +78,7 @@ export const accountBrokerFees = (
     const seen = new Set<string>()
     const fees: FeeActivity[] = []
     const plans: LedgerPlan[] = []
+    const coinAdjustments = new Map<string, { quantity: bigint; cost: bigint }>()
     const prepared = yield* Effect.forEach(
       [...observed].sort((a, b) => a.value.activityId.localeCompare(b.value.activityId)),
       (observation) =>
@@ -101,25 +102,67 @@ export const accountBrokerFees = (
             return yield* invariant('broker fee account, uniqueness, or date binding is invalid')
           seen.add(fee.activityId)
           const contentHash = yield* fromResult(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee }))
-          const plan = brokerFeeLedgerPlan(accountId, fee.activityId, fee.netAmountMicros, identity.ledger)
-          const planHash = yield* fromResult(hashLedgerPlanResult(plan))
           const existing = byId.get(fee.activityId)
+          let coinCostBasisMicros: string | null = existing?.coin_cost_basis_micros ?? null
+          if (fee.coinDebit !== undefined && existing === undefined) {
+            if (fee.netAmountMicros !== '0') return yield* invariant('coin fee cannot change cash')
+            const coin = fee.coinDebit
+            const balances = yield* sql<Record<string, unknown>>`
+              SELECT
+                COALESCE((SELECT sum(quantity_delta_atoms) FROM accounting_transactions WHERE account_id = ${accountId} AND symbol = ${coin.symbol}), 0)::text AS quantity,
+                COALESCE((SELECT sum(cost_basis_delta_micros) FROM accounting_transactions WHERE account_id = ${accountId} AND symbol = ${coin.symbol}), 0)::text AS cost,
+                COALESCE((SELECT sum((data->'coinDebit'->>'quantityAtoms')::numeric) FROM broker_fee_accounting WHERE account_id = ${accountId} AND data->'coinDebit'->>'symbol' = ${coin.symbol}), 0)::text AS deducted_quantity,
+                COALESCE((SELECT sum(coin_cost_basis_micros) FROM broker_fee_accounting WHERE account_id = ${accountId} AND data->'coinDebit'->>'symbol' = ${coin.symbol}), 0)::text AS deducted_cost
+            `
+            const [balance] = yield* fromResult(
+              Schema.decodeUnknownResult(
+                Schema.Tuple([
+                  Schema.Struct({
+                    quantity: Schema.String,
+                    cost: Schema.String,
+                    deducted_quantity: Schema.String,
+                    deducted_cost: Schema.String,
+                  }),
+                ]),
+                strictParseOptions,
+              )(balances),
+            )
+            const adjustment = coinAdjustments.get(coin.symbol) ?? { quantity: 0n, cost: 0n }
+            const quantity = BigInt(balance.quantity) - BigInt(balance.deducted_quantity) - adjustment.quantity
+            const cost = BigInt(balance.cost) - BigInt(balance.deducted_cost) - adjustment.cost
+            const debit = BigInt(coin.quantityAtoms)
+            if (quantity < debit || cost < 0n) return yield* invariant('coin fee exceeds accounted inventory')
+            const removed = debit === quantity ? cost : (cost * debit + quantity / 2n) / quantity
+            coinCostBasisMicros = removed.toString()
+            coinAdjustments.set(coin.symbol, { quantity: adjustment.quantity + debit, cost: adjustment.cost + removed })
+          }
+          const plan =
+            fee.coinDebit === undefined
+              ? brokerFeeLedgerPlan(accountId, fee.activityId, fee.netAmountMicros, identity.ledger)
+              : coinFeeLedgerPlan(
+                  accountId,
+                  fee.activityId,
+                  fee.coinDebit.symbol,
+                  coinCostBasisMicros ?? '0',
+                  identity.ledger,
+                )
+          const planHash = yield* fromResult(hashLedgerPlanResult(plan))
           if (existing !== undefined) {
             yield* fromResult(verifyBrokerFeeRecord(existing, accountId, identity))
             if (existing.content_hash !== contentHash)
               return yield* invariant('durable broker fee changed its economic content')
           }
-          return { fee, readEvidence, plan, planHash, contentHash, existing }
+          return { fee, coinCostBasisMicros, readEvidence, plan, planHash, contentHash, existing }
         }),
     )
     if (stored.some((row) => !seen.has(row.data.activityId)))
       return yield* invariant('broker fee history omitted previously accounted activity')
-    for (const { fee, readEvidence, plan, planHash, contentHash, existing } of prepared) {
+    for (const { fee, coinCostBasisMicros, readEvidence, plan, planHash, contentHash, existing } of prepared) {
       if (existing === undefined) {
         yield* sql`
-        INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,
+        INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,coin_cost_basis_micros,data,read_evidence,content_hash,
           ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
-        VALUES(${accountId},${fee.activityId},${fee.date},${fee.netAmountMicros},${sql.json(fee)},${sql.json(readEvidence)},${contentHash},
+        VALUES(${accountId},${fee.activityId},${fee.date},${fee.netAmountMicros},${coinCostBasisMicros},${sql.json(fee)},${sql.json(readEvidence)},${contentHash},
           ${planHash},${identity.clusterId.toString()},${identity.ledger},${readEvidence.observedAt})
       `
       }

@@ -27,11 +27,13 @@ test('only a matching unused expired capture releases speculative debt after inv
     expect(failure.completion).toBe('Failure')
     expect(failure.retry).toEqual({
       _tag: 'Unavailable',
-      nextPollNotBeforeMs: result.reservation.interruptedNotBeforeMs,
+      nextPollNotBeforeMs: failure.deadline,
     })
   }
   expect(result.attempts).toBe(0)
-  expect(result.claims).toBe(4)
+  expect(result.claims).toBe(5)
+  expect(result.regression).toBe('Failure')
+  expect(result.regressionRetry).toEqual({ _tag: 'Unavailable', nextPollNotBeforeMs: result.regressionDeadline })
   expect(result.invalidations).toBeGreaterThanOrEqual(4)
   const expiryLog = result.logs.find((log: { message: string[] }) =>
     log.message.includes('Broker observation capture expired before starting'),

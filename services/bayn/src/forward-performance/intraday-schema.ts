@@ -113,7 +113,7 @@ export const IntradayPerformanceVolumeEvidenceSchema = Schema.Struct({
   decisionManifest: IntradayPerformanceDecisionManifestSchema,
   volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
   terminalPriceBasis: Schema.Literal('FINAL_MINUTE_BAR_CLOSE'),
-  quantityMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
+  quantityAtoms: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
   closePriceMicros: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/)),
   finalizedAt: UtcInstantSchema,
   archiveRequest: IntradayPerformanceArchiveRequestSchema,
