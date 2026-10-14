@@ -73,12 +73,18 @@ test('success, defects and interruption cross the runtime boundary without opera
 })
 
 test('permission rejection remains fail-closed and is not classified as a timeout', async () => {
+  const identity = {
+    provider: acquisitionFailure.provider,
+    environment: acquisitionFailure.environment,
+    baseUrl: acquisitionFailure.baseUrl,
+    expectedAccountId: acquisitionFailure.expectedAccountId,
+  }
   const permission = new BrokerAccountPreflightError({
-    ...acquisitionFailure,
+    ...identity,
     failure: { _tag: 'BrokerAccountBlocked' },
   })
   const acquisition = new BrokerSessionAcquisitionError({
-    ...acquisitionFailure,
+    ...identity,
     stage: BrokerSessionAcquisitionStage.Permissions,
     cause: permission,
   })
