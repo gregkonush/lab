@@ -2406,11 +2406,11 @@ spec:
             path: ./out/argocd/applications/ofz/kustomization.yaml
             updates:
               - key: commonAnnotations.delivery\.proompteng\.ai/source-revision
-                value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
+                value: ${{ quote(imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision']) }}
               - key: commonAnnotations.delivery\.proompteng\.ai/image-digest
-                value: ${{ imageFrom(vars.imageRepo).Digest }}
+                value: ${{ quote(imageFrom(vars.imageRepo).Digest) }}
               - key: commonAnnotations.delivery\.proompteng\.ai/github-run-id
-                value: ${{ imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id'] }}
+                value: ${{ quote(imageFrom(vars.imageRepo).Annotations['ai.proompteng.github-actions-run-id']) }}
         - uses: git-commit
           as: commit
           config:

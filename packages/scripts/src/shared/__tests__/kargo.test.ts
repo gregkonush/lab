@@ -1150,7 +1150,7 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
   })
 
-  it('predeclares every Ofz scalar that its Kargo promotion updates', () => {
+  it('predeclares and preserves string types for every Ofz provenance annotation', () => {
     const source = YAML.parse(readRepoFile('argocd/applications/ofz/kustomization.yaml')) as {
       commonAnnotations?: Record<string, unknown>
     }
@@ -1164,6 +1164,7 @@ describe('Kargo direct-push GitOps contract', () => {
       const key = String(change.key).slice('commonAnnotations.'.length).replaceAll('\\.', '.')
       expect(typeof source.commonAnnotations?.[key]).toBe('string')
       expect(source.commonAnnotations?.[key]).not.toBe('')
+      expect(change.value).toMatch(/^\$\{\{ quote\(.+\) \}\}$/)
     }
   })
 
