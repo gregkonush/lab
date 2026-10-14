@@ -37,18 +37,25 @@ A synced SealedSecret does not prove User admission.
 
 ## Acceptance
 
-The bounded, tokenless `bayn-valkey-acceptance-v2` Job uses only the application
-credential. It writes to the primary, waits for one replica acknowledgement on
+The bounded, tokenless `bayn-valkey-acceptance-v3` Sync hook uses only the
+application credential. It writes to the primary, waits for one replica acknowledgement on
 the same connection, reads the replicated value and removes the synthetic key.
 It also checks key-prefix rejection and rejection without a password. Keys
 expire after ten minutes if the Job is interrupted.
+
+`BeforeHookCreation` recreates an earlier completed or failed attempt on the
+next full Application sync. If startup exceeds the five-minute Job deadline,
+let the operator recover, then run a full reviewed sync of `bayn-valkey` to
+rerun acceptance. Do not use a `--resource` selective sync for this check:
+[Argo hooks do not run during selective sync](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/#hook-lifecycle-and-cleanup).
+Successful Job history stays available until the next attempt.
 
 ```sh
 kustomize build argocd/applications/bayn-valkey > /tmp/bayn-valkey.yaml
 bash scripts/kubeconform.sh /tmp/bayn-valkey.yaml
 kubectl -n bayn get valkeys.rds.valkey.buf.red,failovers.valkey.buf.red
 kubectl -n bayn get pods,pvc -l buf.red/name=bayn-valkey
-kubectl -n bayn logs job/bayn-valkey-acceptance-v2
+kubectl -n bayn logs job/bayn-valkey-acceptance-v3
 ```
 
 ## Migration from the unused sharded cluster
@@ -56,22 +63,45 @@ kubectl -n bayn logs job/bayn-valkey-acceptance-v2
 The three original primaries were checked with the existing TLS application
 credential and each reported `DBSIZE=0`. No Bayn process consumed that cluster.
 Changing `arch` in place does not retire the operator's old Cluster child.
-After merging and passing validation, run one scoped Argo synchronization at
-the reviewed revision with `Force=true` and `Replace=true` for the Valkey,
-`replica-acl-bayn-valkey-default` User and acceptance-v2 Job. Do not persist those
-force options as Application automation or resource annotations.
+Argo's server disables replace syncs. Use three reviewed GitOps steps rather
+than changing that server policy:
 
-Before replacement, verify the Valkey has no `delete-pvc` finalizer and all six
-old PVCs have no Cluster owner references. Use cascading replacement of the Valkey owner, not an orphaning delete. The
-old protected User has owner references to the old Cluster and Valkey UIDs;
-replacing those owners garbage-collects that User independently of Argo pruning.
-Replacement retires the old child Cluster and six pods. The six old `valkey-data-drc-bayn-valkey-*` volumes remain
-retained for recovery; do not delete them during this rollout. Verify the new
-Failover child is Ready, exactly two data pods run on separate hosts, the old
-Cluster and old User are absent, and acceptance-v2 succeeds. Argo must converge
-to Synced/Healthy at the reviewed revision.
+1. Temporarily set `Prune=true,Delete=false` on the Valkey and desired User.
+   Verify Argo applied those annotations at the reviewed `main` revision.
+2. Remove `valkey.yaml`, `user.yaml` and the acceptance Job from the
+   Kustomization. Normal cascading pruning deletes the Valkey owner and its
+   old Cluster and new Failover children. Verify both children and their pods
+   are absent before continuing.
+3. Restore the primary/replica resources with `Prune=false,Delete=false` and a
+   new acceptance Job name. Verify the new Valkey UID, two Ready pods on
+   separate hosts, a Ready User and passing authenticated acceptance.
 
-Recovery uses a reviewed source reversion and the same scoped replacement; the
-retained old volumes remain available. Never prune volumes, relax ACLs or use an
-operator credential to make an acceptance test pass. Cache availability does
-not grant broker, strategy or capital authority.
+Before pruning, verify the Valkey has no `delete-pvc` finalizer and all old
+PVCs have no owner references. The old protected User has owner references to
+the old Cluster and Valkey UIDs; cascading owner deletion garbage-collects
+that User independently of Argo pruning. Retain the six old
+`valkey-data-drc-bayn-valkey-*` volumes and the two replica volumes throughout
+this rollout. Verify the old Cluster and old User are absent and Argo is
+Synced/Healthy at each reviewed revision. Do not persist force/replace options
+or change Application automation.
+
+Upstream v2.1.0 can leave a foreground-deletion cycle: generated operator Users
+wait for the Cluster/Failover to disappear while those parents wait for their
+Users. If this occurs, wait for all cache Pods and StatefulSets to disappear
+and for operator cleanup finalizers to clear. A separately authorized metadata
+repair can then remove only `foregroundDeletion` from the two terminating child
+objects, with UID, deletion timestamp and finalizer-list preconditions. Verify
+all retained PVC/PV identities first and afterward. Let the operator clean its
+User and Secret finalizers; never strip those or a delete-PVC finalizer. Do not
+recreate the instance until both old children, all old Users and the old Valkey
+owner are absent. Check the actual `bayn-valkey-auth` Secret before restoring
+the User: a SealedSecret's stale `Synced` condition does not prove its Secret
+survived owner cleanup. Reconcile the unchanged encrypted credential through
+a reviewed Secret-template change if the Secret is absent; do not create a
+plaintext Secret or rotate credentials to bypass admission.
+
+Recovery uses a reviewed source reversion. If changing architecture again,
+repeat the reviewed owner removal and recreation; changing `arch` in place
+leaves stale children. Retained volumes remain available. Never prune volumes,
+relax ACLs or use an operator credential to make an acceptance test pass.
+Cache availability does not grant broker, strategy or capital authority.
