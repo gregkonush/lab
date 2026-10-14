@@ -5,6 +5,7 @@ on:
     paths:
       - 'services/ofz/**'
       - 'devices/nuc/ofz-recovery/**'
+      - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
@@ -34,6 +35,7 @@ on:
     paths:
       - 'services/ofz/**'
       - 'devices/nuc/ofz-recovery/**'
+      - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'

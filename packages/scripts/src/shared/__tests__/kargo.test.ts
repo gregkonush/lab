@@ -160,6 +160,14 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  ofz: {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('ofz')],
+    apps: ['ofz'],
+    includePaths: [],
+  },
   devbox: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
