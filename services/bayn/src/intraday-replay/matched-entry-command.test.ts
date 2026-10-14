@@ -355,6 +355,8 @@ test.each([
   'pending',
   'foreign',
   'protocol',
+  'pending-cycle',
+  'active-cycle',
   'early',
   'complete',
 ] as const)('matched inventory semantics fail closed for %s evidence', async (scenario) => {
@@ -366,12 +368,18 @@ test.each([
       const arrivals = `${directory}/arrivals.gz`
       yield* fs.writeFile(arrivals, gzipSync(data.body))
       const retained = inventoryFor(data)
-      const cycles =
+      let cycles =
         scenario === 'protocol'
           ? retained.cycles.map((cycle) =>
               cycle.cycleId === '0'.repeat(64) ? { ...cycle, protocolHash: '0'.repeat(64) } : cycle,
             )
           : retained.cycles
+      if (scenario === 'pending-cycle' || scenario === 'active-cycle')
+        cycles = cycles.map((cycle) =>
+          cycle.cycleId === '0'.repeat(64)
+            ? { ...cycle, state: scenario === 'pending-cycle' ? CycleState.Pending : CycleState.Active }
+            : cycle,
+        )
       let batchRows = retained.batches
       if (scenario === 'duplicate') batchRows = [...batchRows, ...batchRows]
       if (scenario === 'edited') batchRows = batchRows.map((batch) => ({ ...batch, batchId: '1'.repeat(64) }))
@@ -429,6 +437,8 @@ test.each([
           expect(report.summary.completenessProblems).toContain('inventory-cut-before-session-close:2026-09-04')
         else if (scenario === 'protocol')
           expect(report.summary.completenessProblems).toContain('native-inventory-protocol-mismatch:2026-09-04')
+        else if (scenario === 'pending-cycle' || scenario === 'active-cycle')
+          expect(report.summary.completenessProblems).toContain('nonterminal-inventory-cycle:2026-09-04')
         else if (scenario !== 'complete')
           expect(report.summary.completenessProblems).toContain('native-inventory-batch-mismatch:2026-09-04')
         else expect(report.summary.completenessProblems).not.toContain('native-inventory-batch-mismatch:2026-09-04')

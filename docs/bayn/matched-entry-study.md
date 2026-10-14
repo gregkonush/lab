@@ -65,6 +65,8 @@ omitted batches, changed results and cuts taken before the registered session cl
 unavailable. Reports retain the complete witnessed cycles and batches, including no-batch and pending cycles.
 Every retained cycle must bind the registered protocol, including blocked and no-batch cycles. A foreign protocol
 keeps that cycle visible and makes the study incomplete even when all supplied batch protocols match.
+Pending or active cycles also make the study incomplete, even after session close: later recovery can still append
+their batches or results. Preserve that cut and take a new export after the cycles become terminal.
 Independent review must still establish that the witness is the complete native export; a self-consistent JSON hash
 does not prove that provenance. Missing historical witnesses remain `null` and incomplete. Do not manufacture them
 from a selected subset, reuse another session's witness or relabel an old report.

@@ -8,6 +8,7 @@ import { canonicalHashV1Result, sha256 } from '../hash'
 import { EntryTimingReceiptSchema } from './entry-timing'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { JevPurpose } from '../jev/portfolio'
+import { CycleState } from '../cycle/model'
 import { verifyJevStudyInventory, type JevStudyInventory } from '../jev/study-inventory'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { observedQuoteAt } from '../market-data/streaming/projection'
@@ -522,6 +523,8 @@ export const runMatchedEntryStudy = (
         verifiedInventories.push(retained)
         if (retained.cycles.some((cycle) => cycle.protocolHash !== registration.protocolHash))
           problems.push(`native-inventory-protocol-mismatch:${inventory.sessionDate}`)
+        if (retained.cycles.some((cycle) => cycle.state === CycleState.Pending || cycle.state === CycleState.Active))
+          problems.push(`nonterminal-inventory-cycle:${inventory.sessionDate}`)
         const actualBatches = batches
           .filter((batch) => batch.snapshot.manifest.sessionDate === inventory.sessionDate)
           .map((batch) => ({
