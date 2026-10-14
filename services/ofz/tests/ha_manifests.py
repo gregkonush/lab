@@ -579,9 +579,12 @@ def validate(targets):
             == "barman-cloud.cloudnative-pg.io",
             f"{target}: daily schedule must not duplicate the explicit initial backup",
         )
-        initial = resource(targets, target, "Backup", f"{target}-db-nuc-cutover")
+        initial = resource(
+            targets, target, "Backup", f"{target}-db-nuc-cutover-primary"
+        )
         require(
             initial["spec"]["method"] == "plugin"
+            and initial["spec"]["target"] == "primary"
             and initial["spec"]["pluginConfiguration"]["name"]
             == "barman-cloud.cloudnative-pg.io"
             and initial["spec"]["cluster"]["name"] == f"{target}-db"
@@ -672,12 +675,18 @@ def main():
     }
     validate(targets)
     mutations = [
-        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover")[
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
             "spec"
         ].update(method="volumeSnapshot"),
-        lambda data: resource(data, "keycloak", "Backup", "keycloak-db-nuc-cutover")[
-            "metadata"
-        ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
+        lambda data: resource(
+            data, "keycloak", "Backup", "keycloak-db-nuc-cutover-primary"
+        )["metadata"]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
+            "spec"
+        ].update(target="prefer-standby"),
+        lambda data: resource(
+            data, "keycloak", "Backup", "keycloak-db-nuc-cutover-primary"
+        )["spec"].update(target="prefer-standby"),
         lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"][
             "affinity"
         ].update(podAntiAffinityType="preferred"),
