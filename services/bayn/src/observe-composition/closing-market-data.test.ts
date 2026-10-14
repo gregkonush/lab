@@ -416,10 +416,11 @@ describe('closing market-data fallback boundaries', () => {
                     report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } },
                   }
                 : fresh
+        if (fresh.riskContext.authority === null) throw new Error('fixture authority missing')
         const terminalReconciliation = yield* reconciliationForPreparation(
           preflight,
           refreshReconciliation,
-          Effect.succeed(fresh.riskContext.authority ?? undefined),
+          Effect.succeed(fresh.riskContext.authority),
           30_000,
         )
         const recoverClose = ensureExecutionCycleClosure({
@@ -683,7 +684,12 @@ describe('closing market-data fallback boundaries', () => {
         const residualReconciliation = yield* reconciliationForPreparation(
           yield* reconcile,
           refreshResidual,
-          Effect.suspend(() => reconcile.pipe(Effect.map((facts) => facts.riskContext.authority ?? undefined))),
+          reconcile.pipe(
+            Effect.map((facts) => {
+              if (facts.riskContext.authority === null) throw new Error('fixture authority missing')
+              return facts.riskContext.authority
+            }),
+          ),
           30_000,
         )
         const recoverResidual = ensureExecutionCycleClosure({
