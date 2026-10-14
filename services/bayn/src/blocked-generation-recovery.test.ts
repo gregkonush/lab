@@ -177,7 +177,7 @@ describe('terminal generation recovery', () => {
           return { _tag: 'NoTerminalGeneration' as const }
         }),
     }
-    const authorityStore: AuthorityGenerationStoreShape = {
+    const authorityStore: Pick<AuthorityGenerationStoreShape, 'ensureAuthorityGeneration'> = {
       ensureAuthorityGeneration: () => Effect.die('not used'),
     }
     const writerFence: WriterFenceService = {

@@ -31,7 +31,7 @@ permissions:
 
 concurrency:
   group: codex-devbox-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v3
         with:
-          driver-opts: network=host
+          driver: docker
       - name: Resolve immutable build metadata
         id: meta
         shell: bash
@@ -77,7 +77,7 @@ jobs:
           context: .
           file: services/devbox/Dockerfile
           platforms: linux/${{ matrix.architecture }}
-          load: true
+          network: host
           tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
           build-args: SOURCE_REVISION=${{ github.sha }}
           labels: |
@@ -85,6 +85,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ steps.meta.outputs.created }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:cache-${{ matrix.architecture }}
+          cache-to: type=inline
       - name: Exercise the native image
         shell: bash
         env:
@@ -114,13 +115,41 @@ jobs:
             cd services/nanoagent
             GOWORK=off go test ./...
           '
+      - name: Exercise systemd preparation recovery
+        shell: bash
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fixture="$(docker run --detach --rm --privileged --cgroupns private \
+            --tmpfs /run --tmpfs /run/lock --entrypoint /sbin/init \
+            "$IMAGE" --unit=basic.target)"
+          trap 'docker rm --force "$fixture" >/dev/null 2>&1 || true' EXIT
+          for _ in {1..50}; do
+            if docker exec "$fixture" systemctl is-active --quiet basic.target; then
+              break
+            fi
+            sleep 0.2
+          done
+          docker exec "$fixture" /bin/bash -c '
+            set -euo pipefail
+            test "$(cat /proc/1/comm)" = systemd
+            systemctl is-active --quiet basic.target
+            python3 -m unittest discover -s /opt/lab-seed/services/devbox/tests -p test_prepare_restart.py -v
+          '
       - name: Publish validated preparation image
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           IMAGE: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+          ARCH: ${{ matrix.architecture }}
           DOCKER_COMMAND_RETRY_ATTEMPTS: '24'
           DOCKER_COMMAND_RETRY_DELAY_SECONDS: '30'
-        run: bun packages/scripts/src/shared/docker.ts push "$IMAGE"
+        run: |
+          set -euo pipefail
+          bun packages/scripts/src/shared/docker.ts push "$IMAGE"
+          cache="${IMAGE%:*}:cache-$ARCH"
+          docker tag "$IMAGE" "$cache"
+          bun packages/scripts/src/shared/docker.ts push "$cache"
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

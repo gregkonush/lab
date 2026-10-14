@@ -21,6 +21,7 @@ const readyAgent = {
   cpuMillis: 4_000,
   memoryMib: 8_192,
   workspaceGib: 32,
+  uid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
   power: { idleTimeoutMinutes: 60 },
   nodeName: 'ryzen',
   message: '',
@@ -62,11 +63,11 @@ const sourceEntries = [
 ]
 
 function previewTicket(sequence: number) {
-  return `${'a'.repeat(47)}${sequence.toString(36)}.${'b'.repeat(43)}`
+  return createHash('sha256').update(`fixture-preview-ticket-${sequence}`).digest('base64url')
 }
 
 function previewSessionToken(sequence: number) {
-  return `${'c'.repeat(47)}${sequence.toString(36)}.${'d'.repeat(43)}`
+  return createHash('sha256').update(`fixture-preview-session-${sequence}`).digest('base64url')
 }
 
 function mockRevision(content: string) {
@@ -132,13 +133,15 @@ type TerminalStore = { sessions: Record<string, unknown>[] }
 type MockOptions = {
   activeCodexLogin?: boolean
   authenticated?: boolean
+  userId?: string
   agent?: typeof readyAgent | null
   blockDraftStorage?: boolean
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
-  failCodexModels?: boolean
+  codexModelsError?: { status: number; error: string; code?: string }
+  failCreateOnce?: boolean
+  commitFailedCreate?: boolean
   failSendTurnOnce?: boolean
-  legacyCodexModels?: boolean
   paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
@@ -159,6 +162,8 @@ type MockOptions = {
   searchTruncated?: boolean
   preserveDraftStorageOnReload?: boolean
   terminalStore?: TerminalStore
+  supersedeSleepOnce?: boolean
+  supersededCreationId?: string
 }
 
 async function mockTengri(page: Page, options: MockOptions = {}) {
@@ -166,6 +171,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let snapshotFailuresRemaining = 0
   let snapshotRequests = 0
   let authenticated = options.authenticated ?? true
+  let failCreate = options.failCreateOnce ?? false
+  let supersedeSleep = options.supersedeSleepOnce ?? false
   const actions: Record<string, unknown>[] = []
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
@@ -359,7 +366,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
       body: `<!doctype html><title>Opening preview</title><script>location.replace(${JSON.stringify(launchLocations)}[decodeURIComponent(location.hash.slice(1))])</script>`,
     })
   })
-  await page.route('**/api/auth/sign-out', async (route) => {
+  await page.route('**/api/auth/logout', async (route) => {
     authenticated = false
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true }) })
   })
@@ -456,7 +463,7 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           controlPlaneConfigured: true,
           previewGatewayOrigin,
           authenticated,
-          user: authenticated ? user : null,
+          user: authenticated ? { ...user, id: options.userId ?? user.id } : null,
           agents: authenticated && agent ? [agent] : [],
         }),
       })
@@ -465,6 +472,36 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
     const action = request.postDataJSON() as Record<string, unknown>
     actions.push(action)
+    if (action.action === 'create-agent' && action.operationId === options.supersededCreationId) {
+      await route.fulfill({
+        status: 409,
+        json: { error: 'Workspace removed', code: 'lifecycle_superseded' },
+      })
+      return
+    }
+    if (action.action === 'create-agent' && failCreate) {
+      failCreate = false
+      if (options.commitFailedCreate) {
+        const owner = createHash('sha256')
+          .update(`github:${options.userId ?? user.id}`)
+          .digest('hex')
+        const id = `agent-${createHash('sha256')
+          .update(`ofz.workspace.v1\n${owner}\n${String(action.operationId)}`)
+          .digest('hex')
+          .slice(0, 32)}`
+        agent = { ...readyAgent, id, displayName: String(action.displayName) }
+      }
+      await route.fulfill({ status: 503, json: { error: 'Creation response is uncertain' } })
+      return
+    }
+    if (action.action === 'sleep-agent' && supersedeSleep) {
+      supersedeSleep = false
+      await route.fulfill({
+        status: 409,
+        json: { error: 'A newer workspace transition replaced this request.', code: 'lifecycle_superseded' },
+      })
+      return
+    }
     let result: unknown = null
     switch (action.action) {
       case 'create-agent':
@@ -640,18 +677,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-models':
-        if (options.legacyCodexModels) {
-          await route.fulfill({
-            status: 412,
-            json: {
-              error: 'Model selection needs an updated guest. Chat continues with existing Codex settings.',
-              code: 'model_selection_unavailable',
-            },
-          })
-          return
-        }
-        if (options.failCodexModels) {
-          await route.fulfill({ status: 503, json: { error: 'Codex model catalog unavailable' } })
+        if (options.codexModelsError) {
+          const { status, ...body } = options.codexModelsError
+          await route.fulfill({ status, json: body })
           return
         }
         result = options.paginateCodexModels
@@ -1344,6 +1372,36 @@ test('connects while the icon font is stalled and redraws icons when it arrives'
   }
 })
 
+test('connects and accepts input while an optional terminal addon chunk is stalled', async ({ page }) => {
+  const mock = await mockTengri(page)
+  let releaseAddon = () => {}
+  const addonGate = new Promise<void>((resolve) => {
+    releaseAddon = resolve
+  })
+  let blockedAddons = 0
+  await page.route('**/_next/static/chunks/**', async (route) => {
+    if (route.request().resourceType() !== 'script') return route.continue()
+    const response = await route.fetch()
+    const source = await response.text()
+    if (/(?:"WebglAddon"\s*,|["']?WebglAddon["']?\s*:)\s*\(\)\s*=>/.test(source)) {
+      blockedAddons += 1
+      await addonGate
+    }
+    await route.fulfill({ response })
+  })
+  try {
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Open Terminal', exact: true }).click()
+    const terminal = page.getByRole('region', { name: 'Terminal window' })
+    await expect.poll(() => blockedAddons).toBeGreaterThan(0)
+    await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+    await terminal.getByRole('textbox', { name: 'Terminal input' }).pressSequentially('addon still loading')
+    await expect.poll(() => mock.terminalInput.join('')).toBe('addon still loading')
+  } finally {
+    releaseAddon()
+  }
+})
+
 test('keeps the terminal usable when WebGL and its icon font are unavailable', async ({ page }) => {
   const mock = await mockTengri(page)
   await page.addInitScript(() => {
@@ -1719,65 +1777,46 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
     })
 })
 
-test('reports a model catalog outage and retries without creating a conversation', async ({ page }) => {
-  const options = { failCodexModels: true }
-  const mock = await mockTengri(page, options)
-  await page.goto('/')
-  const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByRole('alert')).toContainText('Codex model catalog unavailable')
-  await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
-  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
-  expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
-  options.failCodexModels = false
-  await tengri.getByRole('button', { name: 'Retry models' }).click()
-  await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
-  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeEnabled()
-})
-
 for (const savedThread of [false, true]) {
-  test(`continues ${savedThread ? 'saved' : 'new'} conversations while model selection awaits a guest update`, async ({
-    page,
-  }) => {
-    const options = { legacyCodexModels: true }
-    const mock = await mockTengri(page, options)
-    if (savedThread) {
-      await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
-    }
-    await page.goto('/')
-    const tengri = page.getByRole('region', { name: 'Tengri window' })
-    await expect(tengri.getByRole('alert')).toContainText('Chat continues with existing Codex settings')
-    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
-    await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Continue in this workspace')
-    await tengri.getByRole('button', { name: 'Send message' }).click()
-    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
-    for (const action of mock.actions.filter((action) =>
-      ['create-thread', 'resume-thread', 'send-turn'].includes(String(action.action)),
-    )) {
-      expect(action).not.toHaveProperty('model')
-      expect(action).not.toHaveProperty('reasoningEffort')
-    }
-    expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
-    await emitCodexEvent(page, {
-      sequence: 1,
-      kind: 'thread-state',
-      method: 'turn/completed',
-      threadId: savedThread ? 'thread-existing' : 'thread-1',
-      turnId: 'turn-1',
-      itemId: '',
-      approvalId: '',
-      text: '',
-      rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+  for (const catalogFailure of [
+    { name: 'catalog outage', status: 503 },
+    { name: 'retired capability response', status: 412, code: 'model_selection_unavailable' },
+  ]) {
+    test(`blocks new turns in ${savedThread ? 'saved' : 'new'} conversations after a ${catalogFailure.name}`, async ({
+      page,
+    }) => {
+      const options: MockOptions = {
+        codexModelsError: { ...catalogFailure, error: 'Codex model catalog unavailable' },
+      }
+      const mock = await mockTengri(page, options)
+      if (savedThread) {
+        await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+      }
+      await page.goto('/')
+      const tengri = page.getByRole('region', { name: 'Tengri window' })
+      await expect(tengri.getByRole('alert')).toContainText('Codex model catalog unavailable')
+      await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
+      if (savedThread) {
+        await expect.poll(() => mock.actions.some((action) => action.action === 'resume-thread')).toBe(true)
+      }
+      const composer = tengri.getByRole('textbox', { name: 'Message your agent' })
+      await composer.fill('Use the selected settings')
+      await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      await composer.press('Enter')
+      expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(
+        false,
+      )
+      options.codexModelsError = undefined
+      await tengri.getByRole('button', { name: 'Retry models' }).click()
+      await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+      await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
+      await tengri.getByRole('button', { name: 'Send message' }).click()
+      await expect
+        .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
+        .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
+      expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
     })
-    options.legacyCodexModels = false
-    await tengri.getByRole('button', { name: 'Retry models' }).click()
-    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
-    await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
-    await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected settings')
-    await tengri.getByRole('button', { name: 'Send message' }).click()
-    await expect
-      .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
-      .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
-  })
+  }
 }
 
 for (const unavailable of ['model', 'effort']) {
@@ -2399,6 +2438,23 @@ test('does not refresh the guest account after sleep starts', async ({ page }) =
 
   mock.releaseHeldLifecycleAction()
   await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+test('keeps the desktop active after superseded sleep and allocates a fresh operation on retry', async ({ page }) => {
+  const mock = await mockTengri(page, { supersedeSleepOnce: true })
+  await page.goto('/')
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByText('A newer workspace transition replaced this request.')).toBeVisible()
+  await expect(dock).toBeVisible()
+  await expect(settings.getByRole('button', { name: 'Sleep Agent' })).toBeEnabled()
+  await settings.getByRole('button', { name: 'Sleep Agent' }).click()
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  const sleeps = mock.actions.filter((action) => action.action === 'sleep-agent')
+  expect(sleeps).toHaveLength(2)
+  expect(sleeps[1].operationId).not.toBe(sleeps[0].operationId)
 })
 
 test('keeps a committed delete transition gated when snapshot refresh fails', async ({ page }) => {
@@ -3537,6 +3593,110 @@ test('shows native-feeling unauthenticated and create-agent states', async ({ pa
   await create.getByLabel('Agent name').fill('Ada')
   await create.getByRole('button', { name: 'Create Agent' }).click()
   await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+})
+
+for (const timing of ['concurrently', 'after the first response'] as const) {
+  test(`shares one creation operation across two empty desktop tabs submitting ${timing}`, async ({
+    page,
+    context,
+  }) => {
+    const other = await context.newPage()
+    const first = await mockTengri(page, { agent: null })
+    const second = await mockTengri(other, { agent: null })
+    await Promise.all([page.goto('/'), other.goto('/')])
+    const firstForm = page.getByRole('dialog', { name: 'Create your agent' })
+    const secondForm = other.getByRole('dialog', { name: 'Create your agent' })
+    await Promise.all([
+      firstForm.getByLabel('Agent name').fill('Shared workspace'),
+      secondForm.getByLabel('Agent name').fill('Shared workspace'),
+    ])
+    if (timing === 'concurrently') {
+      await Promise.all([
+        firstForm.getByRole('button', { name: 'Create Agent' }).click(),
+        secondForm.getByRole('button', { name: 'Create Agent' }).click(),
+      ])
+    } else {
+      await firstForm.getByRole('button', { name: 'Create Agent' }).click()
+      await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+      await secondForm.getByRole('button', { name: 'Create Agent' }).click()
+    }
+    await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+    await expect(other.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+    const firstCreates = first.actions.filter((action) => action.action === 'create-agent')
+    const secondCreates = second.actions.filter((action) => action.action === 'create-agent')
+    expect(firstCreates).toHaveLength(1)
+    expect(secondCreates).toHaveLength(1)
+    expect(firstCreates[0].operationId).toBeTruthy()
+    expect(secondCreates[0].operationId).toBe(firstCreates[0].operationId)
+  })
+}
+
+test('creates with a new name after its workspace is deleted on another device', async ({ page }) => {
+  const first = await mockTengri(page, { agent: null, preserveDraftStorageOnReload: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const creationId = String(first.actions.find((action) => action.action === 'create-agent')?.operationId)
+  await page.unrouteAll({ behavior: 'wait' })
+  const replacement = await mockTengri(page, {
+    agent: null,
+    supersededCreationId: creationId,
+    preserveDraftStorageOnReload: true,
+  })
+  await page.reload()
+  await create.getByLabel('Agent name').fill('Replacement workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const creates = replacement.actions.filter((action) => action.action === 'create-agent')
+  expect(creates.map((action) => action.displayName)).toEqual(['Original workspace', 'Replacement workspace'])
+  expect(creates[0].operationId).toBe(creationId)
+  expect(creates[1].operationId).not.toBe(creationId)
+})
+
+test('creates with a new name after deleting a workspace whose creation reply was lost', async ({ page }) => {
+  const mock = await mockTengri(page, { agent: null, failCreateOnce: true, commitFailedCreate: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByText('Creation response is uncertain')).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  await page.getByRole('region', { name: 'Settings window' }).getByRole('button', { name: 'Delete Agent' }).click()
+  await page
+    .getByRole('alertdialog', { name: /Delete “Original workspace”/ })
+    .getByRole('button', { name: 'Delete Agent' })
+    .click()
+  await expect(create).toBeVisible()
+  await create.getByLabel('Agent name').fill('Different workspace')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const creates = mock.actions.filter((action) => action.action === 'create-agent')
+  expect(creates).toHaveLength(2)
+  expect(creates[1].operationId).not.toBe(creates[0].operationId)
+})
+
+test('creates after an uncertain request from a previous account in the same tab', async ({ page }) => {
+  const first = await mockTengri(page, { agent: null, failCreateOnce: true })
+  await page.goto('/')
+  const create = page.getByRole('dialog', { name: 'Create your agent' })
+  await create.getByLabel('Agent name').fill('Original')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByText('Creation response is uncertain')).toBeVisible()
+  const originalId = first.actions.find((action) => action.action === 'create-agent')?.operationId
+  expect(originalId).toBeTruthy()
+
+  await page.unrouteAll({ behavior: 'wait' })
+  const second = await mockTengri(page, { agent: null, userId: 'second-human' })
+  await page.reload()
+  await create.getByLabel('Agent name').fill('Different')
+  await create.getByRole('button', { name: 'Create Agent' }).click()
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const replacementId = second.actions.find((action) => action.action === 'create-agent')?.operationId
+  expect(replacementId).toBeTruthy()
+  expect(replacementId).not.toBe(originalId)
 })
 
 test('has no serious or critical Axe violations', async ({ page }) => {

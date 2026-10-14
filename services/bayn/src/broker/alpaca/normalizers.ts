@@ -39,6 +39,8 @@ import {
 } from './model'
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
 import { Pipeable } from '../../pipeable'
+import { quantityFromDecimal } from '../../quantity'
+import { decodeInstrument } from '../../instruments'
 
 const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
@@ -112,6 +114,44 @@ const decimalToMicrosResultDataFirst = (
 }
 
 export const decimalToMicrosResult = Pipeable.dual(3, decimalToMicrosResultDataFirst)
+
+const quantityResult = (
+  value: string,
+  name: string,
+  { signed = false, positive = true }: { readonly signed?: boolean; readonly positive?: boolean } = {},
+): Result.Result<string, BrokerReadContractFailure> =>
+  quantityFromDecimal(value).pipe(
+    Result.mapError((cause) =>
+      contractFailure({
+        reason: cause.reason === 'precision' ? 'DECIMAL_PRECISION' : 'DECIMAL_FORMAT',
+        message: `${name} is outside the exact quantity domain`,
+        facts: { field: name, actual: value },
+      }),
+    ),
+    Result.flatMap((quantity) =>
+      (positive && quantity === 0n) ||
+      (!signed && quantity < 0n) ||
+      quantity > (signed ? I128_MAX : U128_MAX) ||
+      quantity < I128_MIN
+        ? Result.fail(
+            contractFailure({
+              reason: 'DECIMAL_RANGE',
+              message: `${name} is outside the quantity range`,
+              facts: { field: name, actual: value },
+            }),
+          )
+        : Result.succeed(quantity.toString()),
+    ),
+  )
+
+// Prices used for valuation are rounded once to USD micros. Executed fills keep exact price atoms.
+const valuationPriceMicros = (value: string, name: string): Result.Result<string, BrokerReadContractFailure> =>
+  Result.flatMap(quantityResult(value, name), (atoms) => {
+    const micros = (BigInt(atoms) + 500n) / 1000n
+    return micros === 0n
+      ? Result.fail(contractFailure({ reason: 'DECIMAL_ZERO', message: `${name} rounds to zero USD micros` }))
+      : Result.succeed(micros.toString())
+  })
 
 const positiveMicrosResult = (value: string, name: string): Result.Result<string, BrokerReadContractFailure> =>
   Result.flatMap(decimalToMicrosResult(value, false, name), (micros) =>
@@ -195,6 +235,11 @@ const normalizeAccountResultDataFirst = (
       cashMicros,
       equityMicros,
       lastEquityMicros,
+      cryptoStatus: raw.crypto_status ?? null,
+      nonMarginableBuyingPowerMicros:
+        raw.non_marginable_buying_power === undefined
+          ? null
+          : yield* decimalToMicrosResult(raw.non_marginable_buying_power, false, 'non-marginable buying power'),
       buyingPowerMicros,
       accountBlocked: raw.account_blocked,
       tradingBlocked: raw.trading_blocked,
@@ -229,7 +274,7 @@ const normalizePositionResultDataFirst = (
   accountId: string,
   observedAt: string,
 ): Result.Result<Position, BrokerReadContractFailure> => {
-  if (raw.asset_class !== AssetClass.UsEquity) {
+  if (raw.asset_class !== AssetClass.UsEquity && raw.asset_class !== AssetClass.Crypto) {
     return Result.fail(
       contractFailure({
         reason: 'ASSET_CLASS',
@@ -244,10 +289,12 @@ const normalizePositionResultDataFirst = (
   }
   const assetClass = raw.asset_class
   return Result.gen(function* () {
-    const quantityMicros = yield* positionMicrosResult(raw.qty, raw.side, 'position quantity')
-    const averageEntryPriceMicros = yield* positiveMicrosResult(raw.avg_entry_price, 'average entry price')
+    const rawQuantity = BigInt(yield* quantityResult(raw.qty, 'position quantity', { signed: true }))
+    const magnitude = rawQuantity < 0n ? -rawQuantity : rawQuantity
+    const quantityAtoms = (raw.side === PositionSide.Short ? -magnitude : magnitude).toString()
+    const averageEntryPriceMicros = yield* valuationPriceMicros(raw.avg_entry_price, 'average entry price')
     const costBasisMicros = yield* positionMicrosResult(raw.cost_basis, raw.side, 'position cost basis')
-    const marketPriceMicros = yield* positiveMicrosResult(raw.current_price, 'current price')
+    const marketPriceMicros = yield* valuationPriceMicros(raw.current_price, 'current price')
     const marketValueMicros = yield* positionMicrosResult(raw.market_value, raw.side, 'market value')
     const unrealizedPnlMicros = yield* decimalToMicrosResult(raw.unrealized_pl, true, 'unrealized PnL')
     return {
@@ -257,7 +304,7 @@ const normalizePositionResultDataFirst = (
       exchange: raw.exchange,
       assetClass,
       side: raw.side,
-      quantityMicros,
+      quantityAtoms,
       averageEntryPriceMicros,
       costBasisMicros,
       marketPriceMicros,
@@ -298,6 +345,17 @@ const normalizeAssetResultDataFirst = (
     )
   }
   return Result.gen(function* () {
+    if (raw.class !== AssetClass.UsEquity && raw.class !== AssetClass.Crypto)
+      return yield* Result.fail(
+        contractFailure({ reason: 'ASSET_CLASS', message: 'unsupported instrument asset class' }),
+      )
+    const instrument = yield* decodeInstrument({
+      symbol: raw.symbol,
+      assetClass: raw.class,
+      minimumOrderSize: raw.min_order_size ?? null,
+      quantityIncrement: raw.min_trade_increment ?? null,
+      priceIncrement: raw.price_increment ?? null,
+    }).pipe(Result.mapError((cause) => contractFailure({ reason: 'ASSET_BINDING', message: cause.message })))
     const requestHash = yield* hashResult(assetRequestMaterial(requestedSymbol), 'asset request')
     const normalized = {
       schemaVersion: assetObservationSchemaVersion,
@@ -311,6 +369,9 @@ const normalizeAssetResultDataFirst = (
       status: raw.status,
       tradable: raw.tradable,
       fractionable: raw.fractionable,
+      minimumQuantityAtoms: instrument.minimumQuantityAtoms.toString(),
+      quantityIncrementAtoms: instrument.quantityIncrementAtoms.toString(),
+      priceIncrementAtoms: instrument.priceIncrementAtoms.toString(),
       attributes: [...new Set(raw.attributes ?? [])].sort(),
     }
     const normalizedResponseHash = yield* hashResult(normalized, 'asset response')
@@ -325,7 +386,7 @@ const normalizeOrderResultDataFirst = (
   accountId: string,
   observedAt: string,
 ): Result.Result<Order, BrokerReadContractFailure> => {
-  if (raw.asset_class !== AssetClass.UsEquity) {
+  if (raw.asset_class !== AssetClass.UsEquity && raw.asset_class !== AssetClass.Crypto) {
     return Result.fail(
       contractFailure({
         reason: 'ASSET_CLASS',
@@ -373,16 +434,19 @@ const normalizeOrderResultDataFirst = (
   }
 
   return Result.gen(function* () {
-    const quantityMicros = raw.qty === null ? undefined : yield* positiveMicrosResult(raw.qty, 'order quantity')
+    const quantityAtoms = raw.qty === null ? undefined : yield* quantityResult(raw.qty, 'order quantity')
     const notionalMicros =
       raw.notional === null ? undefined : yield* positiveMicrosResult(raw.notional, 'order notional')
-    const filledQuantityMicros = yield* decimalToMicrosResult(raw.filled_qty, false, 'filled quantity')
-    if (quantityMicros !== undefined && BigInt(filledQuantityMicros) > BigInt(quantityMicros)) {
+    const filledQuantityAtoms = yield* quantityResult(raw.filled_qty, 'filled quantity', { positive: false })
+    if (quantityAtoms !== undefined && BigInt(filledQuantityAtoms) > BigInt(quantityAtoms)) {
       return yield* Result.fail(
         contractFailure({ reason: 'ORDER_SHAPE', message: 'filled quantity exceeds order quantity' }),
       )
     }
-    const filledAveragePriceMicros = yield* optionalMicrosResult(raw.filled_avg_price, false, 'filled average price')
+    const filledAveragePriceMicros =
+      raw.filled_avg_price === null
+        ? undefined
+        : yield* valuationPriceMicros(raw.filled_avg_price, 'filled average price')
     const limitPriceMicros = yield* optionalMicrosResult(raw.limit_price, false, 'limit price')
     const stopPriceMicros = yield* optionalMicrosResult(raw.stop_price, false, 'stop price')
     const trailPercentMicros = yield* optionalMicrosResult(raw.trail_percent, false, 'trail percent')
@@ -406,9 +470,9 @@ const normalizeOrderResultDataFirst = (
       assetId: raw.asset_id,
       symbol: raw.symbol,
       assetClass,
-      ...(quantityMicros === undefined ? {} : { quantityMicros }),
+      ...(quantityAtoms === undefined ? {} : { quantityAtoms }),
       ...(notionalMicros === undefined ? {} : { notionalMicros }),
-      filledQuantityMicros,
+      filledQuantityAtoms,
       ...(filledAveragePriceMicros === undefined ? {} : { filledAveragePriceMicros }),
       orderClass: raw.order_class === '' ? OrderClass.Simple : raw.order_class,
       orderType: raw.type,
@@ -451,11 +515,11 @@ const normalizeFillActivityResultDataFirst = (
     )
   }
   return Result.gen(function* () {
-    const cumulativeQuantityMicros = yield* decimalToMicrosResult(raw.cum_qty, false, 'cumulative fill quantity')
-    const leavesQuantityMicros = yield* decimalToMicrosResult(raw.leaves_qty, false, 'leaves quantity')
-    const priceMicros = yield* positiveMicrosResult(raw.price, 'fill price')
-    const quantityMicros = yield* positiveMicrosResult(raw.qty, 'fill quantity')
-    if (BigInt(cumulativeQuantityMicros) < BigInt(quantityMicros)) {
+    const cumulativeQuantityAtoms = yield* quantityResult(raw.cum_qty, 'cumulative fill quantity', { positive: false })
+    const leavesQuantityAtoms = yield* quantityResult(raw.leaves_qty, 'leaves quantity', { positive: false })
+    const priceAtoms = yield* quantityResult(raw.price, 'fill price')
+    const quantityAtoms = yield* quantityResult(raw.qty, 'fill quantity')
+    if (BigInt(cumulativeQuantityAtoms) < BigInt(quantityAtoms)) {
       return yield* Result.fail(
         contractFailure({
           reason: 'FILL_SHAPE',
@@ -464,8 +528,8 @@ const normalizeFillActivityResultDataFirst = (
       )
     }
     if (
-      (raw.type === TradeActivityType.Fill && leavesQuantityMicros !== '0') ||
-      (raw.type === TradeActivityType.PartialFill && leavesQuantityMicros === '0')
+      (raw.type === TradeActivityType.Fill && leavesQuantityAtoms !== '0') ||
+      (raw.type === TradeActivityType.PartialFill && leavesQuantityAtoms === '0')
     ) {
       return yield* Result.fail(
         contractFailure({
@@ -477,10 +541,10 @@ const normalizeFillActivityResultDataFirst = (
     return {
       accountId,
       activityId: raw.id,
-      cumulativeQuantityMicros,
-      leavesQuantityMicros,
-      priceMicros,
-      quantityMicros,
+      cumulativeQuantityAtoms,
+      leavesQuantityAtoms,
+      priceAtoms,
+      quantityAtoms,
       side: raw.side,
       symbol: raw.symbol,
       transactionTime: raw.transaction_time,
@@ -605,13 +669,27 @@ export const normalizeFeeActivitiesResult = (
             message: 'fee activity account does not match the configured account',
           }),
         )
-      return decimalToMicrosResult(activity.net_amount, true, 'fee net amount').pipe(
-        Result.map((netAmountMicros) => ({
-          accountId,
-          activityId: activity.id,
-          date: activity.date,
-          netAmountMicros,
-        })),
-      )
+      return Result.gen(function* () {
+        const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'fee net amount')
+        const common = { accountId, activityId: activity.id, date: activity.date, netAmountMicros }
+        if (activity.activity_type === 'FEE') return common
+        if (netAmountMicros !== '0')
+          return yield* Result.fail(
+            contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),
+          )
+        const aliases: Readonly<Record<string, string>> = { BTCUSD: 'BTC/USD', ETHUSD: 'ETH/USD', SOLUSD: 'SOL/USD' }
+        const symbol = aliases[activity.symbol] ?? activity.symbol
+        if (!['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(symbol))
+          return yield* Result.fail(
+            contractFailure({ reason: 'ASSET_BINDING', message: 'coin fee has an unsupported instrument' }),
+          )
+        const quantity = yield* quantityResult(activity.qty, 'coin fee quantity', { signed: true })
+        if (BigInt(quantity) >= 0n)
+          return yield* Result.fail(
+            contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must debit a positive coin quantity' }),
+          )
+        const priceAtoms = yield* quantityResult(activity.price, 'coin fee price')
+        return { ...common, coinDebit: { symbol, quantityAtoms: (-BigInt(quantity)).toString(), priceAtoms } }
+      })
     }),
   )

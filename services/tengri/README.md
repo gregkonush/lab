@@ -1,12 +1,43 @@
 # Tengri control plane
 
+The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
+`internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
+controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
+signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
+cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
+`node services/tengri/fixtures/generate-ofz-guest-request-v4.mjs` from the repository root.
+
+Ofz checks the complete observation policy before the controller signs the exact request. Scoped proofs carry only
+the per-request byte/item budget, with no reusable root or ID lists. The decoded proof remains bounded at 16 KiB,
+including JSON escaping of a maximum 4096-byte target. Protocol 3, its full-policy scope and its signing domain are
+rejected; all three consumers migrate in the same paired release.
+
+Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
+at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
+verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
+then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
+message's storage, so ongoing terminal input does not reserve capacity for later requests.
+
+Nanoagent verifies the proof again against its root-owned runtime claim and recovery generation and consumes a local
+nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
+openings bind the actual verb, escaped path/query and body; preview proof and claim headers are removed before reaching
+the application. Scoped content remains denied until bounded observer handlers exist.
+
+The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
+supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
+bundle contains only the public key and generation. Guest init stages both, clears the old claim before freeze/resume,
+and atomically publishes the resumed claim. A restored authority requires key rotation and trusted slot preparation
+under the new recovery generation before admission resumes. The migration gate remains closed until native KVM,
+independent execution fencing, observers, recovery and the remaining plan gates pass.
+
 Tengri owns `runtime.proompteng.ai/v1alpha1 MicroVM` resources and six prepared Firecracker slots. Every guest has
-4 vCPU, 8 GiB RAM, a private 1 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
+4 vCPU, 8 GiB RAM, a private 1.5 GiB root disk, and a retained 32 GiB Ceph home. Creation restores a prepared snapshot;
 resume restores that owner's latest committed snapshot. Neither request schedules a Pod, attaches storage, boots a
 kernel, or installs tools. Empty or preparing capacity returns an explicit error.
 
 The host runner reserves 9 GiB, including 1 GiB beyond guest RAM for preparation and VMM overhead, matching the native
-acceptance fixture. Artifact staging has a separate 2 GiB limit so copying the boot disk does not exhaust a 128 MiB
+acceptance fixture. Artifact staging has a separate 3 GiB limit so copying the boot disk does not exhaust a 128 MiB
 container through charged file pages. The namespace quota covers all six runners, supervisors, and the controller.
 
 Sleep freezes and snapshots the guest, flushes its disks, stops and reaps the VMM, and evicts the snapshot's file pages
@@ -14,8 +45,9 @@ before acknowledging completion. The stable slot Pod, home PVC, TAP, and small h
 resource requests still reserve resume capacity even while resident guest RAM is released.
 
 This source uses one runtime. The previous Kata Pod lifecycle and guest SPIRE/token-refresh implementation are
-removed. The hard cutover is separately authorized and must preserve existing home PVC UIDs. Source and local tests
-do not establish a deployed migration or the authenticated p95 latency target.
+removed. The authorized hard cutover deleted the old workspaces and homes. Retire the old unclaimed prepared pool
+before activating the new contract; fresh workspaces receive new homes and grants. Source and local tests do not
+establish a deployed migration or the authenticated p95 latency target.
 
 ## Slot ownership and failure handling
 
@@ -24,13 +56,27 @@ and epoch. The controller binds the MicroVM with resourceVersion compare-and-swa
 claims cannot assign two slots to one MicroVM UID or start two owners in one slot. Deletion before a Lease claim
 consumes the candidate epoch with the same Lease CAS, preventing a late claim while retaining the unused prepared slot.
 
+The Lease allocation identifies retained storage custody by MicroVM name, UID and slot epoch. An executing runtime
+claim additionally requires the canonical Ofz runtime epoch. Guest RPC, preview HTTP and WebSocket admission require
+one exact UID, slot-epoch and runtime-epoch header each. Existing connections close when that full claim changes.
+A newer runtime cannot reuse an earlier awake claim: reconciliation first saves the old runtime, then checks fresh
+Ofz authority before restoring the new epoch from the same allocation's committed snapshot. Guest init accepts a
+changed runtime only while frozen for that exact allocation. A never-started workspace retains its prepared home
+without creating a runtime claim. Termination observes the current claim under the installed leader fence; an unused
+slot receives a deterministic retirement identity solely for stop acknowledgement.
+
+Runtime epochs are mandatory in private lifecycle claims and owned journals. Paired controller/guest artifacts and
+new root disks are required at the coordinated hard cutover. No old home or journal is imported. Scoped observers and
+the independent host execution deadline remain separate authorization work.
+
 The runner's durable journal binds the Pod and home UID, guest image, kernel digest, Firecracker revision, CPU identity,
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-direct-io.1`; journals from another VMM revision require fenced recovery. Snapshot restore consumes the
-generation before vCPUs run, then thaws root/home,
-sets the guest clock, binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
+`1.16.1+tengri-async-io.3`; journals from another VMM revision require fenced recovery. Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
+guest RAM. Full snapshot capture resets normal readahead before reading every page. Snapshot restore consumes the
+generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
+binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
@@ -46,6 +92,14 @@ Loss of an active runner, Pod, or node retains the owner and home for explicit f
 Pods, and controller disconnection never authorize a replacement writer. Sleeping journals can reopen only with
 unchanged runtime and disk identities. An exited VMM fences traffic and reports failure.
 
+Lifecycle commands monitor database leadership throughout execution. Withdrawn authority closes the private command's
+write side; the runner cancels that operation, terminates and reaps its VMM, and durably retains a failed claim before
+acknowledging. A separate fencing command covers a completion racing with authority loss. Replacement leadership waits
+for that fencing proof under the admission gate. If proof is unavailable, the supervisor quarantines admission instead
+of installing another leader. Cancellation retains an in-progress journal writer until it completes, so a detached
+fsync cannot overwrite the fencing record. This does not provide the independent host execution deadline required for
+the authorization cutover.
+
 Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
 and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
 or finalizer removal for an owned slot. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
@@ -54,7 +108,7 @@ only unused slots; claimed guests retain their runtime through ordinary sleep/re
 ## Host and guest boundaries
 
 The slot runs under the normal OCI runtime with separate container PID namespaces, no host networking/mounts,
-and no Kubernetes API token. The supervisor mounts only the SPIFFE CSI socket and private control sockets. The runner
+and no Kubernetes API token. The supervisor mounts the SPIFFE CSI socket, private control sockets and its restricted database credential. The runner
 mounts only its boot artifacts, disks, token, and sockets.
 
 The short-lived TAP init container receives NET_ADMIN inside the Pod network namespace. It creates `tengri0`, private
@@ -80,8 +134,9 @@ publication, and the old guest network path after the final old guest and its st
 the host supervisor registration and private vsock credential.
 
 The image workflows withhold the Tengri, Nanoagent, and Proompteng Kargo aliases until the repository variable `TENGRI_PREPARED_SLOT_CUTOVER_READY`
-is exactly `true`. Keep it unset until the separately approved cutover has fenced old writers and enrolled their
-retained homes against the staged immutable image pair. Kargo's existing automatic promotion policy remains in place.
+is exactly `true`. Keep it false until the authorized cutover has removed the old workspaces and homes and the new
+authority dependencies are ready for the immutable image pair. The owner chose fresh workspaces for this cutover;
+no retained-data import or migration rehearsal is required. Kargo's existing automatic promotion policy remains in place.
 Proompteng's resume API uses the streaming controller contract, so its BFF must join the same approved maintenance
 cutover. Restore lifecycle traffic only after both applications run the reviewed source and conversation recovery passes.
 
@@ -92,7 +147,9 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 ## Transport and workload identity
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
-SPIRE mTLS authenticates both host hops. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
+SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
+replay database permits at most one second of clock lead in its future bound and retains the exact signed expiry;
+expired requests and used nonces remain rejected. Tengri's identity is `spiffe://proompteng.ai/ns/tengri/sa/tengri`; its port 50051
 accepts only `spiffe://proompteng.ai/ns/proompteng/sa/proompteng`. Every slot supervisor has
 `spiffe://proompteng.ai/ns/tengri/slot/pod/<Pod UID>` and accepts only Tengri. Certificates rotate outside guest memory.
 
@@ -135,6 +192,10 @@ The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatG
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
 
+Every supported guest exposes `model/list`. Catalog failures remain ordinary request failures; the desktop requires
+a valid model and reasoning selection before starting a turn and offers a catalog retry. There is no older-guest mode
+that silently drops selected settings. Existing history and active turns can still be recovered during a catalog outage.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
@@ -150,59 +211,78 @@ can reach only the control listener. A guest application may therefore own paths
 without those requests reaching Tengri's own handlers.
 
 `/livez` reports process liveness. `/readyz` and the compatibility `/healthz` alias report success only while the
-Kubernetes control path, SpiceDB permission API, and in-process ticket state are usable; deployment probes do not advertise an isolated process
+Kubernetes control path, Ofz authority, and shared SQL state are usable; deployment probes do not advertise an isolated process
 as ready to accept agent operations.
 
 ## Workspace authorization
 
-The Rust controller uses the shared [Ofz SpiceDB service](../../argocd/applications/ofz/README.md).
-[`src/authz.zed`](src/authz.zed) defines `tengri_user`, `tengri_workspace`, an `owner` relationship, and
-`access = owner`. The user ID is the existing SHA-256 GitHub subject hash; the workspace ID is
-`<namespace>/<MicroVM name>`. Each workspace operation checks `access` with fully consistent reads. Local CR owner
-fields and labels supply initial enrollment metadata; they do not authorize a request.
+Ofz owns authorization for the controller and BFF. Tengri calls the canonical
+[AuthorizationService](../../proto/proompteng/authz/v1/authz.proto) over exact-peer SPIFFE mutual TLS; it never
+receives a SpiceDB administrative key, installs schema, or creates owner tuples directly. The canonical
+[operation catalog](../ofz/operations.json) maps each runtime RPC to an explicit action. Local Kubernetes labels,
+names and owner fields locate resources; Ofz checks the actual MicroVM UID and current runtime epoch.
 
-`TENGRI_AUTHZ_ENDPOINT` and `TENGRI_AUTHZ_KEY_FILE` are required. The deployment connects to
-`http://ofz.ofz.svc.cluster.local:8443` and mounts `tengri-spicedb-key` only in the controller. Requests read the
-projected key file each time so Secret rotation takes effect without a restart. The key permits the whole SpiceDB API;
-the browser, BFF, and guest never receive it. NetworkPolicy permits only the controller to reach Ofz's SpiceDB pods.
+The BFF carries the human ID, opaque session ID, trace ID, workspace UID, runtime epoch, origin, contract version and
+recovery generation. One mounted 32-byte key encoded as lowercase hexadecimal signs the canonical protobuf body,
+RPC path, full context and fresh nonce. Tengri reads `TENGRI_INTERNAL_HMAC_KEY_FILE` for each request. There is no
+old owner-header or multi-key protocol. Cutover rotates both peers together while traffic is fenced.
+`OFZ_GRPC_ENDPOINT` is a fixed DNS authority and must present `spiffe://proompteng.ai/ns/ofz/sa/ofz-api`.
+The active controller and BFF manifests both select the namespace-local `tengri-internal-request-key` Secret,
+whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The controller additionally mounts
+`tengri-controller-db` and `ofz-database-ca`. Provision these before promotion; missing credentials fail startup.
 
-Before serving, startup installs the embedded schema only when SpiceDB reports no schema. An existing schema is
-preserved and must already contain the Tengri definitions; a missing or incompatible permission contract stops startup.
-Future changes to the shared schema require an explicit reviewed migration. Startup enrolls existing non-deleting
-MicroVMs using their recorded owners. Creation enrolls new workspaces before returning success. Enrollment records
-`runtime.proompteng.ai/spicedb-enrolled: v1` on each CR after writing the relationship. Kubernetes status/finalizer write
-conflicts retry the annotation patch without repeating the grant. Interrupted enrollment is retried before the
-workspace is returned successfully.
+`TENGRI_DATABASE_DSN`, `TENGRI_DATABASE_PASSWORD_FILE` and `TENGRI_DATABASE_CA_FILE` select the TLS-only
+`tengri_control` database. Controller and supervisor use separate `tengri_controller` and `tengri_supervisor` roles.
+Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
+verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
+plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
 
-The marker prevents subsequent startup or repeated creation from restoring a revoked owner relationship. Keep the
-annotation when managing grants. To revoke a workspace, delete its `owner` relationship through the private SpiceDB
-API. Grant changes take effect on the next request. Open file/Codex streams and terminal/preview WebSockets recheck
-access every second and close on denial or authority failure; streaming preview response bodies use the same guard.
-Permission requests have a two-second deadline. Denial returns `PERMISSION_DENIED`; outages or invalid responses return
-`UNAVAILABLE`. There is no local authorization fallback or positive permission cache. Deletion removes all workspace
-relationships before deleting the guest resources and releasing the finalizer.
+Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the `ofz-database-ca` Secret's `ca.crt`
+only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,
+role `tengri_supervisor`. The runner and guest receive neither credential. Provision both reviewed Secrets before
+enabling slot creation during cutover.
+Supervisor readiness checks the shared database schema and runner state together under a two-second deadline.
+A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
+unavailable. Process liveness remains independent of that dependency.
 
-Run `bash services/tengri/test-authz.sh` to test schema installation, enrollment with a Kubernetes write conflict,
-owner and foreign-user checks, namespace isolation, stream revocation, restart without re-granting, and preservation
-of another application's schema against the pinned real SpiceDB image. It creates and removes an isolated local
-Docker container and uses only a disposable test key. Controller validation in the image workflow runs this test.
+The namespace reserves seven Leases for six slots and the controller election. Its twelve-Secret quota covers
+six slot bootstraps, four Ofz credentials and the two old keys retained until the fenced cutover. NetworkPolicy
+permits the controller to call Ofz on 9443 and both controller and supervisors to reach only Ofz PostgreSQL on 5432.
 
-`TENGRI_INTERNAL_HMAC_SECRET` normally contains one base64url key of at least 32 bytes. Rotate it without an
-authentication outage by sealing `new,current` into both namespace-scoped manifests in the same commit: the BFF signs
-with both keys and the controller accepts either while the two SealedSecrets reconcile independently. After both
-workloads observe the bundle, reseal both manifests with only the new key. More than two keys are rejected.
+The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
+are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks
+the installed database fence before and after lifecycle or guest forwarding. SQL failure or expired leadership rejects
+protected requests. Leadership alone is not proof of a guest execution permit; the complete execution fencing and
+revocation qualification remains part of the [migration plan](../../docs/tengri/ofz-enterprise-authorization-plan.md).
+Before restoring a guest, the client installs the current controller fence and then reads fresh Ofz runtime authority.
+It checks the exact workspace, owner, runtime epoch, policy version, retained home and reservation, and rejects an
+expired or denied decision immediately before sending restore. Sleep and stop remain separate fenced operations.
 
-The Deployment also mounts `tengri-runtime` as a projected Secret. Tengri compares those files with the values loaded
-into its environment and, without logging either value, deletes only its own control-plane Pod when the SealedSecrets
-controller updates the generated Secret. The Deployment then creates a replacement Pod with the refreshed environment;
-no manual restart or cluster-wide reloader is required.
+Ofz reserves 32 GiB before creation. Before claiming a slot, the controller binds the reservation to the exact MicroVM
+UID with `BeginWorkspaceEnrollment`. An unbound reservation expires after five minutes; an accepted enrollment remains
+quota-counted while its slot is being claimed, and creation retries recover that accepted binding. If the owner is
+offboarded before enrollment finishes, the controller records the exact home as quarantined with no runtime authority.
+The controller enrolls the exact retained home, reservation and UID once;
+later reconciliation reads Ofz's owner, runtime epoch and intent instead of regranting the original owner. Human
+resume and sleep commands commit in Ofz before the controller projects them. The BFF preserves the operation ID and
+payload across retries. Removal denies access immediately but keeps quota until the controller proves the bound home
+is absent and commits `CompleteWorkspaceRemoval` with the exact home UID and reservation.
 
-Every valid signed request atomically consumes a hashed replay receipt in the pre-provisioned
-`tengri-auth-nonces` ConfigMap. Kubernetes `resourceVersion` compare-and-swap makes replay rejection consistent across
-controller restarts. The singleton serializes nonce updates before entering the Kubernetes compare-and-swap loop, and
-bounded exponential retry absorbs an external write conflict without rejecting an ordinary burst of valid requests.
-Only live receipts are retained and the bounded store fails closed. The deployment RBAC grants only `get` and `update`
-on that named ConfigMap.
+Checks have a two-second deadline and no positive permission cache. Open streams and preview/terminal WebSockets
+retain their original receipt-backed access chain, recheck every second and close on denial or authority failure.
+Preview HTTP requests recheck before forwarding and after response headers, then guard the response stream with that
+same chain. Observer operations do not renew idle activity.
+`/readyz` requires Kubernetes, Ofz's unfenced and archive-healthy state, and shared SQL availability.
+
+Run `bash services/tengri/test-runtime.sh` for real TLS PostgreSQL 18.6 and SpiceDB 1.56.2 fixtures. It exercises
+replica-wide redemption/replay, preview binding and rotation, capacity/expiry, leadership CAS and lease expiry,
+supervisor SQL restrictions and protected cleanup. `bash services/ofz/test-control.sh` additionally proves typed
+reservation/runtime reads and the two-stage removal contract. For native KVM acceptance, set the documented image,
+output and sample variables and run `bash services/ofz/test-control.sh kvm`; this provisions the real shared SQL
+fixture and invokes `test-kvm.sh`. Unit fixtures do not establish production authority or fleet acceptance.
+
+These source contracts are held behind `TENGRI_PREPARED_SLOT_CUTOVER_READY=false` until the coordinated release.
+See [implementation status](../../docs/tengri/ofz-implementation-status.md) for the remaining production gates.
 
 ## Lifecycle settings and delivery
 
@@ -210,20 +290,18 @@ System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The defa
 are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
 starts a new idle interval; authenticated activity extends it. Retained homes have no expiry or automatic deletion deadline.
 
-The authorization cutover requires the Ofz service, its existing API key, the controller-only NetworkPolicy rule,
-and `tengri-spicedb-key` before the new controller starts. The committed strict-scope SealedSecret is generated with
-`nix develop -c python3 scripts/seal-tengri-authz.py --context galactic-tailscale`; the helper reads the existing Ofz key
-and writes ciphertext without applying resources. Rotate this copy whenever the shared Ofz key changes. Validate the
-sealed manifest, render the Tengri application, and publish/promote the reviewed controller image through Kargo.
-Verify exact deployed revisions, enrollment annotations, allowed and denied workspace operations, and open-session
-revocation after an authorized rollout. Preserve SpiceDB's PostgreSQL data and the enrollment annotations during
-recovery; do not clear them to recover an intentionally revoked grant.
+The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
+exact-peer SPIFFE registrations and coordinated BFF signing-key rotation. The owner authorized deleting the existing
+workspaces and homes for this cutover; they were removed on 2026-10-13. The temporary `tengri-ofz-cutover` admission
+policy and binding prevent old-contract creation until the new authority is deployed. Remove both after verifying
+the new dependencies and images, then prove fresh workspace creation. Runtime readiness, a healthy Argo Application, and unit tests do not
+replace live allow/deny, stream revocation, recovery, history and fleet qualification.
 
 Normal delivery uses the paired image publisher, Kargo, and Argo. Native AMD64/ARM64 guest artifacts contain the
 checksummed kernel/root disk. The controller image also supplies the host runner, supervisor, TAP script, and pinned
 Firecracker. Keep the paired source revision and immutable image digests together. Withhold discoverable Kargo aliases
 until real KVM acceptance passes. See the [operations runbook](../../docs/tengri/operations.md) for the permission
-review, retained-home enrollment, release boundary, and recovery procedure. Do not run historical node-mutating spikes.
+review, fresh-workspace acceptance, release boundary, and recovery procedure. Do not run historical node-mutating spikes.
 
 ## Validation
 
@@ -250,13 +328,27 @@ CI builds these artifacts without executing the KVM fixture. It requires no SSH 
 requires the scoped approval below.
 Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
 as the native images, including the KVM harness cache, to reuse the release compilation.
-`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, and `TENGRI_KVM_SAMPLES` select the artifacts,
-absolute local result directory, and sample count for `bash services/tengri/test-kvm.sh`. Routine main publication runs
+Native image builds for same-repository PRs also import and export `cache-pr-<number>-<architecture>` per service.
+Later edits reuse that PR's compiled layers. Main builds import and export only their existing main cache; fork PRs
+export no registry cache. These cache tags remain outside Kargo image discovery.
+`TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
+select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
+`bash services/tengri/test-kvm.sh`. The retained Tengri fixture includes the native `runner-seccomp.json` profile.
+The guest receives a separate resolver file. Docker's network resolver at `127.0.0.11` stays in the fixture container
+for shared SQL discovery; copying it into the VM would send DNS requests to the guest's own loopback.
+Routine main publication runs
 three real sleep/resume cycles on each architecture. Every resume must finish below one second, and publication still
 requires file and same-shell continuity, initialized Codex, host identity rotation, VMM termination, snapshot page
-eviction, guest administration, and browser startup. The first sleep lasts three minutes so the previous host SVID
+eviction, guest administration, and browser startup. It also requires terminal first output below 300 ms, managed
+Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
+disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
+error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
+The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
+Resume replies report monotonic time spent after applying the host clock. The host excludes that readiness work
+when bounding clock-transfer delay, and repeats the same idempotent resume if the timestamp arrived too late.
+Missing or inconsistent clock timing rejects the resume; the controller and guest images must be promoted together.
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
@@ -270,7 +362,7 @@ BuildKit reports export errors without canceling required image publication
 or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
 The fixture uses a private Docker
-network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
+network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six

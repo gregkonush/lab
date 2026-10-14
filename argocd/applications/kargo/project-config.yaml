@@ -62,6 +62,9 @@ spec:
         name: agents
       autoPromotionEnabled: true
     - stageSelector:
+        name: ofz
+      autoPromotionEnabled: true
+    - stageSelector:
         name: tengri
       autoPromotionEnabled: true
     - stageSelector:
@@ -77,7 +80,7 @@ spec:
         name: restate
       autoPromotionEnabled: true
     - stageSelector:
-        name: rune
+        name: bayn-model
       autoPromotionEnabled: true
     - stageSelector:
         name: temporal-worker

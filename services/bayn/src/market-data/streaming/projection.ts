@@ -1,3 +1,6 @@
+import { MarketKind } from '../../instruments'
+import { decodeCryptoMarketFeature, isCryptoMarketFeature } from '../features/crypto-contract'
+import { nativeFeatureMatchesBars, rollingWindowStartMs, type NativeMarketFeature } from '../features/native-feature'
 import { sameBarMarketValues } from '../intraday/bar-publication'
 import { createHash } from 'node:crypto'
 import { Result } from 'effect'
@@ -9,12 +12,16 @@ import { compareIntradayInstants, intradayInstantNanos } from '../intraday/time'
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
 import {
   decodeRollingMarketFeature,
-  featureMatchesBars,
   MarketFeatureFailure,
   marketFeatureClockSkewAllowanceMs,
-  type RollingMarketFeature,
 } from '../features/contract'
-import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
+import {
+  decodeRawMarketRecord,
+  marketSourceKind,
+  RawMarketEventKind,
+  type KafkaMarketRecord,
+  type StreamingUniverse,
+} from './raw-events'
 
 export interface ObservedMarketValue<A> {
   readonly value: A
@@ -25,7 +32,7 @@ export interface ObservedMarketValue<A> {
 export interface ObservedBar extends ObservedMarketValue<IntradayBar> {
   readonly firstPublication?: ObservedMarketValue<IntradayBar>
 }
-export interface ObservedFeature<A = RollingMarketFeature> extends ObservedMarketValue<A> {
+export interface ObservedFeature<A = NativeMarketFeature> extends ObservedMarketValue<A> {
   readonly topic: string
   readonly partition: number
   readonly offset: string
@@ -34,6 +41,7 @@ export interface StreamingProjection {
   readonly availabilityMode: 'observed' | 'simulated'
   readonly epoch: string
   readonly sequence: number
+  readonly sources: ReadonlyMap<string, StreamingUniverse>
   readonly offsets: ReadonlyMap<string, string>
   readonly bars: ReadonlyMap<string, readonly ObservedBar[]>
   readonly quotes: ReadonlyMap<string, ObservedMarketValue<IntradayQuote>>
@@ -60,6 +68,7 @@ export const emptyStreamingProjection = (epoch: string, technicalTopic?: string)
   availabilityMode: 'observed',
   epoch,
   sequence: 0,
+  sources: new Map(),
   offsets: new Map(),
   bars: new Map(),
   quotes: new Map(),
@@ -174,6 +183,7 @@ const incorporateDecodedRecord = (
   const state = {
     ...previous,
     sequence,
+    sources: new Map(previous.sources).set(universe.universeId, universe),
     featureArrival: null,
     technicalFeatureArrival: null,
     offsets: new Map(previous.offsets).set(key, record.offset),
@@ -182,13 +192,21 @@ const incorporateDecodedRecord = (
     const parsed = Result.try({
       try: (): unknown => JSON.parse(record.value),
       catch: () => new MarketFeatureFailure({ reason: 'schema', message: 'feature is not JSON' }),
-    }).pipe(Result.flatMap(decodeRollingMarketFeature))
+    }).pipe(
+      Result.flatMap(
+        (value): Result.Result<NativeMarketFeature, MarketFeatureFailure> =>
+          marketSourceKind(universe) === MarketKind.Crypto
+            ? decodeCryptoMarketFeature(value)
+            : decodeRollingMarketFeature(value),
+      ),
+    )
     if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
     const feature = parsed.success
     const material = feature.material
     if (
-      material.universeId !== universe.universeId ||
-      material.universeSymbolHash !== universe.universeSymbolHash ||
+      (!isCryptoMarketFeature(feature) &&
+        (feature.material.universeId !== universe.universeId ||
+          feature.material.universeSymbolHash !== universe.universeSymbolHash)) ||
       !universe.symbols.includes(material.symbol) ||
       material.inputs.some((input) => input.sourceTopic !== universe.topics.bars) ||
       feature.computedAtMs > featureRecordedAtMs + marketFeatureClockSkewAllowanceMs ||
@@ -244,25 +262,40 @@ const incorporateDecodedRecord = (
         recordHash,
         ...(firstPublication === undefined ? {} : { firstPublication }),
       }
-      const revisions = [...existing, revision].toSorted(
-        (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
-      )
-      const minuteCounts = new Map<string, number>()
+      // Histories are already sorted and bounded by this reducer. Merge the new
+      // revision without sorting or mutating an earlier projection's history.
       const bars: ObservedBar[] = []
       let minimumObservationMs = state.minimumObservationMs
-      for (const entry of revisions) {
-        // Raw timestamps have nine fractional digits; recorded rows may have three.
-        const minute = entry.value.eventAt.slice(0, -1).padEnd(29, '0')
-        const count = minuteCounts.get(minute) ?? 0
-        if (count === 0 && minuteCounts.size === 61) continue
-        minuteCounts.set(minute, count + 1)
-        if (count < 4) bars.push(entry)
-        else {
-          const earliestRetained = bars.findLast(
-            (retained) => compareIntradayInstants(retained.value.eventAt, entry.value.eventAt) === 0,
-          )
-          minimumObservationMs = Math.max(minimumObservationMs, earliestRetained?.availableAtMs ?? availableAtMs)
+      let incoming = true
+      let index = 0
+      let previousMinute: string | undefined
+      let minutes = 0
+      let revisions = 0
+      let earliestRetainedAtMs = availableAtMs
+      while (incoming || index < existing.length) {
+        const prior = existing[index]
+        let entry: ObservedBar
+        if (
+          incoming &&
+          (prior === undefined ||
+            (compareIntradayInstants(prior.value.eventAt, bar.eventAt) || compareBarRevisions(prior.value, bar)) < 0)
+        ) {
+          entry = revision
+          incoming = false
+        } else if (prior !== undefined) {
+          entry = prior
+          index++
+        } else break
+        // Recorded timestamps may have three fractional digits; raw rows have nine.
+        if (previousMinute === undefined || compareIntradayInstants(entry.value.eventAt, previousMinute) !== 0) {
+          if (++minutes > 61) break
+          previousMinute = entry.value.eventAt
+          revisions = 0
         }
+        if (revisions++ < 4) {
+          bars.push(entry)
+          earliestRetainedAtMs = entry.availableAtMs
+        } else minimumObservationMs = Math.max(minimumObservationMs, earliestRetainedAtMs)
       }
       return { ...state, minimumObservationMs, bars: new Map(state.bars).set(bar.symbol, bars) }
     }
@@ -437,7 +470,7 @@ export const selectStreamingSymbolInputs = (
     for (const feature of state.features.get(symbol) ?? []) {
       if (
         feature.availableAtMs > observedAtMs ||
-        feature.value.material.windowStartMs !== windowStartMs ||
+        rollingWindowStartMs(feature.value) !== windowStartMs ||
         feature.value.material.windowEndMs !== windowEndMs
       )
         continue
@@ -447,7 +480,7 @@ export const selectStreamingSymbolInputs = (
         )
       )
         return yield* fail('feature partition has rejected records in the observation window')
-      if (yield* featureMatchesBars(feature.value, bars))
+      if (yield* nativeFeatureMatchesBars(feature.value, bars))
         return { bars, quote: quote.value, trade: trade.value, feature }
     }
     return yield* fail('matching rolling feature is unavailable')

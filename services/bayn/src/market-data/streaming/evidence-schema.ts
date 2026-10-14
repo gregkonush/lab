@@ -10,7 +10,7 @@ import {
   UnsignedMicrosSchema,
 } from '../../schemas'
 import { TechnicalMarketFeatureSchema } from '../features/technical-contract'
-import { RollingMarketFeatureSchema } from '../features/contract'
+import { NativeMarketFeatureSchema } from '../features/native-feature'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 
 const PositionFields = { topic: StrictNonEmptyStringSchema, partition: NonNegativeIntegerSchema }
@@ -73,7 +73,7 @@ const CutFields = {
       offset: UnsignedMicrosSchema,
       availableAtMs: Timestamp,
       sequence: PositiveIntegerSchema,
-      value: RollingMarketFeatureSchema,
+      value: NativeMarketFeatureSchema,
     }),
   ),
 } as const

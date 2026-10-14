@@ -456,7 +456,7 @@ private fun readinessModeFor(
 ): MarketDataChannelReadinessMode =
   when {
     canonicalMarketDataChannel(channel) == "updatedBars" -> MarketDataChannelReadinessMode.CONDITIONAL
-    marketType == AlpacaMarketType.OPTIONS && canonicalMarketDataChannel(channel) == "trades" ->
+    marketType in setOf(AlpacaMarketType.OPTIONS, AlpacaMarketType.CRYPTO) && canonicalMarketDataChannel(channel) == "trades" ->
       MarketDataChannelReadinessMode.CONDITIONAL
     else -> MarketDataChannelReadinessMode.CONTINUOUS
   }
@@ -467,6 +467,7 @@ internal fun canonicalMarketDataChannel(channel: String): String? =
     "quote", "quotes" -> "quotes"
     "bars" -> "bars"
     "updatedbars" -> "updatedBars"
+    "orderbooks" -> "orderbooks"
     else -> null
   }
 

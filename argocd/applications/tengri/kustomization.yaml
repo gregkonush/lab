@@ -4,10 +4,7 @@ namespace: tengri
 resources:
 - mesh-security.yaml
 - crd.yaml
-- sealed-secret.yaml
-- spicedb-key-sealedsecret.yaml
 - service-account.yaml
-- auth-nonces.yaml
 - rbac.yaml
 - deployment.yaml
 - services.yaml
@@ -15,12 +12,14 @@ resources:
 - resource-quota.yaml
 - pod-disruption-budget.yaml
 - network-policies.yaml
+- ofz-credentials-sealedsecret.yaml
+- database-ca.yaml
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:6d3d475fc4d302d6466d173b1ac2d8056388553f3e3784339df6848680dfe432
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:b441b855cd94561a4f4466987b98c926b989c18529a8335a946be61747ebfe9a
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:664d20cf9a021506a66c280788f97c99b42080d99316e6d2e66516a05d01f822
+  digest: sha256:25aa6f2446e984bb78d2af4540a82d1391d0c1024ccacce188656eb54b38ac40

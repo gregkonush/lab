@@ -1,3 +1,4 @@
+import { isCryptoMarketFeature } from './market-data/features/crypto-contract'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -250,13 +251,16 @@ test.each([
   if (scenario === 'mismatched feature')
     features.set(
       symbol,
-      (features.get(symbol) ?? []).map((receipt) => ({
-        ...receipt,
-        value: {
-          ...receipt.value,
-          material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
-        },
-      })),
+      (features.get(symbol) ?? []).map((receipt) => {
+        if (isCryptoMarketFeature(receipt.value)) throw new Error('expected equity fixture')
+        return {
+          ...receipt,
+          value: {
+            ...receipt.value,
+            material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
+          },
+        }
+      }),
     )
   if (scenario === 'late feature')
     features.set(
@@ -444,4 +448,22 @@ test('no eligible candidate remains ordinary abstention after the decision deadl
   const metrics = renderPrometheusMetrics(abstaining, config, provenance, config.build.verification)
   expect(metrics).toContain('bayn_execution_session_ready 1\n')
   expect(metrics).toContain('bayn_execution_session_condition{condition="decision_lagging"} 0\n')
+})
+
+test('an unused entry expiry reports rearming during the market rotation cooldown', () => {
+  const state = sessionState('2026-10-01T14:00:30.000Z')
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  expectSession(
+    {
+      ...state,
+      cycle: {
+        ...state.cycle,
+        current: null,
+        last: { ...current, phase: CycleState.Blocked, terminalReason: CycleTerminalReason.UnusedEntryExpired },
+      },
+    },
+    'REARMING',
+    true,
+  )
 })

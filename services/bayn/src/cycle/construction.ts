@@ -1,3 +1,5 @@
+import { isContinuousMarket, type MarketHours } from '../market-hours'
+import { continuousExecutionPolicy } from '../market-hours'
 import { Data, DateTime, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -431,15 +433,20 @@ const makeIntradayCycleWindowDataFirst = (
       )
     }
     yield* validateCycleWindowDurations(policy)
+    const continuous = calendar.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
     const submissionOpenAt = utcInstantFromEpochMillis(
-      'warmupAfterOpenMs' in policy
-        ? Date.parse(calendar.executionOpenAt) + policy.warmupAfterOpenMs
-        : Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs - policy.submissionWindowMs,
+      continuous
+        ? Date.parse(calendar.executionOpenAt)
+        : 'warmupAfterOpenMs' in policy
+          ? Date.parse(calendar.executionOpenAt) + policy.warmupAfterOpenMs
+          : Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs - policy.submissionWindowMs,
     )
     const submissionCutoffAt = utcInstantFromEpochMillis(
-      'submissionCutoffBeforeCloseMs' in policy
-        ? Date.parse(calendar.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
-        : Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs,
+      continuous
+        ? Date.parse(calendar.executionOpenAt) + continuousExecutionPolicy.entryValidityMs
+        : 'submissionCutoffBeforeCloseMs' in policy
+          ? Date.parse(calendar.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
+          : Date.parse(calendar.executionOpenAt) + policy.submissionCutoffAfterOpenMs,
     )
     return yield* Result.mapError(
       decodeCycleWindowResult({
@@ -496,3 +503,15 @@ const makeCycleDraftDataFirst = (
   })
 
 export const makeCycleDraft = Pipeable.dual(2, makeCycleDraftDataFirst)
+
+export const makeBoundExecutionCalendar = (
+  hours: MarketHours,
+  window: Pick<CycleWindow, 'executionSessionDate' | 'executionOpenAt' | 'executionCloseAt'>,
+) => {
+  const session = isContinuousMarket(hours)
+    ? { date: window.executionSessionDate, openAt: window.executionOpenAt, closeAt: window.executionCloseAt }
+    : hours.sessions.find((entry) => entry.date === window.executionSessionDate)
+  return session === undefined
+    ? Result.fail(failure('execution-calendar', 'decode', 'market hours have no selected execution window'))
+    : makeExecutionCalendarObservation({ schemaVersion: hours.schemaVersion, source: hours.source, ...session })
+}

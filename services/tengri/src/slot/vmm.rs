@@ -33,7 +33,7 @@ impl Vmm {
         }
     }
 
-    async fn start(config: &SlotConfig) -> anyhow::Result<Self> {
+    pub async fn spawn(config: &SlotConfig) -> anyhow::Result<Self> {
         #[cfg(test)]
         let started = Instant::now();
         let api_socket = config.directory.join("firecracker.sock");
@@ -97,26 +97,32 @@ impl Vmm {
                 Ok(())
             });
         }
+        let api = Client::builder()
+            .unix_socket(api_socket.as_path())
+            .no_proxy()
+            .timeout(Duration::from_secs(300))
+            .build()?;
         let child = command.spawn().context("launch Firecracker")?;
         #[cfg(test)]
         eprintln!(
             "real KVM VMM spawn: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let api = Client::builder()
-            .unix_socket(api_socket.as_path())
-            .no_proxy()
-            .timeout(Duration::from_secs(300))
-            .build()?;
         #[cfg(test)]
         eprintln!(
             "real KVM VMM API client: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let mut vm = Self { child, api };
+        Ok(Self { child, api })
+    }
+
+    async fn wait_api(&mut self, config: &SlotConfig) -> anyhow::Result<()> {
+        #[cfg(test)]
+        let started = Instant::now();
+        let api_socket = config.directory.join("firecracker.sock");
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            ensure!(vm.running()?, "Firecracker exited before opening its API");
+            ensure!(self.running()?, "Firecracker exited before opening its API");
             if fs::try_exists(&api_socket).await? {
                 break;
             }
@@ -131,11 +137,12 @@ impl Vmm {
             "real KVM VMM API open: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        Ok(vm)
+        Ok(())
     }
 
-    pub async fn boot(config: &SlotConfig) -> anyhow::Result<Self> {
-        let vm = Self::start(config).await?;
+    pub async fn boot(&mut self, config: &SlotConfig) -> anyhow::Result<()> {
+        self.wait_api(config).await?;
+        let vm = &*self;
         vm.request(
             Method::PUT,
             "/machine-config",
@@ -152,7 +159,7 @@ impl Vmm {
         ] {
             vm.request(Method::PUT, &format!("/drives/{id}"), json!({
                 "drive_id": id, "path_on_host": path, "is_root_device": root, "is_read_only": false,
-                "cache_type": "Unsafe", "io_engine": "Sync"
+                "cache_type": "Writeback", "io_engine": "Async"
             })).await?;
         }
         vm.request(
@@ -175,22 +182,22 @@ impl Vmm {
             json!({"action_type": "InstanceStart"}),
         )
         .await?;
-        Ok(vm)
+        Ok(())
     }
 
-    pub async fn load(config: &SlotConfig, directory: &Path) -> anyhow::Result<Self> {
+    pub async fn load(&mut self, config: &SlotConfig, directory: &Path) -> anyhow::Result<()> {
         ensure!(
             fs::metadata(directory.join("memory.bin")).await?.len()
                 == u64::from(config.memory_mib) << 20,
             "snapshot memory length does not match the guest"
         );
-        let vm = Self::start(config).await?;
-        vm.request(Method::PUT, "/snapshot/load", json!({
+        self.wait_api(config).await?;
+        self.request(Method::PUT, "/snapshot/load", json!({
             "snapshot_path": directory.join("state.bin"),
             "mem_backend": { "backend_type": "File", "backend_path": directory.join("memory.bin") },
             "resume_vm": false
         })).await?;
-        Ok(vm)
+        Ok(())
     }
 
     pub async fn resume(&self) -> anyhow::Result<()> {
@@ -283,28 +290,52 @@ pub async fn connect_vsock(path: &Path, port: u32) -> anyhow::Result<UnixStream>
 
 pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value> {
     timeout(Duration::from_secs(30), async {
-        let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
-        let mut bytes = serde_json::to_vec(command)?;
-        bytes.push(b'\n');
-        stream.write_all(&bytes).await?;
-        let mut reader = BufReader::new(stream);
-        let mut reply = String::new();
-        use tokio::io::AsyncReadExt;
-        (&mut reader).take(4097).read_line(&mut reply).await?;
-        ensure!(
-            reply.len() <= 4096 && reply.ends_with('\n'),
-            "invalid guest control response"
-        );
-        let reply: Value = serde_json::from_str(&reply)?;
-        ensure!(
-            reply.get("ok").and_then(Value::as_bool) == Some(true),
-            "guest lifecycle failed: {}",
-            reply
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("invalid response")
-        );
-        Ok::<_, anyhow::Error>(reply)
+        loop {
+            let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
+            let mut command = command.clone();
+            let sent = Instant::now();
+            if command["action"] == "resume" {
+                command["unixTimeNanos"] = json!(
+                    chrono::Utc::now()
+                        .timestamp_nanos_opt()
+                        .context("host clock overflow")?
+                );
+            }
+            let mut bytes = serde_json::to_vec(&command)?;
+            bytes.push(b'\n');
+            stream.write_all(&bytes).await?;
+            let mut reader = BufReader::new(stream);
+            let mut reply = String::new();
+            use tokio::io::AsyncReadExt;
+            (&mut reader).take(4097).read_line(&mut reply).await?;
+            ensure!(
+                reply.len() <= 4096 && reply.ends_with('\n'),
+                "invalid guest control response"
+            );
+            let reply: Value = serde_json::from_str(&reply)?;
+            ensure!(
+                reply.get("ok").and_then(Value::as_bool) == Some(true),
+                "guest lifecycle failed: {}",
+                reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("invalid response")
+            );
+            if command["action"] != "resume" {
+                return Ok::<_, anyhow::Error>(reply);
+            }
+            let after_clock = reply["clockElapsedNanos"]
+                .as_u64()
+                .context("guest resume requires clock application timing")?;
+            // The guest clock advances during readiness checks after it is set.
+            let transfer = sent
+                .elapsed()
+                .checked_sub(Duration::from_nanos(after_clock))
+                .context("invalid guest clock application timing")?;
+            if transfer <= Duration::from_millis(500) {
+                return Ok::<_, anyhow::Error>(reply);
+            }
+        }
     })
     .await
     .context("guest lifecycle timed out")?
@@ -372,6 +403,100 @@ pub fn evict_memory(_: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resume_refreshes_clock_after_slow_guest_readiness() {
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let mut ready_at = 0;
+            for round in 1..=2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                assert_eq!(line, format!("CONNECT {GUEST_CONTROL_PORT}\n"));
+                reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                let command: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(command["action"], "resume");
+                if round == 1 {
+                    sleep(Duration::from_millis(1100)).await;
+                    ready_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+                    assert!(ready_at - command["unixTimeNanos"].as_i64().unwrap() > 1_000_000_000);
+                } else {
+                    assert!(command["unixTimeNanos"].as_i64().unwrap() >= ready_at);
+                }
+                let reply = format!("{{\"ok\":true,\"round\":{round},\"clockElapsedNanos\":0}}\n");
+                reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        let reply = guest_command(&path, &json!({"action": "resume"}))
+            .await
+            .unwrap();
+        fs::remove_file(path).await.unwrap();
+        assert_eq!(reply["round"], 2);
+        peer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn slow_readiness_after_setting_clock_does_not_repeat_resume() {
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let applied = Instant::now();
+            sleep(Duration::from_millis(1100)).await;
+            let elapsed = applied.elapsed().as_nanos();
+            let reply = format!("{{\"ok\":true,\"clockElapsedNanos\":{elapsed}}}\n");
+            reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
+        });
+        let result = guest_command(&path, &json!({"action": "resume"})).await;
+        fs::remove_file(path).await.unwrap();
+        peer.await.unwrap();
+        assert!(result.is_ok(), "healthy guest was retried: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn resume_clock_is_sampled_after_the_vsock_handshake() {
+        let path = std::env::temp_dir().join(format!(
+            "tg-{}.sock",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        ));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut handshake = String::new();
+            reader.read_line(&mut handshake).await.unwrap();
+            assert_eq!(handshake, format!("CONNECT {GUEST_CONTROL_PORT}\n"));
+            let connected_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            let mut command = String::new();
+            reader.read_line(&mut command).await.unwrap();
+            let command: Value = serde_json::from_str(&command).unwrap();
+            reader
+                .get_mut()
+                .write_all(b"{\"ok\":true,\"clockElapsedNanos\":0}\n")
+                .await
+                .unwrap();
+            (connected_at, command)
+        });
+        let stale = chrono::Utc::now().timestamp_nanos_opt().unwrap() - 10_000_000_000;
+        guest_command(&path, &json!({"action": "resume", "unixTimeNanos": stale}))
+            .await
+            .unwrap();
+        let (connected_at, command) = peer.await.unwrap();
+        fs::remove_file(path).await.unwrap();
+        assert!(command["unixTimeNanos"].as_i64().unwrap() >= connected_at);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

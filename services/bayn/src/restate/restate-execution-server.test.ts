@@ -1,14 +1,11 @@
+import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
 
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
-import {
-  decodeRestateRequestIdentityKeys,
-  makeRestateExecutionEndpointHandler,
-  restateExecutionServerConfig,
-} from './restate-execution-server'
+import { makeRestateExecutionEndpointHandler, restateExecutionServerConfig } from './restate-execution-server'
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -79,9 +76,12 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
-          poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
         },
         pollIntervalMs: 30_000,
       },
@@ -198,9 +198,12 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
-          poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
         },
         pollIntervalMs: 30_000,
       },

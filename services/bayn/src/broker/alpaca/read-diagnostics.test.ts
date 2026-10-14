@@ -173,7 +173,7 @@ describe('bounded observational broker diagnostics', () => {
       },
     }
     expect(projectReadDiagnostic('fee-activities', [row])).toEqual({
-      endpoint: '/v2/account/activities/FEE',
+      endpoint: '/v2/account/activities',
       fees: [],
       omitted: 1,
     })
@@ -181,7 +181,7 @@ describe('bounded observational broker diagnostics', () => {
     const rows = Array.from({ length: 129 }, (_, index) => fee(index))
     Object.defineProperty(rows, 'slice', { value: () => Array.from({ length: 1_000 }, (_, index) => fee(index)) })
     const projected = projectReadDiagnostic('fee-activities', rows)
-    expect(projected?.endpoint === '/v2/account/activities/FEE' && projected.fees.length).toBe(128)
+    expect(projected?.endpoint === '/v2/account/activities' && projected.fees.length).toBe(128)
     expect(projected).toMatchObject({ omitted: 1 })
     const fields = projectReadDiagnostic('account', {
       get accrued_fees() {
@@ -494,7 +494,7 @@ describe('bounded observational broker diagnostics', () => {
     const client = HttpClient.make((request, url) => {
       calls += 1
       expect(request.method).toBe('GET')
-      expect(['/v2/account', '/v2/account/activities/FEE']).toContain(url.pathname)
+      expect(['/v2/account', '/v2/account/activities']).toContain(url.pathname)
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -510,6 +510,9 @@ describe('bounded observational broker diagnostics', () => {
         const original = yield* read.account
         const feeRead = yield* read.feeActivities()
         expect(original.value).toEqual({
+          cryptoStatus: null,
+          nonMarginableBuyingPowerMicros: null,
+
           id: accountId,
           status: AccountStatus.Active,
           currency: 'USD',

@@ -1,3 +1,5 @@
+import { equityMarketProfile } from '../jev/markets'
+import { makeJevEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
@@ -8,7 +10,7 @@ import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
 import { IsoDateSchema } from '../schemas'
 import { ControlStudyFailure } from './control-portfolio'
-import { makeControlEntryQuery, prepareControlStudy, type ControlMarket } from './control-study'
+import { prepareControlStudy, type ControlMarket } from './control-study'
 import { openBacktestSource, type BacktestSourceReceipt } from './source'
 
 export enum ControlInputCoverage {
@@ -59,7 +61,7 @@ export const scanControlInputs = (input: {
     let availableSnapshotCount = 0
     let unavailableSnapshotCount = 0
     const failures = new Map<string, { reason: string; count: number; firstObservedAt: string; firstMessage: string }>()
-    const candidates = protocol.candidateSymbols.map((symbol) => ({
+    const candidates = equityMarketProfile.candidateSymbols.map((symbol) => ({
       symbol,
       availableCount: 0,
       excludedCount: 0,
@@ -77,12 +79,12 @@ export const scanControlInputs = (input: {
         continue
       }
       yield* market.advanceTo(atMs)
-      const query = makeControlEntryQuery({
+      const query = makeJevEntryQuery({
         protocol,
         sessionDate,
         calendar: input.calendar,
         observedAtMs: atMs,
-        candidates: protocol.candidateSymbols,
+        candidates: equityMarketProfile.candidateSymbols,
       })
       const observation = yield* market.snapshot(query)
       if (observation.status === 'UNAVAILABLE') {
@@ -137,7 +139,7 @@ export const scanControlInputs = (input: {
 export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt: BacktestSourceReceipt) =>
   Effect.gen(function* () {
     const { input, prepared, definition: studyDefinition } = yield* Effect.fromResult(prepareControlStudy(raw, receipt))
-    if (input.schemaVersion === 'bayn.control-study-input.v6')
+    if (input.ridge !== undefined)
       return yield* new ControlStudyFailure({
         message: 'Native snapshot preflight does not certify Ridge feature coverage',
       })

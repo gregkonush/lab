@@ -170,8 +170,8 @@ const targetPlan = (
               symbol: 'AMD',
               targetWeight: 0.5,
               referencePriceMicros: '100000000',
-              currentQuantityMicros: '1000000',
-              targetQuantityMicros: '1000000',
+              currentQuantityAtoms: '1000000000',
+              targetQuantityAtoms: '1000000000',
             },
           ]
         : [],

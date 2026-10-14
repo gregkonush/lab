@@ -1,3 +1,7 @@
+import { equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
+
+import type { MarketSources } from '../market-data/streaming/raw-events'
+import { ValkeyCacheLive } from '../valkey-cache'
 import { BrokerObservationsLive } from '../db/broker-observations'
 import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
@@ -8,7 +12,7 @@ import { JevClient, JevClientLive, JevError } from '../jev/client'
 import { JevFailure } from '../jev/contract'
 import { JevHttpClientLive } from '../jev/http'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { intradayFeatureTopic } from '../strategy/intraday-market'
+
 import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
@@ -30,15 +34,7 @@ import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
-import {
-  KafkaMarketProjection,
-  KafkaMarketProjectionLive,
-  makeKafkaMarketProjection,
-} from '../market-data/streaming/kafka'
-import { makeResearchCapturePostgresStore } from '../db/research-capture-postgres'
-import type { ResearchCaptureSession } from '../research-capture/session'
-import { researchCaptureS3Config } from '../research-capture/session-config'
-import { makeS3ResearchCaptureObjectStore } from '../research-capture/s3'
+import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { sqlResource } from '../operations'
 import { operationalError } from '../errors'
@@ -81,23 +77,27 @@ export const ApplicationPlatformLive = Layer.merge(NodeServices.layer, NodeHttpC
 const HttpApplicationPlatformLive = (config: LoadedRuntimeConfig) =>
   Layer.merge(HttpServerLive(config), ApplicationPlatformLive)
 
-const workerStreamingUniverse = (plan: ApplicationIdentity) => {
-  const protocol = defaultJevProtocolDocument
-  return {
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
-    symbols: protocol.universe,
+const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
+  {
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
+    symbols: equityMarketProfile.universe,
     topics: {
-      ...protocol.sourceTopics,
-      features: intradayFeatureTopic,
+      ...equityMarketProfile.sourceTopics,
+      features: equityMarketProfile.streamingInput.featureTopic,
       ...(plan.config.kafka?.technicalFeaturesTopic === undefined
         ? {}
         : { technicalFeatures: plan.config.kafka.technicalFeaturesTopic }),
     },
-  }
-}
+  },
+  {
+    universeId: cryptoMarketProfile.universeId,
+    universeSymbolHash: cryptoMarketProfile.universeSymbolHash,
+    symbols: cryptoMarketProfile.universe,
+    topics: { ...cryptoMarketProfile.sourceTopics, features: cryptoMarketProfile.streamingInput.featureTopic },
+  },
+]
 
-/** Read-only Kafka consumption; no persistence, capture, broker, model or trading-driver acquisition. */
 export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
   plan.config.kafka === undefined
     ? Layer.effect(
@@ -115,7 +115,6 @@ export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
 const WorkerMarketDataLive = (
   plan: ApplicationIdentity,
   postgres: ReturnType<typeof PostgresLive>,
-  capture?: ResearchCaptureSession,
   prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   if (plan.config.kafka === undefined)
@@ -129,37 +128,13 @@ const WorkerMarketDataLive = (
         }),
       ),
     )
-  const universe = workerStreamingUniverse(plan)
-  const config = plan.config.kafka
-  const kafka =
-    capture === undefined
-      ? (prewarmedProjection ?? KafkaMarketProjectionLive(config, universe))
-      : Layer.effect(
-          KafkaMarketProjection,
-          Effect.gen(function* () {
-            const sql = yield* PgClient.PgClient
-            yield* capture.start(
-              makeResearchCapturePostgresStore(sql),
-              researchCaptureS3Config.pipe(Effect.flatMap(makeS3ResearchCaptureObjectStore)),
-              universe,
-            )
-            const market = yield* makeKafkaMarketProjection(
-              config,
-              universe,
-              undefined,
-              undefined,
-              capture.workerObserver,
-            )
-            capture.bind(market)
-            return market
-          }),
-        ).pipe(Layer.provide(postgres))
+  const kafka = prewarmedProjection ?? WorkerMarketProjectionLive(plan)
   return StreamingIntradayMarketDataLive.pipe(Layer.provide(kafka), Layer.provide(postgres))
 }
 
 const PostgresLive = (config: PostgresResourceConfig) => {
   const client = sqlResource(PostgresClientResourceLive(config))
-  const migrations = PostgresMigrationsLive(config).pipe(Layer.provide(client))
+  const migrations = PostgresMigrationsLive(config)
   return Layer.merge(client, migrations)
 }
 
@@ -171,7 +146,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 /** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
@@ -188,22 +163,21 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
       Layer.provide(BrokerObservationResourceLive(plan.config)),
       Layer.provide(postgres),
     ),
-  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 export const AutonomousWorkerApplicationResourcesLive = (
   plan: ApplicationPlanFor<'AutonomousService'>,
-  capture?: ResearchCaptureSession,
   prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   const postgres = PostgresLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   return Layer.mergeAll(
-    WorkerMarketDataLive(plan, postgres, capture, prewarmedProjection),
+    WorkerMarketDataLive(plan, postgres, prewarmedProjection),
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 
 export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
@@ -252,7 +226,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
     WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 
 export const applicationDependencies: Effect.Effect<

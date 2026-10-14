@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,7 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = 2
+const guestProtocolVersion = guestauth.ProtocolVersion
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {
@@ -38,18 +39,27 @@ func (server *apiServer) newRPCServer() *grpc.Server {
 		return nil
 	}
 	rpc := grpc.NewServer(
+		grpc.ForceServerCodec(guestRPCCodec{}),
 		grpc.MaxRecvMsgSize(maxGuestRPCBytes), grpc.MaxSendMsgSize(maxGuestRPCBytes),
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 			if err := authenticated(ctx); err != nil {
 				return nil, err
 			}
-			return handler(ctx, req)
+			claim, err := server.guestAuthorization.admit(ctx, info.FullMethod, req)
+			if err != nil {
+				return nil, err
+			}
+			result, err := handler(ctx, req)
+			if changed := server.guestAuthorization.requireClaim(claim); changed != nil {
+				return nil, changed
+			}
+			return result, err
 		}),
-		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 			if err := authenticated(stream.Context()); err != nil {
 				return err
 			}
-			return handler(srv, stream)
+			return handler(srv, &authorizedGuestStream{ServerStream: stream, authorization: server.guestAuthorization, method: info.FullMethod})
 		}),
 	)
 	pb.RegisterNanoagentServiceServer(rpc, &guestRPCServer{api: server})

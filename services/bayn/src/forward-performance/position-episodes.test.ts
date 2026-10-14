@@ -22,28 +22,28 @@ const success = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const transaction = (index: number, side: OrderSide, quantity: number, symbol = 'NVDA'): AccountingTransaction => {
-  const quantityMicros = BigInt(quantity) * 1_000_000n
+  const quantityAtoms = BigInt(quantity) * 1_000_000n
   return success(
     prepareAccounting(
       canonicalHashV1({ index, side, quantity, symbol }),
       {
-        schemaVersion: 'bayn.paper-fill.v1',
+        schemaVersion: 'bayn.fill.v2',
         accountId: 'episode-account',
         fillId: `fill-${index}`,
         brokerOrderId: `order-${index}`,
         clientOrderId: `client-${index}`,
         symbol,
         side,
-        quantityMicros: quantityMicros.toString(),
-        priceMicros: '100000000',
+        quantityAtoms: quantityAtoms.toString(),
+        priceAtoms: '100000000000',
         feeMicros: '100',
         occurredAt: `2026-09-18T15:30:${String(index).padStart(2, '0')}.000Z`,
       },
       side === OrderSide.Buy
-        ? { quantityMicros: '0', costMicros: '0' }
+        ? { quantityAtoms: '0', costMicros: '0' }
         : {
-            quantityMicros: quantityMicros.toString(),
-            costMicros: (quantityMicros * 100n).toString(),
+            quantityAtoms: quantityAtoms.toString(),
+            costMicros: (quantityAtoms * 100n).toString(),
           },
       7_001,
     ),
@@ -183,7 +183,7 @@ describe('position episodes', () => {
             {
               ...sell,
               ...(fault === 'account' ? { accountId: 'another-account' } : {}),
-              ...(fault === 'delta' ? { quantityDeltaMicros: '2000000' } : {}),
+              ...(fault === 'delta' ? { quantityDeltaAtoms: '2000000000' } : {}),
               ...(fault === 'future' ? { occurredAt: '2026-09-19T15:30:02.000Z' } : {}),
             },
           ]

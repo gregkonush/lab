@@ -1,3 +1,11 @@
+import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
+import submissionDenialReason from '../../migrations/0099_submission_denial_reason'
+import valkeyBrokerMaterializations from '../../migrations/0098_valkey_broker_materializations'
+import brokerObservationQuota from '../../migrations/0096_broker_observation_quota'
+import continuousCashSpot from '../../migrations/0097_continuous_cash_spot'
+import completionEvidenceIndexes from '../../migrations/0095_completion_evidence_indexes'
+import brokerObservationCaptures from '../../migrations/0094_broker_observation_captures'
+import researchInference from '../../migrations/0093_research_inference'
 import expiredZeroExecutionRearm from '../../migrations/0092_expired_zero_execution_rearm'
 import inferenceExpenseQuotes from '../../migrations/0091_inference_expense_quotes'
 import momentumFirstJevCompatibility from '../../migrations/0090_momentum_first_jev_compatibility'
@@ -94,6 +102,14 @@ import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '100_unused_entry_admission': unusedEntryAdmission,
+  '99_submission_denial_reason': submissionDenialReason,
+  '98_valkey_broker_materializations': valkeyBrokerMaterializations,
+  '96_broker_observation_quota': brokerObservationQuota,
+  '97_continuous_cash_spot': continuousCashSpot,
+  '95_completion_evidence_indexes': completionEvidenceIndexes,
+  '94_broker_observation_captures': brokerObservationCaptures,
+  '93_research_inference': researchInference,
   '92_expired_zero_execution_rearm': expiredZeroExecutionRearm,
   '91_inference_expense_quotes': inferenceExpenseQuotes,
   '90_momentum_first_jev_compatibility': momentumFirstJevCompatibility,

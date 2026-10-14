@@ -1,3 +1,6 @@
+import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
+import { quantityFromDecimal } from '../quantity'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { Effect, Result } from 'effect'
 
 import {
@@ -5,6 +8,7 @@ import {
   OrderSide as BrokerOrderSide,
   OrderType as BrokerOrderType,
   type Account,
+  type AssetObservation,
   type BrokerReadShape,
   type Order,
   type Position,
@@ -30,6 +34,7 @@ import {
   type MutationExecutionAuthority,
 } from './authority'
 import { Pipeable } from '../pipeable'
+import { SubmissionDenialReason } from './submission-denial'
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
@@ -117,8 +122,8 @@ export type ExecutionCapitalLimitFailure =
       readonly _tag: 'OpenOrderQuantityInvalid'
       readonly brokerOrderId: string
       readonly symbol: string
-      readonly quantityMicros: string
-      readonly filledQuantityMicros: string
+      readonly quantityAtoms: string
+      readonly filledQuantityAtoms: string
     }
   | {
       readonly _tag: 'OrderNotionalLimitExceeded'
@@ -187,21 +192,21 @@ export type ExecutionCapitalLimitFailure =
   | {
       readonly _tag: 'IncreasingSellUnsupported'
       readonly symbol: string
-      readonly currentQuantityMicros: string
-      readonly projectedQuantityMicros: string
+      readonly currentQuantityAtoms: string
+      readonly projectedQuantityAtoms: string
     }
   | {
       readonly _tag: 'CloseOnlyOrderNotReducing'
       readonly symbol: string
       readonly side: IntentOrderSide
-      readonly currentQuantityMicros: string
-      readonly projectedQuantityMicros: string
+      readonly currentQuantityAtoms: string
+      readonly projectedQuantityAtoms: string
     }
   | {
       readonly _tag: 'PendingSellUncovered'
       readonly symbol: string
-      readonly currentQuantityMicros: string
-      readonly pendingSellQuantityMicros: string
+      readonly currentQuantityAtoms: string
+      readonly pendingSellQuantityAtoms: string
     }
   | {
       readonly _tag: 'BoundedBrokerOrderInvalid'
@@ -228,6 +233,7 @@ export interface MutationAuthorityDependencies {
 }
 
 export interface ExecutionBrokerSubmitSnapshot extends ExecutionCapitalSnapshot {
+  readonly asset: AssetObservation
   readonly accountObservedAt: string
   readonly positionsObservedAt: string
   readonly ordersObservedAt: string
@@ -247,7 +253,7 @@ export interface ExecutionCapitalLimitContext {
 }
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
-const microsPerUnit = 1_000_000n
+const microsPerUnit = 1_000_000_000n
 
 export const executionCapitalLimitsFromPolicy = (policy: Policy): ExecutionCapitalLimits => ({
   maxGrossNotionalMicros: policy.maxGrossExposureMicros,
@@ -280,14 +286,14 @@ export const constrainExecutionCapitalLimits = (
 const positionExposureIdentity = (
   positions: readonly Pick<
     Position,
-    'accountId' | 'symbol' | 'quantityMicros' | 'averageEntryPriceMicros' | 'costBasisMicros'
+    'accountId' | 'symbol' | 'quantityAtoms' | 'averageEntryPriceMicros' | 'costBasisMicros'
   >[],
 ) =>
   positions
     .map((position) => ({
       accountId: position.accountId,
       symbol: position.symbol,
-      quantityMicros: position.quantityMicros,
+      quantityAtoms: position.quantityAtoms,
       averageEntryPriceMicros: position.averageEntryPriceMicros,
       ...(position.costBasisMicros === undefined ? {} : { costBasisMicros: position.costBasisMicros }),
     }))
@@ -324,9 +330,9 @@ const openOrderExposureIdentity = (orders: readonly Order[]) =>
       symbol: order.symbol,
       side: order.side,
       orderType: order.orderType,
-      quantityMicros: order.quantityMicros ?? null,
+      quantityAtoms: order.quantityAtoms ?? null,
       notionalMicros: order.notionalMicros ?? null,
-      filledQuantityMicros: order.filledQuantityMicros,
+      filledQuantityAtoms: order.filledQuantityAtoms,
       filledAveragePriceMicros: order.filledAveragePriceMicros ?? null,
       limitPriceMicros: order.limitPriceMicros ?? null,
       stopPriceMicros: order.stopPriceMicros ?? null,
@@ -412,7 +418,7 @@ export const boundedBrokerOrderNotional = (intent: Intent): Result.Result<bigint
 
 const orderHasUnboundedExecutionPrice = (order: Order): boolean =>
   order.notionalMicros === undefined &&
-  order.quantityMicros !== undefined &&
+  order.quantityAtoms !== undefined &&
   order.limitPriceMicros === undefined &&
   (order.orderType === BrokerOrderType.Stop || order.orderType === BrokerOrderType.TrailingStop)
 
@@ -437,9 +443,9 @@ const signedOrderNotional = (order: Order): Result.Result<bigint, ExecutionCapit
       symbol: order.symbol,
     })
   }
-  if (order.notionalMicros !== undefined && order.quantityMicros !== undefined) {
+  if (order.notionalMicros !== undefined && order.quantityAtoms !== undefined) {
     const originalNotional = absolute(BigInt(order.notionalMicros))
-    const originalQuantity = BigInt(order.quantityMicros)
+    const originalQuantity = BigInt(order.quantityAtoms)
     const notional = (originalNotional * remainingQuantity.success + originalQuantity - 1n) / originalQuantity
     return Result.succeed(order.side === BrokerOrderSide.Buy ? notional : -notional)
   }
@@ -483,16 +489,16 @@ const unfilledOrderQuantity = (
   bigint | undefined,
   Extract<ExecutionCapitalLimitFailure, { readonly _tag: 'OpenOrderQuantityUnavailable' | 'OpenOrderQuantityInvalid' }>
 > => {
-  if (order.quantityMicros === undefined) return Result.succeed(undefined)
-  const quantity = BigInt(order.quantityMicros)
-  const filled = BigInt(order.filledQuantityMicros)
+  if (order.quantityAtoms === undefined) return Result.succeed(undefined)
+  const quantity = BigInt(order.quantityAtoms)
+  const filled = BigInt(order.filledQuantityAtoms)
   if (quantity <= 0n || filled < 0n || filled > quantity) {
     return Result.fail({
       _tag: 'OpenOrderQuantityInvalid',
       brokerOrderId: order.brokerOrderId,
       symbol: order.symbol,
-      quantityMicros: order.quantityMicros,
-      filledQuantityMicros: order.filledQuantityMicros,
+      quantityAtoms: order.quantityAtoms,
+      filledQuantityAtoms: order.filledQuantityAtoms,
     })
   }
   return Result.succeed(quantity - filled)
@@ -522,11 +528,11 @@ const symbolQuantityEnvelopeAfterPendingOrders = (
   },
   Extract<ExecutionCapitalLimitFailure, { readonly _tag: 'OpenOrderQuantityUnavailable' | 'OpenOrderQuantityInvalid' }>
 > => {
-  const currentQuantityMicros = snapshot.positions
+  const currentQuantityAtoms = snapshot.positions
     .filter((position) => position.symbol === intent.symbol)
-    .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
-  let beforeIntentMinimumMicros = currentQuantityMicros
-  let beforeIntentMaximumMicros = currentQuantityMicros
+    .reduce((total, position) => total + BigInt(position.quantityAtoms), 0n)
+  let beforeIntentMinimumMicros = currentQuantityAtoms
+  let beforeIntentMaximumMicros = currentQuantityAtoms
   for (const order of snapshot.openOrders.filter((candidate) => candidate.symbol === intent.symbol)) {
     const remaining = unfilledOrderQuantity(order)
     if (Result.isFailure(remaining)) return Result.fail(remaining.failure)
@@ -544,13 +550,13 @@ const symbolQuantityEnvelopeAfterPendingOrders = (
       beforeIntentMinimumMicros -= remaining.success
     }
   }
-  const signedIntentQuantityMicros =
-    intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityMicros) : -BigInt(intent.quantityMicros)
+  const signedIntentQuantityAtoms =
+    intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityAtoms) : -BigInt(intent.quantityAtoms)
   return Result.succeed({
     beforeIntentMinimumMicros,
     beforeIntentMaximumMicros,
-    afterIntentMinimumMicros: beforeIntentMinimumMicros + signedIntentQuantityMicros,
-    afterIntentMaximumMicros: beforeIntentMaximumMicros + signedIntentQuantityMicros,
+    afterIntentMinimumMicros: beforeIntentMinimumMicros + signedIntentQuantityAtoms,
+    afterIntentMaximumMicros: beforeIntentMaximumMicros + signedIntentQuantityAtoms,
   })
 }
 
@@ -567,7 +573,7 @@ export const validatePendingSellCoverage = (
 > => {
   const currentBySymbol = new Map<string, bigint>()
   for (const position of snapshot.positions) {
-    currentBySymbol.set(position.symbol, (currentBySymbol.get(position.symbol) ?? 0n) + BigInt(position.quantityMicros))
+    currentBySymbol.set(position.symbol, (currentBySymbol.get(position.symbol) ?? 0n) + BigInt(position.quantityAtoms))
   }
   const pendingSellsBySymbol = new Map<string, bigint>()
   for (const order of snapshot.openOrders.filter((candidate) => candidate.side === BrokerOrderSide.Sell)) {
@@ -588,8 +594,8 @@ export const validatePendingSellCoverage = (
       return Result.fail({
         _tag: 'PendingSellUncovered',
         symbol,
-        currentQuantityMicros: currentQuantity.toString(),
-        pendingSellQuantityMicros: pendingSellQuantity.toString(),
+        currentQuantityAtoms: currentQuantity.toString(),
+        pendingSellQuantityAtoms: pendingSellQuantity.toString(),
       })
     }
   }
@@ -683,6 +689,7 @@ const validateBrokerStateFreshness = (
     snapshot.ordersObservedAt,
     snapshot.positionsConfirmedAt,
     snapshot.ordersConfirmedAt,
+    snapshot.asset.observedAt,
     ...snapshot.positions.map((position) => position.observedAt),
     ...snapshot.openOrders.map((order) => order.observedAt),
   ]
@@ -809,12 +816,12 @@ const validateExecutionCapitalLimitsDataFirst = (
   )
   const quantityEnvelope = symbolQuantityEnvelopeAfterPendingOrders(intent, snapshot)
   if (Result.isFailure(quantityEnvelope)) return Result.fail(quantityEnvelope.failure)
-  const currentQuantityMicros = snapshot.positions
+  const currentQuantityAtoms = snapshot.positions
     .filter((position) => position.symbol === intent.symbol)
-    .reduce((total, position) => total + BigInt(position.quantityMicros), 0n)
-  const projectedQuantityMicros =
-    currentQuantityMicros +
-    (intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityMicros) : -BigInt(intent.quantityMicros))
+    .reduce((total, position) => total + BigInt(position.quantityAtoms), 0n)
+  const projectedQuantityAtoms =
+    currentQuantityAtoms +
+    (intent.side === IntentOrderSide.Buy ? BigInt(intent.quantityAtoms) : -BigInt(intent.quantityAtoms))
   const strictlyReducingClose =
     context.closeOnly &&
     (intent.side === IntentOrderSide.Sell
@@ -832,8 +839,8 @@ const validateExecutionCapitalLimitsDataFirst = (
       _tag: 'CloseOnlyOrderNotReducing',
       symbol: intent.symbol,
       side: intent.side,
-      currentQuantityMicros: currentQuantityMicros.toString(),
-      projectedQuantityMicros: projectedQuantityMicros.toString(),
+      currentQuantityAtoms: currentQuantityAtoms.toString(),
+      projectedQuantityAtoms: projectedQuantityAtoms.toString(),
     })
   }
 
@@ -862,8 +869,8 @@ const validateExecutionCapitalLimitsDataFirst = (
     return Result.fail({
       _tag: 'IncreasingSellUnsupported',
       symbol: intent.symbol,
-      currentQuantityMicros: quantityEnvelope.success.beforeIntentMinimumMicros.toString(),
-      projectedQuantityMicros: quantityEnvelope.success.afterIntentMinimumMicros.toString(),
+      currentQuantityAtoms: quantityEnvelope.success.beforeIntentMinimumMicros.toString(),
+      projectedQuantityAtoms: quantityEnvelope.success.afterIntentMinimumMicros.toString(),
     })
   }
 
@@ -936,18 +943,22 @@ const mutationAuthorizationError = (message: string, cause: unknown) =>
 
 export const confirmExecutionBrokerState = (
   cached: CachedBrokerState,
-  intentId: string,
+  intent: Pick<Intent, 'intentId' | 'symbol'>,
   brokerRead: BrokerReadShape,
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
     if (brokerRead.projection === undefined)
-      return yield* mutationAuthorizationError('broker observation projection is required for submit', undefined)
+      return yield* invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'broker observation projection is required for submit',
+        denialReason: SubmissionDenialReason.ProjectionRequired,
+      })
     const {
       positions,
       openOrders: orders,
       account,
     } = yield* brokerRead.projection
-      .submissionSnapshot(intentId)
+      .submissionSnapshot(intent.intentId)
       .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker state confirmation failed', cause)))
     const stablePositions = validateStablePositionSnapshot(cached.state.positions, positions.value)
     if (Result.isFailure(stablePositions))
@@ -959,7 +970,11 @@ export const confirmExecutionBrokerState = (
       return yield* mutationAuthorizationError('broker cash changed since reconciliation', {
         _tag: 'BrokerAccountSnapshotChanged',
       })
+    const asset = yield* brokerRead
+      .assetBySymbol(intent.symbol)
+      .pipe(Effect.mapError((cause) => mutationAuthorizationError('broker instrument confirmation failed', cause)))
     return {
+      asset: asset.value,
       account: account.value,
       positions: positions.value,
       openOrders: orders.value,
@@ -1015,7 +1030,7 @@ const validatePersistedCapitalGrantForSubmitDataFirst = (
 
 export const validatePersistedCapitalGrantForSubmit = Pipeable.dual(3, validatePersistedCapitalGrantForSubmitDataFirst)
 
-export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure
+export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure | InstrumentError
 
 const validateExecutionBrokerSubmitSnapshotDataFirst = (
   authority: MutationExecutionAuthority,
@@ -1027,6 +1042,64 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
   const snapshotFreshness = validateBrokerStateFreshness(snapshot, observedAt, context.maxBrokerStateAgeMs)
   if (Result.isFailure(snapshotFreshness)) return Result.fail(snapshotFreshness.failure)
+  const asset = snapshot.asset
+  if (
+    asset.symbol !== intent.symbol ||
+    asset.requestedSymbol !== intent.symbol ||
+    asset.status !== 'active' ||
+    !asset.tradable ||
+    (asset.assetClass === 'crypto') !== (instrumentMarket(intent.symbol) === MarketKind.Crypto)
+  )
+    return Result.fail(
+      new InstrumentError({
+        symbol: intent.symbol,
+        message: 'broker instrument is unavailable or its identity differs',
+      }),
+    )
+  const request = orderRequestBody(intent)
+  if (Result.isFailure(request))
+    return Result.fail(new InstrumentError({ symbol: intent.symbol, message: request.failure.message }))
+  const limit = 'limit_price' in request.success ? quantityFromDecimal(request.success.limit_price) : undefined
+  if (limit !== undefined && Result.isFailure(limit))
+    return Result.fail(
+      new InstrumentError({ symbol: intent.symbol, message: 'broker limit price is outside the exact price domain' }),
+    )
+  const instrument = validateInstrumentOrder(
+    {
+      symbol: asset.symbol,
+      market: instrumentMarket(asset.symbol),
+      minimumQuantityAtoms: BigInt(asset.minimumQuantityAtoms),
+      quantityIncrementAtoms: BigInt(asset.quantityIncrementAtoms),
+      priceIncrementAtoms: BigInt(asset.priceIncrementAtoms),
+    },
+    intent,
+    {
+      closeOnly: context.closeOnly,
+      fractionable: asset.fractionable,
+      ...(limit === undefined || Result.isFailure(limit) ? {} : { limitPriceAtoms: limit.success }),
+    },
+  )
+  if (Result.isFailure(instrument)) return instrument
+  if (
+    instrumentMarket(intent.symbol) === MarketKind.Crypto &&
+    (snapshot.account.cryptoStatus !== 'ACTIVE' || snapshot.account.nonMarginableBuyingPowerMicros === null)
+  )
+    return Result.fail(
+      new InstrumentError({
+        symbol: intent.symbol,
+        message: 'crypto account status or cash buying power is unavailable',
+      }),
+    )
+  const cashBuyingPower = [
+    snapshot.account.cashMicros,
+    snapshot.account.buyingPowerMicros,
+    ...(snapshot.account.nonMarginableBuyingPowerMicros === null
+      ? []
+      : [snapshot.account.nonMarginableBuyingPowerMicros]),
+  ]
+    .map(BigInt)
+    .reduce((minimum, value) => (value < minimum ? value : minimum))
+  const cashSnapshot = { ...snapshot, account: { ...snapshot.account, buyingPowerMicros: cashBuyingPower.toString() } }
   const requestedNotional = boundedBrokerOrderNotional(intent)
   if (Result.isFailure(requestedNotional)) return Result.fail(requestedNotional.failure)
   const openOrderNotionals = priceOpenOrders(snapshot.openOrders)
@@ -1035,7 +1108,7 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
     authority,
     limits,
     intent,
-    snapshot,
+    cashSnapshot,
     requestedNotional.success,
     requestedNotional.success,
     openOrderNotionals.success,

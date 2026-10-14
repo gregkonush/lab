@@ -9,6 +9,7 @@ import {
 } from '../../schemas'
 import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
+import type { ObservedBrokerState } from './observed-snapshot'
 import { Pipeable } from '../../pipeable'
 
 export const defaultFillActivitiesPageSize = 100
@@ -226,6 +227,8 @@ export interface Account {
   readonly cashMicros: string
   readonly equityMicros: string
   readonly lastEquityMicros: string
+  readonly cryptoStatus: string | null
+  readonly nonMarginableBuyingPowerMicros: string | null
   readonly buyingPowerMicros: string
   readonly accountBlocked: boolean
   readonly tradingBlocked: boolean
@@ -247,9 +250,9 @@ export interface Position {
   readonly assetId: string
   readonly symbol: string
   readonly exchange: AssetExchange
-  readonly assetClass: AssetClass.UsEquity
+  readonly assetClass: AssetClass.UsEquity | AssetClass.Crypto
   readonly side: PositionSide
-  readonly quantityMicros: string
+  readonly quantityAtoms: string
   readonly averageEntryPriceMicros: string
   /** Present on current broker responses; omitted only by legacy observations. */
   readonly costBasisMicros?: string
@@ -275,10 +278,10 @@ export interface Order {
   readonly replaces?: string
   readonly assetId: string
   readonly symbol: string
-  readonly assetClass: AssetClass.UsEquity
-  readonly quantityMicros?: string
+  readonly assetClass: AssetClass.UsEquity | AssetClass.Crypto
+  readonly quantityAtoms?: string
   readonly notionalMicros?: string
-  readonly filledQuantityMicros: string
+  readonly filledQuantityAtoms: string
   readonly filledAveragePriceMicros?: string
   readonly orderClass: OrderClass
   readonly orderType: OrderType
@@ -295,6 +298,7 @@ export interface Order {
 }
 
 export interface FeeActivity {
+  readonly coinDebit?: { readonly symbol: string; readonly quantityAtoms: string; readonly priceAtoms: string }
   readonly accountId: string
   readonly activityId: string
   readonly date: string
@@ -309,10 +313,10 @@ export interface FeeActivityPage {
 export interface FillActivity {
   readonly accountId: string
   readonly activityId: string
-  readonly cumulativeQuantityMicros: string
-  readonly leavesQuantityMicros: string
-  readonly priceMicros: string
-  readonly quantityMicros: string
+  readonly cumulativeQuantityAtoms: string
+  readonly leavesQuantityAtoms: string
+  readonly priceAtoms: string
+  readonly quantityAtoms: string
   readonly side: OrderSide
   readonly symbol: string
   readonly transactionTime: string
@@ -343,6 +347,9 @@ export interface AssetObservation {
   readonly status: AssetStatus
   readonly tradable: boolean
   readonly fractionable: boolean
+  readonly minimumQuantityAtoms: string
+  readonly quantityIncrementAtoms: string
+  readonly priceIncrementAtoms: string
   readonly attributes: readonly string[]
   readonly observedAt: string
   readonly normalizedResponseHash: string
@@ -416,6 +423,7 @@ export interface BrokerSubmissionSnapshot {
 }
 
 export interface BrokerReadProjection {
+  readonly healthSnapshot?: Effect.Effect<ObservedBrokerState, BrokerReadError>
   readonly snapshot: Effect.Effect<StableBrokerSnapshot, BrokerReadError>
   readonly submissionSnapshot: (intentId: string) => Effect.Effect<BrokerSubmissionSnapshot, BrokerReadError>
   readonly fresh: BrokerReadShape
@@ -475,6 +483,8 @@ export const AccountResponseSchema = Schema.Struct({
   equity: Decimal,
   last_equity: Decimal,
   buying_power: Decimal,
+  non_marginable_buying_power: Schema.optionalKey(Decimal),
+  crypto_status: Schema.optionalKey(Schema.String),
   account_blocked: Schema.Boolean,
   trading_blocked: Schema.Boolean,
   trade_suspended_by_user: Schema.Boolean,
@@ -520,6 +530,9 @@ export const AssetResponseSchema = Schema.Struct({
   status: Schema.Enum(AssetStatus),
   tradable: Schema.Boolean,
   fractionable: Schema.Boolean,
+  min_order_size: Schema.optionalKey(Decimal),
+  min_trade_increment: Schema.optionalKey(Decimal),
+  price_increment: Schema.optionalKey(Decimal),
   attributes: Schema.optionalKey(Schema.NullOr(Schema.Array(NonEmptyString))),
 })
 
@@ -558,13 +571,22 @@ export const OrderResponseSchema = Schema.Struct({
   hwm: Schema.NullOr(Decimal),
 })
 
-export const FeeActivityResponseSchema = Schema.Struct({
-  activity_type: Schema.Literal('FEE'),
+const FeeActivityResponseBase = {
   id: ActivityId,
   account_id: Schema.optionalKey(Uuid),
   date: IsoDate,
   net_amount: Decimal,
-})
+}
+export const FeeActivityResponseSchema = Schema.Union([
+  Schema.Struct({ ...FeeActivityResponseBase, activity_type: Schema.Literal('FEE') }),
+  Schema.Struct({
+    ...FeeActivityResponseBase,
+    activity_type: Schema.Literal('CFEE'),
+    symbol: NonEmptyString,
+    qty: Decimal,
+    price: Decimal,
+  }),
+])
 export const decodeFeeActivities = Schema.decodeUnknownResult(
   Schema.Array(FeeActivityResponseSchema),
   responseParseOptions,

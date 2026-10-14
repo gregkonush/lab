@@ -5,8 +5,10 @@ import {
   SortDirection,
   verifyBrokerAccountPermissions,
   type BrokerAccountPreflightFailure,
+  type BrokerReadError,
   type BrokerReadShape,
 } from '../broker/alpaca'
+import type { ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
 import type { RuntimeConfig } from '../config'
 import { operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
@@ -81,7 +83,7 @@ const namedBrokerRead = <A, E, R>(
     }),
   )
 
-const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<ProbeResult<BrokerHealthObservation>> =>
+const observeBrokerComponents = (read: BrokerReadShape, timeoutMs: number) =>
   Effect.all(
     {
       account: namedBrokerRead('account read', read.account, timeoutMs),
@@ -104,6 +106,50 @@ const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<
       ),
     },
     { concurrency: 6 },
+  )
+
+const observeBrokerProjection = (snapshot: Effect.Effect<ObservedBrokerState, BrokerReadError>, timeoutMs: number) => {
+  const component = <A>(behavior: string, result: ProbeResult<A>): ProbeResult<A> =>
+    result._tag === 'Available'
+      ? result
+      : { _tag: 'Unavailable', error: `Alpaca ${behavior} unavailable: ${result.error}` }
+  return observe(snapshot).pipe(
+    Effect.map((result) => {
+      const select = <A>(behavior: string, get: (value: ObservedBrokerState) => A): ProbeResult<A> =>
+        component(behavior, result._tag === 'Available' ? { _tag: 'Available', value: get(result.value) } : result)
+      return {
+        account: select('account read', (value) => value.snapshot.account),
+        accountConfiguration: select('account configuration read', (value) => value.configuration),
+        positions: select('positions read', (value) => value.snapshot.positions),
+        openOrders: select('open orders read', (value) => value.openOrders),
+        recentOrders: select('recent orders read', (value) => value.recentOrders),
+        fills: select('recent fills read', (value) => value.recentFills),
+      }
+    }),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => {
+        const timedOut = (behavior: string): ProbeResult<never> => ({
+          _tag: 'Unavailable',
+          error: `Alpaca ${behavior} timed out after ${timeoutMs}ms`,
+        })
+        return Effect.succeed({
+          account: timedOut('account read'),
+          accountConfiguration: timedOut('account configuration read'),
+          positions: timedOut('positions read'),
+          openOrders: timedOut('open orders read'),
+          recentOrders: timedOut('recent orders read'),
+          fills: timedOut('recent fills read'),
+        })
+      },
+    }),
+  )
+}
+
+const observeBroker = (read: BrokerReadShape, timeoutMs: number): Effect.Effect<ProbeResult<BrokerHealthObservation>> =>
+  (read.projection?.healthSnapshot === undefined
+    ? observeBrokerComponents(read, timeoutMs)
+    : observeBrokerProjection(read.projection.healthSnapshot, timeoutMs)
   ).pipe(
     Effect.map((results): ProbeResult<BrokerHealthObservation> => {
       const failures = Object.values(results).flatMap((result) => (result._tag === 'Unavailable' ? [result.error] : []))

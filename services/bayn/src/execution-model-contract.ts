@@ -16,7 +16,7 @@ export const usEquityRegularSessionDurationMs = 6.5 * 60 * 60 * 1_000
 const ExecutionModelCommon = {
   assetClass: Schema.Literal('us-equity'),
   precision: Schema.Struct({
-    quantityIncrementMicros: PositiveMicros,
+    quantityIncrementAtoms: PositiveMicros,
     priceIncrementMicros: PositiveMicros,
     minimumBuyNotionalMicros: PositiveMicros,
   }),
@@ -110,8 +110,9 @@ const ExecutionModelV4Base = Schema.Struct({
 
 const ExecutionModelV5Base = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.execution-model.v5'),
-  venue: Schema.Literal('alpaca-us-equity'),
+  venue: Schema.Literal('alpaca-cash-spot'),
   ...ExecutionModelCommon,
+  assetClass: Schema.Literal('cash-spot'),
   order: Schema.Struct({
     type: Schema.Literal('limit'),
     timeInForce: Schema.Literal('ioc'),

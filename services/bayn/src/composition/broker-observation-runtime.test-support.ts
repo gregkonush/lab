@@ -1,3 +1,5 @@
+import { ValkeyCache } from '../valkey-cache'
+import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Layer, Logger, References, Tracer } from 'effect'
@@ -7,6 +9,7 @@ import type { ApplicationPlanFor } from '../app'
 import * as actualHttp from '../broker/alpaca/http'
 import * as actualSession from '../broker/alpaca/session'
 import * as actualPostgres from '../db/postgres-client'
+import * as actualRestateTelemetry from '../restate/restate-telemetry'
 
 let attempts = 0
 const spans: Tracer.NativeSpan[] = []
@@ -30,15 +33,28 @@ let persistenceTelemetry: { loggerInherited: boolean; tracerInherited: boolean }
 let brokerTelemetry: { loggerInherited: boolean; tracerInherited: boolean } | undefined
 const releaseAcquisition = Promise.withResolvers<void>()
 const acquisitionFinished = Promise.withResolvers<void>()
-const sql = (strings: TemplateStringsArray) => {
+const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
   const query = strings.join('')
-  if (query.includes('RETURNING generation'))
+  if (query.includes('RETURNING broker_observations.generation'))
     return Clock.currentTimeMillis.pipe(
-      Effect.map((now) => [{ generation: 1, startedAt: new Date(now).toISOString() }]),
+      Effect.map((now) => [
+        {
+          status: 'RESERVED',
+          generation: 1,
+          startedAt: new Date(now).toISOString(),
+          nextPollNotBeforeMs: Number(values[3]),
+        },
+      ]),
     )
-  if (query.includes('SET available = false')) return Effect.fail(new Error('injected completed persistence failure'))
+  if (query.includes('WITH failed AS')) return Effect.fail(new Error('injected completed persistence failure'))
   return Effect.succeed([])
 }
+
+await mock.module('../restate/restate-telemetry', () => ({
+  ...actualRestateTelemetry,
+  currentOpenTelemetryParentSpan: () =>
+    Tracer.externalSpan({ traceId: 'a'.repeat(32), spanId: 'b'.repeat(16), sampled: true }),
+}))
 
 await mock.module('../db/postgres-client', () => ({
   ...actualPostgres,
@@ -98,29 +114,23 @@ const result = await Effect.runPromise(
         },
       } as unknown as ApplicationPlanFor<'AutonomousService'>)
       const signal = new AbortController().signal
-      const captureToken = yield* Effect.promise(() => runtime.preparePoll(signal))
-      const now = yield* Clock.currentTimeMillis
       const poll = yield* Effect.promise(() =>
         runtime.poll(signal, {
-          captureToken,
-          captureStartDeadlineMs: now + 1_000,
-          interruptedNotBeforeMs: now + 180_000,
+          captureId: 'test-capture',
         }),
       )
       const attemptsAtReturn = attempts
       releaseAcquisition.resolve()
       yield* Effect.promise(() => acquisitionFinished.promise)
-      const nextPollNotBeforeMs = yield* Effect.promise(() => runtime.nextPollNotBeforeMs(signal))
       return {
-        poll,
+        poll: poll.poll,
         attemptsAtReturn,
         attemptsAfterReturn: attempts,
-        nextPollNotBeforeMs,
         persistenceTelemetry,
         brokerTelemetry,
       }
     }),
-  ).pipe(Effect.provide(telemetry)),
+  ).pipe(Effect.provideService(ValkeyCache, valkeyFixture().cache), Effect.provide(telemetry)),
 )
 process.stdout.write(
   `BROKER_POLL_RESULT=${JSON.stringify({

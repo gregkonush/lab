@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, it } from 'bun:test'
 import YAML from 'yaml'
@@ -158,34 +160,76 @@ const entry = (name: string) => {
 }
 
 describe('enabled app inventory', () => {
-  it('recognizes the inert devbox promotion template without accepting arbitrary mutable images', () => {
-    const template = {
-      name: 'devbox',
-      path: 'argocd/applications/devbox',
-      repoURL: 'https://github.com/proompteng/lab.git',
-      sourceFile: 'argocd/applicationsets/platform.yaml',
-      sourceKind: 'applicationset-element',
-      class: 'deferred',
-      enabled: true,
-      hasHelmChart: false,
-      repoImages: ['registry.ide-newton.ts.net/lab/codex-devbox:unpublished'],
-      workflowPaths: ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo'],
-    } satisfies EnabledAppInventoryEntry
-    expect(classifyEnabledApp(template).class).toBe('workflow-image')
-    expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
-    for (const reference of [
-      'registry.ide-newton.ts.net/lab/codex-devbox:latest',
-      'registry.ide-newton.ts.net/lab/codex-devbox:unreviewed',
-      `registry.ide-newton.ts.net/lab/codex-devbox@sha256:${'0'.repeat(64)}`,
-    ]) {
-      expect(
-        classifyEnabledApp({
-          ...template,
-          repoImages: [reference],
-        }).class,
-      ).toBe('deferred')
+  it('excludes unreferenced prepared directories and includes declared Kustomize inputs', () => {
+    const root = mkdtempSync(join(tmpdir(), 'enabled-app-inputs-'))
+    const app = join(root, 'argocd/applications/example')
+    try {
+      mkdirSync(join(root, 'argocd/applicationsets'), { recursive: true })
+      for (const name of ['active', 'prepared', 'patches', 'values']) mkdirSync(join(app, name), { recursive: true })
+      writeFileSync(
+        join(root, 'argocd/applicationsets/test.yaml'),
+        YAML.stringify({
+          spec: { generators: [{ list: { elements: [{ name: 'example', path: 'argocd/applications/example' }] } }] },
+        }),
+      )
+      const manifest = (name: string) => YAML.stringify({ image: `registry.ide-newton.ts.net/lab/${name}` })
+      writeFileSync(join(app, 'active/deployment.yaml'), manifest('active'))
+      writeFileSync(join(app, 'prepared/deployment.yaml'), manifest('prepared'))
+      writeFileSync(join(app, 'patches/image.yaml'), manifest('patch'))
+      writeFileSync(join(app, 'values/chart.yaml'), manifest('chart'))
+      const input = {
+        resources: ['active'],
+        patches: [{ path: 'patches/image.yaml' }],
+        helmCharts: [{ valuesFile: 'values/chart.yaml' }],
+      }
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify(input))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toEqual([
+        'registry.ide-newton.ts.net/lab/active',
+        'registry.ide-newton.ts.net/lab/chart',
+        'registry.ide-newton.ts.net/lab/patch',
+      ])
+      writeFileSync(join(app, 'kustomization.yaml'), YAML.stringify({ ...input, resources: ['active', 'prepared'] }))
+      expect(loadEnabledAppInventory(root).entries[0]?.repoImages).toContain('registry.ide-newton.ts.net/lab/prepared')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it.each([
+    ['devbox', 'codex-devbox', 'unpublished', '.github/workflows/codex-devbox.yml'],
+    ['ofz', 'ofz', 'unpromoted', '.github/workflows/ofz.yaml'],
+  ])(
+    'recognizes the inert %s promotion template without accepting arbitrary mutable images',
+    (name, image, tag, workflow) => {
+      const repository = `registry.ide-newton.ts.net/lab/${image}`
+      const template = {
+        name,
+        path: `argocd/applications/${name}`,
+        repoURL: 'https://github.com/proompteng/lab.git',
+        sourceFile: 'argocd/applicationsets/platform.yaml',
+        sourceKind: 'applicationset-element',
+        class: 'deferred',
+        enabled: true,
+        hasHelmChart: false,
+        repoImages: [`${repository}:${tag}`],
+        workflowPaths: [workflow, 'argocd/applications/kargo'],
+      } satisfies EnabledAppInventoryEntry
+      expect(classifyEnabledApp(template).class).toBe('workflow-image')
+      expect(classifyEnabledApp({ ...template, workflowPaths: [] }).class).toBe('deferred')
+      for (const reference of [
+        `${repository}:latest`,
+        `${repository}:unreviewed`,
+        `${repository}@sha256:${'0'.repeat(64)}`,
+      ]) {
+        expect(
+          classifyEnabledApp({
+            ...template,
+            repoImages: [reference],
+          }).class,
+        ).toBe('deferred')
+      }
+    },
+  )
 
   it('classifies Tengri as a Kargo-owned workflow image only with complete ownership evidence', () => {
     const tengri = {
@@ -560,7 +604,7 @@ describe('enabled app inventory', () => {
 
   it('pins Keycloak to the immutable multi-architecture security release', () => {
     expect(keycloakManifest).toContain(
-      'quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54',
+      'quay.io/keycloak/keycloak:26.7.4@sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c',
     )
   })
 

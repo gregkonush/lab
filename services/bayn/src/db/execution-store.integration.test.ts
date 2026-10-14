@@ -147,7 +147,7 @@ const flatAccountEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Account
 }
 
 const order = () => ({
-  schemaVersion: 'bayn.paper-order.v1' as const,
+  schemaVersion: 'bayn.order.v3' as const,
   accountId,
   brokerOrderId: 'order-1',
   clientOrderId: 'client-order-1',
@@ -155,8 +155,8 @@ const order = () => ({
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '3000000',
-  filledQuantityMicros: '0',
+  quantityAtoms: '3000000000',
+  filledQuantityAtoms: '0',
   status: OrderStatus.New,
   observedAt,
 })
@@ -178,14 +178,14 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
 const positionEvent = (
   sourceHash: string,
   symbol: string,
-  quantityMicros: string,
+  quantityAtoms: string,
   marketValueMicros: string,
 ): PositionEventInput => {
   const position = {
     schemaVersion: 'bayn.paper-position.v1' as const,
     accountId,
     symbol,
-    quantityMicros,
+    quantityAtoms,
     averageEntryPriceMicros: '100000000',
     marketPriceMicros: '100000000',
     marketValueMicros,
@@ -211,18 +211,18 @@ const positionSnapshot = (sourceHash: string, positions: readonly PositionEventI
   positions,
 })
 
-const fillEvent = (id: string, side: OrderSide, quantityMicros: string, priceMicros: string): FillEventInput => {
+const fillEvent = (id: string, side: OrderSide, quantityAtoms: string, priceMicros: string): FillEventInput => {
   const timestamp = Result.getOrThrow(sourceTimestamp(occurredAt))
   const fill = {
-    schemaVersion: 'bayn.paper-fill.v1' as const,
+    schemaVersion: 'bayn.fill.v2' as const,
     accountId,
     fillId: id,
     brokerOrderId: `order-${id}`,
     clientOrderId: `client-${id}`,
     symbol: 'NVDA',
     side,
-    quantityMicros,
-    priceMicros,
+    quantityAtoms,
+    priceAtoms: (BigInt(priceMicros) * 1000n).toString(),
     feeMicros: '100',
     occurredAt,
   }
@@ -358,7 +358,7 @@ describePostgres('PostgreSQL execution persistence', () => {
   test('deduplicates broker observations and derives valuation from one complete position snapshot', async () => {
     const sourceHash = hash('positions-response-1')
     const positions = [
-      positionEvent(sourceHash, 'NVDA', '2000000', '200000000'),
+      positionEvent(sourceHash, 'NVDA', '2000000000', '200000000'),
       positionEvent(sourceHash, 'AMD', '-500000', '-50000000'),
     ] as const
     const result = await runtime.runPromise(
@@ -424,9 +424,9 @@ describePostgres('PostgreSQL execution persistence', () => {
   })
 
   test('reuses the writer transaction for snapshot persistence and completed accounting verification', async () => {
-    const fill = fillEvent('transaction-fill', OrderSide.Buy, '3000000', '100000000')
+    const fill = fillEvent('transaction-fill', OrderSide.Buy, '3000000000', '100000000')
     const sourceHash = hash('transaction-positions')
-    const positions = [positionEvent(sourceHash, 'NVDA', '3000000', '300000000')]
+    const positions = [positionEvent(sourceHash, 'NVDA', '3000000000', '300000000')]
     const spanEvents: string[] = []
     const tracer = Tracer.make({
       span(options) {
@@ -542,7 +542,7 @@ describePostgres('PostgreSQL execution persistence', () => {
 
   test('persists exact broker cost basis beside legacy position history', async () => {
     const sourceHash = hash('position-cost-basis-v2')
-    const legacy = positionEvent(sourceHash, 'NVDA', '3000000', '303000000')
+    const legacy = positionEvent(sourceHash, 'NVDA', '3000000000', '303000000')
     const position = {
       ...legacy.position,
       schemaVersion: 'bayn.position.v2' as const,
@@ -574,7 +574,7 @@ describePostgres('PostgreSQL execution persistence', () => {
   })
 
   test('resumes a prepared fill after a ledger failure without duplicating durable accounting', async () => {
-    const fill = fillEvent('fill-buy-1', OrderSide.Buy, '3000000', '100000000')
+    const fill = fillEvent('fill-buy-1', OrderSide.Buy, '3000000000', '100000000')
     journalControl.failPosts = true
     const failed = await runtime.runPromise(
       Effect.flatMap(FillAccountingStore, (store) => store.account(fill)).pipe(Effect.flip),
@@ -605,9 +605,9 @@ describePostgres('PostgreSQL execution persistence', () => {
 
   test('batches completed broker history while retaining conflicts and incomplete fill recovery', async () => {
     const observedOrder = orderEvent()
-    const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000', '100000000')
-    const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000', '101000000')
-    const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000', '101000000')
+    const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000000', '100000000')
+    const preparedFill = fillEvent('fill-pending', OrderSide.Buy, '1000000000', '101000000')
+    const unaccountedFill = fillEvent('fill-unaccounted', OrderSide.Buy, '1000000000', '101000000')
     const newOrder = { ...observedOrder, sourceEventId: 'order-observation-2' }
 
     const result = await runtime.runPromise(
@@ -625,7 +625,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const completed = yield* events.completeHistory(history)
         yield* accounting.verifyCompleted([accountedFill])
         const accountingMismatch = yield* accounting
-          .verifyCompleted([{ ...accountedFill, fill: { ...accountedFill.fill, quantityMicros: '2000000' } }])
+          .verifyCompleted([{ ...accountedFill, fill: { ...accountedFill.fill, quantityAtoms: '2000000000' } }])
           .pipe(Effect.flip)
         yield* accounting.account(preparedFill)
         const completedAfterRecovery = yield* events.completeHistory(history)
@@ -672,6 +672,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         yield* fence.transaction(
           Effect.gen(function* () {
             yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING ALL) ON COMMIT DROP`
+            yield* sql`CREATE TRIGGER broker_event_projection_hash BEFORE INSERT ON pg_temp.broker_events FOR EACH ROW EXECUTE FUNCTION initialize_broker_event_projection_hash()`
             yield* sql`CREATE TEMP TABLE account_snapshots (LIKE public.account_snapshots INCLUDING ALL) ON COMMIT DROP`
             yield* sql`INSERT INTO broker_events
               (event_id, schema_version, content_hash, event_kind, broker, account_id, source_event_id,
@@ -753,6 +754,85 @@ describePostgres('PostgreSQL execution persistence', () => {
       }),
     )
     expect(journalControl.postCount).toBe(0)
+  })
+
+  test('coin fees survive a ledger retry and a fractional close without changing cash or replaying inventory', async () => {
+    const buyBase = fillEvent('crypto-buy', OrderSide.Buy, '1000000000', '100000000')
+    const buyFill = { ...buyBase.fill, symbol: 'SOL/USD', feeMicros: '0' }
+    const buy = { ...buyBase, fill: buyFill, contentHash: canonicalHashV1(buyFill) }
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
+        yield* (yield* FillAccountingStore).account(buy)
+      }),
+    )
+    const fees = ['coin-fee-1', 'coin-fee-2'].map((activityId) => ({
+      value: {
+        accountId,
+        activityId,
+        date: '2026-08-28',
+        netAmountMicros: '0',
+        coinDebit: { symbol: 'SOL/USD', quantityAtoms: '2000000', priceAtoms: '100000000000' },
+      },
+      evidence: { requestId: 'coin-fees', status: 200, contentHash: hash('coin-fees'), observedAt },
+    }))
+    const post = (items: typeof fees) =>
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return yield* sql.withTransaction(
+          accountBrokerFees(sql, journal(journalControl), accountId, items, config.tigerBeetle),
+        )
+      })
+    journalControl.failPosts = true
+    expect(await runtime.runPromise(post(fees).pipe(Effect.flip))).toMatchObject({ failure: 'ledger' })
+    journalControl.failPosts = false
+    const posted = await runtime.runPromise(post(fees))
+    const posts = journalControl.postCount
+    expect(await runtime.runPromise(post(fees))).toEqual(posted)
+    expect(journalControl.postCount).toBe(posts)
+    expect(posted.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual([
+      200000n,
+      200000n,
+    ])
+    const secondBuyAt = '2026-08-28T14:31:01.000Z'
+    const secondBase = fillEvent('crypto-buy-2', OrderSide.Buy, '1000000000', '200000000')
+    const secondFill = { ...secondBase.fill, symbol: 'SOL/USD', feeMicros: '0', occurredAt: secondBuyAt }
+    const secondBuy = {
+      ...secondBase,
+      fill: secondFill,
+      contentHash: canonicalHashV1(secondFill),
+      occurredAt: secondBuyAt,
+      observedAt: secondBuyAt,
+      sourceTimestamp: Result.getOrThrow(sourceTimestamp(secondBuyAt)),
+    }
+    const sellAt = '2026-08-28T14:31:02.000Z'
+    const sellBase = fillEvent('crypto-sell', OrderSide.Sell, '1996000000', '201000000')
+    const sellFill = { ...sellBase.fill, symbol: 'SOL/USD', feeMicros: '0', occurredAt: sellAt }
+    const sell = {
+      ...sellBase,
+      fill: sellFill,
+      contentHash: canonicalHashV1(sellFill),
+      occurredAt: sellAt,
+      observedAt: sellAt,
+      sourceTimestamp: Result.getOrThrow(sourceTimestamp(sellAt)),
+    }
+    const rows = await runtime.runPromise(
+      Effect.gen(function* () {
+        const accounting = yield* FillAccountingStore
+        yield* accounting.account(secondBuy)
+        yield* accounting.account(sell)
+        yield* accounting.verifyCompleted([buy, secondBuy, sell])
+        const sql = yield* PgClient.PgClient
+        return yield* sql`SELECT
+        (sum(quantity_delta_atoms) - (SELECT sum((data->'coinDebit'->>'quantityAtoms')::numeric) FROM broker_fee_accounting))::text AS quantity,
+        (sum(cost_basis_delta_micros) - (SELECT sum(coin_cost_basis_micros) FROM broker_fee_accounting))::text AS cost,
+        (SELECT sum(net_amount_micros)::text FROM broker_fee_accounting) AS fee_cash,
+        (SELECT realized_pnl_micros::text FROM accounting_transactions WHERE side = 'SELL') AS realized
+        FROM accounting_transactions`
+      }),
+    )
+    expect(rows).toEqual([{ quantity: '0', cost: '0', fee_cash: '0', realized: '101596000' }])
+    expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {

@@ -71,18 +71,21 @@ adds intraday protocol v3 to the durable authority contracts while preserving v1
 ## Retained-input verification
 
 ```sh
-node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
+node dist/streaming-diagnostics-command.js --query query.json
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
 bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
-matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
-input joins observed now; it does not claim those features were available in a past trading session. The image
+matches, and closes the connection. The query is an exact `IntradaySnapshotQuery` JSON object with calendar, universe, window and observation time.
+The receipt evaluates eligibility with `selectStreamingInputs`, reports exact missing minute timestamps, quote ages
+and source coordinates, and retains every excluded candidate even when no candidate can trade. Late arrivals
+remain unavailable at the requested observation. A fresh diagnostic consumer cannot recover original historical
+arrival times; use retained original capture evidence for historical availability claims. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
 finished image without network access.
 
 Historical probes may need to consume a large retained backfill whose Kafka timestamps reflect recent publication.
-Use `--bootstrap-timeout-seconds 7200` with `--since` to allow two hours for that read-only bootstrap. The default
+Use `--bootstrap-timeout-seconds 7200` with `--query` to allow two hours for that read-only bootstrap. The default
 is 300 seconds, and the accepted range is 1–14400 seconds (four hours). Estimate the budget from retained record
 count and observed processing rate, allowing time for bounded connection recovery. The receipt records the
 selected `bootstrapTimeoutMs`.
@@ -142,6 +145,27 @@ remain unknown. Tombstones contribute zero value bytes. These cumulative counter
 Compute interval rates from counter differences within the same epoch and the actual `observedAtMs` difference.
 Thirty-second samples do not prove peak rates, continuity or original-session capture coverage. Payload lengths
 remain available with capture disabled; hashing and raw-byte retention run only when requested by the capture observer.
+
+The same periodic log includes `arrivalEnvelope` (`bayn.kafka-arrival-envelope.v1`). It reuses each record's existing
+incorporation-boundary millisecond timestamp and exact raw value length, keeping four fixed scalar accumulators for
+1, 10, 100 and 1000 ms bins. No payload, per-record log, additional clock sample or storage operation is added.
+Within the measured epoch, `maximumAlignedWindowRecords` is a lower bound on the largest count in any window of
+that width; `maximumWindowRecordsUpperBound` is the conservative upper bound from two adjacent aligned bins. The
+two values bracket the exact rolling maximum; the upper bound can overcount a boundary-spanning window. Known-byte
+lower bounds and complete raw-byte upper bounds follow the same rule. One unknown non-tombstone length makes every
+raw-byte upper bound null for that epoch. Tombstones count as one record and zero value bytes.
+`Kafka market projection arrival measurements finalized` emits the final measured prefix once when the consumer
+scope closes, including failed epochs that ended before their first periodic report. Finalization of this diagnostic
+does not assert successful consumer closure or complete source coverage.
+
+Clock regression, an invalid clock or unsafe counter arithmetic permanently invalidates the envelope and makes its
+upper bounds null, retaining only the measured prefix. The observer never changes projection or trading behavior.
+It resets with the consumer epoch, includes bootstrap and ignored/rejected records reaching the timestamp boundary,
+and does not sample records discarded before that boundary after invalidation. An empty epoch is no workload
+measurement. These observed bounds exclude keys, headers, framing, SQL metadata, replication and runtime memory;
+they neither predict future arrivals nor prove continuity, capture capacity or complete session coverage. Correlate
+them with same-operation object/SQL phase timings before choosing a bounded capacity workload.
+
 Offset lag is an exact decimal string and includes Kafka control-record positions;
 it is not a market-message count. A failed end-offset lookup produces null lag with allowlisted SDK and broker error
 codes; raw exception messages are omitted. Missing
@@ -173,6 +197,8 @@ boundary, and its source-reference suffix matches the currently selected raw bar
 hashes. The producer retains complete session provenance; Bayn independently verifies the decision-window suffix,
 not older raw bars outside its retained window. The full technical payload and source references are hashed into the
 snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
+The selected market source owns the optional topic. Sharing a consumer with equities does not attach their technical
+topic to a crypto snapshot or its bootstrap evidence.
 
 An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
 correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement

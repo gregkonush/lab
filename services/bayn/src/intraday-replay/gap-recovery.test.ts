@@ -92,9 +92,9 @@ describe('original-receipt gap recovery', () => {
 
   test.each([
     [99.5, 99.75, 'AAPL'],
-    [99.50000000001, 99.75, null],
+    [99.500000001, 99.75, null],
     [99, 99.2475, 'AAPL'],
-    [99, 99.24749999999, null],
+    [99, 99.247499999, null],
     [99, 100, null],
   ] as const)('exact decimal boundary for opening %s and decision %s', (opening, decision, selected) => {
     expect(run(gapFixture({ prices: { AAPL: [100, opening, decision] } })).selectedSymbol).toBe(selected)
@@ -373,7 +373,7 @@ describe('gap position lifecycle', () => {
   })
   test('stop boundary is inclusive and exits remain latched after price recovery', () => {
     expect(observe(gapDecisionMs + 60_000, 99.5).reason).toBe(GapExitReason.Stop)
-    expect(observe(gapDecisionMs + 60_000, 99.50000000001).action).toBe(GapExitAction.Hold)
+    expect(observe(gapDecisionMs + 60_000, 99.500000001).action).toBe(GapExitAction.Hold)
     expect(observe(gapDecisionMs + 60_000, 102, GapExitReason.Stop).reason).toBe(GapExitReason.Stop)
   })
   test('missing management pricing stays unknown; close still requests reducing exit without inventing pricing', () => {

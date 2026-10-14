@@ -30,6 +30,12 @@ See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) f
 
 ## Sources of truth
 
+Loki, Mimir and Tempo Deployments and StatefulSets require `network.proompteng.ai/100g=true` on Turin or Altra.
+Their stateless Kafka and RGW clients also require this label; the Ryzen Ceph-volume exclusion alone cannot keep
+these network workloads off its slower link. Tempo keeps three block builders and three live stores with a two-plus-one
+host spread. The Loki canary and node collectors retain all-host coverage. Move retained storage clients individually
+and verify native rings, Kafka offsets, ingestion and historical queries before advancing the rollout.
+
 1. `argocd/applications/rook-ceph/rook-ceph-objectstore-loki-user.yaml`
 2. `argocd/applications/rook-ceph/rook-ceph-object-user-objectstore-loki-reflector-source.yaml`
 3. `argocd/applications/observability/rook-ceph-rgw-loki-reflected-secret.yaml`
@@ -105,7 +111,7 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics, plus
   CloudNativePG backup and scheduled-backup timestamps.
 - `observability-cluster-metrics-alloy`: scrapes kube-state-metrics, kubelet, every CloudNativePG instance, the Ceph
-  manager, Bayn's bounded service metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
+  manager, Bayn's bounded service and financial-model metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
   including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
 - `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
@@ -115,6 +121,21 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
+
+The TA and market-data archive scrapes retain separate pipeline identities. Their critical email alerts detect a
+missing scrape, no running Flink job, and stalled or missing checkpoints, with mutually exclusive failure conditions
+to avoid duplicate pages for one failed pipeline. Bayn runtime degradation still fires after one minute and remains
+one incident across brief recoveries, resolving only after five minutes without the condition. Email subjects include
+`FIRING` or `RESOLVED`; mailbox delivery alone does not establish the current alert state.
+
+The adjusted-daily publisher has a separate warning email when its latest scheduled run remains newer than its last
+successful completion beyond the two-hour start and execution budget, followed by a five-minute hold. An owned
+recovery completion resolves the incident; a successful Friday publication does not page over the weekend. The
+collector retains both CronJob timestamps without enabling the Job collector or changing Kubernetes permissions.
+Alertmanager sends warnings carrying `notify="email"` to the existing email receiver, with a four-hour repeat
+interval. This includes the existing Bayn input, execution and replica warnings and Restate metadata lag. Warnings
+without that opt-in remain quiet. Apply a fallback configuration update before a separately
+reviewed Alertmanager revision bump, as described in the [email runbook](../../../docs/runbooks/mimir-email-alerting.md).
 
 The central Alloy also discovers each Ceph exporter pod (`ceph-exporter` job), retaining OSD and node identity.
 The existing cAdvisor scrape retains `container_cpu_cfs_periods_total`, `container_cpu_cfs_throttled_periods_total`
@@ -176,3 +197,16 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   --data-urlencode 'query=topk(10, ceph_storage:rbd_pod_write_bytes_per_second:rate5m)' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 ```
+
+## Bayn research model
+
+The private `bayn-model` application replaces Rune with a locked Alpha-R1 checkpoint. The central Alloy scrapes
+vLLM metrics and admission metrics every fifteen seconds and retains both provisioning and serving logs with
+namespace, pod, container and service identity. `bayn-model-performance` shows readiness, queue time, TTFT,
+prefill/decode latency, throughput, token volume, KV occupancy and bounded-admission failures. Request logs contain
+generated request IDs, validated trace IDs and durations; request/response bodies are disabled in vLLM.
+The same log pipeline retains the independent `research` container. Its Effect metrics reach Mimir through the
+gateway's pod port 8080; the research egress policy must allow that destination port even though the Service exposes
+port 80. `bayn-research.rules` covers worker heartbeat, failed attempts and incomplete expense coverage.
+Research-model unavailability and repeated deadline expiry are warnings without email paging. A model outage does
+not change Bayn execution readiness. See [the model runbook](../../../services/bayn-model/README.md).

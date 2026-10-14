@@ -1,5 +1,31 @@
 # Nanoagent guest API
 
+`internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
+verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
+proofs require an explicit observation budget and cannot carry control actions. Workload proofs permit only an exact
+metadata probe or terminal cleanup. The shared public test vectors are generated together into the Tengri fixture and
+`internal/guestauth/testdata/ofz-guest-request-v4.json`. Go embeds its copy in the test binary so standalone Docker
+builds and isolated test execution do not require a sibling source directory. CI verifies both generated copies.
+These public deterministic keys must never provide deployment keys.
+
+Ofz checks the complete approved policy on each call. The signed proof delegates one exact action, method, target and
+body with only that request's byte/item budget; it does not copy file roots or unrelated conversation/terminal IDs into
+the guest. The 16 KiB decoded-context limit covers JSON escaping of a maximum 4096-byte target. Protocol 3 and its
+signing domain are rejected. Controller, supervisor and guest must migrate together.
+
+The RPC receiver requires a signed proof for every unary request and every stream opening message. It checks the
+canonical protobuf bytes, action, target, exactly one copy of each claim header, and the runtime published by guest
+root before admitting a single-use nonce. It rechecks the runtime before returning unary data or sending stream data.
+The bootstrap token alone grants no RPC admission. Scoped content is denied until the bounded observer RPCs exist.
+
+Guest init requires a 32-byte public `verificationKey` in the private slot boot configuration. It publishes the key as
+`/run/tengri/guest-verify.pub` and atomically writes `/run/tengri/claim.json` after binding a resumed runtime. Freeze and
+resume clear the previous claim. Nanoagent reads bounded root-owned regular files and rejects writable files and
+symlinks. The host runner mounts only `tengri-guest-verification`, never the controller's private signing key.
+Controller signing, supervisor proof/shared replay checks and preview authorization use the same mandatory protocol.
+Native KVM acceptance, independent execution fencing, observers and recovery remain migration gates; this checkpoint
+cannot be deployed.
+
 Nanoagent runs as UID 1000 inside each Tengri Firecracker guest. Tengri owns the VMM outside the guest, in a normal OCI
 slot Pod. The guest has its own Linux kernel, root disk, and retained 32 GiB home. See the
 [runtime lifecycle](../tengri/README.md) for the host boundary and snapshot protocol.
@@ -22,6 +48,9 @@ Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
 [`nanoagent.proto`](../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto). Nanoagent serves HTTP/2 gRPC and preview
 HTTP over private vsock port 1024. Every RPC checks the slot's unique bootstrap credential. Only the host supervisor
 can reach this transport, after authenticating the exact Tengri SPIFFE identity and current owner/epoch headers.
+The binding includes the Ofz runtime epoch. Guest init requires that canonical epoch on every resume and returns its
+complete claim to the runner. It can change the runtime only from a frozen snapshot belonging to the same MicroVM UID
+and slot epoch; an active guest cannot be rebound. The runner rejects a resume reply that omits or changes that claim.
 Port 8080 binds guest loopback and serves health probes. Host mTLS terminates at the supervisor on port 8443.
 
 SPIRE credentials and its CSI socket stay in the host supervisor. Guest memory contains no SVID, PSAT token, Kubernetes
@@ -82,7 +111,7 @@ for verifying the browser computer tool.
 
 ## Firecracker rootfs and persistent tools
 
-The final OCI artifact carries a pinned boot kernel and a populated 1 GiB ext4 root disk under `/guest`. The Dockerfile
+The final OCI artifact carries a pinned boot kernel and a populated 1.5 GiB ext4 root disk under `/guest`. The Dockerfile
 checks the populated filesystem with at least 16 MiB and 256 inodes free, then writes a SHA-256 manifest.
 Regenerable Python bytecode caches and packaged documentation are omitted from the rootfs; Python source, libraries,
 executables, and copyright files remain. Native image checks exercise Python SSL, SQLite, JSON, and virtual environments.
@@ -106,7 +135,7 @@ C, and CGO projects therefore build from the persistent home toolchain without i
 `bootstrap-developer-tools` then installs Homebrew using a pinned, SHA-256-verified upstream installer. It uses
 the PVC-backed `/home/nanoagent/.linuxbrew` prefix as the guest user, without sudo. This 26-byte prefix meets
 [Homebrew's supported custom-prefix requirements](https://docs.brew.sh/Support-Tiers#custom-prefixes) on Ubuntu 24.04
-for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for Neovim, Tree-sitter CLI, GitHub CLI, fd, fzf, lazygit, gdu, bottom, kubectl, tmux, GNU Make,
+for both AMD64 and ARM64. Homebrew verifies and installs binary bottles for GitHub CLI, fd, fzf, lazygit, gdu, bottom, kubectl, tmux, GNU Make,
 CMake, pkgconf, and GCC with `g++`/`c++` commands. Existing Git, ripgrep, jq, SSH, curl, Python, and pinned language compilers remain available.
 Successful installation writes a receipt tied to the bootstrap script, bundled Neovim configuration, XDG paths,
 and resolved C toolchain root. A toolchain upgrade invalidates it so the C++ wrappers use the new headers and startup objects.
@@ -114,27 +143,36 @@ The cache also verifies that the C++ wrapper targets the active Homebrew compile
 executable is linked as `gdu` on the guest PATH for AstroNvim.
 Subsequent boots check that receipt and the supplied executables without starting Homebrew or Neovim. A missing
 executable, changed configuration path, or new bootstrap invalidates the receipt and runs installation again.
-The installer checks all baseline formulae in one Homebrew invocation. Neovim is upgraded when it is below
-AstroNvim's required 0.11 minimum; other installed baseline formulae are reused.
+The installer checks all baseline formulae in one Homebrew invocation and reuses installed formulae.
 Cold installation requires GitHub and Homebrew registry access and fails startup if installation or validation fails.
 
-Nanoagent puts the pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
+Nanoagent puts user executables first, then the local editor and pinned toolchain ahead of Homebrew in child-process PATH. Login shells use the image's
 `/etc/profile.d/tengri-development.sh`, and newly created shell profiles source it too. Existing user shell profiles
 and Neovim configuration are preserved. The profile exports the fixed Homebrew prefix and paths directly, so opening
-a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured. A new Neovim
-configuration uses [AstroNvim's documented Lazy plugin setup](https://docs.astronvim.com/) with stable AstroNvim 6.1.0
-and a pinned Lazy bootstrap. Its plugins are installed before Nanoagent becomes ready. The web terminal serves Nerd
-Font symbols alongside Geist Mono and renders Neovim's block, bar, and underline mode cursors with xterm's WebGL renderer.
-The font loads in the browser, so guest font installation is unnecessary. Run `nvim` to open the editor, `:AstroVersion` to inspect its version, and `:LspInstall`
-or `:TSInstall` to add language support. On an image update, the installer replaces an unchanged generated configuration
-only when its hash and location match the previous installation receipt. User-edited configurations remain intact.
-The default plugin setup runs when
-the installation receipt is invalid, without upgrading installed plugins. Homebrew's Cellar, cache, and Neovim
-configuration, plugin lockfile, plugin data, and undo files survive sleep/resume; none of these packages enters the 1 GiB rootfs.
-Native image builds exercise this setup, all supplied commands, an additional `brew install hello`, and a repeated
-bootstrap before the rootfs check. The cache regression replaces Homebrew and Neovim with failing executables and
-proves that a prepared home still boots. Stale receipts, missing commands, changed XDG paths, and a changed toolchain root must run installation
-and must not retain a successful receipt after a failure.
+a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured.
+
+The managed editor lives on the fast guest root at `/opt/tengri/editor`: SHA-256-pinned Neovim 0.12.5,
+Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, and nine baseline parsers.
+The image build installs and verifies these dependencies; opening a fresh editor downloads nothing.
+The generated manifest points Lazy directly to these local plugin directories. Automatic plugin updates,
+missing-plugin installation, and parser downloads are disabled for the managed baseline. Explicit `:TSInstall`
+and user-added plugins can still use persistent user storage. Run `nvim` and `:AstroVersion` to inspect the editor.
+
+Existing user shell profiles and edited Neovim configuration are preserved. On an image update, bootstrap replaces
+an unchanged generated configuration only when its hash and path match the previous receipt. Custom plugins,
+Homebrew's Cellar and cache, editor data, lockfiles, state, undo files, workspace and Codex state stay on the retained
+home PVC. The launcher moves only regenerable Lua bytecode caches to the guest's local `/tmp`; it does not move or
+remove user data. Existing Homebrew Neovim installations remain available explicitly. User `~/.local/bin` overrides
+retain priority over the managed editor.
+
+The browser terminal serves Nerd Font symbols alongside Geist Mono and renders block, bar, and underline mode
+cursors. Guest fonts are unnecessary. Native image builds exercise the supplied tools, an additional `brew install hello`,
+and repeated bootstrap. A separate network-disabled check starts the managed editor twice with fresh XDG directories,
+verifies all baseline plugins and parsers resolve locally, and opens a custom persistent plugin fixture. Bootstrap's cache
+regression replaces Homebrew with a failing executable and proves that a prepared home still boots. Stale receipts,
+missing commands, changed XDG paths and a changed toolchain root must invalidate installation and must not retain a
+successful receipt after failure. These headless checks establish dependency availability; terminal first-screen latency
+is measured separately on a real guest.
 
 Small system compiler links let Homebrew's post-install steps reach the persistent C compiler at `/usr/bin/cc` and
 `/usr/bin/gcc`. The C++ wrappers combine Homebrew's compiler and standard library with the bundled Linux development
@@ -150,7 +188,7 @@ default seccomp filter, and with no host namespace or filesystem mounts in its P
 Nanoagent starts Codex with `gpt-6.1-sol` as its default model. Explicit thread and turn options override that default;
 omitted options preserve an existing thread's settings.
 
-The operating-system root is the private 1 GiB Firecracker disk. Snapshot sleep/resume retains its changes and running
+The operating-system root is the private 1.5 GiB Firecracker disk. Snapshot sleep/resume retains its changes and running
 processes. An explicitly fenced cold replacement resets the root from the image. The 32 GiB home, `/workspace`, Codex account, and
 home-installed tools remain on the retained PVC. APT indexes and downloaded packages use `~/.cache/apt` on that PVC;
 installed system packages consume root-filesystem space. Image builds exercise passwordless `sudo`, writes to `/etc` and
@@ -184,7 +222,7 @@ bash -n bootstrap-toolchain.sh
 bash -n bootstrap-developer-tools.sh developer-profile.sh
 bash -n bootstrap-browser.sh bootstrap-browser-runtime.sh launch-browser.sh browser-xkbcomp.sh
 bash -n validate-rootfs.sh validate-rootfs.test.sh
-# On Linux with e2fsprogs and at least 1 GiB of temporary disk space:
+# On Linux with e2fsprogs and at least 2 GiB of temporary disk space:
 bash validate-rootfs.test.sh
 bash bootstrap-codex.sh --validate-manifest
 gofmt -w *.go
@@ -206,7 +244,7 @@ controller and guest; the automatic Tengri Warehouse and Stage promote only the 
 
 Authenticated `OpenEditor` starts code-server on demand. `bootstrap-code-server.sh` pins version 4.135.0 and verifies
 platform-specific SHA-256 digests before installing into `$HOME/.tengri/code-server`. The large upstream payload stays
-on the persistent home volume, outside Firecracker's 1 GiB rootfs. Each image build verifies the native Linux archive;
+on the persistent home volume, outside Firecracker's 1.5 GiB rootfs. Each image build verifies the native Linux archive;
 first use requires HTTPS access to GitHub release assets. An unavailable download fails visibly and can be retried.
 
 `CODE_SERVER_BINARY` and `CODE_SERVER_BOOTSTRAP_COMMAND` select the executable and installer. The supervisor starts one
@@ -233,7 +271,7 @@ slot's image and live editor process. An image change requires the explicit fenc
 
 The guest runs a persistent headed Chromium browser with a private TigerVNC display. The desktop and Codex's
 `computer` MCP tool share that display. The immutable image bundles a compressed graphics archive inside the
-enforced 1 GiB root filesystem. Its expanded libraries and pinned Chromium build install on the retained home.
+enforced 1.5 GiB root filesystem. Its expanded libraries and pinned Chromium build install on the retained home.
 The boot init configures these browser paths before starting Nanoagent and its Codex MCP server.
 The launcher sets `browser.custom_chrome_frame=false` on every start and disables Openbox decorations. Tengri owns
 the window controls; Chromium keeps its tabs and address bar without a second set of controls inside the preview.

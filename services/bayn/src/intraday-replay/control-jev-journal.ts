@@ -15,6 +15,7 @@ import { decodeJevEvaluationReceipt, decodeJevEvaluationRequest, type JevEvaluat
 import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { JevPurpose } from '../jev/portfolio'
+import { JevEntryTargetSchema } from '../jev/decision'
 import {
   decodeJevResolution,
   JevResolutionStatus,
@@ -39,6 +40,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
     const plannedRequests = new Map<string, JevEvaluationRequest>()
     const windows = new Map<string, string>()
     const calls: ReplayJevCall[] = []
+    let interrupted = false
     const failure = (cause: unknown) =>
       operationalError({
         component: 'database',
@@ -47,7 +49,23 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
         cause,
       })
     const atomic = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
-      permit.withPermit(Effect.uninterruptible(operation)).pipe(Effect.mapError(failure))
+      permit
+        .withPermit(
+          Effect.gen(function* () {
+            if (interrupted)
+              return yield* failure(
+                'Interrupted journal cannot be reused; preserve this experiment and use a new directory',
+              )
+            return yield* operation
+          }).pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                interrupted = true
+              }),
+            ),
+          ),
+        )
+        .pipe(Effect.mapError(failure))
     const filePath = (kind: string, id: string) => `${directory}/${kind}-${id}.json`
     const read = (kind: string, id: string) =>
       Effect.gen(function* () {
@@ -288,7 +306,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
     }
     const observations: CandidateObservationStore['Service'] = {
       latestJevWindowEnd: ({ cycleId, purpose }) =>
-        Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`))),
+        atomic(Effect.sync(() => Option.fromNullishOr(windows.get(`${cycleId}:${purpose}`)))),
       record: ({ contentHash, payload }) =>
         atomic(
           Effect.gen(function* () {
@@ -296,8 +314,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
             if (
               observation.schemaVersion !== 'bayn.jev-observation.v1' ||
               observation.contentHash !== contentHash ||
-              observation.portfolio.purpose !== JevPurpose.Manage ||
-              observation.portfolio.brokerState.account.accountId !== `research-control-management-${runId}` ||
+              observation.portfolio.brokerState.account.accountId !== `research-control-${runId}` ||
               observation.cycleId !==
                 (yield* Effect.fromResult(
                   canonicalHashV1Result({ runId, sessionDate: observation.snapshot.manifest.sessionDate }),
@@ -306,7 +323,7 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
                 (yield* Effect.fromResult(
                   canonicalHashV1Result({
                     runId,
-                    scope: 'SIMULATED_CONTROL_MANAGEMENT',
+                    scope: 'SIMULATED_CONTROL',
                     protocol: observation.protocol,
                   }),
                 ))
@@ -326,6 +343,28 @@ export const makeControlJevJournal = (directory: string, runId: string) =>
       evaluations,
       batches: batchStore,
       observations,
+      usable: Effect.sync(() => !interrupted),
+      retainEntryDecision: (raw: unknown) =>
+        atomic(
+          Effect.gen(function* () {
+            const decision = yield* Schema.decodeUnknownEffect(JevEntryTargetSchema, strictParseOptions)(raw)
+            const storedBatch = yield* readBatch(decision.evidence.batchPlan.batchId)
+            if (storedBatch?.result?.resultHash !== decision.evidence.batchResult.resultHash)
+              return yield* failure('Entry decision has no identical committed batch result')
+            const observation = yield* Effect.fromResult(
+              reproduceJevCandidateObservation(yield* readObservation(decision.evidence.batchPlan.observationHash)),
+            )
+            if (
+              observation.schemaVersion !== 'bayn.jev-observation.v1' ||
+              observation.portfolio.purpose !== JevPurpose.Entry ||
+              observation.portfolio.brokerState.account.accountId !== `research-control-${runId}`
+            )
+              return yield* failure('Entry decision belongs to another independent portfolio')
+            const hash = yield* Effect.fromResult(canonicalHashV1Result(decision))
+            yield* write('entry-decision', hash, decision)
+            return hash
+          }),
+        ),
       calls: Effect.sync((): readonly ReplayJevCall[] => [...calls]),
       retainCall: (call: ReplayJevCall) =>
         atomic(
