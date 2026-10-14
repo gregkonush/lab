@@ -258,6 +258,7 @@ describe('native control management requests', () => {
     )
       throw new Error('Expected native management requests')
     expect(result.batch.candidates).toHaveLength(1)
+    if (result.observation.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected managed portfolio')
     expect(result.observation.portfolio.entryFills[0]?.priceAtoms).toBe('100000000000')
     expect(candidate.request.request).toEqual(nativeCandidate.request.request)
     expect(candidate.request.request.state).toMatchObject({
