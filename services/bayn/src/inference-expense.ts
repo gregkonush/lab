@@ -153,6 +153,20 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
         return yield* Result.fail(
           new InferenceCostError({ message: 'Unknown inference usage cannot carry a priced expense' }),
         )
+    } else if (line.usageStatus === InferenceUsageStatus.NotDispatched) {
+      if (
+        line.receiptHash === null ||
+        line.inputTokens !== '0' ||
+        line.outputTokens !== '0' ||
+        line.estimatedCostPicoUsd !== '0' ||
+        line.rateHash !== null ||
+        quote.rate !== null
+      )
+        return yield* Result.fail(
+          new InferenceCostError({
+            message: 'Undispatched inference expense requires a receipt, zero usage and cost, and no tariff',
+          }),
+        )
     } else {
       if (line.receiptHash === null || line.inputTokens === null || line.outputTokens === null)
         return yield* Result.fail(new InferenceCostError({ message: 'Metered inference expense has incomplete usage' }))

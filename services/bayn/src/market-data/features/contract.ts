@@ -1,4 +1,4 @@
-import { Data, Result, Schema } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
@@ -15,7 +15,8 @@ export enum MarketFeatureSessionPolicy {
   RegularNewYork = 'alpaca.regular.new-york-date.v1',
 }
 
-export const marketFeatureClockSkewAllowanceMs = 5000
+import { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewAllowanceMs } from './feature-core'
+export { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewAllowanceMs } from './feature-core'
 
 export const rollingFeatureDefinitionMaterial = [
   MarketFeatureDefinition.RollingPrice30m,
@@ -44,14 +45,6 @@ export const RequiredMarketFeatureSchema = Schema.Struct({
   windowEndAt: UtcInstantSchema,
 })
 
-export const MarketFeatureInputSchema = Schema.Struct({
-  eventTimeNanos: IntegerString,
-  ingestionTimeNanos: IntegerString,
-  sourceTopic: Identity,
-  sourcePartition: SafeInteger,
-  sourceOffset: IntegerString,
-  contentHash: Hash,
-})
 export const RollingMarketValuesSchema = Schema.Struct({
   referencePriceMicros: PositiveIntegerString,
   rangeHighPriceMicros: PositiveIntegerString,
@@ -85,12 +78,6 @@ export const RollingMarketFeatureSchema = Schema.Struct({
 export type RollingMarketFeature = typeof RollingMarketFeatureSchema.Type
 export type MarketFeatureInput = typeof MarketFeatureInputSchema.Type
 export type RollingMarketValues = typeof RollingMarketValuesSchema.Type
-
-export class MarketFeatureFailure extends Data.TaggedError('MarketFeatureFailure')<{
-  readonly reason: 'schema' | 'identity' | 'window' | 'hash' | 'input'
-  readonly message: string
-  readonly cause?: unknown
-}> {}
 
 const failure = (reason: MarketFeatureFailure['reason'], message: string, cause?: unknown) =>
   new MarketFeatureFailure({ reason, message, ...(cause === undefined ? {} : { cause }) })

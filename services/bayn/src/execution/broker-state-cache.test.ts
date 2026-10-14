@@ -11,6 +11,9 @@ const accountId = 'cache-test-account'
 const generation = '1'.repeat(64)
 const fixture = (): ReconciliationPassResult => {
   const cached = cachedBrokerStateFixture({
+    cryptoStatus: null,
+    nonMarginableBuyingPowerMicros: null,
+
     id: accountId,
     status: BrokerAccountStatus.Active,
     currency: 'USD',
@@ -116,7 +119,7 @@ describe('native broker state cache', () => {
       const cache = makeBrokerStateCache(accountId, generation)
       const result = fixture()
       const order = {
-        schemaVersion: 'bayn.paper-order.v2' as const,
+        schemaVersion: 'bayn.order.v3' as const,
         accountId,
         brokerOrderId: 'order',
         clientOrderId: 'client',
@@ -124,8 +127,8 @@ describe('native broker state cache', () => {
         side: OrderSide.Buy,
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
-        quantityMicros: '2000000',
-        filledQuantityMicros: status === OrderStatus.PartiallyFilled ? '1000000' : '0',
+        quantityAtoms: '2000000000',
+        filledQuantityAtoms: status === OrderStatus.PartiallyFilled ? '1000000000' : '0',
         limitPriceMicros: '100000000',
         status,
         observedAt: now,

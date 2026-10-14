@@ -1,3 +1,5 @@
+import { equityMarketProfile } from '../jev/markets'
+
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
@@ -201,8 +203,8 @@ durableTest.each(
         const windowEnd = Math.floor(at / 60_000) * 60_000
         const query = {
           ...fixture.query,
-          symbols: [...protocol.candidateSymbols, protocol.benchmarkSymbol].sort(),
-          candidateSymbols: protocol.candidateSymbols,
+          symbols: [...equityMarketProfile.candidateSymbols, 'SPY'].sort(),
+          candidateSymbols: equityMarketProfile.candidateSymbols,
           rangeStartAt: utcInstantFromEpochMillis(windowEnd - (fullWindow ? 30 : 1) * 60_000),
           rangeEndAt: utcInstantFromEpochMillis(windowEnd),
           observedAt: utcInstantFromEpochMillis(at),
@@ -413,7 +415,7 @@ durableTest.each(
           runId,
           sourceManifestHash: source.sourceManifestHash,
           openingCashMicros: '100000000000',
-          protocol: fixture.protocol,
+          protocol: { ...fixture.protocol, ...equityMarketProfile },
           assumptions: {
             latencyMs: 10,
             slippageBps: slippedExit ? 1 : 0,
@@ -435,7 +437,7 @@ durableTest.each(
                   : fixture.input.calendar,
             ),
           ),
-          assets: fixture.protocol.universe.map((symbol, index) =>
+          assets: equityMarketProfile.universe.map((symbol, index) =>
             Result.getOrThrow(
               normalizeAssetResult(
                 {
@@ -490,9 +492,7 @@ durableTest.each(
                   ...cursor,
                   projection: {
                     ...cursor.projection,
-                    bars: new Map(
-                      [...cursor.projection.bars].filter(([symbol]) => symbol !== protocol.benchmarkSymbol),
-                    ),
+                    bars: new Map([...cursor.projection.bars].filter(([symbol]) => symbol !== 'SPY')),
                   },
                 }
               : scenario === 'fallback' && (cursor.lastArrival?.availableAtMs ?? 0) >= closeAtMs
@@ -658,9 +658,15 @@ durableTest.each(
         if (scenario === 'missing-calendar') {
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           const pass = yield* runtime.advance
-          expect(pass.observation).toMatchObject({ result: 'FAILURE', failure: 'calendar-unavailable' })
+          expect(pass.observation).toMatchObject({
+            result: 'SUCCESS',
+            recoveryAction: 'WAITING',
+            readiness: { reason: 'SNAPSHOT_UNAVAILABLE', snapshotQuery: { symbols: ['BTC/USD', 'ETH/USD'] } },
+          })
           expect((yield* broker.snapshot).orders).toEqual([])
-          expect(yield* sql`SELECT count(*)::int AS count FROM autonomous_cycles`).toEqual([{ count: 0 }])
+          expect(
+            yield* sql`SELECT state, execution_calendar_schema_version AS hours, snapshot_id IS NULL AND decision_hash IS NULL AS unbound FROM autonomous_cycles`,
+          ).toEqual([{ state: 'ACTIVE', hours: 'bayn.continuous-market-hours.v1', unbound: true }])
           expect(yield* sql`SELECT count(*)::int AS count FROM jev_evaluation_requests`).toEqual([{ count: 0 }])
           return { _tag: 'Coverage' as const }
         }
@@ -801,11 +807,25 @@ durableTest.each(
           expect(state.fills).toEqual([])
           expect(state.ledger.positions).toEqual([])
           expect(
-            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04'`,
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v1'`,
           ).toEqual([{ state: 'NO_TRADE', bound: true }])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
+          yield* advanceMarketTo(finalizationAtMs + 180_001)
+          const successor = yield* runtime.advance
+          expect(successor.observation).toMatchObject({
+            result: 'SUCCESS',
+            recoveryAction: 'WAITING',
+            readiness: { reason: 'SNAPSHOT_UNAVAILABLE', snapshotQuery: { symbols: ['BTC/USD', 'SOL/USD'] } },
+          })
+          expect(
+            yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles
+            WHERE execution_calendar_schema_version = 'bayn.continuous-market-hours.v1' ORDER BY entry_attempt_ordinal`,
+          ).toEqual([
+            { state: 'BLOCKED', ordinal: 2 },
+            { state: 'ACTIVE', ordinal: 3 },
+          ])
           expect(schedule.failedPassCount).toBe(0)
-          expect(schedule.unavailableDecisionPassCount).toBe(0)
+          expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
           expect(yield* sql`SELECT effective, kill_state FROM authority_state`).toEqual([
             { effective: 'PAPER', kill_state: 'CLEAR' },
           ])
@@ -821,7 +841,7 @@ durableTest.each(
                 unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
               },
             }),
-          ).toEqual({ completion: 'COMPLETE', issues: [] })
+          ).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
           return { _tag: 'Coverage' as const }
         }
         if (
@@ -1226,7 +1246,7 @@ durableTest.each(
             { state: 'COMPLETED' },
           ])
           if (partialEntryReentry) {
-            expect(state.fills.map((fill) => fill.quantityMicros)).toEqual(['40000000', '40000000'])
+            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['40000000000', '40000000000'])
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
             yield* advanceMarketTo(reentryAtMs)
@@ -1295,11 +1315,11 @@ durableTest.each(
             }
           }
           if (scenario === 'partial-exit-reentry') {
-            expect(state.fills.map((fill) => fill.quantityMicros)).toEqual([
-              '100000000',
-              '40000000',
-              '40000000',
-              '20000000',
+            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual([
+              '100000000000',
+              '40000000000',
+              '40000000000',
+              '20000000000',
             ])
             const restarted = yield* createRuntime
             expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)

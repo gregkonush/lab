@@ -2,13 +2,14 @@ export {
   accrueCashYield,
   elapsedCalendarDays,
   saleCostBasisMicros,
-  scaleQuantityMicros,
+  scaleQuantityAtoms,
 } from './strategy/execution-model/cash'
 export {
-  desiredQuantityMicros,
+  desiredQuantityAtoms,
   microsToNumber,
   notionalMicros,
   numberToMicros,
+  priceNumberToMicros,
   referencePriceMicros,
 } from './strategy/execution-model/fixed-point'
 export { calculateSessionFees, type FeeBreakdown, type FeeInput } from './strategy/execution-model/fees'

@@ -364,7 +364,7 @@ export const readForwardPerformancePostgresDataFirst = (
           Effect.flatMap(decodeTransactions),
         )
         const brokerFeeRows = yield* sql<Record<string, unknown>>`
-          SELECT fee.data, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
+          SELECT fee.data, fee.coin_cost_basis_micros::text AS coin_cost_basis_micros, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
             fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
             fee.tigerbeetle_ledger::integer AS tigerbeetle_ledger, fee.posted_at IS NOT NULL AS posted,
             fee.first_observed_at, fee.posted_at,
@@ -482,7 +482,7 @@ export const readForwardPerformancePostgresDataFirst = (
             intent.decision_hash,
             intent.symbol,
             intent.side,
-            intent.quantity_micros::text AS quantity_micros,
+            intent.quantity_atoms::text AS quantity_atoms,
             intent.notional_limit_micros::text AS notional_limit_micros,
             intent.replan_generation_hash,
             intent.terminal_outcome,
@@ -515,9 +515,9 @@ export const readForwardPerformancePostgresDataFirst = (
             observed_order.account_id,
             observed_order.symbol,
             observed_order.side,
-            observed_order.quantity_micros::text AS quantity_micros,
+            observed_order.quantity_atoms::text AS quantity_atoms,
             observed_order.notional_micros::text AS notional_micros,
-            observed_order.filled_quantity_micros::text AS filled_quantity_micros,
+            observed_order.filled_quantity_atoms::text AS filled_quantity_atoms,
             observed_order.status,
             event.occurred_at,
             event.observed_at
@@ -555,8 +555,8 @@ export const readForwardPerformancePostgresDataFirst = (
             fill.account_id,
             fill.symbol,
             fill.side,
-            fill.quantity_micros::text AS quantity_micros,
-            fill.price_micros::text AS price_micros,
+            fill.quantity_atoms::text AS quantity_atoms,
+            fill.price_atoms::text AS price_atoms,
             fill.fee_micros::text AS fee_micros,
             fill.source_timestamp,
             event.occurred_at,
@@ -744,7 +744,7 @@ export const readForwardPerformancePostgresDataFirst = (
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at <= latest_reconciliation.reconciled_at
             GROUP BY transaction.symbol
-            HAVING sum(transaction.quantity_delta_micros) <> 0
+            HAVING sum(transaction.quantity_delta_atoms) <> 0
               OR sum(transaction.cost_basis_delta_micros) <> 0
           ) AS open_position
         `.pipe(Effect.flatMap(decodeCount))
@@ -847,8 +847,8 @@ export const readForwardPerformancePostgresDataFirst = (
             cycleId: row.cycle_id ?? '',
             symbol: row.symbol,
             side: row.side,
-            quantityMicros: row.quantity_micros,
-            priceMicros: row.price_micros,
+            quantityAtoms: row.quantity_atoms,
+            priceAtoms: row.price_atoms,
             notionalMicros: row.notional_micros,
             feeMicros: row.fee_micros,
             realizedPnlMicros: row.realized_pnl_micros,

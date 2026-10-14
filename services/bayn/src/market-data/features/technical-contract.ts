@@ -19,18 +19,9 @@ export enum TechnicalFeatureContract {
 export enum TechnicalFeatureDefinition {
   Indicators1m = 'dorvud.technical-indicators-1m.v1',
 }
-export enum TechnicalReadiness {
-  Ready = 'READY',
-  Warming = 'WARMING',
-  Gap = 'GAP',
-  SourceMissing = 'SOURCE_MISSING',
-  ZeroVolume = 'ZERO_VOLUME',
-}
+import { TechnicalReadiness, TechnicalFeatureValueSchema } from './feature-core'
+export { TechnicalReadiness, TechnicalFeatureValueSchema } from './feature-core'
 
-export const TechnicalFeatureValueSchema = Schema.Struct({
-  status: Schema.Enum(TechnicalReadiness),
-  value: Schema.NullOr(Schema.String.check(Schema.isPattern(/^(?:0|-?[1-9][0-9]*)$/))),
-})
 export const TechnicalMarketValuesSchema = Schema.Struct({
   ema12PriceMicros: TechnicalFeatureValueSchema,
   ema26PriceMicros: TechnicalFeatureValueSchema,

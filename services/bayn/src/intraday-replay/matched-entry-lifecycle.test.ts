@@ -54,7 +54,7 @@ test('protective trigger survives partial fills and an unchanged quote cannot re
   const stopped = step(entry(), MatchedEvent.Poll, at + 5100, quote(at + 5100, { bidPrice: 99, askPrice: 99.02 }))
   const arrival = quote(at + 5200, { bidPrice: 99, askPrice: 99.02, bidSize: 1 })
   const partial = step(stopped, MatchedEvent.ExitArrival, at + 5200, arrival)
-  expect(partial.portfolio.ledger.positions[0]?.quantityMicros).toBe('98000000')
+  expect(partial.portfolio.ledger.positions[0]?.quantityAtoms).toBe('98000000000')
   expect(finishMatchedLifecycle(partial).status).toBe('UNRESOLVED')
   expect(finishMatchedLifecycle(partial).netExecutionPnlMicros).toBeNull()
   const exhausted = step(
@@ -63,7 +63,7 @@ test('protective trigger survives partial fills and an unchanged quote cannot re
     at + 10200,
     arrival,
   )
-  expect(exhausted.portfolio.ledger.positions[0]?.quantityMicros).toBe('98000000')
+  expect(exhausted.portfolio.ledger.positions[0]?.quantityAtoms).toBe('98000000000')
   expect(finishMatchedLifecycle(exhausted).status).toBe('UNRESOLVED')
   expect(finishMatchedLifecycle(exhausted).netExecutionPnlMicros).toBeNull()
   const flat = step(step(exhausted, MatchedEvent.Poll, at + 15100), MatchedEvent.ExitArrival, at + 15200)

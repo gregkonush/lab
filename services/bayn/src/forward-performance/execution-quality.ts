@@ -1,7 +1,6 @@
 import { validIntradayPerformanceVolumeEvidence } from './intraday-volume'
 import { DateTime, Option, Result } from 'effect'
 
-import { alpacaBuyNotionalMicros } from '../broker/alpaca-mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type {
   ForwardPerformanceEvidenceInput,
@@ -12,7 +11,6 @@ import type {
   ForwardPerformanceTransactionEvidence,
 } from './model'
 
-const MICROS = 1_000_000n
 const SIGNED_MICROS_MIN = -(1n << 127n)
 const SIGNED_MICROS_MAX = (1n << 127n) - 1n
 const RATIO_DECIMAL_PLACES = 12
@@ -54,8 +52,8 @@ const checkedAdd = (left: bigint, right: bigint): bigint | undefined => {
   return inSignedRange(value) ? value : undefined
 }
 
-const roundHalfUp = (quantity: bigint, price: bigint): bigint | undefined => {
-  const value = (quantity * price + MICROS / 2n) / MICROS
+const roundHalfUp = (quantity: bigint, price: bigint, denominator = 1_000_000_000n): bigint | undefined => {
+  const value = (quantity * price + denominator / 2n) / denominator
   return inSignedRange(value) ? value : undefined
 }
 
@@ -162,21 +160,8 @@ const identityMatches = (
     intent.decisionHash === evidence.decisionHash &&
     intent.symbol === evidence.symbol &&
     intent.side === evidence.side &&
-    intent.quantityMicros === evidence.plannedQuantityMicros &&
+    intent.quantityAtoms === evidence.plannedQuantityAtoms &&
     intent.createdAt === evidence.decisionCreatedAt
-  )
-}
-
-const notionalOrderMatchesIntent = (
-  intent: NonNullable<ForwardPerformanceExecutionEvidence['intent']>,
-  orderNotionalMicros: string,
-): boolean => {
-  if (intent.notionalLimitMicros === undefined) return false
-  if (intent.side !== 'BUY') return orderNotionalMicros === intent.notionalLimitMicros
-  const currentNotional = alpacaBuyNotionalMicros(intent.notionalLimitMicros)
-  return (
-    orderNotionalMicros === intent.notionalLimitMicros ||
-    (Result.isSuccess(currentNotional) && orderNotionalMicros === currentNotional.success)
   )
 }
 
@@ -185,9 +170,7 @@ const orderMatches = (evidence: ForwardPerformanceExecutionEvidence): boolean =>
   const order = evidence.terminalOrder
   if (intent === undefined || order === undefined) return false
   const representationMatches =
-    order.quantityMicros !== undefined
-      ? order.quantityMicros === evidence.plannedQuantityMicros && order.notionalMicros === undefined
-      : order.notionalMicros !== undefined && notionalOrderMatchesIntent(intent, order.notionalMicros)
+    order.quantityAtoms === evidence.plannedQuantityAtoms && order.notionalMicros === undefined
   return (
     SHA256_PATTERN.test(order.eventId) &&
     order.intentId === evidence.intentId &&
@@ -220,8 +203,8 @@ const transactionMatchesFill = (
   transaction.cycleId === evidence.cycleId &&
   transaction.symbol === evidence.symbol &&
   transaction.side === evidence.side &&
-  transaction.quantityMicros === fill.quantityMicros &&
-  transaction.priceMicros === fill.priceMicros &&
+  transaction.quantityAtoms === fill.quantityAtoms &&
+  transaction.priceAtoms === fill.priceAtoms &&
   transaction.feeMicros === fill.feeMicros &&
   transaction.occurredAt === fill.occurredAt
 
@@ -231,7 +214,7 @@ const validMarketVolumeEvidence = (
   if (volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1') {
     return Result.succeed(validIntradayPerformanceVolumeEvidence(volume))
   }
-  const marketVolume = parseUnsigned(volume.quantityMicros, true)
+  const marketVolume = parseUnsigned(volume.quantityAtoms, true)
   const closePrice = parseUnsigned(volume.closePriceMicros, true)
   const { contentHash, ...material } = volume
   return Result.map(canonicalHashV1Result(material), (expectedHash) =>
@@ -394,7 +377,7 @@ const measureExecutionQuality = (
     if (seenIntents.has(evidence.intentId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
     seenIntents.add(evidence.intentId)
 
-    const planned = parseUnsigned(evidence.plannedQuantityMicros, true)
+    const planned = parseUnsigned(evidence.plannedQuantityAtoms, true)
     const referencePrice = parseUnsigned(evidence.referencePriceMicros, true)
     if (planned === undefined) reasons.add('PLANNED_DECISION_EVIDENCE_GAP')
     if (referencePrice === undefined) reasons.add('REFERENCE_PRICE_EVIDENCE_GAP')
@@ -418,7 +401,7 @@ const measureExecutionQuality = (
     }
 
     const fills = [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right)))
-    const reportedFilledQuantity = parseUnsigned(order?.filledQuantityMicros, false)
+    const reportedFilledQuantity = parseUnsigned(order?.filledQuantityAtoms, false)
     if (reportedFilledQuantity !== undefined && reportedFilledQuantity > 0n && fills.length === 0) {
       reasons.add('FILL_EVIDENCE_GAP')
     }
@@ -434,8 +417,8 @@ const measureExecutionQuality = (
       if (seenFillEvents.has(fill.brokerEventId)) reasons.add('DUPLICATE_EXECUTION_EVIDENCE')
       seenFillEvents.add(fill.brokerEventId)
 
-      const quantity = parseUnsigned(fill.quantityMicros, true)
-      const price = parseUnsigned(fill.priceMicros, true)
+      const quantity = parseUnsigned(fill.quantityAtoms, true)
+      const price = parseUnsigned(fill.priceAtoms, true)
       const fee = parseUnsigned(fill.feeMicros, false)
       if (quantity === undefined || price === undefined || fee === undefined) {
         reasons.add('INVALID_EXECUTION_MICROS')
@@ -466,7 +449,7 @@ const measureExecutionQuality = (
 
       const transaction = transactionByBrokerEvent.get(fill.brokerEventId)
       const transactionNotional = parseUnsigned(transaction?.notionalMicros, true)
-      const expectedNotional = roundHalfUp(quantity, price)
+      const expectedNotional = roundHalfUp(quantity, price, 1_000_000_000_000n)
       if (
         transaction === undefined ||
         transactionNotional === undefined ||
@@ -531,20 +514,14 @@ const measureExecutionQuality = (
         plannedReferenceNotional = nextPlanNotional
       }
 
-      const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityMicros, false)
+      const orderFilled = blocked ? 0n : parseUnsigned(order?.filledQuantityAtoms, false)
       const orderQuantity = blocked
         ? planned
-        : order?.quantityMicros === undefined
+        : order?.quantityAtoms === undefined
           ? undefined
-          : parseUnsigned(order.quantityMicros, true)
+          : parseUnsigned(order.quantityAtoms, true)
       const orderNotional = order?.notionalMicros === undefined ? undefined : parseUnsigned(order.notionalMicros, true)
-      const representationMatches = blocked
-        ? true
-        : orderQuantity !== undefined
-          ? orderQuantity === planned && orderNotional === undefined
-          : orderNotional !== undefined &&
-            evidence.intent !== undefined &&
-            notionalOrderMatchesIntent(evidence.intent, orderNotional.toString())
+      const representationMatches = blocked || (orderQuantity === planned && orderNotional === undefined)
       if (
         orderFilled === undefined ||
         !representationMatches ||
@@ -686,9 +663,9 @@ const measureExecutionQuality = (
       implementationShortfall: {
         plannedOrderCount: executions.length,
         fillCount,
-        plannedQuantityMicros: plannedQuantity.toString(),
-        filledQuantityMicros: filledQuantity.toString(),
-        unfilledQuantityMicros: (plannedQuantity >= filledQuantity ? plannedQuantity - filledQuantity : 0n).toString(),
+        plannedQuantityAtoms: plannedQuantity.toString(),
+        filledQuantityAtoms: filledQuantity.toString(),
+        unfilledQuantityAtoms: (plannedQuantity >= filledQuantity ? plannedQuantity - filledQuantity : 0n).toString(),
         plannedReferenceNotionalMicros: plannedReferenceNotional.toString(),
         executedNotionalMicros: executedNotional.toString(),
         executionPriceShortfallMicros: executionPriceShortfall.toString(),
@@ -766,7 +743,7 @@ const measureObservedCapacity = (
       reasons.add(matchingVolumes.length === 0 ? 'MARKET_VOLUME_EVIDENCE_GAP' : 'INVALID_MARKET_VOLUME_EVIDENCE')
       continue
     }
-    const marketVolume = parseUnsigned(volume.quantityMicros, true)
+    const marketVolume = parseUnsigned(volume.quantityAtoms, true)
     const validVolume = validMarketVolumeEvidence(volume)
     if (Result.isFailure(validVolume)) return Result.fail(validVolume.failure)
     if (marketVolume === undefined || !validVolume.success) {
@@ -828,16 +805,16 @@ const measureObservedCapacity = (
       symbol,
       windowOpenedAt: volume.windowOpenedAt,
       windowClosedAt: volume.windowClosedAt,
-      filledQuantityMicros: filled.toString(),
-      marketVolumeQuantityMicros: marketVolume.toString(),
+      filledQuantityAtoms: filled.toString(),
+      marketVolumeQuantityAtoms: marketVolume.toString(),
       ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1'
         ? {
             intradaySource: { feed: 'iex' as const, volumeScope: volume.volumeScope, evidenceHash: volume.contentHash },
           }
         : {}),
       participationRate: {
-        numeratorQuantityMicros: filled.toString(),
-        denominatorQuantityMicros: marketVolume.toString(),
+        numeratorQuantityAtoms: filled.toString(),
+        denominatorQuantityAtoms: marketVolume.toString(),
         decimal: formatRatio(filled, marketVolume),
       },
     })
@@ -863,8 +840,8 @@ const measureObservedCapacity = (
     boundedObservedReferenceNotionalMicros: boundedReferenceNotional.toString(),
     boundedObservedExecutedNotionalMicros: boundedExecutedNotional.toString(),
     maximumParticipationRate: {
-      numeratorQuantityMicros: maximumNumerator.toString(),
-      denominatorQuantityMicros: maximumDenominator.toString(),
+      numeratorQuantityAtoms: maximumNumerator.toString(),
+      denominatorQuantityAtoms: maximumDenominator.toString(),
       decimal: formatRatio(maximumNumerator, maximumDenominator),
     },
   })

@@ -1,11 +1,11 @@
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1, sha256 } from '../hash'
 import type { MarketDataContract } from '../market-data'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest } from '../types'
 import { fixtureProtocol } from './runtime-fixtures'
 
 export const persistedMarketDataContract: MarketDataContract = {
   universeId: 'cross-asset-taa-v1',
-  universeSymbolHash: fixtureProtocol.universeSymbolHash,
+  universeSymbolHash: sha256(fixtureProtocol.universe.join(',')),
   universe: fixtureProtocol.universe,
   historyStart: '2026-03-02',
   evaluationStart: '2026-03-06',
@@ -29,7 +29,7 @@ export const makePersistedSnapshotFixture = (): InputManifest => {
       publicationId: '8'.repeat(64),
       publicationSchemaVersion: PublicationSchema.AdjustedDailySnapshotV2,
       universeId: 'cross-asset-taa-v1',
-      universeSymbolHash: fixtureProtocol.universeSymbolHash,
+      universeSymbolHash: sha256(fixtureProtocol.universe.join(',')),
       source: DataSource.Alpaca,
       sourceFeed: DataFeed.Sip,
       adjustment: PriceAdjustment.All,

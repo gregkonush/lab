@@ -16,13 +16,13 @@ const coreInput = (
 ): IntradayReplayIocCoreInput => ({
   order: {
     side: OrderSide.Buy,
-    quantityMicros: 2_000_000n,
+    quantityAtoms: 2000000000n,
     limitPriceMicros: 100_020_000n,
     ...overrides,
   },
   quote: {
     priceMicros: 100_010_000n,
-    displayedQuantityMicros: 2_000_000n,
+    displayedQuantityAtoms: 2000000000n,
     ...quote,
   },
   executionModel: intradayMomentumExecutionModel,
@@ -40,8 +40,8 @@ describe('intraday replay IOC economic core', () => {
   test('preserves exact buy and sell quote economics', () => {
     expect(success(simulateIntradayReplayIocCore(coreInput()))).toEqual({
       status: 'filled',
-      requestedQuantityMicros: 2_000_000n,
-      filledQuantityMicros: 2_000_000n,
+      requestedQuantityAtoms: 2000000000n,
+      filledQuantityAtoms: 2000000000n,
       fillPriceMicros: 100_010_000n,
       fillNotionalMicros: 200_020_000n,
       unfilledRemainder: 'none',
@@ -54,8 +54,8 @@ describe('intraday replay IOC economic core', () => {
       ),
     ).toEqual({
       status: 'filled',
-      requestedQuantityMicros: 2_000_000n,
-      filledQuantityMicros: 2_000_000n,
+      requestedQuantityAtoms: 2000000000n,
+      filledQuantityAtoms: 2000000000n,
       fillPriceMicros: 99_990_000n,
       fillNotionalMicros: 199_980_000n,
       unfilledRemainder: 'none',
@@ -66,12 +66,12 @@ describe('intraday replay IOC economic core', () => {
     expect(
       success(
         simulateIntradayReplayIocCore(
-          coreInput({}, { displayedQuantityMicros: 3_900_000n }, { availableLiquidityPpm: 500_000 }),
+          coreInput({}, { displayedQuantityAtoms: 3900000000n }, { availableLiquidityPpm: 500_000 }),
         ),
       ),
     ).toMatchObject({
       status: 'filled',
-      filledQuantityMicros: 1_000_000n,
+      filledQuantityAtoms: 1000000000n,
       unfilledRemainder: 'canceled',
     })
     expect(
@@ -79,7 +79,7 @@ describe('intraday replay IOC economic core', () => {
     ).toMatchObject({
       status: 'canceled',
       reason: 'adverse-price-exceeds-limit',
-      filledQuantityMicros: 0n,
+      filledQuantityAtoms: 0n,
     })
   })
 })

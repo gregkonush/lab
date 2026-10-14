@@ -19,6 +19,7 @@ class PersistentNixTests(unittest.TestCase):
         self.registration = self.root / "registration"
         self.registration.write_text("closure one\n")
         self.toolchain.mkdir(parents=True)
+        self.image.chmod(0o755)
         (self.image / "var/nix/db").mkdir(parents=True)
         (self.image / "var/nix/db/db.sqlite").write_text("database")
         self.binaries.mkdir()
@@ -69,8 +70,11 @@ class PersistentNixTests(unittest.TestCase):
 
     def test_same_closure_restart_mounts_without_copy_or_database_import(self):
         for _ in range(2):
+            if self.store.exists():
+                self.store.chmod(0o700)
             result = self.run_seed()
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.store.stat().st_mode & 0o777, 0o755)
         self.assertEqual(
             self.calls.read_text().splitlines(),
             ["copy", "mount", "register", "mount"],

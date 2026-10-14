@@ -1,3 +1,6 @@
+import { isContinuousMarket } from '../../market-hours'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
+import { exchangeSessions } from '../../market-hours'
 import { IntradayCandidateEvidencePolicy } from './model'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -26,7 +29,7 @@ const calendarMaterial = {
 }
 const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
 
-const request: IntradaySnapshotRequest = {
+const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
   sessionDate: '2026-08-18',
   calendar,
   rangeStartAt: '2026-08-18T13:30:00.000Z',
@@ -349,18 +352,18 @@ describe('immutable intraday market snapshot', () => {
     ).toBe('request')
   })
 
-  test('accepts legacy persisted quote and trade markers without changing the snapshot binding', () => {
+  test('rejects retired persisted quote and trade markers', () => {
     const rows = makeRows()
-    const current = success(verifyIntradaySnapshot(request, rows))
-    const legacy = success(
-      verifyIntradaySnapshot(request, {
-        ...rows,
-        quotes: rows.quotes.map((row) => ({ ...row, latest_payload_variants: '1' })),
-        trades: rows.trades.map((row) => ({ ...row, latest_payload_variants: '1' })),
-      }),
-    )
-
-    expect(legacy).toEqual(current)
+    for (const field of ['quotes', 'trades'] as const) {
+      expect(
+        Result.isFailure(
+          verifyIntradaySnapshot(request, {
+            ...rows,
+            [field]: rows[field].map((row) => ({ ...row, latest_payload_variants: '1' })),
+          }),
+        ),
+      ).toBe(true)
+    }
   })
 
   test('binds complete post-range evidence without requiring every symbol to be selection-fresh simultaneously', () => {
@@ -487,6 +490,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('reruns row-level invariants instead of trusting a self-rehashed payload', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     expect(success(reverifyIntradayMarketSnapshot(verified))).toEqual(verified)
 
     const firstBar = verified.bars[0]
@@ -507,12 +511,13 @@ describe('immutable intraday market snapshot', () => {
 
   test('reruns exchange-session invariants instead of trusting a self-rehashed calendar', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     const forgedCalendarMaterial = {
       schemaVersion: verified.manifest.calendar.schemaVersion,
       source: verified.manifest.calendar.source,
       requestedRange: { ...verified.manifest.calendar.requestedRange },
       timeZone: verified.manifest.calendar.timeZone,
-      sessions: verified.manifest.calendar.sessions.map((session) => ({
+      sessions: exchangeSessions(verified.manifest.calendar).map((session) => ({
         ...session,
         openAt: '2026-08-18T14:30:00.000Z',
       })),
@@ -536,6 +541,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('rejects altered manifest metadata even when rows and snapshot identity are unchanged', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     const forgedManifest = Object.freeze({
       ...verified.manifest,
       barCount: verified.manifest.barCount + 1,
@@ -817,7 +823,7 @@ describe('immutable intraday market snapshot', () => {
     const mutableCalendar = {
       ...request.calendar,
       requestedRange: { ...request.calendar.requestedRange },
-      sessions: request.calendar.sessions.map((session) => ({ ...session })),
+      sessions: exchangeSessions(request.calendar).map((session) => ({ ...session })),
     }
     const mutableUniverse = [...request.universe]
     const mutableTopics = { ...request.sourceTopics }
@@ -830,6 +836,7 @@ describe('immutable intraday market snapshot', () => {
       archiveWatermarks: mutableWatermarks,
     }
     const verified = success(verifyIntradaySnapshotRequest(mutableRequest))
+    if (isContinuousMarket(verified.calendar)) throw new Error('expected equity fixture')
 
     mutableUniverse[0] = 'AAPL'
     mutableCalendar.sessions[0]!.openAt = '2026-08-18T14:30:00.000Z'
@@ -844,8 +851,8 @@ describe('immutable intraday market snapshot', () => {
     expect(Object.isFrozen(verified.universe)).toBe(true)
     expect(Object.isFrozen(verified.calendar)).toBe(true)
     expect(Object.isFrozen(verified.calendar.requestedRange)).toBe(true)
-    expect(Object.isFrozen(verified.calendar.sessions)).toBe(true)
-    expect(Object.isFrozen(verified.calendar.sessions[0])).toBe(true)
+    expect(Object.isFrozen(exchangeSessions(verified.calendar))).toBe(true)
+    expect(Object.isFrozen(exchangeSessions(verified.calendar)[0])).toBe(true)
     expect(Object.isFrozen(verified.sourceTopics)).toBe(true)
     expect(Object.isFrozen(verified.archiveWatermarks)).toBe(true)
     expect(Object.isFrozen(verified.archiveWatermarks[0])).toBe(true)
@@ -1028,6 +1035,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for malformed replayed quote and trade timestamps', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1050,6 +1058,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for null replayed quote and trade rows', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1072,6 +1081,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for malformed replayed bar rows', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {
@@ -1094,6 +1104,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for malformed replayed snapshot collections', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       { ...verified, bars: null as never },
@@ -1111,6 +1122,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('decodes the replay envelope before reading nested manifest fields', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       null as never,
       { ...verified, manifest: null as never },
@@ -1134,6 +1146,7 @@ describe('immutable intraday market snapshot', () => {
 
   test('returns a typed row failure for non-serializable replayed quote and trade payloads', () => {
     const verified = success(verifyIntradaySnapshot(request, makeRows()))
+    if (isContinuousMarket(verified.manifest.calendar)) throw new Error('expected equity fixture')
 
     const malformedSnapshots: readonly IntradayMarketSnapshot[] = [
       {

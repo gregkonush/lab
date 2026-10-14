@@ -280,7 +280,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_GROUP_ID: 'bayn-market-data-archive-v3',
       ARCHIVE_CRYPTO_TOPIC: 'bayn.market-data.crypto.v1',
       ARCHIVE_CRYPTO_LOCATION: 'us',
-      ARCHIVE_CRYPTO_SYMBOLS: 'BTC/USD,ETH/USD',
+      ARCHIVE_CRYPTO_SYMBOLS: 'BTC/USD,ETH/USD,SOL/USD',
       ARCHIVE_OFFSET_RESET: 'latest',
       ARCHIVE_CORE_FEED: 'iex',
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',

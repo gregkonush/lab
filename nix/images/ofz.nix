@@ -36,12 +36,24 @@ let
     PROTOC = "${pkgs.protobuf}/bin/protoc";
     cargoTestFlags = [ "--lib" ];
   };
+  auditPython = pkgs.python3.withPackages (python: [
+    python.minio
+    python.psycopg
+  ]);
+  auditSource = pkgs.writeText "ofz-audit-export.py" (
+    builtins.readFile (repoRoot + "/services/ofz/audit_export.py")
+  );
+  auditExport = pkgs.writeShellScriptBin "ofz-audit-export" ''
+    exec ${auditPython}/bin/python ${auditSource} "$@"
+  '';
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "registry.ide-newton.ts.net/lab/ofz";
   tag = "nix";
   contents = [
     ofz
+    auditExport
+    auditPython
     pkgs.cacert
   ];
   config = {
