@@ -17,7 +17,8 @@ versions, access another bucket or change storage configuration. `database-write
 on NUC. Publish only each database's writer pair as its namespace-scoped SealedSecret.
 
 Both database buckets require versioning, AES256 and thirty-day COMPLIANCE retention. CNPG archives WAL within
-sixty seconds and schedules a daily physical base backup, with an immediate first backup. Barman keeps a thirty-five-day
+sixty seconds and schedules a daily physical base backup. Protected one-off Backup resources establish the first copy
+at the new destination; changing an existing ScheduledBackup does not retrigger its initial run. Barman keeps a thirty-five-day
 recovery window. Bucket lifecycle expires current objects after forty days and noncurrent versions after forty-five
 days. Existing protected versions remain immutable during logical pruning.
 
@@ -64,9 +65,10 @@ separate required work.
 
 1. Hold Ofz reconciliation while the reviewed database destinations change. Keep the existing audit exporter running.
 2. Deploy the reviewed NUC source and matching published tool image. Verify the existing audit version and key identity
-   still match, then verify the two database buckets and writer isolation.
+   still match. The deployed verifier exercises both database writers' encrypted version readback, listing,
+   thirty-day retention, version-deletion denial, cross-bucket read/write denial and rejected encryption changes.
 3. Reconcile Ofz at its exact Kargo-generated revision. For held Keycloak, sync only the reviewed database Cluster,
-   ObjectStore, database writer SealedSecret and ScheduledBackup before upgrading the identity server.
+   ObjectStore, database writer SealedSecret, ScheduledBackup and protected one-off Backup before upgrading the identity server.
 4. Verify both initial physical backups complete, WAL objects arrive encrypted, and the database writers cannot read
    the other database or the audit archive. A successful Backup resource alone does not prove recovery.
 5. Restore each physical backup and its WAL into an isolated NUC PostgreSQL instance of the pinned production version.

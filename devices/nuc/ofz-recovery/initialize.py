@@ -351,6 +351,102 @@ def verify(
     }
 
 
+def database_clients(directory: Path, *, local: bool = False) -> dict[str, Minio]:
+    values = json.loads(credential(str(directory / "database-writers.json")))
+    return {
+        name: Minio(
+            "127.0.0.1:9445" if local else ENDPOINT,
+            access_key=keys["access_key"],
+            secret_key=keys["secret_key"],
+            secure=not local,
+            region="us-east-1",
+            http_client=urllib3.PoolManager(
+                ssl_context=ssl.create_default_context(
+                    cafile=os.environ.get("SSL_CERT_FILE")
+                ),
+                timeout=urllib3.Timeout(total=8, connect=2, read=5),
+                retries=False,
+            ),
+        )
+        for name, keys in values.items()
+    }
+
+
+def verify_databases(
+    directory: Path,
+    writers: dict[str, Minio] | None = None,
+    root: Minio | None = None,
+) -> list[dict]:
+    writers = writers or database_clients(directory)
+    root = root or client(directory, root=True)
+    report = []
+    for name, bucket in DATABASE_BUCKETS.items():
+        writer = writers[name]
+        config = writer.get_object_lock_config(bucket)
+        if (
+            writer.get_bucket_versioning(bucket).status != "Enabled"
+            or config.mode != COMPLIANCE
+            or config.duration_unit != "Days"
+            or config.duration < DATABASE_RETENTION_DAYS
+        ):
+            raise ArchiveError("versioned thirty-day database retention required")
+        data = f"{name} independent database storage qualification\n".encode()
+        digest = hashlib.sha256(data).hexdigest()
+        key = f"qualification/{digest}.txt"
+        minimum = datetime.now(UTC) + timedelta(
+            days=DATABASE_RETENTION_DAYS, minutes=-1
+        )
+        written = writer.put_object(
+            bucket, key, io.BytesIO(data), len(data), sse=SseS3()
+        )
+        if not written.version_id:
+            raise ArchiveError("database archive returned no immutable version")
+        retained = writer.get_object_retention(
+            bucket, key, version_id=written.version_id
+        )
+        if retained.mode != COMPLIANCE or retained.retain_until_date < minimum:
+            raise ArchiveError("database retention readback failed")
+        response = writer.get_object(bucket, key, version_id=written.version_id)
+        try:
+            if (
+                response.headers.get("x-amz-server-side-encryption") != "AES256"
+                or response.read(len(data) + 1) != data
+            ):
+                raise ArchiveError("encrypted database version readback failed")
+        finally:
+            response.close()
+            response.release_conn()
+        listed = next(writer.list_objects(bucket, prefix=key), None)
+        if listed is None or listed.object_name != key:
+            raise ArchiveError("database writer cannot list its backup")
+        denied(lambda: writer.remove_object(bucket, key, version_id=written.version_id))
+        denied(lambda: root.remove_object(bucket, key, version_id=written.version_id))
+        for other in [BUCKET, *DATABASE_BUCKETS.values()]:
+            if other != bucket:
+                denied(
+                    lambda: writer.put_object(other, key, io.BytesIO(data), len(data))
+                )
+                denied(lambda: writer.get_object(other, key))
+        denied(
+            lambda: writer.set_bucket_encryption(
+                bucket, SSEConfig(Rule.new_sse_s3_rule())
+            )
+        )
+        report.append(
+            {
+                "bucket": bucket,
+                "versionId": written.version_id,
+                "sha256": digest,
+                "encryption": "AES256",
+                "retainedUntil": retained.retain_until_date.isoformat(),
+                "crossBucketWriteDenied": True,
+                "crossBucketReadDenied": True,
+                "rootVersionDeleteDenied": True,
+            }
+        )
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -362,15 +458,22 @@ def main() -> None:
         prepare(arguments.directory)
     elif arguments.operation == "configure":
         configure(arguments.directory)
-    elif arguments.operation == "verify-local":
+    else:
+        local = arguments.operation == "verify-local"
+        root = client(arguments.directory, root=True, local=local)
         report = verify(
             arguments.directory,
-            writer=client(arguments.directory, root=False, local=True),
-            root=client(arguments.directory, root=True, local=True),
+            writer=client(arguments.directory, root=False, local=local),
+            root=root,
         )
-        print(json.dumps({"boundary": "NUC loopback S3", **report}, sort_keys=True))
-    else:
-        print(json.dumps(verify(arguments.directory), sort_keys=True))
+        report["databases"] = verify_databases(
+            arguments.directory,
+            writers=database_clients(arguments.directory, local=local),
+            root=root,
+        )
+        if local:
+            report["boundary"] = "NUC loopback S3"
+        print(json.dumps(report, sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -284,6 +284,7 @@ class RealArchive(unittest.TestCase):
             initialize.configure(credentials, storage=administrator)
             initialize.configure(credentials, storage=administrator)
             writers = json.loads((credentials / "database-writers.json").read_text())
+            database_clients = {}
             for database, bucket in initialize.DATABASE_BUCKETS.items():
                 writer = Minio(
                     endpoint,
@@ -293,6 +294,7 @@ class RealArchive(unittest.TestCase):
                     region="us-east-1",
                 )
                 config = writer.get_object_lock_config(bucket)
+                database_clients[database] = writer
                 self.assertEqual(config.mode, COMPLIANCE)
                 self.assertEqual(config.duration, 30)
                 self.assertEqual(writer.get_bucket_versioning(bucket).status, "Enabled")
@@ -345,6 +347,19 @@ class RealArchive(unittest.TestCase):
                 self.assertEqual(lifecycle.rules[0].expiration.days, 40)
                 self.assertEqual(
                     lifecycle.rules[0].noncurrent_version_expiration.noncurrent_days, 45
+                )
+            report = initialize.verify_databases(
+                credentials, writers=database_clients, root=administrator
+            )
+            self.assertEqual(
+                {item["bucket"] for item in report},
+                set(initialize.DATABASE_BUCKETS.values()),
+            )
+            with self.assertRaises(S3Error):
+                initialize.verify_databases(
+                    credentials,
+                    writers={**database_clients, "ofz": database_clients["keycloak"]},
+                    root=administrator,
                 )
             docker("exec", name, "/bin/sh", "-ec", "test -s /data/filer.sqlite3")
             administrator.set_object_lock_config(

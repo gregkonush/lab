@@ -44,7 +44,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-7"
 spec:
   schedule: "0 30 10 * * *"
-  immediate: true
+  immediate: false
   backupOwnerReference: cluster
   target: prefer-standby
   method: plugin
@@ -52,3 +52,18 @@ spec:
     name: barman-cloud.cloudnative-pg.io
   cluster:
     name: ofz-db
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: ofz-db-nuc-cutover
+  annotations:
+    argocd.argoproj.io/sync-wave: "-6"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: ofz-db
+  target: prefer-standby
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

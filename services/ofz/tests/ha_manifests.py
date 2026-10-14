@@ -498,12 +498,26 @@ def validate(targets):
             "spec"
         ]
         require(
-            scheduled["immediate"] is True
+            scheduled["immediate"] is False
             and scheduled["cluster"]["name"] == f"{target}-db"
             and scheduled["method"] == "plugin"
             and scheduled["pluginConfiguration"]["name"]
             == "barman-cloud.cloudnative-pg.io",
-            f"{target}: first independent backup must not wait for the daily schedule",
+            f"{target}: daily schedule must not duplicate the explicit initial backup",
+        )
+        initial = resource(targets, target, "Backup", f"{target}-db-nuc-cutover")
+        require(
+            initial["spec"]["method"] == "plugin"
+            and initial["spec"]["pluginConfiguration"]["name"]
+            == "barman-cloud.cloudnative-pg.io"
+            and initial["spec"]["cluster"]["name"] == f"{target}-db"
+            and initial["metadata"]["annotations"].get("argocd.argoproj.io/sync-wave")
+            == "-6"
+            and initial["metadata"]["annotations"].get(
+                "argocd.argoproj.io/sync-options"
+            )
+            == "Prune=false,Delete=false",
+            f"{target}: new store requires a protected physical backup before serving changes",
         )
     for name in ["keycloak-tengri-broker", "keycloak-tengri-bff"]:
         credential = resource(targets, "keycloak", "SealedSecret", name)
@@ -584,6 +598,12 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover")[
+            "spec"
+        ].update(method="volumeSnapshot"),
+        lambda data: resource(data, "keycloak", "Backup", "keycloak-db-nuc-cutover")[
+            "metadata"
+        ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["metadata"][
             "annotations"
         ].pop("argocd.argoproj.io/sync-wave"),
@@ -601,7 +621,7 @@ def main():
         ]["parameters"].update(archive_timeout="1h"),
         lambda data: resource(data, "keycloak", "ScheduledBackup", "keycloak-db-daily")[
             "spec"
-        ].update(immediate=False),
+        ].update(immediate=True),
         lambda data: container(data, "tengri", "Deployment", "tengri")["env"].append(
             {"name": "TENGRI_GUEST_SIGNING_KEY_FILE", "value": "/tmp/wrong-key"}
         ),
