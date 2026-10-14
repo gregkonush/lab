@@ -1,7 +1,7 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1.7
 FROM mirror.gcr.io/ubuntu:24.04
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.162.1
 ARG RUST_VERSION=1.90.0
 ENV DEBIAN_FRONTEND=noninteractive container=kata
 RUN apt-get update && apt-get install --yes --no-install-recommends \
@@ -48,6 +48,7 @@ RUN devbox-install-deps && \
     rm -rf /root/.bun/install/cache /root/.npm /var/lib/apt/lists/*
 COPY --chmod=0755 services/devbox/boot.sh /usr/local/bin/devbox-boot
 COPY --chmod=0755 services/devbox/seed-home.sh /usr/local/bin/devbox-seed-home
+COPY --chmod=0755 services/devbox/seed-nix.sh /usr/local/bin/devbox-seed-nix
 COPY services/devbox/prepare.sh /usr/local/sbin/devbox-prepare
 COPY services/devbox/verify.sh /usr/local/bin/devbox-verify
 COPY services/devbox/profile.sh /etc/profile.d/devbox.sh

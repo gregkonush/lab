@@ -312,7 +312,7 @@ class MarketDataArchiveJobTest {
     }
   }
 
-  private fun validEnvironment(): Map<String, String> =
+  internal fun validEnvironment(): Map<String, String> =
     mapOf(
       "ARCHIVE_CORE_FEED" to "sip",
       "ARCHIVE_CORE_BARS_TOPIC" to "torghut.bars.1m.v1",

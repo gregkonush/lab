@@ -1399,6 +1399,40 @@ data:
               summary: Torghut signal pipeline checkpoints are stalled
               description: The {{ $labels.service }} job is running but its last completed checkpoint is over three minutes old, zero or missing for five minutes. Inspect Kafka resolution, task failures, backpressure and checkpoint storage. This check runs outside market hours because an idle streaming job must still checkpoint.
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+      - name: signal-publications.rules
+        rules:
+          - alert: SignalAdjustedDailyPublicationMissed
+            expr: |
+              (
+                max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                )
+                > on (namespace, cronjob)
+                (
+                  max by (namespace, cronjob) (
+                    kube_cronjob_status_last_successful_time{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                  )
+                  or on (namespace, cronjob)
+                  0 * max by (namespace, cronjob) (
+                    kube_cronjob_created{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                  )
+                )
+              )
+              and on (namespace, cronjob)
+              (
+                time() - max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                ) > 7200
+              )
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              notify: email
+            annotations:
+              summary: Signal adjusted-daily publication missed its deadline
+              description: The latest scheduled publisher run has no successful completion after its two-hour start and execution budget. Inspect the CronJob, failed Job logs, quorum deadlines and finalized manifests on both ClickHouse replicas. A successful owned recovery resolves this incident; retained failed Jobs do not keep it firing.
+              runbook_url: docs/signal/adjusted-daily-publications.md
       - name: torghut-trading.rules
         rules:
           - alert: TorghutActiveApiRevisionMetricsDown

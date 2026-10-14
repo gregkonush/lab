@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
@@ -11,6 +11,7 @@ import { create, toBinary } from '@bufbuild/protobuf'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
+import { accessCommandSchema, MAX_ACCESS_COMMAND_BYTES } from './access-schemas'
 import { createSpiffeFixture } from './spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -18,6 +19,41 @@ const identityTest = process.env.OFZ_IDENTITY_FIXTURE === '1' ? test : test.skip
 const root = path.resolve(import.meta.dir, '../../../../..')
 const processes: ReturnType<typeof spawn>[] = []
 const cleanups: (() => unknown)[] = []
+
+async function routingEndpoint(port: number, firstBackend: number) {
+  let backend = firstBackend
+  const connections = new Set<Socket>()
+  const service = tcpServer((incoming) => {
+    const upstream = createConnection(backend, '127.0.0.1')
+    for (const socket of [incoming, upstream]) {
+      connections.add(socket)
+      socket.once('close', () => connections.delete(socket))
+      socket.on('error', () => {
+        incoming.destroy()
+        upstream.destroy()
+      })
+    }
+    incoming.once('close', () => upstream.destroy())
+    upstream.once('close', () => incoming.destroy())
+    incoming.pipe(upstream).pipe(incoming)
+  })
+  service.listen(port, '127.0.0.1')
+  await once(service, 'listening')
+  const disconnect = () => {
+    for (const socket of connections) socket.destroy()
+  }
+  cleanups.push(() => {
+    disconnect()
+    return new Promise<void>((resolve) => service.close(() => resolve()))
+  })
+  return {
+    route(nextBackend: number) {
+      backend = nextBackend
+      disconnect()
+    },
+  }
+}
+
 afterAll(async () => {
   await Promise.all(
     processes.map(async (child) => {
@@ -355,14 +391,14 @@ identityTest(
       try {
         const url = new URL(request.url || '/', process.env.TENGRI_DESKTOP_ORIGIN)
         if (url.pathname === '/') {
-          response.setHeader('Content-Type', 'text/html')
+          response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
             '<!doctype html><html><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
           )
           return
         }
         if (url.pathname === '/fixture.js') {
-          response.setHeader('Content-Type', 'text/javascript')
+          response.setHeader('Content-Type', 'text/javascript; charset=utf-8')
           response.end(javascript)
           return
         }
@@ -416,6 +452,9 @@ identityTest(
     const kcHttp = await freePort(),
       kcHttps = await freePort(),
       ofzPort = await freePort()
+    const kcPrimaryHttps = await freePort(),
+      kcSecondaryHttp = await freePort(),
+      kcSecondaryHttps = await freePort()
     const base = `https://proompteng.ai:${bffAddress.port}`,
       issuer = `https://auth.proompteng.ai:${kcHttps}/realms/tengri`
     Object.assign(process.env, {
@@ -433,43 +472,102 @@ identityTest(
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
       SPIFFE_WORKLOAD_API_PROTO_PATH: fixture.protoPath,
     })
-    const kcLog = secret('keycloak.log', '')
-    const kc = spawn(
-      z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN),
-      [
-        'start-dev',
-        '--db=postgres',
-        `--db-url=jdbc:postgresql://localhost:${port}/keycloak?sslmode=verify-full&sslrootcert=${process.env.OFZ_TEST_CA_FILE}`,
-        '--db-username=postgres',
-        '--http-host=127.0.0.1',
-        `--http-port=${kcHttp}`,
-        `--https-port=${kcHttps}`,
-        `--hostname=https://auth.proompteng.ai:${kcHttps}`,
-        `--https-certificate-file=${certPath}`,
-        `--https-certificate-key-file=${keyPath}`,
-      ],
-      {
-        env: {
-          ...process.env,
-          KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
-          KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
-          JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    )
-    processes.push(kc)
-    kc.stdout?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
-    kc.stderr?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
-    const adminBase = `http://127.0.0.1:${kcHttp}`
-    for (let attempt = 0; ; attempt++) {
-      if (kc.exitCode !== null || attempt > 240)
-        throw new Error(`Fixture Keycloak startup failed: ${readFileSync(kcLog, 'utf8').slice(-1000)}`)
-      try {
-        if ((await fetch(adminBase + '/realms/master/.well-known/openid-configuration')).ok) break
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 500))
+    const freeCachePort = async () => {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const candidate = 10000 + Math.floor(Math.random() * 5000)
+        const sockets = [tcpServer(), tcpServer()]
+        try {
+          for (const [index, socket] of sockets.entries()) {
+            socket.listen(candidate + index * 50000, '127.0.0.1')
+            await once(socket, 'listening')
+          }
+          return candidate
+        } catch {
+        } finally {
+          await Promise.all(
+            sockets
+              .filter((socket) => socket.listening)
+              .map((socket) => new Promise<void>((resolve) => socket.close(() => resolve()))),
+          )
+        }
+      }
+      throw new Error('No isolated Keycloak transport and failure-detection port pair')
     }
+    const primaryHome = path.join(fixture.directory, 'keycloak-primary')
+    const secondaryHome = path.join(fixture.directory, 'keycloak-secondary')
+    cpSync(path.dirname(path.dirname(z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN))), primaryHome, {
+      recursive: true,
+    })
+    const startKeycloak = async (
+      home: string,
+      name: string,
+      httpPort: number,
+      httpsPort: number,
+      optimized: boolean,
+    ) => {
+      const log = secret(`keycloak-${name}.log`, '')
+      const server = spawn(
+        path.join(home, 'bin/kc.sh'),
+        [
+          'start',
+          ...(optimized ? ['--optimized'] : ['--db=postgres', '--health-enabled=true']),
+          '--cache=ispn',
+          '--cache-stack=jdbc-ping',
+          '--cache-embedded-mtls-enabled=true',
+          '--cache-embedded-network-bind-address=127.0.0.1',
+          `--cache-embedded-network-bind-port=${await freeCachePort()}`,
+          `--spi-cache-embedded--default--node-name=${name}`,
+          `--db-url=jdbc:postgresql://localhost:${port}/keycloak?sslmode=verify-full&sslrootcert=${process.env.OFZ_TEST_CA_FILE}`,
+          '--db-username=postgres',
+          '--db-pool-max-size=20',
+          '--http-enabled=true',
+          '--http-host=127.0.0.1',
+          `--http-port=${httpPort}`,
+          `--https-port=${httpsPort}`,
+          `--http-management-port=${await freePort()}`,
+          `--hostname=https://auth.proompteng.ai:${kcHttps}`,
+          `--https-certificate-file=${certPath}`,
+          `--https-certificate-key-file=${keyPath}`,
+        ],
+        {
+          env: {
+            ...process.env,
+            KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
+            KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
+            JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      processes.push(server)
+      server.stdout?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
+      server.stderr?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
+      const startupDeadline = Date.now() + 120_000
+      for (;;) {
+        if (server.exitCode !== null || server.signalCode !== null || Date.now() >= startupDeadline)
+          throw new Error(`Fixture Keycloak ${name} startup failed: ${readFileSync(log, 'utf8').slice(-3000)}`)
+        try {
+          if ((await fetch(`http://127.0.0.1:${httpPort}/realms/master/.well-known/openid-configuration`)).ok) break
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      return { server, log }
+    }
+    const kc = await startKeycloak(primaryHome, 'primary', kcHttp, kcPrimaryHttps, false)
+    cpSync(primaryHome, secondaryHome, { recursive: true })
+    const kcSecondary = await startKeycloak(secondaryHome, 'secondary', kcSecondaryHttp, kcSecondaryHttps, true)
+    for (let attempt = 0; ; attempt++) {
+      if (
+        [kc.log, kcSecondary.log].every((log) =>
+          /ISPN000094: Received new cluster view.*\(2\)/.test(readFileSync(log, 'utf8')),
+        )
+      )
+        break
+      if (attempt > 100) throw new Error('Production Keycloak instances did not form a two-member jdbc-ping cluster')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    const keycloakEndpoint = await routingEndpoint(kcHttps, kcPrimaryHttps)
+    let adminBase = `http://127.0.0.1:${kcHttp}`
     const bootstrap = (providerSecret: string, clientSecret: string) =>
       execFileSync('python3', [path.join(root, 'argocd/applications/keycloak/tengri/bootstrap.py')], {
         env: {
@@ -565,28 +663,7 @@ identityTest(
     const secondApiPort = await freePort()
     const firstApi = await startApi(firstApiPort)
     await startApi(secondApiPort)
-    let activeApiPort = firstApiPort
-    const connections = new Set<Socket>()
-    const service = tcpServer((incoming) => {
-      const upstream = createConnection(activeApiPort, '127.0.0.1')
-      for (const socket of [incoming, upstream]) {
-        connections.add(socket)
-        socket.once('close', () => connections.delete(socket))
-        socket.on('error', () => {
-          incoming.destroy()
-          upstream.destroy()
-        })
-      }
-      incoming.once('close', () => upstream.destroy())
-      upstream.once('close', () => incoming.destroy())
-      incoming.pipe(upstream).pipe(incoming)
-    })
-    service.listen(ofzPort, '127.0.0.1')
-    await once(service, 'listening')
-    cleanups.push(() => {
-      for (const socket of connections) socket.destroy()
-      return new Promise<void>((resolve) => service.close(() => resolve()))
-    })
+    const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
     const { ofzCall } = await import('./ofz')
     const { AuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
     await ofzCall(AuthorizationService.method.getPolicyState, {}).catch((error) => {
@@ -624,7 +701,7 @@ identityTest(
           'Isolated broker page: ' +
             (await page.locator('body').innerText()).slice(0, 1500) +
             '\n' +
-            readFileSync(kcLog, 'utf8')
+            readFileSync(kc.log, 'utf8')
               .split('\n')
               .filter((line) => line.includes('WARN') || line.includes('ERROR'))
               .slice(-8)
@@ -723,10 +800,9 @@ identityTest(
 
     // Routing removes the failed backend; the unchanged gRPC target must reconnect to the surviving process.
     const failoverStarted = Date.now()
-    activeApiPort = secondApiPort
+    apiEndpoint.route(secondApiPort)
     firstApi.kill('SIGKILL')
     await once(firstApi, 'exit')
-    for (const socket of connections) socket.destroy()
     let survivingIdentity: Awaited<ReturnType<typeof getTengriIdentity>> | undefined
     let failoverError: unknown
     while (Date.now() - failoverStarted < 30_000) {
@@ -815,6 +891,15 @@ identityTest(
       await page.getByRole('button', { name: 'Apply change', exact: true }).click()
       expect((await result).status()).toBe(status)
     }
+    const postAccess = (command: Record<string, unknown>) =>
+      page.evaluate(async (input) => {
+        const response = await fetch('/api/tengri/access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        })
+        return { status: response.status, body: await response.json() }
+      }, command)
     await page.getByLabel('Change', { exact: true }).selectOption('quota')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
     await page.getByLabel('total', { exact: true }).fill('3')
@@ -854,6 +939,214 @@ identityTest(
     ).toBeVisible()
     await browserExpect(page.getByText('GitHub #3', { exact: true })).toBeVisible()
 
+    // Seed a stopped, enrolled workspace; creation and enrollment are exercised by the controller wire fixture above.
+    const scopedWorkspace = randomUUID()
+    const scopedHome = randomUUID()
+    await control.query(
+      "WITH enrolled AS (INSERT INTO ofz.reservations(id,owner_id,home_bytes,workspace_uid,state) VALUES($1,$2,34359738368,$3,'enrolled') RETURNING id) INSERT INTO ofz.workspaces(uid,owner_id,home_uid,reservation_id,home_bytes) SELECT $3,$2,$4,id,34359738368 FROM enrolled",
+      [randomUUID(), inspected.session.humanId, scopedWorkspace, scopedHome],
+    )
+    await nativeCall('/v1/relationships/write', {
+      updates: [
+        relation('workspace', scopedWorkspace, 'platform', 'platform', 'lab'),
+        relation('workspace', scopedWorkspace, 'owner', 'human', inspected.session.humanId),
+      ],
+    })
+    await page.goto(base + '/?workspace=' + scopedWorkspace)
+    const contentOptIn = page.getByLabel('Approve bounded Viewer content access', { exact: true })
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
+    await page.getByLabel('Reason', { exact: true }).fill('Grant metadata-only Viewer access')
+    await applyChange(200)
+    const viewerRow = page.getByRole('row').filter({ has: page.getByText('GitHub #3', { exact: true }) })
+    await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    const viewerId = createHash('sha256').update('github:3').digest('hex')
+    const storedViewer = async () =>
+      (
+        await control.query('SELECT role,scope FROM ofz.collaborators WHERE workspace_uid=$1 AND human_id=$2', [
+          scopedWorkspace,
+          viewerId,
+        ])
+      ).rows[0]
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+
+    await contentOptIn.check()
+    const roots = page.getByLabel('File roots under /workspace', { exact: true })
+    await roots.fill('/workspace/../private')
+    const lookupsBeforeInvalidScope = identityLookups
+    const versionBeforeInvalidScope = (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version
+    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await browserExpect(roots).toHaveAttribute('aria-invalid', 'true')
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'canonical path under /workspace' })).toBeVisible()
+    expect(identityLookups).toBe(lookupsBeforeInvalidScope)
+    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
+      versionBeforeInvalidScope,
+    )
+    await roots.fill(
+      Array.from({ length: 16 }, (_, index) => {
+        const prefix = `/workspace/project-${index}/`
+        return prefix + 'x'.repeat(4096 - prefix.length)
+      }).join('\n'),
+    )
+    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'Access request exceeds 64 KiB' })).toBeVisible()
+    expect(identityLookups).toBe(lookupsBeforeInvalidScope)
+    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
+      versionBeforeInvalidScope,
+    )
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    await roots.fill('/workspace/src ')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill(' shared-id ')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill(' shared-id ')
+    await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
+    await page.getByLabel('Maximum items', { exact: true }).fill('20')
+    await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
+    await applyChange(200)
+    for (const [label, target] of [
+      ['File roots', '/workspace/src '],
+      ['Codex thread IDs', ' shared-id '],
+      ['Terminal IDs', ' shared-id '],
+    ]) {
+      const group = viewerRow.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) })
+      await browserExpect(group.getByText(JSON.stringify(target), { exact: true })).toBeVisible()
+    }
+    const approvedScope = {
+      file_roots: ['/workspace/src '],
+      thread_ids: [' shared-id '],
+      terminal_ids: [' shared-id '],
+      browser_screenshot: false,
+      max_bytes: 4096,
+      max_items: 20,
+    }
+    expect(await storedViewer()).toEqual({ role: 3, scope: approvedScope })
+    await browserExpect(viewerRow.getByText(/Browser status · up to 4096 bytes \/ 20 items/)).toBeVisible()
+
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await contentOptIn.check()
+    await roots.fill('/workspace/narrow')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill('')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill('')
+    await page.getByLabel('Allow browser screenshots', { exact: true }).check()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText(JSON.stringify('/workspace/narrow'), { exact: true })).toBeVisible()
+    await browserExpect(viewerRow.getByText(/Browser status and screenshots/)).toBeVisible()
+    expect(await storedViewer()).toEqual({
+      role: 3,
+      scope: {
+        ...approvedScope,
+        file_roots: ['/workspace/narrow'],
+        thread_ids: [],
+        terminal_ids: [],
+        browser_screenshot: true,
+      },
+    })
+    await contentOptIn.uncheck()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    const boundaryRoots = Array.from({ length: 15 }, (_, index) => {
+      const prefix = `/workspace/maximum-${index}/`
+      return prefix + 'x'.repeat(4096 - prefix.length)
+    })
+    const finalPrefix = '/workspace/maximum-final/'
+    boundaryRoots.push(finalPrefix)
+    const boundaryCommand = {
+      action: 'collaborator',
+      operationId: randomUUID(),
+      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      reason: 'Maximum accepted Viewer command',
+      workspaceUid: scopedWorkspace,
+      login: 'fixture-3',
+      role: 'viewer',
+      enabled: true,
+      scope: {
+        fileRoots: boundaryRoots,
+        threadIds: [],
+        terminalIds: [],
+        browserScreenshot: false,
+        maxBytes: 1024,
+        maxItems: 20,
+      },
+    }
+    boundaryRoots[15] =
+      finalPrefix + 'x'.repeat(MAX_ACCESS_COMMAND_BYTES - Buffer.byteLength(JSON.stringify(boundaryCommand)))
+    accessCommandSchema.parse(boundaryCommand)
+    expect(Buffer.byteLength(JSON.stringify(boundaryCommand))).toBe(MAX_ACCESS_COMMAND_BYTES)
+    expect((await postAccess(boundaryCommand)).status).toBe(200)
+    expect((await storedViewer()).scope.file_roots).toEqual(boundaryRoots)
+    expect(
+      (
+        await postAccess({
+          ...boundaryCommand,
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          scope: undefined,
+        })
+      ).status,
+    ).toBe(200)
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    const metadataGrant = randomUUID()
+    expect(
+      (
+        await postAccess({
+          action: 'grant',
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          reason: 'Verify metadata-only diagnostic scope display',
+          workspaceUid: scopedWorkspace,
+          grantId: metadataGrant,
+          agentId: randomUUID(),
+          resource: { kind: 'workspace', id: scopedWorkspace },
+          permissions: ['metadata'],
+          scope: {
+            fileRoots: [],
+            threadIds: [],
+            terminalIds: [],
+            browserScreenshot: false,
+            maxBytes: 1024,
+            maxItems: 20,
+          },
+          expiresAt: new Date(Date.now() + 300000).toISOString(),
+          proofKeyThumbprint: Buffer.alloc(32, 1).toString('base64url'),
+        })
+      ).status,
+    ).toBe(200)
+    await page.reload()
+    const diagnosticRow = page
+      .getByRole('row')
+      .filter({ has: page.getByText(`Grant ${metadataGrant}`, { exact: true }) })
+    await browserExpect(diagnosticRow).toBeVisible()
+    await browserExpect(diagnosticRow).not.toContainText('Browser status')
+    await browserExpect(diagnosticRow.getByText('up to 1024 bytes / 20 items', { exact: true })).toBeVisible()
+    expect(
+      (
+        await postAccess({
+          action: 'revoke',
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          reason: 'Remove isolated metadata diagnostic',
+          workspaceUid: scopedWorkspace,
+          grantId: metadataGrant,
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (await control.query('SELECT home_uid,state,running FROM ofz.workspaces WHERE uid=$1', [scopedWorkspace]))
+        .rows[0],
+    ).toEqual({
+      home_uid: scopedHome,
+      state: 'active',
+      running: false,
+    })
+    console.log(
+      'PASS: real Access UI and BFF preserve metadata-only Viewers, reject invalid scope inline before identity lookup, commit exact bounded scopes, require a new subject opt-in, narrow targets and remove content without starting the retained workspace',
+    )
+    await page.goto(base)
+    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
+
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])
     await page.getByLabel('Change', { exact: true }).selectOption('quota')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
@@ -864,12 +1157,38 @@ identityTest(
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
+    const subjectBeforeFailover = (
+      await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [inspected.session.id])
+    ).rows[0]?.identity_subject
+    const credentialIdentities = async () =>
+      z
+        .array(z.object({ id: z.string(), type: z.string() }))
+        .parse(await (await adminCall(`/users/${subjectBeforeFailover}/credentials`)).json())
+    const passkeysBeforeFailover = await credentialIdentities()
+    const keycloakFailoverStarted = Date.now()
+    keycloakEndpoint.route(kcSecondaryHttps)
+    adminBase = `http://127.0.0.1:${kcSecondaryHttp}`
+    kc.server.kill('SIGKILL')
+    await once(kc.server, 'exit')
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
     expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
+    expect(Date.now() - keycloakFailoverStarted).toBeLessThan(30_000)
+    expect(await credentialIdentities()).toEqual(passkeysBeforeFailover)
+    const survivingSession = await getTengriIdentity(
+      new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }),
+    )
+    expect(survivingSession?.session.humanId).toBe(inspected.session.humanId)
+    expect(
+      (await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [survivingSession?.session.id]))
+        .rows[0]?.identity_subject,
+    ).toBe(subjectBeforeFailover)
+    console.log(
+      'PASS: two production Keycloak 26.7.4 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
+    )
 
     // A second numeric GitHub identity has the same verified email upstream.
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
@@ -1010,15 +1329,6 @@ identityTest(
     await page.goto(base)
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
 
-    const postAccess = (command: Record<string, unknown>) =>
-      page.evaluate(async (input) => {
-        const response = await fetch('/api/tengri/access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input),
-        })
-        return { status: response.status, body: await response.json() }
-      }, command)
     const promote = await postAccess({
       action: 'membership',
       operationId: randomUUID(),
@@ -1086,5 +1396,5 @@ identityTest(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )
   },
-  180_000,
+  300_000,
 )

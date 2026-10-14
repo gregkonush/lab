@@ -29,12 +29,14 @@ use tokio::{
 
 use super::{
     Claim, GUEST_API_PORT, SlotState,
+    admission::GuestAdmission,
     runner::{self, CommandRequest, SlotStatus},
     vmm::connect_vsock,
 };
 
 pub const CLAIM_UID_HEADER: &str = "x-tengri-microvm-uid";
 pub const CLAIM_EPOCH_HEADER: &str = "x-tengri-claim-epoch";
+pub const RUNTIME_EPOCH_HEADER: &str = "x-tengri-runtime-epoch";
 pub const LEADER_OWNER_HEADER: &str = "x-tengri-leader-owner";
 pub const LEADER_GENERATION_HEADER: &str = "x-tengri-leader-generation";
 pub(crate) const READINESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -49,6 +51,7 @@ struct Supervisor {
     leadership: watch::Sender<Option<crate::control::Fence>>,
     fencing_failed: Arc<AtomicBool>,
     runner_socket: PathBuf,
+    admission: GuestAdmission,
 }
 
 struct GuestConnection {
@@ -204,6 +207,15 @@ pub async fn run() -> anyhow::Result<()> {
     let database = Arc::new(crate::control::Database::from_environment("tengri_supervisor").await?);
     database.verify_schema().await?;
     let readiness_database = database.clone();
+    let admission = GuestAdmission::new(
+        tengri::guest_authorization::GuestVerifier::from_file(&PathBuf::from(env::var(
+            "TENGRI_GUEST_VERIFICATION_KEY_FILE",
+        )?))?,
+        pod_uid,
+        tengri::guest_authorization::recovery_generation_from_file(&PathBuf::from(env::var(
+            "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
+        )?))?,
+    )?;
     let health = Router::new()
         .route(
             "/metrics",
@@ -231,7 +243,7 @@ pub async fn run() -> anyhow::Result<()> {
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
-        result = serve(listener, tls, database) => result,
+        result = serve(listener, tls, database, admission) => result,
         result = health_task => { result??; anyhow::bail!("supervisor health listener stopped") },
     }
 }
@@ -262,6 +274,7 @@ pub(super) async fn serve(
     listener: TcpListener,
     tls: Arc<rustls::ServerConfig>,
     database: Arc<crate::control::Database>,
+    admission: GuestAdmission,
 ) -> anyhow::Result<()> {
     let (state, _) = watch::channel(SlotState::Preparing);
     let supervisor = Supervisor {
@@ -273,6 +286,7 @@ pub(super) async fn serve(
         leadership: watch::channel(None).0,
         fencing_failed: Arc::new(AtomicBool::new(false)),
         runner_socket: runner::sockets_directory().join("control.sock"),
+        admission,
     };
     let router = Router::new()
         .route("/slot/status", get(status))
@@ -533,25 +547,35 @@ async fn forward(
         .context("slot is unclaimed")
         .map_err(lifecycle_error)?
         .clone();
-    if !status.state.serves(&claim)
-        || request
-            .headers()
-            .get(CLAIM_UID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            != Some(claim.microvm_uid.as_str())
-        || request
-            .headers()
-            .get(CLAIM_EPOCH_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok())
-            != Some(claim.epoch)
-    {
+    if !status.state.serves(&claim) || !matches_claim(request.headers(), &claim) {
         return Err((
             StatusCode::CONFLICT,
             "slot owner, epoch, or lifecycle changed".into(),
         ));
     }
     supervisor.state.send_replace(status.state);
+    let (opening, forwarded) = supervisor.admission.opening(request).await.map_err(|_| {
+        (
+            StatusCode::FORBIDDEN,
+            "invalid signed guest RPC opening".into(),
+        )
+    })?;
+    supervisor
+        .admission
+        .consume(&opening, &claim, leadership, &supervisor.database)
+        .await
+        .map_err(|error| {
+            let status = match error.code() {
+                tonic::Code::PermissionDenied | tonic::Code::Unauthenticated => {
+                    StatusCode::FORBIDDEN
+                }
+                _ => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            (status, "signed guest RPC admission unavailable".into())
+        })?;
+    supervisor.require_leadership(Some(leadership)).await?;
+    request = forwarded;
+    drop(opening);
     #[cfg(test)]
     eprintln!(
         "real KVM proxy status: {:.2} ms cumulative",
@@ -568,10 +592,7 @@ async fn forward(
     parts.authority = Some(axum::http::uri::Authority::from_static("nanoagent"));
     *request.uri_mut() =
         axum::http::Uri::from_parts(parts).map_err(|error| lifecycle_error(error.into()))?;
-    let grpc = request
-        .headers()
-        .get("content-type")
-        .is_some_and(|v| v.as_bytes().starts_with(b"application/grpc"));
+    let grpc = tengri::guest_authorization::rpc_action(request.uri().path()).is_some();
     if grpc {
         let mut sender = supervisor
             .grpc_sender(&claim, &socket, leadership)
@@ -647,9 +668,58 @@ async fn forward(
     }
 }
 
+fn matches_claim(headers: &HeaderMap, claim: &Claim) -> bool {
+    [CLAIM_UID_HEADER, CLAIM_EPOCH_HEADER, RUNTIME_EPOCH_HEADER]
+        .iter()
+        .all(|name| headers.get_all(*name).iter().count() == 1)
+        && headers
+            .get(CLAIM_UID_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(claim.microvm_uid.as_str())
+        && headers
+            .get(CLAIM_EPOCH_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(claim.epoch.to_string().as_str())
+        && headers
+            .get(RUNTIME_EPOCH_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(claim.runtime_epoch.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guest_headers_require_exact_single_current_runtime_binding() {
+        let claim = Claim {
+            microvm_id: "agent-a".into(),
+            microvm_uid: "owner-a".into(),
+            epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(CLAIM_UID_HEADER, claim.microvm_uid.parse().unwrap());
+        headers.insert(CLAIM_EPOCH_HEADER, "7".parse().unwrap());
+        assert!(!matches_claim(&headers, &claim));
+        headers.insert(RUNTIME_EPOCH_HEADER, claim.runtime_epoch.parse().unwrap());
+        assert!(matches_claim(&headers, &claim));
+        for (name, invalid) in [
+            (CLAIM_UID_HEADER, "owner-b"),
+            (CLAIM_EPOCH_HEADER, "8"),
+            (CLAIM_EPOCH_HEADER, "07"),
+            (RUNTIME_EPOCH_HEADER, "55555555-5555-4555-8555-555555555555"),
+        ] {
+            let mut wrong = headers.clone();
+            wrong.insert(name, invalid.parse().unwrap());
+            assert!(!matches_claim(&wrong, &claim));
+        }
+        for name in [CLAIM_UID_HEADER, CLAIM_EPOCH_HEADER, RUNTIME_EPOCH_HEADER] {
+            let mut duplicate = headers.clone();
+            duplicate.append(name, headers.get(name).unwrap().clone());
+            assert!(!matches_claim(&duplicate, &claim));
+        }
+    }
 
     #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
@@ -699,6 +769,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "22222222-2222-4222-8222-222222222222".into(),
         };
         let (state, _) = watch::channel(SlotState::Awake {
             claim: claim.clone(),
@@ -718,6 +789,7 @@ mod tests {
             leadership: watch::channel(Some(leadership)).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         for _ in 0..4 {
             let mut sender = supervisor
@@ -828,6 +900,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(true)),
             runner_socket: PathBuf::from("/not-contacted"),
+            admission: GuestAdmission::fixture(),
         };
         assert!(matches!(
             supervisor.require_leadership(None).await,
@@ -867,6 +940,7 @@ mod tests {
                 microvm_id: "agent-a".into(),
                 microvm_uid: "owner-a".into(),
                 epoch: 7,
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
             };
             let awake = SlotState::Awake {
                 claim: claim.clone(),
@@ -941,6 +1015,7 @@ mod tests {
                 leadership: watch::channel(Some(fence)).0,
                 fencing_failed: Arc::new(AtomicBool::new(false)),
                 runner_socket: socket,
+                admission: GuestAdmission::fixture(),
             };
             let request = match action {
                 "restore" => CommandRequest::Restore {
@@ -1010,6 +1085,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let awake = SlotState::Awake {
             claim: claim.clone(),
@@ -1077,6 +1153,7 @@ mod tests {
             leadership: watch::channel(Some(fence)).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: socket,
+            admission: GuestAdmission::fixture(),
         };
         let transition = tokio::spawn({
             let supervisor = supervisor.clone();
@@ -1090,6 +1167,7 @@ mod tests {
             .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
             .header(CLAIM_UID_HEADER, &claim.microvm_uid)
             .header(CLAIM_EPOCH_HEADER, "7")
+            .header(RUNTIME_EPOCH_HEADER, "44444444-4444-4444-8444-444444444444")
             .body(Body::empty())
             .unwrap();
         let forwarded = forward(State(supervisor.clone()), request);
@@ -1149,6 +1227,7 @@ mod tests {
                 microvm_id: "agent-a".into(),
                 microvm_uid: "owner-a".into(),
                 epoch: 7,
+                runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
             },
         });
         let gate = Arc::new(Mutex::new(()));
@@ -1157,6 +1236,7 @@ mod tests {
             .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
             .header(CLAIM_UID_HEADER, "owner-a")
             .header(CLAIM_EPOCH_HEADER, "7")
+            .header(RUNTIME_EPOCH_HEADER, "44444444-4444-4444-8444-444444444444")
             .body(Body::empty())
             .unwrap();
         let supervisor = Supervisor {
@@ -1168,6 +1248,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         let response = forward(State(supervisor), request);
         futures::pin_mut!(response);
@@ -1180,6 +1261,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let saving = SlotState::Saving {
             claim: owner.clone(),
@@ -1194,6 +1276,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         for claim in [
             Claim {
@@ -1223,6 +1306,7 @@ mod tests {
             microvm_id: "agent-a".into(),
             microvm_uid: "owner-a".into(),
             epoch: 7,
+            runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
         };
         let awake = SlotState::Awake {
             claim: owner.clone(),
@@ -1237,6 +1321,7 @@ mod tests {
             leadership: watch::channel(None).0,
             fencing_failed: Arc::new(AtomicBool::new(false)),
             runner_socket: runner::sockets_directory().join("control.sock"),
+            admission: GuestAdmission::fixture(),
         };
         for wrong in [
             Claim {

@@ -752,6 +752,7 @@
         "@restatedev/restate-sdk-opentelemetry": "1.16.5",
         "effect": "4.0.0",
         "ml-matrix": "6.15.0",
+        "redis": "6.3.0",
         "tigerbeetle-node": "0.17.9",
       },
       "devDependencies": {

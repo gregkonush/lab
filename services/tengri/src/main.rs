@@ -126,6 +126,14 @@ async fn main() -> anyhow::Result<()> {
         desktop_origin,
     )?;
     let grpc_tls = workload_identity.server_tls()?;
+    let guest_authority = guest::authorization::GuestAuthority::new(
+        &PathBuf::from(required_env("TENGRI_GUEST_SIGNING_KEY_FILE")?),
+        tengri::guest_authorization::recovery_generation_from_file(&PathBuf::from(required_env(
+            "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
+        )?))?,
+        database.clone(),
+        authorization.clone(),
+    )?;
     let grpc_listener = TcpListener::bind(listen_address)
         .await
         .context("bind SPIFFE gRPC control plane")?;
@@ -135,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         ControlPlaneConfig {
             identity: workload_identity.clone(),
             authorization: authorization.clone(),
+            guest_authority: guest_authority.clone(),
             namespace: namespace.clone(),
             default_image,
             architecture,
@@ -161,7 +170,7 @@ async fn main() -> anyhow::Result<()> {
         activity,
         preview_origin,
         service.guest_pool(),
-        authorization.clone(),
+        guest_authority.clone(),
     )?;
     let gateway_listener = TcpListener::bind(gateway_address)
         .await

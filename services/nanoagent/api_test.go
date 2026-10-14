@@ -1183,6 +1183,9 @@ func TestPreviewOnlyProxiesToGuestLoopback(t *testing.T) {
 	target := "/v1/preview/43210/hello?mode=full"
 	request := httptest.NewRequest(http.MethodGet, target, nil)
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	request.Header.Set("Connection", "keep-alive, X-Internal")
 	request.Header.Set("Forwarded", "for=203.0.113.7")
 	request.Header.Set("Keep-Alive", "timeout=5")
@@ -1216,6 +1219,9 @@ func TestBeginShutdownCancelsActivePreviewRequests(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/preview/43210/events", nil)
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	response := httptest.NewRecorder()
 	handled := make(chan struct{})
 	go func() {
@@ -1331,14 +1337,17 @@ func TestPreviewProxiesWebSocketUpgradesToGuestLoopback(t *testing.T) {
 	t.Cleanup(nanoagent.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	previewRequest := httptest.NewRequest(http.MethodGet, "/v1/preview/"+upstreamURL.Port()+"/hmr", nil)
+	previewRequest.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	previewRequest.Header.Set("Origin", "https://tengri-session.proompteng.ai")
+	if err := signFixturePreview(previewRequest, nil, nil); err != nil {
+		t.Fatal(err)
+	}
 	connection, response, err := websocket.Dial(
 		ctx,
 		"ws"+strings.TrimPrefix(nanoagent.URL, "http")+"/v1/preview/"+upstreamURL.Port()+"/hmr",
 		&websocket.DialOptions{
-			HTTPHeader: http.Header{
-				"Authorization": []string{"Bearer test-bootstrap-token"},
-				"Origin":        []string{"https://tengri-session.proompteng.ai"},
-			},
+			HTTPHeader:   previewRequest.Header,
 			Subprotocols: []string{"vite-hmr"},
 		},
 	)
@@ -1374,8 +1383,11 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 func performAuthorizedRequest(handler http.Handler, method string, target string, body []byte) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, target, bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-bootstrap-token")
+	if err := signFixturePreview(request, body, nil); err != nil {
+		panic(err)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
+	handler.ServeHTTP(fixtureDeadlineRecorder{response}, request)
 	return response
 }
