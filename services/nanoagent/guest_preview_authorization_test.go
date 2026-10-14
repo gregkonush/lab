@@ -45,7 +45,7 @@ func signFixturePreview(request *http.Request, body []byte, change func(*guestau
 	if err != nil {
 		return err
 	}
-	signature := ed25519.Sign(fixtureGuestKey(), append([]byte("tengri-guest-request-v3\x00"), payload...))
+	signature := ed25519.Sign(fixtureGuestKey(), append([]byte("tengri-guest-request-v4\x00"), payload...))
 	request.Header.Set(guestauth.ContextHeader, base64.RawURLEncoding.EncodeToString(payload))
 	request.Header.Set(guestauth.SignatureHeader, base64.RawURLEncoding.EncodeToString(signature))
 	request.Header.Set(guestClaimUIDHeader, claim.WorkspaceUID)
