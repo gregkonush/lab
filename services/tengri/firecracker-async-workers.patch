@@ -34,30 +34,55 @@
              instance.register_eventfd(eventfd)?;
 --- a/src/vmm/src/io_uring/operation/mod.rs
 +++ b/src/vmm/src/io_uring/operation/mod.rs
-@@ -132,9 +132,11 @@
-
-         inner.opcode = self.opcode as u8;
-         inner.fd = i32::try_from(self.fd).unwrap();
-         // Simplifying assumption that we only used pre-registered FDs.
--        inner.flags = self.flags | (1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT);
-+        inner.flags = self.flags
-+            | (1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT)
-+            | (1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT);
-
-         if let Some(addr) = self.addr {
-             inner.__bindgen_anon_2.addr = addr as u64;
+@@ -93,9 +93,9 @@
+             fd,
+             opcode: OpCode::Write,
+             addr: Some(addr),
+             len: Some(len),
+-            flags: 0,
++            flags: 1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT,
+             offset: Some(offset),
+             user_data,
          }
+     }
 --- a/src/vmm/src/io_uring/restriction.rs
 +++ b/src/vmm/src/io_uring/restriction.rs
-@@ -45,9 +45,10 @@
+@@ -21,8 +21,10 @@
+ #[derive(Debug)]
+ pub enum Restriction {
+     /// Allow an operation.
+     AllowOpCode(OpCode),
++    /// Allow file writes to start on asynchronous workers.
++    AllowAsync,
+     /// Only allow operations on pre-registered fds.
+     RequireFixedFds,
+ }
+
+@@ -39,8 +41,15 @@
+                     u16::try_from(io_uring_register_restriction_op::IORING_RESTRICTION_SQE_OP)
+                         .unwrap();
+                 instance.__bindgen_anon_1.sqe_op = *opcode as u8;
+             }
++            AllowAsync => {
++                instance.opcode = u16::try_from(
++                    io_uring_register_restriction_op::IORING_RESTRICTION_SQE_FLAGS_ALLOWED,
++                )
++                .unwrap();
++                instance.__bindgen_anon_1.sqe_flags = 1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT;
++            }
+             RequireFixedFds => {
+                 instance.opcode = u16::try_from(
                      io_uring_register_restriction_op::IORING_RESTRICTION_SQE_FLAGS_REQUIRED,
                  )
-                 .unwrap();
-                 instance.__bindgen_anon_1.sqe_flags =
--                    1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT;
-+                    (1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT)
-+                        | (1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT);
-             }
-         };
-
-         instance
+--- a/src/vmm/src/devices/virtio/block/virtio/io/async_io.rs
++++ b/src/vmm/src/devices/virtio/block/virtio/io/async_io.rs
+@@ -77,8 +77,9 @@
+             vec![file],
+             vec![
+                 // Make sure we only allow operations on pre-registered fds.
+                 Restriction::RequireFixedFds,
++                Restriction::AllowAsync,
+                 // Allowlist of opcodes.
+                 Restriction::AllowOpCode(OpCode::Read),
+                 Restriction::AllowOpCode(OpCode::Write),
+                 Restriction::AllowOpCode(OpCode::Fsync),
