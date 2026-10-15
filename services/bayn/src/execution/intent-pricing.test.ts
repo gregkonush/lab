@@ -1,10 +1,11 @@
+import { instrumentMarket } from '../instruments'
 import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
 import { defaultExecutionModel } from '../execution-model'
-import { simulateIntradayReplayIocCore } from '../intraday-replay/execution-core'
+import { simulateIntradayReplayExecution } from '../intraday-replay/execution-core'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
 import { deriveExecutionIntentPricing } from './intent-pricing'
@@ -43,7 +44,14 @@ describe('execution intent pricing', () => {
       expect(pricing.notionalLimitMicros).toBe(expectedLimit * 46n)
       const simulate = (limitPriceMicros: bigint, priceMicros: bigint = arrivalAsk) =>
         Result.getOrThrow(
-          simulateIntradayReplayIocCore({
+          simulateIntradayReplayExecution({
+            instrument: {
+              symbol: input.symbol,
+              market: instrumentMarket(input.symbol),
+              minimumQuantityAtoms: 1_000_000_000n,
+              quantityIncrementAtoms: 1_000_000_000n,
+              priceIncrementAtoms: 100_000n,
+            },
             order: { side: OrderSide.Buy, quantityAtoms: 46000000000n, limitPriceMicros },
             quote: { priceMicros, displayedQuantityAtoms: 46000000000n },
             executionModel: intradayMomentumExecutionModel,
@@ -93,7 +101,14 @@ describe('execution intent pricing', () => {
     expect(pricing.expectedExecutionPriceMicros).toBe(288_900_000n)
     const simulate = (limitPriceMicros: bigint, slippageBps: number, availableLiquidityPpm = 1_000_000) =>
       Result.getOrThrow(
-        simulateIntradayReplayIocCore({
+        simulateIntradayReplayExecution({
+          instrument: {
+            symbol: input.symbol,
+            market: instrumentMarket(input.symbol),
+            minimumQuantityAtoms: 1_000_000_000n,
+            quantityIncrementAtoms: 1_000_000_000n,
+            priceIncrementAtoms: 100_000n,
+          },
           order: { side: OrderSide.Sell, quantityAtoms: quantity, limitPriceMicros },
           quote: { priceMicros: reference, displayedQuantityAtoms: quantity },
           executionModel: intradayMomentumExecutionModel,

@@ -48,7 +48,7 @@ const configuredCapitalActivation = (
     : decodeConfiguredCapitalActivation(serialized, serializedBuildLineage)
 
 export interface ReadOnlyCapitalActivationStore {
-  readonly authority: AuthorityGenerationStoreShape
+  readonly authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>
 }
 
 const makeReadOnlyCapitalActivationStore = (
@@ -136,7 +136,7 @@ export const readOnlyCycleObservationId = (
 export const resolveReadOnlyCycleObservationId = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
-  authority: AuthorityGenerationStoreShape,
+  authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState'>,
 ): Effect.Effect<CycleObservationBinding, ExecutionStoreError> => {
   const configuredId = readOnlyCycleObservationId(configured)
   if (
@@ -152,35 +152,27 @@ export const resolveReadOnlyCycleObservationId = (
     )
   }
   const readAuthorityState = authority.readAuthorityState
-  return readAuthorityState === undefined
-    ? Effect.fail(
-        new ExecutionStoreError({
-          operation: 'authority',
-          failure: 'invariant',
-          message: 'read-only status authority projection is unavailable',
-        }),
-      )
-    : readAuthorityState.pipe(
-        Effect.flatMap((current) =>
-          Effect.fromResult(observeCycleGenerationHash(current)).pipe(
-            Effect.mapError(
-              (message) =>
-                new ExecutionStoreError({
-                  operation: 'authority',
-                  failure: 'invariant',
-                  message,
-                }),
-            ),
-            Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
-          ),
+  return readAuthorityState.pipe(
+    Effect.flatMap((current) =>
+      Effect.fromResult(observeCycleGenerationHash(current)).pipe(
+        Effect.mapError(
+          (message) =>
+            new ExecutionStoreError({
+              operation: 'authority',
+              failure: 'invariant',
+              message,
+            }),
         ),
-      )
+        Effect.map((bindingId): CycleObservationBinding => ({ _tag: 'Exact', bindingId })),
+      ),
+    ),
+  )
 }
 
 export const resolveReadOnlyCycleObservationIdForHealth = (
   configured: Result.Result<ConfiguredCapitalActivation | null, string>,
   activationRequestRequired: boolean,
-  authority: AuthorityGenerationStoreShape,
+  authority: Pick<AuthorityGenerationStoreShape, 'readAuthorityState'>,
   operationTimeoutMs: number,
 ): Effect.Effect<CycleObservationBinding> =>
   resolveReadOnlyCycleObservationId(configured, activationRequestRequired, authority).pipe(

@@ -129,6 +129,21 @@ spire-server:
             - k8s:container-name:proompteng
           ttl: 2m
           fallback: false
+        ofz-api:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/ofz/sa/ofz-api
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ofz
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ofz-api
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:ofz-api
+            - k8s:container-name:ofz-api
+          ttl: 2m
+          fallback: false
         tengri:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri

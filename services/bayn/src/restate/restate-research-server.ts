@@ -15,6 +15,7 @@ import { Clock, Config, Effect, Layer, Metric, Schema } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import { embeddedBuildMetadata } from '../build'
+import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 import { PostgresClientLive } from '../db/postgres-client'
 import { GitSourceRevisionSchema } from '../schemas'
 import { validateResearchApprovalKey } from '../research-inference/approval'
@@ -25,13 +26,12 @@ import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import {
-  approvePublicInformation,
   makePublicInformationServices,
+  submitPublicInformationActivation,
   submitPublicInformationJobs,
 } from './restate-public-information'
 import { publicInformationEnabled, publicInformationIntervalMs } from '../public-information'
 import { runPublicInformation } from '../public-information-resources'
-import { sendRestateInvocation } from './restate-invocation-client'
 import { makeBaynResearchRun } from './restate-research-run'
 import { acquireRestateTelemetry, currentOpenTelemetryParentSpan } from './restate-telemetry'
 
@@ -143,14 +143,13 @@ export const researchServerProgram = Effect.gen(function* () {
       yield* Metric.update(publicInformationEnabled, enabled ? 1 : 0)
       if (!enabled) return
       yield* submitPublicInformationJobs((source) =>
-        sendRestateInvocation(
-          'http://restate.restate.svc.cluster.local:8080/BaynPublicInformationControl/activate/send',
+        submitPublicInformationActivation(
           {
-            source,
             sourceRevision: config.sourceRevision,
-            approval: approvePublicInformation(source, config.sourceRevision, config.approvalKey),
+            approvalKey: config.approvalKey,
+            ingressOrigin: 'http://restate.restate.svc.cluster.local:8080',
           },
-          { timeoutMs: 5_000, headers: { 'Idempotency-Key': `public-information:${source}:${config.sourceRevision}` } },
+          source,
         ),
       )
     }).pipe(
@@ -193,10 +192,12 @@ export const researchServerProgram = Effect.gen(function* () {
   )
 }).pipe(Effect.scoped)
 
-if (import.meta.main)
+if (import.meta.main) {
+  initializeErrorTracking('bayn-research')
   NodeRuntime.runMain(
-    Layer.effectDiscard(researchServerProgram).pipe(
+    Layer.effectDiscard(researchServerProgram.pipe(reportTerminalFailure('bayn-research'))).pipe(
       Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-research')),
       Layer.launch,
     ),
   )
+}

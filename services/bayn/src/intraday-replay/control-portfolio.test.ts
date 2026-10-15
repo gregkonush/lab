@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
@@ -23,7 +24,13 @@ import {
 
 const fixture = nativeJevFixture()
 const at = Date.parse(fixture.observation.payload.observedAt)
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const original = fixture.snapshot.latestQuotes['AAPL']
 if (original === undefined) throw new Error('Missing AAPL fixture')
 const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
@@ -61,6 +68,7 @@ test('fixed principal sizing retains one budget across different equity and incl
     quantities.push(
       Result.getOrThrow(
         controlEntryQuantity({
+          instruments: replayTestInstruments,
           portfolio: Result.getOrThrow(createControlPortfolio(cashMicros)),
           policy,
           protocol: fixture.protocol,
@@ -77,6 +85,7 @@ test('fixed principal sizing retains one budget across different equity and incl
   expect(quantities).toEqual([199_000_000_000n, 199_000_000_000n, 99_000_000_000n])
   const limited = Result.getOrThrow(
     controlEntryQuantity({
+      instruments: replayTestInstruments,
       portfolio: Result.getOrThrow(createControlPortfolio('100000000')),
       policy,
       protocol: fixture.protocol,
@@ -93,6 +102,7 @@ test('fixed principal sizing retains one budget across different equity and incl
     expect(
       Result.isFailure(
         controlEntryQuantity({
+          instruments: replayTestInstruments,
           portfolio: { ...flat(), ledger: { ...flat().ledger, cashMicros } },
           policy,
           protocol: fixture.protocol,
@@ -110,6 +120,7 @@ test('fixed principal sizing retains one budget across different equity and incl
     expect(
       Result.isFailure(
         controlEntryQuantity({
+          instruments: replayTestInstruments,
           portfolio: flat(),
           policy,
           protocol: fixture.protocol,
@@ -137,6 +148,7 @@ test('the explicit reserve experiment lowers late entry size while the legacy/de
   )
   const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
   const input = {
+    instruments: replayTestInstruments,
     portfolio,
     policy,
     protocol: fixture.protocol,
@@ -235,7 +247,7 @@ test('exit retries cannot replenish an unchanged quote liquidity budget', () => 
     const sell = order(
       OrderSide.Sell,
       at + 1_000_000 + attempt * 500,
-      BigInt(portfolio.ledger.positions[0]?.quantityAtoms ?? '0') / 1_000_000n,
+      BigInt(portfolio.ledger.positions[0]?.quantityAtoms ?? '0') / 1_000_000_000n,
     )
     portfolio = Result.getOrThrow(applyControlOrder(portfolio, { ...sell, arrivalQuote: retained })).portfolio
   }
@@ -367,6 +379,7 @@ test('entry sizing obeys order and daily turnover bounds including the adverse l
   const size = (portfolio = flat(), policy = risk, targetWeight = 0.2) =>
     Result.getOrThrow(
       controlEntryQuantity({
+        instruments: replayTestInstruments,
         portfolio,
         policy,
         protocol: fixture.protocol,
@@ -386,6 +399,7 @@ test('entry sizing obeys order and daily turnover bounds including the adverse l
   expect(
     Result.isFailure(
       controlEntryQuantity({
+        instruments: replayTestInstruments,
         portfolio: entry(),
         policy: risk,
         protocol: fixture.protocol,
@@ -427,14 +441,14 @@ test('relative momentum preserves candidate quote freshness while using a real o
   )
   const { candidateEvidencePolicy: _policy, ...historicalManifest } = snapshot.manifest
   expect(
-    Result.getOrThrow(
+    Result.isFailure(
       selectControlSymbol(
         { ...snapshot, manifest: historicalManifest },
         ControlPolicy.RelativeMomentum,
         fixture.protocol,
       ),
     ),
-  ).toBeNull()
+  ).toBeTrue()
   for (const quoteAgeMs of [10_000, 10_001]) {
     const aged = {
       ...snapshot,
@@ -445,9 +459,9 @@ test('relative momentum preserves candidate quote freshness while using a real o
         ]),
       ),
     }
-    const selected = Result.getOrThrow(selectControlSymbol(aged, ControlPolicy.RelativeMomentum, fixture.protocol))
-    if (quoteAgeMs === 10_000) expect(selected).toBe('AAPL')
-    else expect(selected).toBeNull()
+    const selected = selectControlSymbol(aged, ControlPolicy.RelativeMomentum, fixture.protocol)
+    if (quoteAgeMs === 10_000) expect(Result.getOrThrow(selected)).toBe('AAPL')
+    else expect(Result.isFailure(selected)).toBeTrue()
   }
   const future = {
     ...snapshot,
@@ -455,7 +469,7 @@ test('relative momentum preserves candidate quote freshness while using a real o
       trade.symbol === 'SPY' ? trade : { ...trade, eventAt: new Date(at + 1).toISOString() },
     ),
   }
-  expect(Result.getOrThrow(selectControlSymbol(future, ControlPolicy.RelativeMomentum, fixture.protocol))).toBeNull()
+  expect(Result.isFailure(selectControlSymbol(future, ControlPolicy.RelativeMomentum, fixture.protocol))).toBeTrue()
 })
 
 test('retained breakout accepts a fresh benchmark quote when its trade is older than candidate freshness', () => {

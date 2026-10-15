@@ -262,25 +262,40 @@ const incorporateDecodedRecord = (
         recordHash,
         ...(firstPublication === undefined ? {} : { firstPublication }),
       }
-      const revisions = [...existing, revision].toSorted(
-        (a, b) => compareIntradayInstants(b.value.eventAt, a.value.eventAt) || compareBarRevisions(b.value, a.value),
-      )
-      const minuteCounts = new Map<string, number>()
+      // Histories are already sorted and bounded by this reducer. Merge the new
+      // revision without sorting or mutating an earlier projection's history.
       const bars: ObservedBar[] = []
       let minimumObservationMs = state.minimumObservationMs
-      for (const entry of revisions) {
-        // Raw timestamps have nine fractional digits; recorded rows may have three.
-        const minute = entry.value.eventAt.slice(0, -1).padEnd(29, '0')
-        const count = minuteCounts.get(minute) ?? 0
-        if (count === 0 && minuteCounts.size === 61) continue
-        minuteCounts.set(minute, count + 1)
-        if (count < 4) bars.push(entry)
-        else {
-          const earliestRetained = bars.findLast(
-            (retained) => compareIntradayInstants(retained.value.eventAt, entry.value.eventAt) === 0,
-          )
-          minimumObservationMs = Math.max(minimumObservationMs, earliestRetained?.availableAtMs ?? availableAtMs)
+      let incoming = true
+      let index = 0
+      let previousMinute: string | undefined
+      let minutes = 0
+      let revisions = 0
+      let earliestRetainedAtMs = availableAtMs
+      while (incoming || index < existing.length) {
+        const prior = existing[index]
+        let entry: ObservedBar
+        if (
+          incoming &&
+          (prior === undefined ||
+            (compareIntradayInstants(prior.value.eventAt, bar.eventAt) || compareBarRevisions(prior.value, bar)) < 0)
+        ) {
+          entry = revision
+          incoming = false
+        } else if (prior !== undefined) {
+          entry = prior
+          index++
+        } else break
+        // Recorded timestamps may have three fractional digits; raw rows have nine.
+        if (previousMinute === undefined || compareIntradayInstants(entry.value.eventAt, previousMinute) !== 0) {
+          if (++minutes > 61) break
+          previousMinute = entry.value.eventAt
+          revisions = 0
         }
+        if (revisions++ < 4) {
+          bars.push(entry)
+          earliestRetainedAtMs = entry.availableAtMs
+        } else minimumObservationMs = Math.max(minimumObservationMs, earliestRetainedAtMs)
       }
       return { ...state, minimumObservationMs, bars: new Map(state.bars).set(bar.symbol, bars) }
     }

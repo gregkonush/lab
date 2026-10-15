@@ -73,10 +73,12 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.3`; journals from another VMM revision require fenced recovery. Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
-guest RAM. Full snapshot capture resets normal readahead before reading every page. Snapshot restore consumes the
-generation before vCPUs run, then thaws root/home,
-sets the guest clock, binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
+`1.16.1+tengri-async-io.5`; journals from another VMM revision require fenced recovery. Disk writes start on the
+bounded io_uring workers, so buffered writes cannot run inline on the VMM thread that also handles terminal vsock traffic.
+The ring requires pre-registered files and permits only read, write, and flush operations.
+Snapshot restore uses upstream demand paging and normal read-ahead. Snapshot restore consumes the
+generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
+binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
 If the final sleep journal write fails after a completed save, the runner retains that snapshot's pending commit.
@@ -146,6 +148,9 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 
 ## Transport and workload identity
 
+Controller renewal timeouts retry only within the last confirmed lease deadline. Ownership loss or a returned error
+closes authority immediately; late renewal replies cannot revive expired authority.
+
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
 SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
 replay database permits at most one second of clock lead in its future bound and retains the exact signed expiry;
@@ -192,6 +197,10 @@ The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatG
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
 
+Every supported guest exposes `model/list`. Catalog failures remain ordinary request failures; the desktop requires
+a valid model and reasoning selection before starting a turn and offers a catalog retry. There is no older-guest mode
+that silently drops selected settings. Existing history and active turns can still be recovered during a catalog outage.
+
 Each Chrome preview load exchanges its one-use ticket for a bounded, owner-scoped session whose ID is allocated before
 the browser receives the ticket. The desktop revokes both unused tickets and active sessions when a preview is
 superseded or closed, so reload and history use cannot exhaust the per-agent session limit. The gateway injects a
@@ -232,6 +241,15 @@ whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
+Replay admission hashes each nonce into one of 64 independently locked buckets, each capped at 128 unexpired entries.
+An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
+controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
+Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
+both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
+resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
+Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
+Unused slots continue through the normal retirement and preparation path for the promoted controller/guest pair.
 
 Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the `ofz-database-ca` Secret's `ca.crt`
 only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,
@@ -342,6 +360,9 @@ error into only the disposable fixture home disk and requires the guest to repor
 The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
+Resume replies report monotonic time spent after applying the host clock. The host excludes that readiness work
+when bounding clock-transfer delay, and repeats the same idempotent resume if the timestamp arrived too late.
+Missing or inconsistent clock timing rejects the resume; the controller and guest images must be promoted together.
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
@@ -355,7 +376,7 @@ BuildKit reports export errors without canceling required image publication
 or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
 
 The fixture uses a private Docker
-network/PID namespace, one CPU, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts.
+network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.
 It checks real files, the same PTY shell, initialized Codex, stop/page-eviction, and rotating host identities, preserving
 diagnostics before cleaning only its own resources. Its report states the boundary and exclusions. One prepared
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six

@@ -1,10 +1,11 @@
+import { instrumentMarket } from '../instruments'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import {
-  simulateIntradayReplayIocCore,
+  simulateIntradayReplayExecution,
   type IntradayReplayIocCoreInput,
   type IntradayReplayIocCoreOutcome,
 } from './execution-core'
@@ -14,6 +15,13 @@ const coreInput = (
   quote: Partial<IntradayReplayIocCoreInput['quote']> = {},
   assumptions: Partial<IntradayReplayIocCoreInput['assumptions']> = {},
 ): IntradayReplayIocCoreInput => ({
+  instrument: {
+    symbol: 'NVDA',
+    market: instrumentMarket('NVDA'),
+    minimumQuantityAtoms: 1_000_000_000n,
+    quantityIncrementAtoms: 1_000_000_000n,
+    priceIncrementAtoms: 100_000n,
+  },
   order: {
     side: OrderSide.Buy,
     quantityAtoms: 2000000000n,
@@ -38,7 +46,7 @@ const success = (result: Result.Result<IntradayReplayIocCoreOutcome, unknown>): 
 
 describe('intraday replay IOC economic core', () => {
   test('preserves exact buy and sell quote economics', () => {
-    expect(success(simulateIntradayReplayIocCore(coreInput()))).toEqual({
+    expect(success(simulateIntradayReplayExecution(coreInput()))).toEqual({
       status: 'filled',
       requestedQuantityAtoms: 2000000000n,
       filledQuantityAtoms: 2000000000n,
@@ -48,7 +56,7 @@ describe('intraday replay IOC economic core', () => {
     })
     expect(
       success(
-        simulateIntradayReplayIocCore(
+        simulateIntradayReplayExecution(
           coreInput({ side: OrderSide.Sell, limitPriceMicros: 99_980_000n }, { priceMicros: 99_990_000n }),
         ),
       ),
@@ -65,7 +73,7 @@ describe('intraday replay IOC economic core', () => {
   test('enforces IOC limits and rounds the displayed cap to whole shares', () => {
     expect(
       success(
-        simulateIntradayReplayIocCore(
+        simulateIntradayReplayExecution(
           coreInput({}, { displayedQuantityAtoms: 3900000000n }, { availableLiquidityPpm: 500_000 }),
         ),
       ),
@@ -75,7 +83,7 @@ describe('intraday replay IOC economic core', () => {
       unfilledRemainder: 'canceled',
     })
     expect(
-      success(simulateIntradayReplayIocCore(coreInput({ limitPriceMicros: 100_010_000n }, {}, { slippageBps: 1 }))),
+      success(simulateIntradayReplayExecution(coreInput({ limitPriceMicros: 100_010_000n }, {}, { slippageBps: 1 }))),
     ).toMatchObject({
       status: 'canceled',
       reason: 'adverse-price-exceeds-limit',

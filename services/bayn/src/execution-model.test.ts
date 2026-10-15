@@ -186,8 +186,8 @@ describe('explicit execution model', () => {
     const fees = success(
       calculateSessionFees(
         [
-          { side: 'buy', quantityAtoms: 1000000000n, notionalMicros: 100_000_000n },
-          { side: 'sell', quantityAtoms: 10000000000n, notionalMicros: 1_000_000_000n },
+          { symbol: 'NVDA', side: 'buy', quantityAtoms: 1000000000n, notionalMicros: 100_000_000n },
+          { symbol: 'NVDA', side: 'sell', quantityAtoms: 10000000000n, notionalMicros: 1_000_000_000n },
         ],
         defaultExecutionModel,
         MICROS,
@@ -198,12 +198,21 @@ describe('explicit execution model', () => {
       secMicros: 30_000n,
       tafMicros: 10_000n,
       catMicros: 10_000n,
+      cryptoMicros: 0n,
+      cashMicros: 50_000n,
       totalMicros: 50_000n,
     })
 
     const capped = success(
       calculateSessionFees(
-        [{ side: 'sell', quantityAtoms: 100000000000n * MICROS, notionalMicros: 100_000_000n * MICROS }],
+        [
+          {
+            symbol: 'NVDA',
+            side: 'sell',
+            quantityAtoms: 100000000000n * MICROS,
+            notionalMicros: 100_000_000n * MICROS,
+          },
+        ],
         defaultExecutionModel,
         MICROS,
       ),

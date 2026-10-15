@@ -19,6 +19,7 @@ import urllib3
 from minio import Minio
 from minio.error import S3Error
 from minio.retention import COMPLIANCE, Retention
+from minio.sse import SseS3
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
@@ -136,6 +137,8 @@ class Exporter:
             BUCKET, receipt.key, version_id=receipt.version_id
         )
         try:
+            if response.headers.get("x-amz-server-side-encryption") != "AES256":
+                raise ArchiveError("independent archive version must be encrypted")
             data = response.read(MAX_BATCH_BYTES + 1)
         finally:
             response.close()
@@ -181,6 +184,7 @@ class Exporter:
                 content_type="application/json",
                 metadata={"sha256": digest},
                 retention=Retention(COMPLIANCE, minimum),
+                sse=SseS3(),
             )
             version = stored.version_id
             until = minimum

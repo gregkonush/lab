@@ -836,6 +836,7 @@ export const runControlSession = (input: {
               ? BigInt(held?.quantityAtoms ?? '0')
               : yield* Effect.fromResult(
                   controlEntryQuantity({
+                    instruments: assumptions.instruments,
                     portfolio,
                     policy: risk,
                     protocol,
