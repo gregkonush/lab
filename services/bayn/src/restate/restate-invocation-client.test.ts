@@ -50,7 +50,7 @@ describe('Restate invocation client', () => {
     const receipt = await Effect.runPromise(
       sendRestateInvocation(
         'http://restate.example.test:8080/restate/send/BaynExecutionController/account/activateDeployment',
-        { schemaVersion: 'bayn.execution-deployment-activation.v1' },
+        { schemaVersion: 'bayn.execution-deployment-activation.v2' },
         { headers: { authorization: 'Bearer secret', 'idempotency-key': 'request-1' }, timeoutMs: 30_000 },
         async (input, init) => {
           if (typeof init?.body !== 'string') throw new Error('request body was not encoded as JSON')

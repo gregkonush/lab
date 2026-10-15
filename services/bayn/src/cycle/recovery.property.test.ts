@@ -43,11 +43,10 @@ test('property: changing source with the same plan requires a replay-safe contro
           nextSequence: sequence,
         }
         const request = {
-          schemaVersion: 'bayn.execution-deployment-activation.v1' as const,
+          schemaVersion: 'bayn.execution-deployment-activation.v2' as const,
           controllerKey,
           planHash,
           sourceRevision: nextSourceRevision,
-          previousBinding: { planHash, sourceRevision },
         }
         const rotation = Result.getOrThrow(decideExecutionDeploymentActivation(state, request))
         expect(rotation._tag).toBe('Rotate')
@@ -68,6 +67,21 @@ test('property: changing source with the same plan requires a replay-safe contro
         }
         expect(Result.isFailure(decideExecutionControllerActivation(state, activation))).toBe(true)
         const active = Result.getOrThrow(decideExecutionControllerActivation(inactive, activation)).state
+        expect(
+          Result.isFailure(
+            decideExecutionControllerTick(
+              active,
+              {
+                schemaVersion: 'bayn.execution-controller-tick.v1',
+                epoch: active.epoch,
+                sequence,
+              },
+              controllerKey,
+              draft.window.submissionOpenAt,
+              sourceRevision,
+            ),
+          ),
+        ).toBe(true)
         expect(active).toMatchObject({
           active: true,
           epoch: epoch + 1,
@@ -89,14 +103,9 @@ test('property: changing source with the same plan requires a replay-safe contro
             ),
           ),
         ).toEqual({ _tag: 'Ignored', reason: 'StaleEpoch' })
-        expect(
-          Result.isFailure(
-            decideExecutionDeploymentActivation(state, {
-              ...request,
-              previousBinding: { planHash, sourceRevision: nextSourceRevision },
-            }),
-          ),
-        ).toBe(true)
+        expect(Result.isFailure(decideExecutionControllerActivation(active, { ...activation, sourceRevision }))).toBe(
+          true,
+        )
       },
     ),
   )
