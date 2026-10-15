@@ -4,9 +4,14 @@ import { bindForwardPerformanceTerminalReferencePrices } from './program'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
+import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { decodeIntradayBarRows } from '../market-data/intraday/rows'
+import { MarketVolumeBindingRow } from './postgres/model'
+import { marketVolumeRequestsFromRows } from './postgres/projection'
+import { intradayPerformanceDecisionRequest, intradayPerformanceSessionQuery } from './intraday-volume'
 import { makeForwardPerformanceReceipt } from './domain'
 import type {
   ForwardPerformanceDailyMarketVolumeEvidence,
@@ -1137,6 +1142,34 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
   })
 
+  test('retains observed settlement costs and withholds qualification until broker receipts match', () => {
+    for (const settled of [false, true]) {
+      const receipt = success(
+        makeForwardPerformanceReceipt(
+          input({
+            transactions: exactTransactions(),
+            executionEvidence: exactExecutionEvidence(),
+            marketVolumeEvidence: exactMarketVolumeEvidence(),
+            brokerFeeAccruals: [
+              { accrualId: 'a'.repeat(64), accountId: 'paper-account-1', expenseMicros: '140', settled },
+            ],
+            ledgerTotals: {
+              realizedGainMicros: '100',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '160',
+              otherChargedCostsMicros: '0',
+              cashYieldMicros: '0',
+            },
+          }),
+        ),
+      )
+      expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+      expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+      expect(receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
+      expect(receipt.executionQuality.reasonCodes.includes('EXPLICIT_COST_EVIDENCE_GAP')).toBe(!settled)
+    }
+  })
+
   test('deducts delayed broker fees and refunds without fabricating fills', () => {
     const receipt = success(
       makeForwardPerformanceReceipt(
@@ -1622,4 +1655,61 @@ test('retains native archive evidence even when a missing fill prevents executio
   expect(receipt.executionQuality.status).toBe('UNDETERMINED')
   expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
   expect(receipt.observedCapacity.intradaySources).toEqual([volume])
+})
+
+test('crypto capacity observations preserve the native us feed in the completed receipt', () => {
+  const symbol = 'ETH/USD'
+  const fixture = cryptoMarketFixture(symbol)
+  const manifest = fixture.snapshot.manifest
+  const end = Date.parse(manifest.rangeEndAt)
+  const binding = Schema.decodeUnknownSync(MarketVolumeBindingRow)({
+    cycle_id: hash('a'),
+    snapshot_id: manifest.snapshotId,
+    execution_session_date: manifest.sessionDate,
+    execution_open_at: new Date(end + 500),
+    execution_close_at: new Date(end + 192_000),
+    manifest,
+  })
+  const request = marketVolumeRequestsFromRows(
+    [{ cycleId: hash('a'), symbol }],
+    [binding],
+    new Date(end + 200_000).toISOString(),
+  )[0]
+  if (request === undefined || !('decisionManifest' in request)) throw new Error('Missing crypto report request')
+  const archive = intradayPerformanceSessionQuery(
+    request,
+    Result.getOrThrow(intradayPerformanceDecisionRequest(request)),
+  )
+  const original = Result.getOrThrow(decodeIntradayBarRows(fixture.rows.bars)).find((bar) => bar.symbol === symbol)
+  if (original === undefined) throw new Error('Missing crypto producer bar')
+  const bars = [1, 2].map((minute) => ({
+    ...original,
+    event_at: new Date(end + minute * 60_000).toISOString(),
+    ingested_at: new Date(end + (minute + 1) * 60_000).toISOString(),
+    volume: '10',
+    native_payload: `{"v":10,"c":${original.close}}`,
+    is_final: '1',
+  }))
+  const volume = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  if (volume === undefined) throw new Error('Missing complete crypto volume')
+  const fillPrefix = new Date(end + 60_000).toISOString().slice(0, 17)
+  const accounting = JSON.parse(
+    JSON.stringify(
+      input({
+        cycles: [cycle('a', { submissionOpenAt: request.windowOpenedAt, terminalAt: request.windowClosedAt })],
+        transactions: exactTransactions(),
+        executionEvidence: exactExecutionEvidence(),
+      }),
+    )
+      .replaceAll('NVDA', symbol)
+      .replaceAll('2026-07-20T13:00:00.000Z', request.windowOpenedAt)
+      .replaceAll('2026-07-20T20:00:', fillPrefix),
+  ) as ForwardPerformanceEvidenceInput
+  const receipt = success(makeForwardPerformanceReceipt({ ...accounting, marketVolumeEvidence: [volume] }))
+  expect(receipt.observedCapacity.status).toBe('MEASURED')
+  expect(receipt.observedCapacity.observations[0]?.intradaySource).toEqual({
+    feed: 'us',
+    volumeScope: volume.volumeScope,
+    evidenceHash: volume.contentHash,
+  })
 })

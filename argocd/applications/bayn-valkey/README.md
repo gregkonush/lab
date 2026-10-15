@@ -9,13 +9,20 @@ their existing authority.
 
 `valkey.yaml` selects `arch: replica`, one shard and two data pods. Required
 anti-affinity places one pod on each eligible 100G host. Each requests 1Gi of
-memory, caps the dataset at 512Mi and owns a 10Gi Ceph RBD volume. AOF uses
-`appendfsync everysec`; `noeviction` rejects writes at capacity.
+memory, caps the dataset at 512Mi and retains its existing 10Gi Ceph RBD volume.
+`noeviction` rejects writes at capacity. AOF and scheduled RDB snapshots are
+disabled for these expiring, disposable materializations. Diskless primary
+replication also prevents the operator from injecting default snapshot schedules.
+The two memory copies still require application replica acknowledgement before
+PostgreSQL publishes their hashes. A complete cache restart requires a fresh
+broker poll; there is no database payload fallback. Existing volumes and files
+are retained.
 
 There is no Sentinel or automatic promotion. A failed primary makes the cache
-unavailable until recovery or an operator-managed manual promotion. Cache users
-must bound requests and use their authoritative source on cache transport
-failure. A replica alone does not guarantee automatic HA across two hosts.
+unavailable until recovery or an operator-managed manual promotion. Bayn bounds
+cache requests and fails explicitly on missing or unavailable materializations;
+the polling owner must publish a fresh cut before readers can proceed. A replica
+alone does not guarantee automatic HA across two hosts.
 Automatic failover requires independent voters; this deployment does not place
 workloads on the reserved compute host or change its taints.
 
@@ -35,6 +42,14 @@ limit. Generate replacements in memory and update only the encrypted value in
 `auth-sealedsecret.yaml`, preserving Secret identity and strict sealing scope.
 A synced SealedSecret does not prove User admission.
 
+The operator makes the password Secret a dependent of its User. GitOps applies
+only the Secret's patch annotation before reconciling the SealedSecret; it never
+declares password data. Sealed Secrets uses
+[patch mode](https://github.com/bitnami/sealed-secrets#patching-existing-secrets)
+to supply the encrypted password without replacing the operator's owner reference
+or finalizer. Keep this annotation in the sealed template as well. Do not add the
+`managed` annotation: that would make the two controllers compete for ownership.
+
 ## Acceptance
 
 The bounded, tokenless `bayn-valkey-acceptance-v3` Sync hook uses only the
@@ -49,6 +64,20 @@ let the operator recover, then run a full reviewed sync of `bayn-valkey` to
 rerun acceptance. Do not use a `--resource` selective sync for this check:
 [Argo hooks do not run during selective sync](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/#hook-lifecycle-and-cleanup).
 Successful Job history stays available until the next attempt.
+
+After Bayn's image rollout, run its installed `valkey-command.js --broker` from
+both API and execution replicas. The transport check writes and reads a 1 MiB
+synthetic value with replica acknowledgement and expiry; the broker check reads
+the actual fenced full and compact materializations. Tiny writes alone do not
+exercise publication-sized traffic.
+
+Apply reviewed configuration through this Application, then verify `appendonly`
+is `no`, `save` is empty and `repl-diskless-sync` is `yes` on both data pods.
+The operator applies these mutable settings without a required Pod restart.
+Keep the one-second application deadline, TLS identity, ACL, `WAIT 1`, PostgreSQL
+fences and retained volumes unchanged. A reverted persistence policy restores
+disk writes through GitOps; missing or expired cache contents still require a
+fresh poll rather than replaying historical trading evidence.
 
 ```sh
 kustomize build argocd/applications/bayn-valkey > /tmp/bayn-valkey.yaml

@@ -120,3 +120,9 @@ export const exchangeSessions = (hours: MarketHours): readonly MarketCalendarSes
 
 export const brokerCalendarResponseHash = (hours: MarketHours): string | null =>
   isContinuousMarket(hours) ? null : hours.normalizedResponseHash
+
+/** Continuous markets use UTC days for observation cohorts, never as liquidation deadlines. */
+export const observationSession = (hours: MarketHours, date: string): MarketCalendarSession | undefined =>
+  isContinuousMarket(hours)
+    ? { date, openAt: `${date}T00:00:00.000Z`, closeAt: new Date(Date.parse(date) + 86_400_000).toISOString() }
+    : hours.sessions.find((session) => session.date === date)

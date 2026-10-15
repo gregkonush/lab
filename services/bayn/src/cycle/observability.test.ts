@@ -17,6 +17,7 @@ const projection: CycleOperationsProjection = {
     accountId: 'sandbox-account',
     signalSessionDate: '2026-08-31',
     executionSessionDate: '2026-08-31',
+    executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
     phase: CycleState.Blocked,
     snapshotId: null,
     decisionHash: null,
@@ -176,3 +177,26 @@ test('uses the actual publication deadline for a cycle with a scheduled publicat
     reason: CycleOperationsReason.MissedPublicationDeadline,
   })
 })
+
+test.each([KillState.Clear, KillState.Active])(
+  'unused admission expiry preserves authority health with kill=%s',
+  (kill) => {
+    const status = deriveCycleOperationsStatus(
+      {
+        ...projection,
+        last:
+          projection.last === null
+            ? null
+            : { ...projection.last, terminalReason: CycleTerminalReason.UnusedEntryExpired },
+        authority: projection.authority === null ? null : { ...projection.authority, kill },
+      },
+      Date.parse(checkedAt),
+      Authority.Execution,
+      thresholds,
+    )
+    expect(status.condition).toBe(
+      kill === KillState.Clear ? CycleOperationsCondition.Waiting : CycleOperationsCondition.Failed,
+    )
+    expect(status.alerts.cycleFailed).toBe(kill === KillState.Active)
+  },
+)

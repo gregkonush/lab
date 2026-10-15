@@ -3478,6 +3478,35 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
             > short_idle + 1_000_000,
         "qualifying control extends idle timeout"
     );
+    let mut held = admin.pool.get().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.query_one(
+        "SELECT id FROM ofz.sessions WHERE id=$1 FOR UPDATE",
+        &[&owner_session],
+    )
+    .await
+    .unwrap();
+    let activity_client = database.pool.get().await.unwrap();
+    let activity = AuditReceipt {
+        actor: Some(Actor {
+            identity: Some(Identity::HumanId(owner.0.clone())),
+        }),
+        session_id: owner.1.clone(),
+        action: Action::FilesWrite as i32,
+        allowed: true,
+        ..Default::default()
+    };
+    let recorded = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        store::record_activity(&**activity_client, &activity),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+    assert!(
+        matches!(recorded, Ok(Ok(true))),
+        "fresh activity must validate without waiting to rewrite the session: {recorded:?}"
+    );
+    drop(activity_client);
     let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
     let mut context = request(
         database,

@@ -922,7 +922,11 @@ describe('intraday shadow decision', () => {
       if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
         throw new Error('expiry regression requires a disposable local test database')
       }
-      const input = fixture({ AAPL: 0.02 }, false, accountId, 'NVDA', true)
+      const original = fixture({ AAPL: 0.02 }, false, `replay-${hash('e')}`, 'NVDA', true)
+      const input = {
+        ...original,
+        cycle: { ...original.cycle, createdAt: brokerObservedAt, updatedAt: brokerObservedAt },
+      }
       const document = await Effect.runPromise(
         buildExecutionDecision({
           ...input,
@@ -957,6 +961,8 @@ describe('intraday shadow decision', () => {
             yield* sql`DROP SCHEMA public CASCADE`
             yield* sql`CREATE SCHEMA public`
             yield* postgresMigrations
+            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+              VALUES (${input.cycle.identity.accountId}, ${hash('e')}, ${document.createdAt})`
             yield* cycles.acquire(
               value(makeCycleDraft(input.cycle.identity, input.cycle.window)),
               input.cycle.createdAt,

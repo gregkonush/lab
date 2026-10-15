@@ -99,6 +99,13 @@ batch instead of being silently reduced to 100. The existing flush interval stil
 input is sparse. The bound limits buffered rows while allowing retained corrections to use the configured batching.
 Rollout acceptance checks actual ClickHouse insert sizes and completed Flink checkpoints after savepoint restore.
 
+The raw archive permits bounded batches of up to 10,000 rows, allowing retained quote backlogs to amortize the
+replicated insert cost. Its one-second flush interval still publishes sparse input without waiting for a full batch.
+Each source partition retains one ordered writer, so its archive watermark continues to identify a committed prefix.
+Source and sink checkpoint IDs, consumer offsets, replication quorum and synchronous acknowledgement are unchanged.
+Acceptance requires current quotes within Bayn's existing age limit, a draining retained backlog and successful
+checkpoints; a running Flink job is insufficient.
+
 ## Rolling feature branch
 
 Set `TA_MARKET_FEATURES_TOPIC=torghut.market-features.v1` to enable the branch. It requires the existing

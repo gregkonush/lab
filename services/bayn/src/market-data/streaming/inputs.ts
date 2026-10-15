@@ -67,6 +67,7 @@ export const selectStreamingInputs = (
     const end = intradayInstantNanos(request.rangeEndAt)
     const symbols = request.symbols ?? request.universe
     const source = state.sources.get(request.universeId)
+    const technicalTopic = source?.topics.technicalFeatures
     const inputTopics = Object.values(source?.topics ?? request.sourceTopics)
     const observationEvicted =
       request.purpose === IntradaySnapshotPurpose.Liquidation
@@ -134,9 +135,10 @@ export const selectStreamingInputs = (
       if (request.purpose === undefined && trade !== undefined && intradayInstantNanos(trade.value.eventAt) >= start)
         entries.push(trade)
       if (request.purpose !== undefined) continue
-      if (state.technicalTopic !== undefined) {
+      if (technicalTopic !== undefined) {
         for (const candidate of state.technicalFeatures.get(symbol) ?? []) {
           if (
+            candidate.topic !== technicalTopic ||
             !technicalReceiptAvailableAt(state, candidate, observedAtMs) ||
             candidate.value.material.sessionDate !== request.sessionDate ||
             candidate.value.material.windowEndMs !== Date.parse(request.rangeEndAt)
@@ -269,10 +271,10 @@ export const selectStreamingInputs = (
         ? technicalReceipts
         : technicalReceipts.filter((feature) => !excluded.has(feature.value.material.symbol))
     const technical =
-      state.technicalTopic === undefined
+      technicalTopic === undefined
         ? undefined
         : {
-            topic: state.technicalTopic,
+            topic: technicalTopic,
             features: technicalFeatures,
             unavailableSymbols: symbols.filter(
               (symbol) => !technicalFeatures.some((feature) => feature.value.material.symbol === symbol),

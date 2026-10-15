@@ -784,7 +784,7 @@ impl MicroVmControlPlane for ControlPlane {
                 }),
             )
             .await
-            .map_err(map_codex_models_error)?;
+            .map_err(map_guest_error)?;
         Ok(Response::new(CodexModels {
             raw_json: value.to_string(),
         }))
@@ -2447,25 +2447,6 @@ fn created_terminal_cleanup_id(error: &GuestError) -> Option<&str> {
     }
 }
 
-fn map_codex_models_error(error: GuestError) -> Status {
-    if let GuestError::Api { status, message } = &error
-        && *status == reqwest::StatusCode::BAD_GATEWAY
-        && serde_json::from_str::<Value>(message)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .as_deref()
-            == Some("Codex method is not exposed by Nanoagent")
-    {
-        return Status::unimplemented("This guest does not support Codex model selection");
-    }
-    map_guest_error(error)
-}
-
 fn map_guest_error(error: GuestError) -> Status {
     metrics::global().record_guest_failure();
     match error {
@@ -2771,28 +2752,36 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_only_the_legacy_guest_model_allowlist_failure() {
+    fn guest_model_failures_do_not_negotiate_an_older_guest_contract() {
         let message = json!({"error": "Codex method is not exposed by Nanoagent"}).to_string();
-        assert_eq!(
-            map_codex_models_error(GuestError::Api {
-                status: reqwest::StatusCode::BAD_GATEWAY,
-                message: message.clone(),
-            })
-            .code(),
-            tonic::Code::Unimplemented
-        );
-        for (status, message) in [
-            (reqwest::StatusCode::FORBIDDEN, message),
+        for (status, message, expected_code) in [
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                message.clone(),
+                tonic::Code::Internal,
+            ),
+            (
+                reqwest::StatusCode::FORBIDDEN,
+                message,
+                tonic::Code::PermissionDenied,
+            ),
             (
                 reqwest::StatusCode::BAD_GATEWAY,
                 json!({"error": "Codex app-server is unavailable"}).to_string(),
+                tonic::Code::Internal,
             ),
-            (reqwest::StatusCode::BAD_GATEWAY, "invalid response".into()),
+            (
+                reqwest::StatusCode::BAD_GATEWAY,
+                "invalid response".into(),
+                tonic::Code::Internal,
+            ),
         ] {
-            assert_ne!(
-                map_codex_models_error(GuestError::Api { status, message }).code(),
-                tonic::Code::Unimplemented
-            );
+            let mapped = map_guest_error(GuestError::Api {
+                status,
+                message: message.clone(),
+            });
+            assert_eq!(mapped.code(), expected_code);
+            assert!(mapped.message().contains(&message));
         }
     }
 

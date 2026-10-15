@@ -76,6 +76,36 @@ describe('Accepted prompt retention', () => {
 })
 
 describe('Codex event replay', () => {
+  const runtimeError: TengriCodexEvent = {
+    ...event,
+    kind: 'error',
+    method: 'error',
+    threadId: '',
+    turnId: '',
+    itemId: '',
+    text: 'Codex app-server is restarting',
+  }
+
+  test('keeps only the latest unscoped runtime error', () => {
+    const latest = { ...runtimeError, sequence: 8 }
+    expect(appendCodexEvent([runtimeError], latest)).toEqual([latest])
+    expect(appendCodexEvent([latest], runtimeError)).toEqual([latest])
+  })
+
+  test('clears recovered runtime errors while preserving failed turns and warnings', () => {
+    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
+    const warning = { ...runtimeError, kind: 'warning' as const }
+    const started = { ...event, sequence: 8, kind: 'thread-state' as const, method: 'turn/started' }
+    const next = appendCodexEvent([runtimeError, turnError, warning], started)
+    expect(next).toEqual([turnError, warning, started])
+  })
+
+  test('does not replay a runtime error older than a successful thread snapshot', () => {
+    expect(appendCodexEventAfterRestore([], runtimeError, new Map(), 8)).toEqual([])
+    const laterError = { ...runtimeError, sequence: 9 }
+    expect(appendCodexEventAfterRestore([], laterError, new Map(), 8)).toEqual([laterError])
+  })
+
   test('keeps pending approvals when later notices exceed the event buffer', () => {
     const approval = {
       ...event,
@@ -1147,5 +1177,103 @@ describe('Codex thread restoration', () => {
         }),
       ),
     ).toEqual([{ id: 'same', kind: 'assistant-text', text: 'First' }])
+  })
+})
+
+describe('Codex buffering equivalence', () => {
+  test('preserves split surrogate deltas while rebasing a partially covered replay', () => {
+    const restored = { id: event.itemId, kind: 'assistant-text' as const, text: 'restored\ud800', eventSequence: 20 }
+    const history = new Map([[restored.id, restored]])
+    let current = appendCodexEventAfterRestore([], { ...event, sequence: 20, text: 'covered' }, history, 20)
+    let expected = restored.text
+    let pageText = ''
+    for (let sequence = 21; sequence <= 140; sequence += 1) {
+      const text = sequence % 2 ? '\udc00漢' : '😀a'.repeat(40)
+      current = appendCodexEventAfterRestore(
+        current,
+        { ...event, sequence, method: 'item/agentMessage/delta', text },
+        history,
+        20,
+      )
+      expected += text
+      expect(current[0]!.text).toBe(expected)
+      if (sequence === 80) pageText = expected
+    }
+    const rebased = reconcileCodexEventsWithRestoredHistory(
+      current,
+      new Map([[restored.id, { ...restored, text: pageText, eventSequence: 80 }]]),
+      20,
+      new Map([[restored.id, 80]]),
+    )
+    expect(rebased[0]!.text).toBe(expected)
+    const sequences = []
+    for (let segment = rebased[0]!.textSegments; segment; segment = segment.previous) sequences.push(segment.sequence)
+    expect(sequences).toEqual(Array.from({ length: 60 }, (_, index) => 140 - index))
+  })
+
+  test('matches serialized item identity after normalizing untrusted wire values', () => {
+    const values: unknown[] = [
+      '',
+      'x',
+      'x:y',
+      'x"y',
+      'x\\y',
+      'x\u0000y',
+      '😀',
+      '\ud800',
+      null,
+      0,
+      1,
+      false,
+      undefined,
+      {},
+      [],
+    ]
+    for (const field of ['threadId', 'turnId', 'itemId']) {
+      for (const left of values) {
+        for (const right of values) {
+          const first = parseCodexEvent(
+            JSON.stringify({ ...event, sequence: 1, method: 'item/started', [field]: left }),
+          )!
+          const next = parseCodexEvent(
+            JSON.stringify({ ...event, sequence: 2, method: 'item/completed', [field]: right }),
+          )!
+          const identity = (value: TengriCodexEvent) =>
+            value.itemId ? JSON.stringify([value.threadId, value.turnId, value.itemId, value.kind]) : ''
+          const matches = Boolean(identity(next)) && identity(first) === identity(next)
+          expect(appendCodexEvent([first], next)).toEqual(matches ? [next] : [first, next])
+        }
+      }
+    }
+  })
+
+  test('matches UTF-8 truncation around the length fast path and byte cap', () => {
+    const cap = 512 << 10
+    const marker = '\n… output truncated …'
+    const encoder = new TextEncoder()
+    const reference = (value: string) => {
+      const bytes = encoder.encode(value)
+      if (bytes.length <= cap) return value
+      let end = cap - encoder.encode(marker).length
+      while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end -= 1
+      return new TextDecoder().decode(bytes.subarray(0, end)) + marker
+    }
+    const lengths = [0, 1, Math.floor(cap / 3) - 1, Math.floor(cap / 3), Math.floor(cap / 3) + 1, cap - 1, cap, cap + 1]
+    for (const unit of ['a', 'é', '漢', '😀', '\ud800', '\udc00', 'a\ud800b', '\ud800\udc00']) {
+      for (const length of lengths) {
+        const text = unit.repeat(Math.ceil(length / unit.length)).slice(0, length)
+        const first = { ...event, sequence: 1, method: 'item/agentMessage/delta', text }
+        let current = appendCodexEvent([], first)
+        let expected = reference(text)
+        expect(current[0]!.text).toBe(expected)
+        expect(parseCodexEvent(JSON.stringify(first))!.text).toBe(expected)
+        for (const [index, delta] of ['a', '漢', '\ud800', '\udc00', '😀'].entries()) {
+          current = appendCodexEvent(current, { ...first, sequence: index + 2, text: delta })
+          if (!expected.endsWith(marker)) expected = reference(expected + delta)
+          expect(current[0]!.text).toBe(expected)
+          expect(encoder.encode(current[0]!.text).length).toBeLessThanOrEqual(cap)
+        }
+      }
+    }
   })
 })

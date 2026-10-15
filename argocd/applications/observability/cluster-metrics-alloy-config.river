@@ -74,7 +74,7 @@ prometheus.relabel "cnpg_metrics" {
 	rule {
 		action        = "keep"
 		source_labels = ["__name__", "name"]
-		regex         = "(up|scrape_duration_seconds);.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
+		regex         = "(up|scrape_duration_seconds);.*|cnpg_collector_postgres_version;.*|cnpg_collector_pg_wal(_archive_status)?;.*|cnpg_collector_wal_(buffers_full|bytes|fpi|records|sync|sync_time|write|write_time);.*|cnpg_collector_(last_collection_error|collection_errors_total|collection_duration_seconds);.*|cnpg_bayn_io_((reads|writes|fsyncs|read_bytes|write_bytes|read_seconds|write_seconds|fsync_seconds)_total|stats_reset_seconds|timing_(relation|wal)_enabled);.*|cnpg_bayn_replication_((connected|streaming|synchronous|measured_flush_lag)_standbys|max_(flush_lag_seconds|reply_age_seconds|unflushed_bytes));.*|cnpg_bayn_generation_index_(valid|ready|scans_total|tuples_read_total|tuples_fetched_total);.*|cnpg_bayn_waits_(backends|active_query_age_seconds);.*|cnpg_pg_database_size_bytes;.*|cnpg_pg_replication_slots_(active|pg_wal_lsn_diff);.*|cnpg_pg_stat_checkpointer_(buffers_written|checkpoints_req|checkpoints_timed|restartpoints_done|restartpoints_req|restartpoints_timed|sync_time|write_time);.*|cnpg_pg_settings_setting;(checkpoint_completion_target|checkpoint_timeout|fsync|full_page_writes|max_slot_wal_keep_size|max_wal_size|min_wal_size|track_io_timing|track_wal_io_timing)"
 	}
 }
 
@@ -241,6 +241,55 @@ prometheus.relabel "bayn_model_metrics" {
 		source_labels = ["__name__"]
 		regex         = "up|vllm:.*|bayn_model_.*|process_.*"
 	}
+}
+
+discovery.kubernetes "bayn_valkey_pods" {
+	role = "pod"
+	namespaces {
+		names = ["bayn"]
+	}
+	selectors {
+		role  = "pod"
+		label = "buf.red/name=bayn-valkey"
+	}
+}
+
+discovery.relabel "bayn_valkey_metrics" {
+	targets = discovery.kubernetes.bayn_valkey_pods.targets
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_port_name"]
+		regex         = "exporter"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+	rule {
+		replacement  = "bayn-valkey"
+		target_label = "service"
+	}
+}
+
+prometheus.relabel "bayn_valkey_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|scrape_duration_seconds|redis_(up|connected_clients|connected_slaves|master_link_up|master_last_io_seconds_ago|master_repl_offset|slave_repl_offset|slave_info|memory_(used|max)_bytes|evicted_keys_total|expired_keys_total|keyspace_(hits|misses)_total|commands_processed_total|net_(input|output)_bytes_total|uptime_in_seconds|exporter_last_scrape_error|exporter_last_scrape_duration_seconds)"
+	}
+}
+
+prometheus.scrape "bayn_valkey" {
+	job_name        = "bayn-valkey"
+	targets         = discovery.relabel.bayn_valkey_metrics.output
+	scrape_interval = "15s"
+	scrape_timeout  = "5s"
+	forward_to      = [prometheus.relabel.bayn_valkey_metrics.receiver]
 }
 
 prometheus.scrape "bayn_model" {
@@ -435,6 +484,36 @@ loki.process "bayn_pod_logs" {
 	}
 
 	forward_to = [loki.write.bayn.receiver]
+}
+
+discovery.relabel "bayn_valkey_logs" {
+	targets = discovery.kubernetes.bayn_valkey_pods.targets
+	rule {
+		action        = "keep"
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		regex         = "valkey|exporter"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_namespace"]
+		target_label  = "namespace"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_pod_name"]
+		target_label  = "pod"
+	}
+	rule {
+		source_labels = ["__meta_kubernetes_pod_container_name"]
+		target_label  = "container"
+	}
+	rule {
+		replacement  = "bayn-valkey"
+		target_label = "service"
+	}
+}
+
+loki.source.kubernetes "bayn_valkey_logs" {
+	targets    = discovery.relabel.bayn_valkey_logs.output
+	forward_to = [loki.process.bayn_pod_logs.receiver]
 }
 
 discovery.kubernetes "bayn_rgw_log_pods" {
