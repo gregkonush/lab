@@ -5,11 +5,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
 import { recoverExpiredNativeEntryAdmission } from '../../../migrations/0101_reclassify_expired_native_entry'
+import shadowDecisionGenerationIndex from '../../../migrations/0104_shadow_decision_generation_index'
 import { canRearmUnusedCycle } from '../../cycle/runner/calendar-decisions'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
@@ -541,6 +543,86 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
       }).pipe(Effect.provide(WriterFenceLive)),
     )
   })
+  test('generation settlement avoids decoding unrelated historical decision evidence', async () => {
+    const fixture = makeFixture(true)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = 'execution cycle loop restricted effective authority: run-cycle-pass: mutation autonomous cycle pass did not complete or reconcile within 30000ms',
+          version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text PRIMARY KEY, decision_hash text NOT NULL, document jsonb NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              SELECT md5(n::text) || md5('cycle-' || n::text),
+                md5('decision-' || n::text) || md5(n::text),
+                jsonb_build_object(
+                  'schemaVersion', 'bayn.paper-cycle-decision.v1', 'mode', 'PAPER',
+                  'bindings', jsonb_build_object('authorityGenerationHash', md5(n::text) || md5(n::text)),
+                  'retainedEvidence', (SELECT jsonb_agg(md5(k::text)) FROM generate_series(1, 2048) AS k)
+                )
+              FROM generate_series(1, 256) AS n`
+            yield* shadowDecisionGenerationIndex
+            yield* sql`ANALYZE autonomous_cycle_shadow_decisions`
+            let lookup: Statement<Record<string, unknown>> | undefined
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (statement.compile()[0].includes('WITH current_generation AS MATERIALIZED')) lookup = statement
+                return statement
+              },
+            })
+            const settle = Effect.gen(function* () {
+              const blocked = yield* BlockedCycleIntentStore
+              return yield* blocked.settleCurrentTerminalGeneration({ accountId, observedAt: fixture.reconciledAt })
+            }).pipe(
+              Effect.provide(
+                Layer.fresh(BlockedCycleIntentStoreLive).pipe(
+                  Layer.provide(Layer.succeed(PgClient.PgClient, monitored)),
+                ),
+              ),
+            )
+            expect(yield* settle).toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+              intentCount: 0,
+              terminalIntentCount: 0,
+            })
+            if (lookup === undefined) throw new Error('Settlement did not inspect the current generation')
+            const [query, parameters] = lookup.compile()
+            const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+            const plans = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                }),
+              ),
+            )(explanation)
+            const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+            if (root === undefined) throw new Error('PostgreSQL did not return the settlement query plan')
+            const touchedBlocks = [
+              'Shared Hit Blocks',
+              'Shared Read Blocks',
+              'Local Hit Blocks',
+              'Local Read Blocks',
+            ].reduce((sum, key) => sum + Number(root[key] ?? 0), 0)
+            expect(touchedBlocks).toBeLessThan(128)
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              SELECT ${'f'.repeat(64)}, ${'e'.repeat(64)},
+                jsonb_set(document, '{bindings,authorityGenerationHash}',
+                  to_jsonb(${canonicalHashV1({ generation: 'execution' })}::text))
+              FROM autonomous_cycle_shadow_decisions LIMIT 1`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+          }),
+        )
+      }),
+    )
+  })
+
   test('recovers a generation restricted before its first cycle only after fresh exact reconciliation', async () => {
     const fixture = makeFixture(true)
     const successorHash = canonicalHashV1({ generation: 'unused-successor' })
