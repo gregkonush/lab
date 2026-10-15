@@ -170,6 +170,10 @@ failed cut is memoized across passes. Unprojected broker health retains its inde
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
+Stable snapshots collect all currently available fee pages without an activity-creation `until` filter. Alpaca can
+exclude an already reported settlement from that filter while its cash effect is visible. Both history scans must
+still agree, and pagination budgets, duplicate detection, response hashes and fee date validation remain enforced.
+
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
