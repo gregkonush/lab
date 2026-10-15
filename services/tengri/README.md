@@ -105,6 +105,10 @@ of installing another leader. Cancellation retains an in-progress journal writer
 fsync cannot overwrite the fencing record. This does not provide the independent host execution deadline required for
 the authorization cutover.
 
+Guest openings share the lifecycle barrier so independent admissions can proceed concurrently. Sleep, stop, status
+publication and leader-fence installation take it exclusively. The existing opening byte limits and two-buffer
+admission capacity remain in force.
+
 Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
 and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
 or finalizer removal for an owned slot. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
@@ -151,8 +155,10 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 
 ## Transport and workload identity
 
-Controller renewal timeouts retry only within the last confirmed lease deadline. Ownership loss or a returned error
-closes authority immediately; late renewal replies cannot revive expired authority.
+Controller renewal keeps one in-flight attempt after its two-second warning threshold. Authority still ends at the
+last confirmed lease deadline while that attempt finishes. A successful reply extends authority from the attempt's
+start, so a slow response cannot overstate the database lease. Ownership loss or a returned error closes authority
+immediately; late renewal replies cannot revive expired authority.
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
 SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent

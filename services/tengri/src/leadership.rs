@@ -229,22 +229,34 @@ where
     loop {
         let attempt = async {
             interval.tick().await;
-            timeout(RENEW_TIMEOUT, renew()).await
+            let started = Instant::now();
+            let renewal = renew();
+            tokio::pin!(renewal);
+            let result = match timeout(RENEW_TIMEOUT, &mut renewal).await {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!(
+                        generation = authority.fence.generation,
+                        "controller leadership renewal pending within confirmed lease"
+                    );
+                    renewal.await
+                }
+            };
+            (started, result)
         };
         tokio::select! {
             biased;
             _ = tokio::time::sleep_until(authority.deadline) => {
                 anyhow::bail!("confirmed controller leadership expired");
             }
-            result = attempt => match result {
-                Ok(Ok(true)) => {
+            (started, result) = attempt => match result {
+                Ok(true) => {
                     ensure!(authority.deadline > Instant::now(), "controller renewal arrived after expiry");
-                    authority.deadline = Instant::now() + LEASE_DURATION - RENEW_TIMEOUT;
+                    authority.deadline = started + LEASE_DURATION;
                     sender.send_replace(Some(authority));
                 }
-                Ok(Ok(false)) => anyhow::bail!("controller leadership ownership changed"),
-                Ok(Err(error)) => return Err(error),
-                Err(_) => tracing::warn!(generation = authority.fence.generation, "controller leadership renewal timed out within confirmed lease"),
+                Ok(false) => anyhow::bail!("controller leadership ownership changed"),
+                Err(error) => return Err(error),
             }
         }
     }
@@ -255,17 +267,15 @@ mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
-    async fn transient_renewal_timeout_keeps_only_the_confirmed_authority() {
+    async fn slow_renewal_keeps_the_inflight_attempt_and_conservative_deadline() {
         let (sender, guard) = Guard::fixture();
         let original = *sender.borrow().as_ref().unwrap();
-        let mut attempts = 0;
+        let begun = Instant::now();
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
         let renewal = renew_authority(&sender, original, || {
-            attempts += 1;
-            let attempt = attempts;
-            async move {
-                if attempt == 1 {
-                    std::future::pending::<()>().await;
-                }
+            attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                tokio::time::sleep(Duration::from_secs(4)).await;
                 Ok(true)
             }
         });
@@ -281,9 +291,14 @@ mod tests {
         assert!(guard.fence().is_ok());
         tokio::select! {
             result = &mut renewal => panic!("renewed leadership was discarded: {result:?}"),
-            _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+            _ = tokio::time::sleep(Duration::from_millis(1250)) => {}
         }
-        assert!(sender.borrow().as_ref().unwrap().deadline > original.deadline);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().deadline,
+            begun + RENEW_INTERVAL + LEASE_DURATION
+        );
+        assert!(guard.fence().is_ok());
     }
 
     #[tokio::test(start_paused = true)]
