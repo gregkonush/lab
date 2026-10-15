@@ -21,6 +21,7 @@ export type ForwardPerformanceReasonCode =
   | 'MISSING_LEDGER_ACCOUNT'
   | 'NON_EXACT_RECONCILIATION'
   | 'OPERATING_COST_EVIDENCE_GAP'
+  | 'BROKER_FEE_SETTLEMENT_PENDING'
   | 'OPEN_POSITION'
   | 'STARTING_CAPITAL_GAP'
   | 'UNCLOSED_WINDOW'
@@ -274,7 +275,7 @@ export interface ForwardPerformanceLedgerTotals {
 }
 
 export interface ForwardPerformanceCashYieldEvidence {
-  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1'
+  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2'
   readonly reconciliationId: string
   readonly reconciliationContentHash: string
   readonly reconciledAt: string
@@ -284,11 +285,13 @@ export interface ForwardPerformanceCashYieldEvidence {
   readonly openingAccountEventId: string
   readonly openingObservedAt: string
   readonly openingCashMicros: string
+  readonly openingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly preWindowAccountedCashDeltaMicros: string
   readonly preWindowCashResidualMicros: string
   readonly closingAccountEventId: string
   readonly closingObservedAt: string
   readonly closingCashMicros: string
+  readonly closingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly accountedCashDeltaMicros: string
   readonly cashYieldMicros: string
 }
@@ -337,6 +340,12 @@ export interface ForwardPerformanceEvidenceInput {
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly accountTransactions?: readonly AccountingTransaction[]
+  readonly brokerFeeAccruals?: readonly {
+    readonly accrualId: string
+    readonly accountId: string
+    readonly expenseMicros: string
+    readonly settled: boolean
+  }[]
   readonly brokerFees?: readonly (import('../broker/alpaca').FeeActivity & { readonly inventoryCostMicros?: string })[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
   readonly unverifiedDecisionHashes?: readonly string[]

@@ -41,6 +41,7 @@ import { accountConfigurationRequestMaterial, assetRequestMaterial } from './req
 import { Pipeable } from '../../pipeable'
 import { quantityFromDecimal } from '../../quantity'
 import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
+import { cashReportingQuantum } from './cash-reporting'
 
 const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
@@ -233,6 +234,7 @@ const normalizeAccountResultDataFirst = (
       status: raw.status,
       currency: raw.currency,
       cashMicros,
+      cashReportingQuantumMicros: cashReportingQuantum(raw.cash),
       equityMicros,
       lastEquityMicros,
       cryptoStatus: raw.crypto_status ?? null,

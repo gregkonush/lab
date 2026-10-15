@@ -1551,7 +1551,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
       return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
-        observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 &&
+        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
+          observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
         ? Effect.void
         : Effect.fail(
@@ -1635,7 +1636,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         }),
     )
     const closeExecutionMarketData = yield* Effect.gen(function* () {
-      if (closingPass.kind === 'broker-position' || source === 'reconciled-position') {
+      if (
+        closingPass.kind === 'broker-position' ||
+        source === 'reconciled-position' ||
+        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' &&
+          evaluatedAt >= cycle.window.executionCloseAt)
+      ) {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
         ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))

@@ -100,9 +100,11 @@ import materializedCompletionCutoff from '../../migrations/0060_materialized_com
 import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
 import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
 import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
+import observedFeeAccruals from '../../migrations/0102_observed_fee_accruals'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '102_observed_fee_accruals': observedFeeAccruals,
   '101_reclassify_expired_native_entry': reclassifyExpiredNativeEntry,
   '100_unused_entry_admission': unusedEntryAdmission,
   '99_submission_denial_reason': submissionDenialReason,

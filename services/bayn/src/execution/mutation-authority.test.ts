@@ -74,6 +74,7 @@ const readResult = <A>(value: A, observedAt: string = evidence.observedAt): Read
 
 const account = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
   id: accountId,
