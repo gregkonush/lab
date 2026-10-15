@@ -3,7 +3,13 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import { hashLedgerPlanResult } from '../ledger-plan'
-import { feeAccrualSources, feeAccrualCohortSettled, type StoredAccrual } from './fee-accruals'
+import {
+  cashAccrualReportingOffsetMicros,
+  feeAccrualSources,
+  feeAccrualCohortSettled,
+  verifyFeeAccrualRecord,
+  type StoredAccrual,
+} from './fee-accruals'
 
 const accrual = (kind: 'COIN' | 'CASH', cycle: string, amount: number, matched: number): typeof StoredAccrual.Type => {
   const common = {
@@ -82,4 +88,55 @@ test('unaccrued directly settled sells do not contaminate a later trading date',
   expect(feeAccrualSources(rows.slice(0, 1), OrderSide.Sell)).toEqual(rows.slice(0, 1))
   expect(feeAccrualSources(rows, OrderSide.Buy)).toEqual(rows)
   expect(feeAccrualSources([], OrderSide.Sell)).toEqual([])
+})
+
+test('an unsettled cash observation carries its exact sub-cent reporting residual until the fee cohort settles', () => {
+  const original = accrual('CASH', 'b', 210000, 0)
+  if (original.data.kind !== 'CASH') throw new Error('Expected cash accrual')
+  const data = {
+    ...original.data,
+    openingCashReportingQuantumMicros: '10000' as const,
+    projectedCashMicros: '99875376976',
+    observedCashMicros: '99875170000',
+    cashReportingQuantumMicros: '10000' as const,
+  }
+  const stored = (value: typeof data, matched = '0', posted = true): typeof StoredAccrual.Type => {
+    const prepared = Result.getOrThrow(prepareFeeAccrual(value, 7001))
+    return Result.getOrThrow(
+      verifyFeeAccrualRecord(
+        {
+          ...original,
+          data: prepared.data,
+          accrual_id: prepared.accrualId,
+          content_hash: prepared.contentHash,
+          cash_debit_micros: prepared.cashDebitMicros,
+          expense_micros: prepared.expenseMicros,
+          ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(prepared.plan)),
+          matched_cash_micros: matched,
+          posted,
+        },
+        'cohort-paper',
+        { clusterId: 2001n, ledger: 7001 },
+      ),
+    )
+  }
+  const row = stored(data)
+  expect(row.cash_debit_micros).toBe('210000')
+  expect(cashAccrualReportingOffsetMicros([row])).toBe('3024')
+  expect(cashAccrualReportingOffsetMicros([stored(data, '100000')])).toBe('3024')
+  expect(cashAccrualReportingOffsetMicros([stored(data, '210000')])).toBe('0')
+  expect(cashAccrualReportingOffsetMicros([stored(data, '0', false)])).toBe('0')
+  const later = stored({
+    ...data,
+    cycleId: 'c'.repeat(64),
+    date: '2026-10-15',
+    observedAt: '2026-10-15T01:00:00.000Z',
+    sourceTrades: [{ ...data.sourceTrades[0], transactionId: 'c'.repeat(64) }],
+    projectedCashMicros: '99900000123',
+    observedCashMicros: '99899800000',
+  })
+  expect(cashAccrualReportingOffsetMicros([row, later])).toBe('-123')
+  expect(cashAccrualReportingOffsetMicros([later, row])).toBe('-123')
+  expect(cashAccrualReportingOffsetMicros([row, accrual('COIN', 'd', 100, 0)])).toBe('3024')
+  expect(cashAccrualReportingOffsetMicros([])).toBe('0')
 })

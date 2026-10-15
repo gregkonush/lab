@@ -53,7 +53,12 @@ import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { continuousMarketHours, continuousExecutionPolicy, tradingWindow } from '../market-hours'
 import { defaultJevProtocolDocument } from '../jev/protocol'
-import { prepareObservedCoinFees, prepareObservedCashFees, readFeeAccruals } from './fee-accruals'
+import {
+  cashAccrualReportingOffsetMicros,
+  prepareObservedCoinFees,
+  prepareObservedCashFees,
+  readFeeAccruals,
+} from './fee-accruals'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -1036,6 +1041,9 @@ describePostgres('PostgreSQL execution persistence', () => {
           ['CASH', '200000', true],
           ['COIN', '200392', true],
         ])
+        expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe(
+          '-1942',
+        )
         const cashAccrual = (yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).find(
           (row) => row.data.kind === 'CASH',
         )
@@ -1080,6 +1088,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
         expect(result.cashDeltaMicros).toBe('-6046')
+        expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe('0')
         expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual([6046n])
         yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at) VALUES(${hash('settlement-report-cut')},'bayn.paper-reconciliation.v1',${accountId},${hash('settlement-report-state')},${hash('settlement-report-state')},${hash('settlement-report-content')},'EXACT','[]'::jsonb,${sellAt})`
         yield* fence.transaction(

@@ -837,7 +837,11 @@ const measureObservedCapacity = (
       marketVolumeQuantityAtoms: marketVolume.toString(),
       ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2'
         ? {
-            intradaySource: { feed: 'iex' as const, volumeScope: volume.volumeScope, evidenceHash: volume.contentHash },
+            intradaySource: {
+              feed: volume.sourceFeed,
+              volumeScope: volume.volumeScope,
+              evidenceHash: volume.contentHash,
+            },
           }
         : {}),
       participationRate: {

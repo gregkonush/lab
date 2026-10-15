@@ -647,19 +647,34 @@ export const ensureExecutionCycleClosure = <R>({
     )
     return { _tag: 'Close', document: stored.document, reconciliation: prepared.reconciliation } as const
   }).pipe(
-    Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
-      Effect.logInfo('Execution close awaits market data').pipe(
-        Effect.annotateLogs({
-          cycleId: cycle.identity.cycleId,
-          ...executionCloseMarketDataDiagnostics(failure),
-        }),
-        Effect.as<ExecutionCycleClosureResult>({
-          _tag: 'Wait',
-          observedAt: failure.observedAt,
-          waitReason: failure.quotePending === true ? 'CLOSE_QUOTE_PENDING' : 'CLOSE_MARKET_DATA_UNAVAILABLE',
-        }),
-      ),
-    ),
+    Effect.catchTags({
+      ExecutionCloseAwaitingReconciliation: (failure) =>
+        Effect.logInfo('Execution close awaits exact reconciliation').pipe(
+          Effect.annotateLogs({
+            cycleId: cycle.identity.cycleId,
+            reconciliationId: failure.reconciliationId,
+            reconciliationStatus: failure.status,
+            observedAt: failure.observedAt,
+          }),
+          Effect.as<ExecutionCycleClosureResult>({
+            _tag: 'Wait',
+            observedAt: failure.observedAt,
+            waitReason: 'CLOSE_RECONCILIATION_PENDING',
+          }),
+        ),
+      ExecutionCloseAwaitingMarketData: (failure) =>
+        Effect.logInfo('Execution close awaits market data').pipe(
+          Effect.annotateLogs({
+            cycleId: cycle.identity.cycleId,
+            ...executionCloseMarketDataDiagnostics(failure),
+          }),
+          Effect.as<ExecutionCycleClosureResult>({
+            _tag: 'Wait',
+            observedAt: failure.observedAt,
+            waitReason: failure.quotePending === true ? 'CLOSE_QUOTE_PENDING' : 'CLOSE_MARKET_DATA_UNAVAILABLE',
+          }),
+        ),
+    }),
   )
 
 export const mutationDecisionInput = (
