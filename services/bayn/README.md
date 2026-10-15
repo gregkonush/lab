@@ -177,6 +177,9 @@ still agree, and pagination budgets, duplicate detection, response hashes and fe
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+Observed cash-fee preparation uses that same indexed baseline reader before adding the retained fill and fee cash
+deltas. Its regression checks the executed PostgreSQL plans against a populated account history, including foreign
+accounts and account events without retained snapshots; this does not change fee bounds or ledger posting order.
 
 The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
 the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
