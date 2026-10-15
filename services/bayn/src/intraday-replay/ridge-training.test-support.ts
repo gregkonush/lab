@@ -37,7 +37,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
           availableAtMs: openMs + (minute + 1) * 60_000 + 1000,
           close: 100 + minute * 0.01,
         })
-      for (let second = 24 * 60; second <= 40 * 60; second += 30) {
+      for (let second = 60; second <= 40 * 60; second += 30) {
         const atMs = openMs + second * 1000 - 1000
         const price = second >= 34 * 60 ? 98 : second >= 32 * 60 ? 99 : 100
         inputs.push({
@@ -48,7 +48,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
           bid: price - 0.01,
           ask: price + 0.01,
           bidSize: mode === 'unresolved' && symbol !== 'SPY' && second >= 32 * 60 ? 0 : 2,
-          askSize: mode === 'excluded' && symbol !== 'SPY' ? 0 : 5,
+          askSize: symbol !== 'SPY' && (mode === 'excluded' || second < 30 * 60 + 30) ? 0 : 5,
         })
         inputs.push({ channel: 'trades', symbol, eventAtMs: atMs, availableAtMs: atMs, close: price })
       }
@@ -107,7 +107,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     expectedCalendarHash: calendar.normalizedResponseHash,
     sessions: calendar.sessions.map((session, index) => ({
       ...session,
-      firstDecisionAt: iso(Date.parse(session.openAt) + 1_830_000),
+      firstDecisionAt: iso(Date.parse(session.openAt) + 90_000),
       partition:
         index < 2
           ? SixBarRidgePartition.Training
@@ -127,7 +127,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v3',
+        inputDefinition: 'bayn.jev-trading-signal-state.v4',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',

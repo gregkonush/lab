@@ -1,4 +1,5 @@
 import { equityMarketProfile } from '../jev/markets'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
@@ -53,7 +54,7 @@ export const scanControlInputs = (input: {
       pollIntervalMs > 60_000
     )
       return yield* new ControlStudyFailure({ message: 'Preflight requires a valid session and bounded poll cadence' })
-    const warmupMs = openMs + protocol.lookbackMinutes * 60_000 + protocol.decisionDelaySeconds * 1000
+    const warmupMs = openMs + intradayMinimumCompletedHistoryMs + protocol.decisionDelaySeconds * 1000
     const cutoffMs = closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
     const scheduledPollCount = Math.ceil((closeMs - openMs) / pollIntervalMs)
     let warmupPollCount = 0

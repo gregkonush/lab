@@ -8,6 +8,7 @@ import { CashReportingQuantumSchema, reportedCashMicros } from '../broker/alpaca
 import { ReconciliationStoreError, type BrokerSnapshot } from './reconciliation'
 import { OrderSide } from '../execution/contracts'
 import { acknowledgeFeePosting, FeePostingKind, readAcknowledgedFeePostings } from './fee-posting'
+import { readOpeningCash } from './account-baseline'
 
 const integer = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/))
 export const StoredAccrual = Schema.Struct({
@@ -276,13 +277,14 @@ export const prepareObservedCoinFees = (sql: PgClient.PgClient, snapshot: Broker
 export const prepareObservedCashFees = (sql: PgClient.PgClient, snapshot: BrokerSnapshot, identity: Identity) =>
   Effect.gen(function* () {
     const accountId = snapshot.account.accountId
+    const openingCash = yield* readOpeningCash(sql, accountId)
     const [balance] = yield* fromResult(
       Schema.decodeUnknownResult(
         Schema.Tuple([Schema.Struct({ cash: Schema.String })]),
         strictParseOptions,
       )(
         yield* sql`
-    SELECT ((SELECT a.cash_micros FROM account_snapshots a JOIN broker_events e USING(event_id) WHERE a.account_id=${accountId} ORDER BY e.source_sequence LIMIT 1)
+    SELECT (${openingCash.cash_micros}::numeric
       +COALESCE((SELECT sum(cash_delta_micros) FROM accounting_transactions WHERE account_id=${accountId}),0)
       +COALESCE((SELECT sum(cash_delta_micros) FROM broker_cash_fee_deltas WHERE account_id=${accountId}),0))::text AS cash
   `,

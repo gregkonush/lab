@@ -10,7 +10,7 @@ import {
   type RollingMarketValues,
 } from './contract'
 import { CryptoMarketFeatureSchema, isCryptoMarketFeature, type CryptoMarketFeature } from './crypto-contract'
-import { MarketFeatureFailure, TechnicalReadiness } from './feature-core'
+import { MarketFeatureFailure } from './feature-core'
 
 export const NativeMarketFeatureSchema = Schema.Union([RollingMarketFeatureSchema, CryptoMarketFeatureSchema])
 export type NativeMarketFeature = RollingMarketFeature | CryptoMarketFeature
@@ -20,16 +20,14 @@ export const rollingWindowStartMs = (feature: NativeMarketFeature) =>
 
 export const rollingValues = (feature: NativeMarketFeature) => {
   if (isCryptoMarketFeature(feature)) {
-    const values = feature.material.rolling30m.values
-    return values === null
-      ? null
-      : {
-          reference: Number(values.referencePrice),
-          high: Number(values.rangeHighPrice),
-          low: Number(values.rangeLowPrice),
-          close: Number(values.lastClosePrice),
-          volume: Number(values.totalVolume),
-        }
+    const values = feature.material.priceWindow
+    return {
+      reference: Number(values.referencePrice),
+      high: Number(values.rangeHighPrice),
+      low: Number(values.rangeLowPrice),
+      close: Number(values.lastClosePrice),
+      volume: Number(values.totalVolume),
+    }
   }
   const values = feature.material.values
   return {
@@ -46,9 +44,9 @@ export const nativeFeatureMatchesBars = (
   bars: readonly IntradayBar[],
 ): Result.Result<boolean, MarketFeatureFailure> => {
   if (!isCryptoMarketFeature(feature)) return featureMatchesBars(feature, bars)
-  if (feature.material.rolling30m.status !== TechnicalReadiness.Ready || bars.length !== 30)
-    return Result.succeed(false)
-  const inputs = feature.material.inputs.slice(-30)
+  const start = BigInt(rollingWindowStartMs(feature)) * 1_000_000n
+  const inputs = feature.material.inputs.filter((input) => BigInt(input.eventTimeNanos) >= start)
+  if (bars.length === 0 || bars.length !== inputs.length) return Result.succeed(false)
   const ordered = bars.toSorted((left, right) => left.eventAt.localeCompare(right.eventAt))
   return Result.gen(function* () {
     for (const [index, bar] of ordered.entries()) {

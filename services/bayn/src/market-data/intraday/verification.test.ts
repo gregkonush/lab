@@ -264,12 +264,14 @@ describe('immutable intraday market snapshot', () => {
     const delayedRows = {
       ...rows,
       bars: rows.bars.map((bar) =>
-        bar.symbol === 'AMD' && bar.event_at === request.rangeStartAt
-          ? { ...bar, ingested_at: '2026-08-18T13:33:00.000Z' }
+        bar.symbol === 'AMD' && Date.parse(bar.event_at) === Date.parse(request.rangeEndAt) - 60_000
+          ? { ...bar, ingested_at: new Date(Date.parse(request.rangeEndAt) + 120_001).toISOString() }
           : bar,
       ),
     }
-    const snapshot = success(verifyIntradaySnapshot(candidateRequest, delayedRows))
+    const snapshot = success(
+      verifyIntradaySnapshot({ ...candidateRequest, observedAt: '2026-08-18T13:37:01.000Z' }, delayedRows),
+    )
     expect(snapshot.bars).toHaveLength(rows.bars.length)
     expect(snapshot.manifest.candidateExclusions).toEqual([
       {
@@ -287,7 +289,9 @@ describe('immutable intraday market snapshot', () => {
         }),
       ).reason,
     ).toBe('hash')
-    expect(error(verifyIntradaySnapshot(request, delayedRows)).reason).toBe('freshness')
+    expect(
+      error(verifyIntradaySnapshot({ ...request, observedAt: '2026-08-18T13:37:01.000Z' }, delayedRows)).reason,
+    ).toBe('freshness')
   })
 
   test('requires the benchmark even when candidate data is unavailable', () => {
@@ -1286,7 +1290,7 @@ describe('immutable intraday market snapshot', () => {
 
     const delayedRequest: IntradaySnapshotRequest = {
       ...request,
-      observedAt: '2026-08-18T13:50:30.000Z',
+      observedAt: '2026-08-18T13:51:01.000Z',
       feed: 'delayed_sip',
       delayClass: 'delayed_15m_consolidated',
     }
@@ -1312,13 +1316,15 @@ describe('immutable intraday market snapshot', () => {
       })),
     }
 
-    const firstBar = delayedRows.bars[0]
+    const firstBar = delayedRows.bars.find(
+      (bar) => Date.parse(bar.event_at) === Date.parse(delayedRequest.rangeEndAt) - 60_000,
+    )
     if (firstBar === undefined) throw new Error('bar fixture is incomplete')
     const lateBar = error(
       verifyIntradaySnapshot(delayedRequest, {
         ...delayedRows,
-        bars: delayedRows.bars.map((bar, index) =>
-          index === 0
+        bars: delayedRows.bars.map((bar) =>
+          bar === firstBar
             ? { ...bar, ingested_at: new Date(Date.parse(bar.event_at) + 17 * 60_000 + 1).toISOString() }
             : bar,
         ),
