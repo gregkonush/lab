@@ -64,6 +64,10 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
+	guestAuthorization, err := loadGuestRPCAdmission()
+	if err != nil {
+		return err
+	}
 	microVMID := strings.TrimSpace(os.Getenv("MICROVM_ID"))
 	bootstrapToken, err := loadBootstrapToken()
 	if err != nil {
@@ -126,6 +130,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	api, err := newAPIServer(apiConfig{
+		guestAuthorization:  guestAuthorization,
 		bootstrapToken:      bootstrapToken,
 		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
 		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),

@@ -4,9 +4,14 @@ import { bindForwardPerformanceTerminalReferencePrices } from './program'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
+import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { decodeIntradayBarRows } from '../market-data/intraday/rows'
+import { MarketVolumeBindingRow } from './postgres/model'
+import { marketVolumeRequestsFromRows } from './postgres/projection'
+import { intradayPerformanceDecisionRequest, intradayPerformanceSessionQuery } from './intraday-volume'
 import { makeForwardPerformanceReceipt } from './domain'
 import type {
   ForwardPerformanceDailyMarketVolumeEvidence,
@@ -44,7 +49,7 @@ const transaction = (
   cycleId: hash('a'),
   symbol: 'NVDA',
   side: 'SELL' as const,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   priceMicros: '109000000',
   notionalMicros: '109000000',
   feeMicros,
@@ -140,8 +145,8 @@ const exactExecutionEvidence = (reverse = false) => {
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       side: 'SELL' as const,
-      quantityMicros: '400000',
-      priceMicros: '109000000',
+      quantityAtoms: '400000000',
+      priceAtoms: '109000000000',
       feeMicros: '10',
       sourceTimestamp: '2026-07-20T20:00:00.000000000Z',
       occurredAt: '2026-07-20T20:00:00.000Z',
@@ -156,8 +161,8 @@ const exactExecutionEvidence = (reverse = false) => {
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       side: 'SELL' as const,
-      quantityMicros: '600000',
-      priceMicros: '108000000',
+      quantityAtoms: '600000000',
+      priceAtoms: '108000000000',
       feeMicros: '10',
       sourceTimestamp: '2026-07-20T20:00:01.000000000Z',
       occurredAt: '2026-07-20T20:00:01.000Z',
@@ -174,7 +179,7 @@ const exactExecutionEvidence = (reverse = false) => {
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       side: 'SELL' as const,
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '110000000',
       intent: {
         intentId: hash('c'),
@@ -184,7 +189,7 @@ const exactExecutionEvidence = (reverse = false) => {
         decisionHash: hash('e'),
         symbol: 'NVDA',
         side: 'SELL' as const,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         terminalOutcome: 'FILLED' as const,
         createdAt: '2026-07-20T13:00:00.000Z',
         updatedAt: '2026-07-20T20:00:02.000Z',
@@ -197,8 +202,8 @@ const exactExecutionEvidence = (reverse = false) => {
         accountId: 'paper-account-1',
         symbol: 'NVDA',
         side: 'SELL' as const,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '1000000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '1000000000',
         status: 'FILLED' as const,
         occurredAt: '2026-07-20T20:00:02.000Z',
         observedAt: '2026-07-20T20:00:02.100Z',
@@ -219,7 +224,7 @@ const exactMarketVolumeEvidence = (): readonly ForwardPerformanceMarketVolumeEvi
     windowOpenedAt: '2026-07-20T13:30:00.000Z',
     windowClosedAt: '2026-07-20T21:00:00.000Z',
     evidenceCutoffAt: '2026-07-20T21:10:00.000Z',
-    quantityMicros: '100000000',
+    quantityAtoms: '100000000000',
     closePriceMicros: '103000000',
     snapshotId: hash('1'),
     manifestContentHash: hash('2'),
@@ -255,15 +260,15 @@ const terminalReferencePriceFor = (
 const exactTransactions = () => [
   transaction('1', '40', '10', {
     brokerEventId: hash('b'),
-    quantityMicros: '400000',
-    priceMicros: '109000000',
+    quantityAtoms: '400000000',
+    priceAtoms: '109000000000',
     notionalMicros: '43600000',
     occurredAt: '2026-07-20T20:00:00.000Z',
   }),
   transaction('2', '60', '10', {
     brokerEventId: hash('d'),
-    quantityMicros: '600000',
-    priceMicros: '108000000',
+    quantityAtoms: '600000000',
+    priceAtoms: '108000000000',
     notionalMicros: '64800000',
     occurredAt: '2026-07-20T20:00:01.000Z',
   }),
@@ -419,9 +424,9 @@ describe('forward performance domain', () => {
       implementationShortfall: {
         plannedOrderCount: 1,
         fillCount: 2,
-        plannedQuantityMicros: '1000000',
-        filledQuantityMicros: '1000000',
-        unfilledQuantityMicros: '0',
+        plannedQuantityAtoms: '1000000000',
+        filledQuantityAtoms: '1000000000',
+        unfilledQuantityAtoms: '0',
         plannedReferenceNotionalMicros: '110000000',
         executedNotionalMicros: '108400000',
         executionPriceShortfallMicros: '1600000',
@@ -446,8 +451,8 @@ describe('forward performance domain', () => {
       boundedObservedReferenceNotionalMicros: '110000000',
       boundedObservedExecutedNotionalMicros: '108400000',
       maximumParticipationRate: {
-        numeratorQuantityMicros: '1000000',
-        denominatorQuantityMicros: '100000000',
+        numeratorQuantityAtoms: '1000000000',
+        denominatorQuantityAtoms: '100000000000',
         decimal: '0.010000000000',
       },
       observations: [
@@ -456,11 +461,11 @@ describe('forward performance domain', () => {
           symbol: 'NVDA',
           windowOpenedAt: '2026-07-20T13:30:00.000Z',
           windowClosedAt: '2026-07-20T21:00:00.000Z',
-          filledQuantityMicros: '1000000',
-          marketVolumeQuantityMicros: '100000000',
+          filledQuantityAtoms: '1000000000',
+          marketVolumeQuantityAtoms: '100000000000',
           participationRate: {
-            numeratorQuantityMicros: '1000000',
-            denominatorQuantityMicros: '100000000',
+            numeratorQuantityAtoms: '1000000000',
+            denominatorQuantityAtoms: '100000000000',
             decimal: '0.010000000000',
           },
         },
@@ -469,7 +474,7 @@ describe('forward performance domain', () => {
     expect(first.observedCapacity.evidenceHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
-  test('measures a notional BUY from actual broker fills when price improvement yields more shares than planned', () => {
+  test('refuses to measure a retired notional BUY as a current quantity execution', () => {
     const [baseExecution] = exactExecutionEvidence()
     const [firstFill, secondFill] = baseExecution?.fills ?? []
     if (baseExecution === undefined || firstFill === undefined || secondFill === undefined) {
@@ -478,7 +483,7 @@ describe('forward performance domain', () => {
     const terminalOrder = baseExecution.terminalOrder
     const baseIntent = baseExecution.intent
     if (terminalOrder === undefined || baseIntent === undefined) throw new Error('execution identity fixture missing')
-    const { quantityMicros: _quantityMicros, ...notionalOrder } = terminalOrder
+    const { quantityAtoms: _quantityAtoms, ...notionalOrder } = terminalOrder
     const executionEvidence: ForwardPerformanceExecutionEvidence = {
       ...baseExecution,
       side: 'BUY',
@@ -491,20 +496,20 @@ describe('forward performance domain', () => {
         ...notionalOrder,
         side: 'BUY',
         notionalMicros: '110000000',
-        filledQuantityMicros: '1100000',
+        filledQuantityAtoms: '1100000000',
       },
       fills: [
         {
           ...firstFill,
           side: 'BUY',
-          quantityMicros: '500000',
-          priceMicros: '100000000',
+          quantityAtoms: '500000000',
+          priceAtoms: '100000000000',
         },
         {
           ...secondFill,
           side: 'BUY',
-          quantityMicros: '600000',
-          priceMicros: '99000000',
+          quantityAtoms: '600000000',
+          priceAtoms: '99000000000',
         },
       ],
     }
@@ -512,16 +517,16 @@ describe('forward performance domain', () => {
       transaction('1', '0', '10', {
         brokerEventId: hash('b'),
         side: 'BUY',
-        quantityMicros: '500000',
-        priceMicros: '100000000',
+        quantityAtoms: '500000000',
+        priceAtoms: '100000000000',
         notionalMicros: '50000000',
         occurredAt: '2026-07-20T20:00:00.000Z',
       }),
       transaction('2', '0', '10', {
         brokerEventId: hash('d'),
         side: 'BUY',
-        quantityMicros: '600000',
-        priceMicros: '99000000',
+        quantityAtoms: '600000000',
+        priceAtoms: '99000000000',
         notionalMicros: '59400000',
         occurredAt: '2026-07-20T20:00:01.000Z',
       }),
@@ -545,14 +550,9 @@ describe('forward performance domain', () => {
     )
 
     expect(receipt.executionQuality).toMatchObject({
-      status: 'MEASURED',
-      reasonCodes: [],
-      implementationShortfall: {
-        plannedQuantityMicros: '1000000',
-        filledQuantityMicros: '1100000',
-        unfilledQuantityMicros: '0',
-        executedNotionalMicros: '109400000',
-      },
+      status: 'UNDETERMINED',
+      reasonCodes: ['FILL_QUANTITY_MISMATCH', 'TERMINAL_ORDER_EVIDENCE_GAP'],
+      implementationShortfall: null,
     })
   })
 
@@ -565,7 +565,7 @@ describe('forward performance domain', () => {
     ) {
       throw new Error('execution identity fixture missing')
     }
-    const { quantityMicros: _quantityMicros, ...notionalOrder } = baseExecution.terminalOrder
+    const { quantityAtoms: _quantityAtoms, ...notionalOrder } = baseExecution.terminalOrder
     const receipt = success(
       makeForwardPerformanceReceipt(
         input({
@@ -694,7 +694,7 @@ describe('forward performance domain', () => {
         accountId: 'paper-account-1',
         symbol: 'NVDA',
         side: 'BUY' as const,
-        plannedQuantityMicros: '1000000',
+        plannedQuantityAtoms: '1000000000',
         referencePriceMicros: '100000000',
         intent: {
           intentId: hash('c'),
@@ -704,7 +704,7 @@ describe('forward performance domain', () => {
           decisionHash: hash('e'),
           symbol: 'NVDA',
           side: 'BUY' as const,
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           terminalOutcome: 'CANCELED' as const,
           createdAt: '2026-07-20T13:00:00.000Z',
           updatedAt: '2026-07-20T20:00:02.000Z',
@@ -717,8 +717,8 @@ describe('forward performance domain', () => {
           accountId: 'paper-account-1',
           symbol: 'NVDA',
           side: 'BUY' as const,
-          quantityMicros: '1000000',
-          filledQuantityMicros: '400000',
+          quantityAtoms: '1000000000',
+          filledQuantityAtoms: '400000000',
           status: 'CANCELED' as const,
           occurredAt: '2026-07-20T20:00:02.000Z',
           observedAt: '2026-07-20T21:06:00.000Z',
@@ -733,8 +733,8 @@ describe('forward performance domain', () => {
             accountId: 'paper-account-1',
             symbol: 'NVDA',
             side: 'BUY' as const,
-            quantityMicros: '400000',
-            priceMicros: '101000000',
+            quantityAtoms: '400000000',
+            priceAtoms: '101000000000',
             feeMicros: '10',
             sourceTimestamp: '2026-07-20T20:00:00.000000000Z',
             occurredAt: '2026-07-20T20:00:00.000Z',
@@ -748,8 +748,8 @@ describe('forward performance domain', () => {
       transaction('1', '0', '10', {
         brokerEventId: hash('b'),
         side: 'BUY',
-        quantityMicros: '400000',
-        priceMicros: '101000000',
+        quantityAtoms: '400000000',
+        priceAtoms: '101000000000',
         notionalMicros: '40400000',
         occurredAt: '2026-07-20T20:00:00.000Z',
       }),
@@ -774,8 +774,8 @@ describe('forward performance domain', () => {
     expect(receipt.executionQuality).toMatchObject({
       status: 'MEASURED',
       implementationShortfall: {
-        filledQuantityMicros: '400000',
-        unfilledQuantityMicros: '600000',
+        filledQuantityAtoms: '400000000',
+        unfilledQuantityAtoms: '600000000',
         executionPriceShortfallMicros: '400000',
         opportunityShortfallMicros: '1800000',
         explicitCostsMicros: '10',
@@ -798,7 +798,7 @@ describe('forward performance domain', () => {
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       side: 'BUY',
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       intent: {
         intentId: zeroFillIntentId,
@@ -808,7 +808,7 @@ describe('forward performance domain', () => {
         decisionHash: hash('e'),
         symbol: 'NVDA',
         side: 'BUY',
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         terminalOutcome: 'CANCELED',
         createdAt: '2026-07-20T13:00:00.000Z',
         updatedAt: '2026-07-20T20:00:03.000Z',
@@ -821,8 +821,8 @@ describe('forward performance domain', () => {
         accountId: 'paper-account-1',
         symbol: 'NVDA',
         side: 'BUY',
-        quantityMicros: '1000000',
-        filledQuantityMicros: '0',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '0',
         status: 'CANCELED',
         occurredAt: '2026-07-20T20:00:03.000Z',
         observedAt: '2026-07-20T20:00:03.100Z',
@@ -846,9 +846,9 @@ describe('forward performance domain', () => {
       implementationShortfall: {
         plannedOrderCount: 2,
         fillCount: 2,
-        plannedQuantityMicros: '2000000',
-        filledQuantityMicros: '1000000',
-        unfilledQuantityMicros: '1000000',
+        plannedQuantityAtoms: '2000000000',
+        filledQuantityAtoms: '1000000000',
+        unfilledQuantityAtoms: '1000000000',
         opportunityShortfallMicros: '3000000',
       },
     })
@@ -858,8 +858,8 @@ describe('forward performance domain', () => {
         {
           cycleId: hash('a'),
           symbol: 'NVDA',
-          filledQuantityMicros: '1000000',
-          marketVolumeQuantityMicros: '100000000',
+          filledQuantityAtoms: '1000000000',
+          marketVolumeQuantityAtoms: '100000000000',
         },
       ],
     })
@@ -878,7 +878,7 @@ describe('forward performance domain', () => {
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       side: 'BUY',
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       intent: {
         intentId,
@@ -888,7 +888,7 @@ describe('forward performance domain', () => {
         decisionHash: hash('e'),
         symbol: 'NVDA',
         side: 'BUY',
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         terminalOutcome: 'CANCELED',
         createdAt: '2026-07-20T13:00:00.000Z',
         updatedAt: '2026-07-20T20:00:03.000Z',
@@ -901,8 +901,8 @@ describe('forward performance domain', () => {
         accountId: 'paper-account-1',
         symbol: 'NVDA',
         side: 'BUY',
-        quantityMicros: '1000000',
-        filledQuantityMicros: '0',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '0',
         status: 'CANCELED',
         occurredAt: '2026-07-20T20:00:03.000Z',
         observedAt: '2026-07-20T20:00:03.100Z',
@@ -935,9 +935,9 @@ describe('forward performance domain', () => {
       implementationShortfall: {
         plannedOrderCount: 1,
         fillCount: 0,
-        plannedQuantityMicros: '1000000',
-        filledQuantityMicros: '0',
-        unfilledQuantityMicros: '1000000',
+        plannedQuantityAtoms: '1000000000',
+        filledQuantityAtoms: '0',
+        unfilledQuantityAtoms: '1000000000',
         opportunityShortfallMicros: '3000000',
         totalImplementationShortfallMicros: '3000000',
         firstFillAt: null,
@@ -950,18 +950,18 @@ describe('forward performance domain', () => {
         {
           cycleId: hash('a'),
           symbol: 'NVDA',
-          filledQuantityMicros: '0',
-          marketVolumeQuantityMicros: '100000000',
+          filledQuantityAtoms: '0',
+          marketVolumeQuantityAtoms: '100000000000',
           participationRate: {
-            numeratorQuantityMicros: '0',
-            denominatorQuantityMicros: '100000000',
+            numeratorQuantityAtoms: '0',
+            denominatorQuantityAtoms: '100000000000',
             decimal: '0.000000000000',
           },
         },
       ],
       maximumParticipationRate: {
-        numeratorQuantityMicros: '0',
-        denominatorQuantityMicros: '100000000',
+        numeratorQuantityAtoms: '0',
+        denominatorQuantityAtoms: '100000000000',
         decimal: '0.000000000000',
       },
     })
@@ -980,7 +980,7 @@ describe('forward performance domain', () => {
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       side: 'BUY',
-      plannedQuantityMicros: '1000000',
+      plannedQuantityAtoms: '1000000000',
       referencePriceMicros: '100000000',
       intent: {
         intentId,
@@ -990,7 +990,7 @@ describe('forward performance domain', () => {
         decisionHash: hash('e'),
         symbol: 'NVDA',
         side: 'BUY',
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         terminalOutcome: 'BLOCKED',
         createdAt: '2026-07-20T13:00:00.000Z',
         updatedAt: '2026-07-20T13:05:00.000Z',
@@ -1023,8 +1023,8 @@ describe('forward performance domain', () => {
       status: 'MEASURED',
       implementationShortfall: {
         fillCount: 0,
-        filledQuantityMicros: '0',
-        unfilledQuantityMicros: '1000000',
+        filledQuantityAtoms: '0',
+        unfilledQuantityAtoms: '1000000000',
         opportunityShortfallMicros: '3000000',
         firstFillAt: null,
         lastFillAt: null,
@@ -1037,7 +1037,7 @@ describe('forward performance domain', () => {
         {
           cycleId: hash('a'),
           symbol: 'NVDA',
-          filledQuantityMicros: '0',
+          filledQuantityAtoms: '0',
           participationRate: { decimal: '0.000000000000' },
         },
       ],
@@ -1060,7 +1060,7 @@ describe('forward performance domain', () => {
               terminalOrder: {
                 ...execution.terminalOrder,
                 status: 'CANCELED',
-                filledQuantityMicros: '400000',
+                filledQuantityAtoms: '400000000',
               },
               fills: execution.fills.slice(0, 1),
             },
@@ -1110,7 +1110,7 @@ describe('forward performance domain', () => {
         input({
           transactions: exactTransactions(),
           executionEvidence: exactExecutionEvidence(),
-          marketVolumeEvidence: [{ ...volume, quantityMicros: '100000001' }],
+          marketVolumeEvidence: [{ ...volume, quantityAtoms: '100000001000' }],
         }),
       ),
     )
@@ -1140,6 +1140,34 @@ describe('forward performance domain', () => {
     expect(receipt.profitability).toBe('NOT_PROFITABLE')
     expect(receipt.totals.grossRealizedPnlMicros).toBe('-50')
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+  })
+
+  test('retains observed settlement costs and withholds qualification until broker receipts match', () => {
+    for (const settled of [false, true]) {
+      const receipt = success(
+        makeForwardPerformanceReceipt(
+          input({
+            transactions: exactTransactions(),
+            executionEvidence: exactExecutionEvidence(),
+            marketVolumeEvidence: exactMarketVolumeEvidence(),
+            brokerFeeAccruals: [
+              { accrualId: 'a'.repeat(64), accountId: 'paper-account-1', expenseMicros: '140', settled },
+            ],
+            ledgerTotals: {
+              realizedGainMicros: '100',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '160',
+              otherChargedCostsMicros: '0',
+              cashYieldMicros: '0',
+            },
+          }),
+        ),
+      )
+      expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-60')
+      expect(receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+      expect(receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
+      expect(receipt.executionQuality.reasonCodes.includes('EXPLICIT_COST_EVIDENCE_GAP')).toBe(!settled)
+    }
   })
 
   test('deducts delayed broker fees and refunds without fabricating fills', () => {
@@ -1552,11 +1580,11 @@ test('measures a completed streaming partial cancellation and retains missing-mi
     ...execution,
     symbol: request.symbol,
     decisionCreatedAt: request.decisionManifest.observedAt,
-    plannedQuantityMicros: '2000000',
+    plannedQuantityAtoms: '2000000000',
     intent: {
       ...execution.intent,
       symbol: request.symbol,
-      quantityMicros: '2000000',
+      quantityAtoms: '2000000000',
       terminalOutcome: 'CANCELED',
       createdAt: request.decisionManifest.observedAt,
       updatedAt: at(execution.intent.updatedAt),
@@ -1564,7 +1592,7 @@ test('measures a completed streaming partial cancellation and retains missing-mi
     terminalOrder: {
       ...execution.terminalOrder,
       symbol: request.symbol,
-      quantityMicros: '2000000',
+      quantityAtoms: '2000000000',
       status: 'CANCELED',
       occurredAt: at(execution.terminalOrder.occurredAt),
       observedAt: at(execution.terminalOrder.observedAt),
@@ -1604,7 +1632,7 @@ test('measures a completed streaming partial cancellation and retains missing-mi
     expect(receipt.executionQuality).toMatchObject({
       status: 'MEASURED',
       reasonCodes: [],
-      implementationShortfall: { filledQuantityMicros: '1000000', unfilledQuantityMicros: '1000000' },
+      implementationShortfall: { filledQuantityAtoms: '1000000000', unfilledQuantityAtoms: '1000000000' },
     })
     expect(receipt.observedCapacity.status).toBe(missing ? 'UNDETERMINED' : 'MEASURED')
     expect(receipt.observedCapacity.reasonCodes).toEqual(missing ? ['MARKET_VOLUME_EVIDENCE_GAP'] : [])
@@ -1627,4 +1655,61 @@ test('retains native archive evidence even when a missing fill prevents executio
   expect(receipt.executionQuality.status).toBe('UNDETERMINED')
   expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
   expect(receipt.observedCapacity.intradaySources).toEqual([volume])
+})
+
+test('crypto capacity observations preserve the native us feed in the completed receipt', () => {
+  const symbol = 'ETH/USD'
+  const fixture = cryptoMarketFixture(symbol)
+  const manifest = fixture.snapshot.manifest
+  const end = Date.parse(manifest.rangeEndAt)
+  const binding = Schema.decodeUnknownSync(MarketVolumeBindingRow)({
+    cycle_id: hash('a'),
+    snapshot_id: manifest.snapshotId,
+    execution_session_date: manifest.sessionDate,
+    execution_open_at: new Date(end + 500),
+    execution_close_at: new Date(end + 192_000),
+    manifest,
+  })
+  const request = marketVolumeRequestsFromRows(
+    [{ cycleId: hash('a'), symbol }],
+    [binding],
+    new Date(end + 200_000).toISOString(),
+  )[0]
+  if (request === undefined || !('decisionManifest' in request)) throw new Error('Missing crypto report request')
+  const archive = intradayPerformanceSessionQuery(
+    request,
+    Result.getOrThrow(intradayPerformanceDecisionRequest(request)),
+  )
+  const original = Result.getOrThrow(decodeIntradayBarRows(fixture.rows.bars)).find((bar) => bar.symbol === symbol)
+  if (original === undefined) throw new Error('Missing crypto producer bar')
+  const bars = [1, 2].map((minute) => ({
+    ...original,
+    event_at: new Date(end + minute * 60_000).toISOString(),
+    ingested_at: new Date(end + (minute + 1) * 60_000).toISOString(),
+    volume: '10',
+    native_payload: `{"v":10,"c":${original.close}}`,
+    is_final: '1',
+  }))
+  const volume = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))
+  if (volume === undefined) throw new Error('Missing complete crypto volume')
+  const fillPrefix = new Date(end + 60_000).toISOString().slice(0, 17)
+  const accounting = JSON.parse(
+    JSON.stringify(
+      input({
+        cycles: [cycle('a', { submissionOpenAt: request.windowOpenedAt, terminalAt: request.windowClosedAt })],
+        transactions: exactTransactions(),
+        executionEvidence: exactExecutionEvidence(),
+      }),
+    )
+      .replaceAll('NVDA', symbol)
+      .replaceAll('2026-07-20T13:00:00.000Z', request.windowOpenedAt)
+      .replaceAll('2026-07-20T20:00:', fillPrefix),
+  ) as ForwardPerformanceEvidenceInput
+  const receipt = success(makeForwardPerformanceReceipt({ ...accounting, marketVolumeEvidence: [volume] }))
+  expect(receipt.observedCapacity.status).toBe('MEASURED')
+  expect(receipt.observedCapacity.observations[0]?.intradaySource).toEqual({
+    feed: 'us',
+    volumeScope: volume.volumeScope,
+    evidenceHash: volume.contentHash,
+  })
 })

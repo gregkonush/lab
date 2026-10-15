@@ -15,11 +15,11 @@ async fn editor_browser_acceptance_fixture() {
         let value = if request.uri().path().contains("/secrets/") {
             json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"editor-fixture-bootstrap"},"data":{"token":"ZWRpdG9yLWJyb3dzZXItZml4dHVyZQ=="}})
         } else {
-            json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"editor-fixture-incarnation","generation":1},"spec":{
-                "displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
+            json!({"apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM","metadata":{"name":"editor-fixture","uid":"11111111-1111-4111-8111-111111111111","generation":1},"spec":{
+                "reservationId":"55555555-5555-4555-8555-555555555555","policyVersion":1,"runtimeEpoch":"22222222-2222-4222-8222-222222222222","displayName":"Editor fixture","ownerHash":"a".repeat(64),"desiredState":"Running","image":"test","architecture":"amd64",
                 "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-09-08T00:00:00Z","idleDeadline":"2099-01-01T00:00:00Z",
-                "slot":{"name":"editor-fixture","podUid":"editor-fixture","pvcName":"editor-fixture-home","pvcUid":"editor-fixture-home-incarnation","epoch":1}
-            },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":"editor-fixture"}})
+                "slot":{"name":"editor-fixture","podUid":"33333333-3333-4333-8333-333333333333","pvcName":"editor-fixture-home","pvcUid":"editor-fixture-home-incarnation","epoch":7}
+            },"status":{"phase":"Ready","guestReady":true,"observedGeneration":1,"podIp":"127.0.0.1","podUid":"33333333-3333-4333-8333-333333333333"}})
         };
         Ok::<_, std::io::Error>(
             Response::builder()
@@ -39,7 +39,7 @@ async fn editor_browser_acceptance_fixture() {
                 "http://localhost:33082"
             })
             .to_owned(),
-            "editor-test-signing-secret-at-least-32-bytes".to_owned(),
+            Arc::new(crate::control::Database::shared_fixture().await),
         )
         .unwrap(),
         ActivityTracker::new(client.clone(), "tengri".to_owned()),
@@ -63,7 +63,7 @@ async fn editor_browser_acceptance_fixture() {
             "tengri",
             crate::identity::WorkloadIdentity::Fixture(8080),
         ),
-        crate::authz::WorkspaceAuthorization::Fixture,
+        crate::guest::authorization::GuestAuthority::fixture(),
     )
     .unwrap();
     let issue_state = state.clone();
@@ -72,18 +72,22 @@ async fn editor_browser_acceptance_fixture() {
         async move {
             let guest = state
                 .guests
-                .for_agent("editor-fixture", None)
+                .for_agent(
+                    "editor-fixture",
+                    None,
+                    crate::guest::authorization::GuestAuthority::fixture_authorization(),
+                )
                 .await
                 .unwrap();
             guest.open_editor().await.unwrap();
             let ticket = state
                 .tickets
                 .issue_editor(
-                    &"a".repeat(64),
+                    &fixture_principal(crate::ofz::proto::Action::EditorOpen),
                     "editor-fixture",
-                    "editor-fixture-incarnation",
                     query.get("window").unwrap(),
                 )
+                .await
                 .unwrap();
             axum::Json(
                 json!({"id":ticket.id,"launchUrl":ticket.url,"expiresAt":ticket.expires_at,"previewOrigin":state.preview_origin.origin(&ticket.id)}),
@@ -96,19 +100,24 @@ async fn editor_browser_acceptance_fixture() {
         async move {
             let guest = state
                 .guests
-                .for_agent("editor-fixture", None)
+                .for_agent(
+                    "editor-fixture",
+                    None,
+                    crate::guest::authorization::GuestAuthority::fixture_authorization(),
+                )
                 .await
                 .unwrap();
             guest.open_browser().await.unwrap();
             let ticket = state
                 .tickets
                 .issue_preview(
-                    &"a".repeat(64),
+                    &fixture_principal(crate::ofz::proto::Action::BrowserControl),
                     "editor-fixture",
                     crate::guest::BROWSER_PORT,
                     "/",
                     "",
                 )
+                .await
                 .unwrap();
             axum::Json(
                 json!({"id":ticket.id,"launchUrl":ticket.url,"expiresAt":ticket.expires_at,"previewOrigin":state.preview_origin.origin(&ticket.id)}),
@@ -121,7 +130,11 @@ async fn editor_browser_acceptance_fixture() {
         async move {
             let guest = state
                 .guests
-                .for_agent("editor-fixture", None)
+                .for_agent(
+                    "editor-fixture",
+                    None,
+                    crate::guest::authorization::GuestAuthority::fixture_authorization(),
+                )
                 .await
                 .unwrap();
             let files = guest.list_files(query.get("path").unwrap()).await.unwrap();
@@ -135,11 +148,12 @@ async fn editor_browser_acceptance_fixture() {
             state
                 .tickets
                 .revoke_preview_lease(
-                    &"a".repeat(64),
+                    &fixture_principal(crate::ofz::proto::Action::PreviewAccess),
                     "editor-fixture",
                     value["sessionId"].as_str().unwrap(),
                     value["revocationToken"].as_str().unwrap(),
                 )
+                .await
                 .unwrap();
             StatusCode::NO_CONTENT
         }
@@ -150,7 +164,10 @@ async fn editor_browser_acceptance_fixture() {
         async move {
             state
                 .tickets
-                .revoke_desktop_previews(&"a".repeat(64))
+                .revoke_desktop_previews(&fixture_principal(
+                    crate::ofz::proto::Action::PreviewAccess,
+                ))
+                .await
                 .unwrap();
             StatusCode::NO_CONTENT
         }
@@ -192,4 +209,14 @@ async fn editor_browser_acceptance_fixture() {
     );
     a.unwrap();
     b.unwrap();
+}
+
+fn fixture_principal(action: crate::ofz::proto::Action) -> crate::auth::Principal {
+    let mut principal = crate::auth::Principal::fixture(
+        &"a".repeat(64),
+        "11111111-1111-4111-8111-111111111111",
+        action,
+    );
+    principal.context.runtime_epoch = "22222222-2222-4222-8222-222222222222".into();
+    principal
 }

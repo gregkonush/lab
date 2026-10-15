@@ -48,6 +48,12 @@ class FakeClient:
 
     def get(self, namespace, kind, name):
         self.actions.append(("get", kind))
+        if kind == "pvc":
+            return {
+                "metadata": {"uid": "claim"},
+                "spec": {"volumeName": "volume"},
+                "status": {"phase": "Bound"},
+            }
         return {"spec": {"template": {"spec": {"containers": [{"env": self.env}]}}}}
 
     def command(self, args, timeout=60):
@@ -58,6 +64,53 @@ class FakeClient:
 
 
 class MaintenanceTest(unittest.TestCase):
+    def test_purge_reads_its_summary_from_stdout_despite_late_stderr_events(self):
+        client = FakeClient()
+        summary = {"deletedTags": 2, "deletedBlobs": 3, "deletedBytes": 100}
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "purge.log"
+
+            def execute(args, **kwargs):
+                if kwargs["stdout"] != subprocess.PIPE:
+                    kwargs["stdout"].write(json.dumps(summary) + "\n")
+                kwargs["stderr"].write('{"event":"purged","bytes":20}\n')
+                return SimpleNamespace(returncode=0, stdout=json.dumps(summary) + "\n")
+
+            with (
+                patch.object(purge, "Collection", return_value=client),
+                patch.object(purge, "copy_verified"),
+                patch.object(purge.subprocess, "run", side_effect=execute),
+            ):
+                self.assertEqual(purge.run("fixture", "batch", output), summary)
+
+    def test_prepare_failure_reports_exit_status_and_remote_diagnostics(self):
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "plan.json"
+
+            def execute(args, **kwargs):
+                kwargs["stderr"].write(
+                    "metadata scan stalled\ncommand terminated with exit code 142\n"
+                )
+                return SimpleNamespace(returncode=142)
+
+            with (
+                patch.object(prepare, "Collection", return_value=client),
+                patch.object(
+                    prepare,
+                    "references",
+                    return_value=["registry.example/lab/test:latest"],
+                ),
+                patch.object(prepare, "copy_verified"),
+                patch.object(prepare.subprocess, "run", side_effect=execute),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "exit 142.*metadata scan stalled"
+                ):
+                    prepare.run("fixture", plan, Path(directory) / "references.json")
+            self.assertTrue(any("rm" in a for a in client.actions))
+            self.assertFalse(any("patch" in a or "delete" in a for a in client.actions))
+
     def test_online_purge_uses_existing_pod_and_only_the_quarantine_root(self):
         client = FakeClient()
         with tempfile.TemporaryDirectory() as directory:
@@ -70,8 +123,10 @@ class MaintenanceTest(unittest.TestCase):
                     "fcntl.LOCK_EX|fcntl.LOCK_NB",
                     args[args.index("-c", args.index("--")) + 1],
                 )
-                kwargs["stdout"].write('{"deletedBlobs":1,"deletedBytes":100}\n')
-                return SimpleNamespace(returncode=0)
+                self.assertEqual(kwargs["stdout"], subprocess.PIPE)
+                return SimpleNamespace(
+                    returncode=0, stdout='{"deletedBlobs":1,"deletedBytes":100}\n'
+                )
 
             with (
                 patch.object(purge, "Collection", return_value=client),
@@ -113,7 +168,7 @@ class MaintenanceTest(unittest.TestCase):
                 kwargs["stderr"].write(
                     "Pod was replaced; retained receipt is resumable\n"
                 )
-                return SimpleNamespace(returncode=137)
+                return SimpleNamespace(returncode=137, stdout="")
 
             with (
                 patch.object(purge, "Collection", return_value=client),

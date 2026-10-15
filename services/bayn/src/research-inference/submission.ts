@@ -1,6 +1,12 @@
 import { Effect, Redacted, Schema, Stream } from 'effect'
 import { HttpClient, HttpClientRequest } from 'effect/http'
-import { decodeResearchRun, hashResearch, ResearchError, ResearchReceiptSchema } from './contract'
+import {
+  decodeResearchRun,
+  hashResearch,
+  maximumResearchReceiptBytes,
+  ResearchError,
+  ResearchReceiptSchema,
+} from './contract'
 import { verifyResearchReceipt } from './store'
 import { approveResearchRun } from './approval'
 
@@ -47,8 +53,8 @@ export const submitResearch = Effect.fn('bayn.research.submit')(
         (): Uint8Array[] => [],
         (chunks, chunk) => {
           bytes += chunk.length
-          return bytes > 786432
-            ? Effect.fail(new ResearchError({ message: 'Research Workflow response exceeds 768 KiB' }))
+          return bytes > maximumResearchReceiptBytes
+            ? Effect.fail(new ResearchError({ message: 'Research Workflow response exceeds 5 MiB' }))
             : Effect.succeed([...chunks, chunk])
         },
       ),

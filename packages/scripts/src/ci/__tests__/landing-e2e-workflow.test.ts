@@ -50,4 +50,23 @@ describe('landing browser validation workflow', () => {
       tengriWorkflow.indexOf('- name: Run Tengri desktop browser suite'),
     )
   })
+
+  test('runs Landing units and runtime SQL acceptance once while retaining identity proof', () => {
+    const ofz = readFileSync('.github/workflows/ofz.yaml', 'utf8')
+    const native = readFileSync('.github/workflows/tengri-images.yml', 'utf8')
+    const combined = [workflow, ofz, native].join('\n')
+    expect(combined.match(/bun run --cwd apps\/landing test\n/g)).toHaveLength(1)
+    expect(combined.match(/bash (?:services\/tengri\/)?test-runtime\.sh/g)).toHaveLength(1)
+    expect(ofz).toContain('bash test-policy.sh')
+    expect(ofz.match(/bash services\/tengri\/test-database-failover\.sh/g)).toHaveLength(1)
+    expect(ofz).not.toContain('\n          bash test-control.sh\n')
+    expect(readFileSync('services/tengri/test-database-failover.sh', 'utf8')).toContain('test-control.sh" failover')
+    expect(ofz).toContain('bash services/ofz/test-control.sh identity')
+    expect(native).toContain('bash test-rpc-interop.sh')
+    expect(ofz).toContain('runs-on: ubuntu-24.04')
+    const parsed = Bun.YAML.parse(native) as { jobs: Record<string, { 'runs-on': string }> }
+    for (const job of ['validate-tengri', 'validate-nanoagent']) {
+      expect(parsed.jobs[job]['runs-on']).toBe('ubuntu-24.04')
+    }
+  })
 })

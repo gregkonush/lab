@@ -1,3 +1,4 @@
+import { instrumentMarket, MarketKind } from '../instruments'
 import { Context, Effect, Result, Schema } from 'effect'
 
 import type { OperationalError } from '../errors'
@@ -5,6 +6,7 @@ import type { ReconciledBrokerState } from '../reconciliation'
 
 import {
   AccountSnapshotSchema,
+  UnsignedMicrosSchema,
   FillSchema,
   OrderSchema,
   OrderSide,
@@ -33,6 +35,11 @@ const ReconciledStateSchema = Schema.Struct({
   unknownOrderCount: Schema.Literal(0),
 })
 
+export const JevInventoryDebitSchema = Schema.Struct({
+  quantityAtoms: UnsignedMicrosSchema,
+  costBasisMicros: UnsignedMicrosSchema,
+})
+
 const Base = Schema.Union([
   Schema.Struct({ purpose: Schema.Literal(JevPurpose.Entry), brokerState: ReconciledStateSchema }),
   Schema.Struct({
@@ -41,6 +48,7 @@ const Base = Schema.Union([
     entryDecisionHash: Sha256Schema,
     entryIntentIds: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
     entryFills: Schema.Array(FillSchema).check(Schema.isMinLength(1)),
+    entryInventoryDebit: JevInventoryDebitSchema,
   }),
 ])
 
@@ -80,7 +88,7 @@ export const JevPortfolioSchema = Base.check(
         path: ['brokerState'],
         issue: 'reconciliation requires unique account-bound positions and orders observed before their snapshot',
       })
-    const held = state.positions.filter((position) => BigInt(position.quantityMicros) !== 0n)
+    const held = state.positions.filter((position) => BigInt(position.quantityAtoms) !== 0n)
     if (context.purpose === JevPurpose.Entry) {
       if (held.length !== 0) issues.push({ path: ['purpose'], issue: 'entry requires a reconciled flat account' })
       return issues
@@ -89,7 +97,7 @@ export const JevPortfolioSchema = Base.check(
     if (
       held.length !== 1 ||
       position === undefined ||
-      BigInt(position.quantityMicros) <= 0n ||
+      BigInt(position.quantityAtoms) <= 0n ||
       position.schemaVersion !== 'bayn.position.v2' ||
       BigInt(position.costBasisMicros) <= 0n
     ) {
@@ -122,19 +130,24 @@ export const JevPortfolioSchema = Base.check(
               order.side === fill.side,
           ),
       ) ||
-      fills.reduce((sum, fill) => sum + BigInt(fill.quantityMicros), 0n) !== BigInt(position.quantityMicros)
+      fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) -
+        BigInt(context.entryInventoryDebit.quantityAtoms) !==
+        BigInt(position.quantityAtoms) ||
+      (instrumentMarket(position.symbol) !== MarketKind.Crypto &&
+        (context.entryInventoryDebit.quantityAtoms !== '0' || context.entryInventoryDebit.costBasisMicros !== '0'))
     )
       issues.push({
         path: ['entryFills'],
-        issue: 'complete canonical entry fills must explain the entire held quantity and match the reconciled orders',
+        issue:
+          'complete canonical entry fills minus posted inventory debits must explain the held quantity and match reconciled orders',
       })
     for (const order of state.orders.filter(
       (order) => order.intentId !== undefined && context.entryIntentIds.includes(order.intentId),
     )) {
       const filled = fills
         .filter((fill) => fill.brokerOrderId === order.brokerOrderId)
-        .reduce((sum, fill) => sum + BigInt(fill.quantityMicros), 0n)
-      if (filled !== BigInt(order.filledQuantityMicros))
+        .reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)
+      if (filled !== BigInt(order.filledQuantityAtoms))
         issues.push({ path: ['entryFills'], issue: 'fill quantities must equal the reconciled entry orders' })
     }
     return issues
@@ -166,6 +179,6 @@ export const jevPortfolioCandidates = (portfolio: JevPortfolio, candidates: read
   portfolio.purpose === JevPurpose.Entry
     ? candidates
     : portfolio.brokerState.positions
-        .filter((position) => BigInt(position.quantityMicros) > 0n)
+        .filter((position) => BigInt(position.quantityAtoms) > 0n)
         .map((position) => position.symbol)
         .sort()

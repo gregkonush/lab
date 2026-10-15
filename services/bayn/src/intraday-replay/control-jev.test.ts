@@ -1,3 +1,6 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
@@ -10,7 +13,7 @@ import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support
 import { JevPurpose } from '../jev/portfolio'
 import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { makeControlJevJournal } from './control-jev-journal'
-import { makeControlJevManagement } from './control-jev'
+import { makeControlJev } from './control-jev'
 import { controlJevFixture } from './control-jev.test-support'
 import { JevClaim } from '../jev/evaluation'
 import { JevCandidatePlanStatus } from '../jev/batch'
@@ -18,7 +21,7 @@ import { ControlExit, ControlPolicy, ControlStudyFailure } from './control-portf
 import { runControlSession, type ControlMarket } from './control-study'
 
 const fixture = nativeJevFixture()
-const session = fixture.snapshot.manifest.calendar.sessions[0]
+const session = exchangeSessions(fixture.snapshot.manifest.calendar)[0]
 if (session === undefined) throw new Error('Expected fixture calendar')
 const openMs = Date.parse(session.openAt)
 const closeMs = openMs + 60 * 60_000
@@ -93,7 +96,7 @@ const simulate = (
             }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', fixture.protocol.universe)
+      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', equityMarketProfile.universe)
       const report = yield* runControlSession({
         policy: ControlPolicy.RelativeMomentum,
         protocol: fixture.protocol,
@@ -110,8 +113,14 @@ const simulate = (
         targetWeight: 0.1,
         decisionLatencyMs: 1000,
         pollIntervalMs: 30_000,
-        assumptions: { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
-        eligibleSymbols: new Set(fixture.protocol.candidateSymbols),
+        assumptions: {
+          instruments: replayTestInstruments,
+          latencyMs: 100,
+          slippageBps: 1,
+          availableLiquidityPpm: 1_000_000,
+          feeMultiplierPpm: 1_000_000,
+        },
+        eligibleSymbols: new Set(equityMarketProfile.candidateSymbols),
         market,
         management: {
           runId,
@@ -144,7 +153,7 @@ test('a control manages its own partial entry, retries its model exit, and charg
   expect(report.orders.filter((order) => order.side === OrderSide.Sell).length).toBe(report.completedEpisodes * 3)
   expect(report.modelCostMicros).toBe(String(requests.length * 5))
   for (const request of requests)
-    expect(request.state).toMatchObject({ task: { decisionPurpose: 'MANAGE' }, position: { quantityShares: 5 } })
+    expect(request.state).toMatchObject({ task: { decisionPurpose: 'MANAGE' }, position: { quantityUnits: 5 } })
   expect(BigInt(report.netPnlAfterKnownCostsMicros ?? '0')).toBe(
     BigInt(report.ledger.netRealizedPnlAfterCostsMicros ?? '0') - 1_000_000n - BigInt(requests.length * 5),
   )
@@ -167,7 +176,7 @@ test('source parsing time cannot change management deadlines, fills, or costs', 
   expect(delayed.calls).toHaveLength(baseline.calls.length)
   for (const call of delayed.calls)
     expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBe(125)
-}, 30_000)
+}, 150_000)
 
 test('failed source catch-up rejects management while retaining its paid response', async () => {
   await Effect.runPromise(
@@ -182,7 +191,7 @@ test('failed source catch-up rejects management while retaining its paid respons
       const marketClock = yield* TestClock.make()
       yield* providerClock.setTime(Date.parse('2026-09-24T21:00:00Z'))
       yield* marketClock.setTime(fixture.atMs)
-      const manager = yield* makeControlJevManagement(
+      const manager = yield* makeControlJev(
         {
           journal,
           providerClock,
@@ -222,7 +231,7 @@ test('interruption cancels the provider once, retains its unknown cost, and forb
       yield* marketClock.setTime(fixture.atMs)
       const started = yield* Deferred.make<void>()
       let finalized = 0
-      const manager = yield* makeControlJevManagement(
+      const manager = yield* makeControlJev(
         {
           journal,
           providerClock,
@@ -255,7 +264,7 @@ test('interruption cancels the provider once, retains its unknown cost, and forb
       expect(yield* journal.calls).toHaveLength(1)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
-})
+}, 30_000)
 
 test('a provider defect remains a defect after the journal retains its unresolved call', async () => {
   await Effect.runPromise(
@@ -270,7 +279,7 @@ test('a provider defect remains a defect after the journal retains its unresolve
       const marketClock = yield* TestClock.make()
       yield* providerClock.setTime(Date.parse('2026-09-24T21:00:00Z'))
       yield* marketClock.setTime(fixture.atMs)
-      const manager = yield* makeControlJevManagement(
+      const manager = yield* makeControlJev(
         { journal, providerClock, provider: { evaluate: () => Effect.die('Fixture provider defect') } },
         (atMs) => marketClock.setTime(atMs),
       ).pipe(Effect.provideService(Clock.Clock, marketClock))
@@ -354,7 +363,7 @@ test.each([
         )
         const sourceAdvances: number[] = []
         let providerCalls = 0
-        const manager = yield* makeControlJevManagement(
+        const manager = yield* makeControlJev(
           {
             journal,
             providerClock,

@@ -128,8 +128,13 @@ cadence cannot attribute a shorter wait. Correlate `cnpg_bayn_waits_*`, WAL I/O 
 and replication gauges with the `COMMIT` span and the server's slow-statement timestamp. Active query age is the
 age of the statement, rather than time spent in its current wait event. A missing wait sample remains UNKNOWN.
 
-When original capture is enabled, inspect `bayn.capture.object.put_verified` for the complete conditional PUT and
-exact GET/readback verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
+The in-process research recorder has been removed. It emits no capture spans in the current worker. The following
+queries apply only to retained traces from older revisions, within their actual retention window. Current research
+archive collection and completion checks are unavailable until the independent
+[market-data archive](../bayn/market-data-archive.md) is implemented and verified.
+
+In historical capture traces, `bayn.capture.object.put_verified` describes conditional PUT and exact GET/readback
+verification. Its `bayn.capture.object.phase` retains the phase reached when it ends:
 `VALIDATING`, `CONDITIONAL_PUT`, `READBACK`, `VERIFY_BYTES` or `VERIFIED`. A failed PUT or GET and a stalled body
 therefore remain distinguishable after cancellation. The span also records the validated
 `bayn.capture.object.sha256`. In the same bounded session window, join that hash to sanitized gateway receipts in Loki:
@@ -146,7 +151,7 @@ acknowledgement event, even if the gateway later logs HTTP 200. HTTP 412 records
 exact readback. Retain missing terminal events as incomplete evidence. Hashes are trace attributes, never metric labels;
 credentials, endpoint, bucket, object keys and raw payloads are excluded. A verified object does not prove that its chunk
 committed to PostgreSQL, and an invalidated capture or unknown write outcome never qualifies a source.
-These background capture spans are outside the execution-stage profile and retain the one-second object deadline.
+These historical events do not establish current runtime behavior or a complete original session.
 
 ## Alert actions
 
@@ -187,10 +192,11 @@ Confirm the current Restate registration's label selector before comparing worke
   gates qualify, preserving the generic unready signal when dedicated telemetry is incomplete. Ordinary abstention
   remains ready. Repair the failed prerequisite through its existing owner. Do not move the session window,
   force a decision, or create another execution process.
-- `BaynInputWindowUnavailable`: the consumer reports `executionSession.condition=INPUT_UNAVAILABLE` for one minute
+- `BaynInputWindowUnavailable`: the consumer reports `executionSession.condition=INPUT_UNAVAILABLE` on the first matching rule evaluation
   on an ACTIVE, decision-unbound cycle, at or after `firstObservationAt` and before `submissionCutoffAt`.
   Runtime readiness, cycle projection availability, and scrape health must all be true on that same replica before
-  replicas are aggregated. Check the retained pass's bounded readiness reason and required feature/window identity,
+  replicas are aggregated. The group evaluates every 15 seconds with no additional pending period because continuous admissions can expire in one minute.
+  Check the retained pass's bounded readiness reason and required feature/window identity,
   then the existing consumer bootstrap barriers and exact raw/feature lineage. A latest-minute bar or healthy producer
   acknowledgement does not prove all 30 required minutes, matching features, or timely availability. Missing middle
   minutes, absent/mismatched/late features, and incomplete offset/bootstrap evidence can withhold the window.
@@ -198,11 +204,14 @@ Confirm the current Restate registration's label selector before comparing worke
   do not relax freshness, admission, risk, or authority gates or force a trade.
 - `BaynExecutionDecisionLagging`: the session preflight is healthy, but the ACTIVE cycle remains unbound after
   `bayn_cycle_decision_deadline_timestamp_seconds`. For the current Jev protocol, the first full observation is 30
-  minutes and two seconds after submission opens. The deadline adds the protocol's maximum decision lag to the later
+  minutes and two seconds after the exchange opens, bounded below by submission opening. Continuous crypto uses
+  completed rolling history immediately at submission opening. Both use the persisted `executionCalendarSchemaVersion`.
+  The deadline adds the protocol's maximum decision lag to the later
   of that observation and the attempt's creation time. Follow the current Restate tick trace through decision construction,
   risk evaluation, and the PostgreSQL decision bind. Do not synthesize a decision or submit directly to the broker.
-  If no decision is durably bound by `submissionCutoffAt`, Bayn must classify the cycle as
-  `MISSED_SUBMISSION_CUTOFF` and close readiness rather than wait until execution close.
+  An unused native admission expires at the earlier of its one-minute lease and `submissionCutoffAt`.
+  `BLOCKED_UNUSED_ENTRY_EXPIRED` releases the empty slot through the existing approved controller after cooldown.
+  It does not authorize entries while an operator or capital restriction remains active.
 - `BaynCycleObservationUnavailable`: inspect `cycle.error` in `GET /v1/status`, then restore the existing PostgreSQL
   projection path. Do not substitute cached or synthetic state.
 - `BaynRuntimeDegraded`: inspect `operational`, all `dependencies` (including `cycleRunner`), `autonomousCycleLoop`,

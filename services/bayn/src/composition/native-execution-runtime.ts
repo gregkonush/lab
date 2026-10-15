@@ -8,11 +8,13 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Metric,
   Option,
   Ref,
   Result,
   Scope,
   ScopedRef,
+  type Tracer,
 } from 'effect'
 
 import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
@@ -44,7 +46,7 @@ import {
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
 } from '../observe-composition'
-import { currentOpenTelemetryLogAnnotations } from '../restate/restate-telemetry'
+import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
 import { currentUtcInstant } from '../time'
 import { makeConfiguredTelemetryRuntimeLayer } from '../telemetry'
@@ -55,8 +57,6 @@ import {
   WorkerMarketProjectionLive,
 } from './resources'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
-import { makeResearchCaptureSession, type ResearchCaptureSession } from '../research-capture/session'
-import { researchCaptureSessionConfig } from '../research-capture/session-config'
 
 export class NativeExecutionRuntimeError extends Data.TaggedError('NativeExecutionRuntimeError')<{
   readonly operation: 'binding' | 'dispose' | 'initialize'
@@ -482,11 +482,13 @@ export const makeNativeExecutionRuntimeAdapter = (
   runner: ExecutionEffectRunner,
   planHash: string,
 ): NativeExecutionRuntime => ({
-  advance: (command, signal) =>
-    runner.runPromise(
-      driver.pipe(Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore, planHash))),
-      { signal },
-    ),
+  advance: (command, signal) => {
+    const parent = currentOpenTelemetryParentSpan()
+    const advance = driver.pipe(
+      Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore, planHash)),
+    )
+    return runner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), { signal })
+  },
   log: (level, message, annotations) => runner.runPromise(logEffect(level, message, annotations)),
   projectState: (controllerKey, state, signal) =>
     runner.runPromise(projectExecutionControllerState(controllerKey, state, statusStore), { signal }),
@@ -559,17 +561,22 @@ const runManagedNativeExecutionAdvance = <R, E>(
   command: AdvanceExecutionCommand,
   signal: AbortSignal,
   planHash: string,
-): Promise<ExecutionAdvanceStepResult> =>
-  executionRunner.runPromise(
-    Effect.all({ driverSlot: PublishedExecutionCycleDriver, statusStore: ExecutionControllerStatusStore }).pipe(
-      Effect.flatMap(({ driverSlot, statusStore }) =>
-        readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
-          Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
-        ),
+  parent: Tracer.ExternalSpan | undefined,
+): Promise<ExecutionAdvanceStepResult> => {
+  const advance = Effect.all({
+    driverSlot: PublishedExecutionCycleDriver,
+    statusStore: ExecutionControllerStatusStore,
+  }).pipe(
+    Effect.flatMap(({ driverSlot, statusStore }) =>
+      readRecoveryFirstCycleDriverSlot(driverSlot).pipe(
+        Effect.flatMap((driver) => executeNativeExecutionAdvance(command, driver, statusStore, planHash)),
       ),
     ),
-    { signal },
   )
+  return executionRunner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), {
+    signal,
+  })
+}
 
 const runManagedControllerStateProjection = <R, E>(
   projectionRunner: NativeExecutionProjectionRuntime<R, E>,
@@ -589,7 +596,8 @@ export const makeManagedNativeExecutionRuntimeAdapter = <R, E>(
   logRunner: ExecutionEffectRunner,
   planHash: string,
 ): NativeExecutionRuntime => ({
-  advance: (command, signal) => runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash),
+  advance: (command, signal) =>
+    runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, currentOpenTelemetryParentSpan()),
   log: (level, message, annotations) => logRunner.runPromise(logEffect(level, message, annotations)),
   projectState: (controllerKey, state, signal) =>
     runManagedControllerStateProjection(executionRunner, controllerKey, state, signal),
@@ -654,12 +662,13 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
 
   return {
     advance: (command, signal) => {
+      const parent = currentOpenTelemetryParentSpan()
       const executionRunner = ScopedRef.getUnsafe(executionRuntimes)
       return executionRunner
         .runPromise(Effect.void, { signal })
         .catch(replaceFailedRuntime)
         .then(() =>
-          runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash).catch((cause: unknown) =>
+          runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, parent).catch((cause: unknown) =>
             cause instanceof NativeExecutionRuntimeError && cause.operation === 'initialize'
               ? replaceFailedRuntime(cause)
               : Promise.reject(cause),
@@ -672,17 +681,11 @@ export const makeRecoveringManagedNativeExecutionRuntimeAdapter = <R, E, Project
   }
 }
 
-export const prewarmNativeMarketProjection = <E, R>(
-  capture: ResearchCaptureSession | undefined,
-  projection: Layer.Layer<KafkaMarketProjection, E, R>,
-) =>
-  // A configured capture retains its existing lazy recorder/consumer ownership and bootstrap evidence.
-  capture !== undefined
-    ? Effect.succeed(null)
-    : Layer.build(projection).pipe(
-        Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
-        Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
-      )
+export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<KafkaMarketProjection, E, R>) =>
+  Layer.build(projection).pipe(
+    Effect.map((context) => Layer.succeed(KafkaMarketProjection, Context.get(context, KafkaMarketProjection))),
+    Effect.mapError((cause) => runtimeError('initialize', 'read-only market projection prewarm failed', cause)),
+  )
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
@@ -690,27 +693,20 @@ export const acquireNativeExecutionRuntime = (
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
     const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
+    const metricIdentity = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
+    )
     const config: ExecutionControllerConfig =
       previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
-    const requestedCapture = yield* researchCaptureSessionConfig.pipe(Effect.result)
-    const decodedCapture = Result.isSuccess(requestedCapture) ? requestedCapture.success : undefined
-    const capture =
-      decodedCapture !== undefined && Result.isSuccess(decodedCapture)
-        ? yield* makeResearchCaptureSession(decodedCapture.success, config.sourceRevision).pipe(
-            Effect.catchCause(() =>
-              Effect.logWarning('Bayn research capture could not start; capture is disabled').pipe(
-                Effect.as(undefined),
-              ),
-            ),
-          )
-        : undefined
-    if (Result.isFailure(requestedCapture) || (decodedCapture !== undefined && Result.isFailure(decodedCapture)))
-      yield* Effect.logWarning('Bayn research capture configuration is invalid; capture is disabled')
-    const prewarmedProjection = yield* prewarmNativeMarketProjection(capture, WorkerMarketProjectionLive(plan))
+    const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
-      AutonomousWorkerApplicationResourcesLive(plan, capture, prewarmedProjection ?? undefined),
+      AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
-    ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
+    ).pipe(
+      Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.provideMerge(metricIdentity),
+    )
     const executionResources = Layer.merge(
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
@@ -721,7 +717,7 @@ export const acquireNativeExecutionRuntime = (
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
 
     const projectionManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
     )
     yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
     const logManaged = yield* ownManagedRuntime(
@@ -734,5 +730,5 @@ export const acquireNativeExecutionRuntime = (
       logManaged,
       config.planHash,
     )
-    return { config, runtime: capture === undefined ? runtime : { ...runtime, capture: capture.observer } }
+    return { config, runtime }
   })

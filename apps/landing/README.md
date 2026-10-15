@@ -42,7 +42,28 @@ verifies the signed numeric GitHub identity, active platform membership and auth
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
 `/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
+Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
+and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
+the content opt-in. Scope fields validate canonical workspace paths, credential exclusions, IDs and UTF-8 byte limits
+inline before submission; the BFF independently validates the same command. The full encoded command, including JSON
+escaping and metadata, must fit the shared 64 KiB request budget. Developer assignments and removals cannot
+carry a Viewer scope. The roster shows the exact approved targets and budgets, or `Metadata only` after scope removal.
+Scope targets preserve their exact entered characters, including surrounding spaces; empty lines are ignored.
+The roster labels file roots, Codex thread IDs and terminal IDs separately and quotes each target to make spaces
+visible. Malformed Unicode that cannot survive protobuf encoding is rejected before submission.
+Selected content can contain private information. Scoped guest content remains denied until the separate bounded
+observer handlers are implemented and qualified.
 The prepared identity release is held until the controller and every runtime channel complete the hard migration.
+Workspace lifecycle operations use principal-scoped local storage and native Web Locks to coordinate desktop tabs.
+A successful creation keeps its operation ID until that exact workspace is confirmed deleted, so a stale empty tab
+recovers the same workspace instead of allocating another retained home. Uncertain outcomes retain the original
+payload and ID; an explicit superseded response retires that operation. Browsers without Web Locks cannot submit
+lifecycle changes.
+Choosing a different creation name first replays the recorded request. An active workspace is recovered; a confirmed
+terminal creation permits one fresh attempt with the new name. Denied or unavailable recovery preserves the original ID.
+Deletion waits for Ofz's confirmed retained-home cleanup on both fresh requests and recovered operation IDs.
+Pending cleanup or an unavailable authority returns an error and preserves those IDs for retry.
+Deletion ignores failed status from an older policy version while waiting for its committed stop to reconcile.
 The BFF rate-limits the authenticated GitHub subject. GitOps adds a separate Traefik rate-limit middleware that uses
 Traefik's connection source, so the application never trusts caller-supplied forwarding headers for IP throttling.
 The BFF also restores an in-progress Codex device login from the guest after a browser reconnect; it does not start a
@@ -89,7 +110,10 @@ without rebuilding on every chunk. Following stops when the reader scrolls upwar
 content growth does not leave the viewport behind the response.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
-Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
+Messages appear immediately while the request runs. Failed sends restore the text and attachments for retry.
+Open chat windows keep their event streams and model selection when another desktop window takes focus.
+Recovered runtime restart notices disappear after a successful turn start or thread recovery; failed turns remain visible.
+Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
@@ -221,8 +245,10 @@ bunx playwright install chromium
 bash services/nanoagent/test-vscode-browser.sh
 ```
 
-The runner requires Bun, Go, Rust, Node.js, OpenSSL, Python, and `protoc`. It downloads and verifies the pinned upstream release, starts
-real Nanoagent and Tengri gateway fixtures, and drives the actual workbench through Chromium. Provisioning and identity
+The runner requires Bun, Go, Rust, Node.js, OpenSSL, Python, Docker, and `protoc`. It starts the disposable TLS PostgreSQL
+and SpiceDB fixture, migrates the shared runtime database and supplies separate controller/BFF database roles. It downloads
+and verifies the pinned upstream release, starts real Nanoagent and Tengri gateway fixtures, and drives the actual workbench
+through Chromium. Set `OFZ_FIXTURE_SSH` to use the authorized remote Docker host for the database. Provisioning and identity
 are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
 Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without

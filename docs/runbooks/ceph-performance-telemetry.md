@@ -128,8 +128,8 @@ read/queue metrics to qualify any later scheduler change.
 
 Ceph's monitor configuration database is persistent. Removing an entry from GitOps is not proof that an old live
 override has disappeared. The normal source configuration deliberately omits the five keys below. The mClock
-profile remains `custom`, with the measured per-OSD IOPS values unchanged. Preserve the committed scheduler shares and
-scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
+profile is `high_client_ops`, with the measured per-OSD IOPS values unchanged. Remove prior custom scheduler overrides
+through the explicitly authorized profile-migration procedure, and preserve scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
 
 Before the one-time authorized cleanup, save the relevant rows from `ceph config dump -f json` and each OSD's
 effective configuration outside Git. Require `HEALTH_OK`, all OSDs up/in, and all PGs active+clean with no recovery,

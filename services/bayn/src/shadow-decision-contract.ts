@@ -1,13 +1,10 @@
+import { exchangeSessions } from './market-hours'
+import { isContinuousMarket, sameMarketHours, marketHoursAreCanonical } from './market-hours'
+
+import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
-import { JevBatchPlanVersion } from './jev/batch'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import {
-  defaultJevProtocolDocument,
-  jevBehaviorHash,
-  momentumFirstJevProtocolDocument,
-  momentumFirstJevBehaviorHash,
-  type JevProtocol,
-} from './jev/protocol'
+import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import { JevExitReason } from './jev/exit'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
@@ -25,9 +22,10 @@ import {
 } from './market-data/streaming/evidence-schema'
 import { Data, Result, Schema } from 'effect'
 
-import { quantizeAlpacaLimitPriceMicros } from './broker/alpaca-price'
+import { instrumentMarket, MarketKind } from './instruments'
+import { quantizeInstrumentPriceMicros } from './broker/alpaca-price'
 import { makeExecutionCalendarObservation } from './cycle'
-import { numberToMicros } from './execution-model'
+import { priceNumberToMicros } from './execution-model'
 import {
   executionIntentIdForDecodedPlan,
   intentIdForPlan,
@@ -125,7 +123,7 @@ const ReconciledPositionLiquidationBindingBase = Schema.Struct({
   positions: Schema.Array(
     Schema.Struct({
       symbol: SymbolSchema,
-      quantityMicros: SignedMicrosSchema,
+      quantityAtoms: SignedMicrosSchema,
       marketPriceMicros: PositiveMicrosSchema,
       observedAt: UtcInstantSchema,
     }),
@@ -145,14 +143,11 @@ const marketDataBindingIssues = (
   binding: typeof ExecutionMarketDataBindingBase.Type,
 ): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
-  const { normalizedResponseHash, ...calendarMaterial } = binding.calendar
-  const calendarHash = canonicalHashV1Result(calendarMaterial)
-  if (Result.isFailure(calendarHash) || calendarHash.success !== normalizedResponseHash) {
-    issues.push({ path: ['calendar', 'normalizedResponseHash'], issue: 'must match the canonical calendar content' })
-  }
+  if (!marketHoursAreCanonical(binding.calendar))
+    issues.push({ path: ['calendar'], issue: 'must bind canonical market hours' })
 
   const topics = Object.values(binding.sourceTopics)
-  if (new Set(topics).size !== topics.length) {
+  if (new Set(topics).size !== (isContinuousMarket(binding.calendar) ? 1 : topics.length)) {
     issues.push({ path: ['sourceTopics'], issue: 'bar, quote, and trade topics must be distinct' })
   }
   const universe = binding.universe
@@ -265,11 +260,8 @@ const marketDataBindingIssues = (
 const ReconciledPositionLiquidationBindingSchema = ReconciledPositionLiquidationBindingBase.check(
   Schema.makeFilter((binding: typeof ReconciledPositionLiquidationBindingBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
-    const { normalizedResponseHash, ...calendarMaterial } = binding.calendar
-    const calendarHash = canonicalHashV1Result(calendarMaterial)
-    if (Result.isFailure(calendarHash) || calendarHash.success !== normalizedResponseHash) {
-      issues.push({ path: ['calendar', 'normalizedResponseHash'], issue: 'must match the canonical calendar content' })
-    }
+    if (!marketHoursAreCanonical(binding.calendar))
+      issues.push({ path: ['calendar'], issue: 'must bind canonical market hours' })
 
     const orderedSymbols = binding.symbols.toSorted(compareCanonicalText)
     const orderedPositions = binding.positions.toSorted((left, right) =>
@@ -292,8 +284,8 @@ const ReconciledPositionLiquidationBindingSchema = ReconciledPositionLiquidation
       issues.push({ path: ['positions'], issue: 'must bind exactly one nonzero reconciled position per symbol' })
     }
     for (const [index, position] of binding.positions.entries()) {
-      if (BigInt(position.quantityMicros) === 0n) {
-        issues.push({ path: ['positions', index, 'quantityMicros'], issue: 'must be nonzero' })
+      if (BigInt(position.quantityAtoms) === 0n) {
+        issues.push({ path: ['positions', index, 'quantityAtoms'], issue: 'must be nonzero' })
       }
       if (position.observedAt !== binding.positionsObservedAt) {
         issues.push({ path: ['positions', index, 'observedAt'], issue: 'must match positionsObservedAt' })
@@ -685,8 +677,8 @@ const intradayMomentumAllocationIssues = (
       .map(([symbol]) => symbol)
     const missingDecisionTarget = decisionSymbols.some((symbol) => !targetSymbols.has(symbol))
     const invalidAdditionalTarget = targetPlan.targets.some(
-      ({ symbol, targetWeight, currentQuantityMicros }) =>
-        !(symbol in strategyDecision.targetWeights) && (targetWeight !== 0 || BigInt(currentQuantityMicros) === 0n),
+      ({ symbol, targetWeight, currentQuantityAtoms }) =>
+        !(symbol in strategyDecision.targetWeights) && (targetWeight !== 0 || BigInt(currentQuantityAtoms) === 0n),
     )
     if (missingDecisionTarget || invalidAdditionalTarget) {
       issues.push({
@@ -761,7 +753,9 @@ const intradayMomentumSnapshotEvidenceIssues = (
       },
     ]
   }
-  const session = binding.calendar.sessions.find(({ date }) => date === binding.sessionDate)
+  if (isContinuousMarket(binding.calendar))
+    return [{ path: ['calendar'], issue: 'the retired equity research strategy cannot consume crypto' }]
+  const session = exchangeSessions(binding.calendar).find(({ date }) => date === binding.sessionDate)
   const executionCalendar =
     session === undefined
       ? undefined
@@ -866,7 +860,7 @@ const quoteBoundLiquidationSnapshotIssues = (
   if (
     executionSession === undefined ||
     binding.sessionDate !== executionSession.executionSession.date ||
-    binding.calendar.normalizedResponseHash !== executionSession.calendar.normalizedResponseHash
+    !sameMarketHours(binding.calendar, executionSession.calendar)
   ) {
     timingIssues.push({
       path: ['bindings', 'executionMarketData', 'calendar'],
@@ -916,8 +910,8 @@ const quoteBoundLiquidationSnapshotIssues = (
       ]
     }
     const converted = Result.all({
-      bid: numberToMicros(quote.bidPrice, `bid price for ${symbol}`),
-      ask: numberToMicros(quote.askPrice, `ask price for ${symbol}`),
+      bid: priceNumberToMicros(quote.bidPrice, `bid price for ${symbol}`, 'DOWN'),
+      ask: priceNumberToMicros(quote.askPrice, `ask price for ${symbol}`, 'UP'),
     })
     if (Result.isFailure(converted) || converted.success.bid <= 0n || converted.success.ask <= 0n) {
       return [
@@ -928,8 +922,8 @@ const quoteBoundLiquidationSnapshotIssues = (
         },
       ]
     }
-    const bid = quantizeAlpacaLimitPriceMicros(converted.success.bid, 'DOWN').toString()
-    const ask = quantizeAlpacaLimitPriceMicros(converted.success.ask, 'UP').toString()
+    const bid = quantizeInstrumentPriceMicros(symbol, converted.success.bid, 'DOWN').toString()
+    const ask = quantizeInstrumentPriceMicros(symbol, converted.success.ask, 'UP').toString()
     if (
       referencePrices.bidPriceMicros[symbol] !== bid ||
       referencePrices.askPriceMicros[symbol] !== ask ||
@@ -975,20 +969,21 @@ const streamingPricingEvidenceIssues = (
     if (quote === undefined)
       return [{ path: ['executionMarketDataRows'], issue: `missing executable quote for ${symbol}` }]
     const values = Result.all({
-      bid: numberToMicros(quote.bidPrice, 'streaming bid'),
-      ask: numberToMicros(quote.askPrice, 'streaming ask'),
-      bidSize: numberToMicros(quote.bidSize, 'streaming bid size'),
-      askSize: numberToMicros(quote.askSize, 'streaming ask size'),
+      bid: priceNumberToMicros(quote.bidPrice, 'streaming bid', 'DOWN'),
+      ask: priceNumberToMicros(quote.askPrice, 'streaming ask', 'UP'),
+      bidSize: quantityFromNumber(quote.bidSize),
+      askSize: quantityFromNumber(quote.askSize),
     })
     if (Result.isFailure(values))
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
+    const increment = instrumentMarket(symbol) === MarketKind.Equity ? 1_000_000_000n : 1n
     if (
-      prices.bidPriceMicros[symbol] !== quantizeAlpacaLimitPriceMicros(bid, 'DOWN').toString() ||
-      prices.askPriceMicros[symbol] !== quantizeAlpacaLimitPriceMicros(ask, 'UP').toString() ||
+      prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||
+      prices.askPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, ask, 'UP').toString() ||
       prices.priceMicros[symbol] !== prices.askPriceMicros[symbol] ||
-      BigInt(terms.maximumBuyQuantityMicros[symbol] ?? '0') > (askSize / 1000000n) * 1000000n ||
-      BigInt(terms.maximumSellQuantityMicros[symbol] ?? '0') > (bidSize / 1000000n) * 1000000n
+      BigInt(terms.maximumBuyQuantityAtoms[symbol] ?? '0') > (askSize / increment) * increment ||
+      BigInt(terms.maximumSellQuantityAtoms[symbol] ?? '0') > (bidSize / increment) * increment
     )
       return [
         {
@@ -1079,7 +1074,7 @@ const targetPlannerEvidenceIssues = (
   return issues
 }
 
-const quantityScale = 1_000_000n
+const quantityScale = 1_000_000_000n
 const absoluteMicros = (value: bigint): bigint => (value < 0n ? -value : value)
 const dividePositionMicrosAwayFromZero = (numerator: bigint): bigint => {
   const magnitude = absoluteMicros(numerator)
@@ -1093,7 +1088,7 @@ const comparePositionSymbols = (left: Position, right: Position): number => {
 }
 
 const revaluePosition = (position: Position, referencePriceMicros: string): Position => {
-  const quantity = BigInt(position.quantityMicros)
+  const quantity = BigInt(position.quantityAtoms)
   const referencePrice = BigInt(referencePriceMicros)
   const averageEntryPrice = BigInt(position.averageEntryPriceMicros)
   return {
@@ -1111,7 +1106,7 @@ const projectTargetPosition = (
   observedAt: string,
 ): readonly Position[] => {
   const retained = positions.filter((position) => position.symbol !== target.symbol)
-  const quantity = BigInt(target.targetQuantityMicros)
+  const quantity = BigInt(target.targetQuantityAtoms)
   if (quantity === 0n) return retained
 
   const previous = positions.find((position) => position.symbol === target.symbol)
@@ -1121,7 +1116,7 @@ const projectTargetPosition = (
     schemaVersion: legacyPositionSchemaVersion,
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
-    quantityMicros: target.targetQuantityMicros,
+    quantityAtoms: target.targetQuantityAtoms,
     averageEntryPriceMicros: averageEntryPrice.toString(),
     marketPriceMicros: target.referencePriceMicros,
     marketValueMicros: dividePositionMicrosAwayFromZero(quantity * referencePrice).toString(),
@@ -1157,58 +1152,18 @@ const reconstructProposedPositionSequence = (
   return sequence
 }
 
-// These immutable hashes identify the five-second Jev protocol and behavior used before V3 batches.
-const retainedJevParameterHash = 'a75bb665c325a3c905e3e95246da279fd4314eb00009f3caef842ab015b056f1'
-const retainedJevStrategyProtocolHash = '628d8354ed9f4ae6152a5ca03078c761fca53598bfb581d647035bc5a4edf12a'
-const retainedJevV3ParameterHash = 'ec39d233bfbaed8f88ab130b5b4cfda316c3f5bab7f48e17ee377db69eb1a444'
-const retainedJevV3StrategyProtocolHash = 'f52bbd44648727b798a0b1ee312722c119279770aeceb6a25f5d8ad52f79d94d'
-
-export const jevProtocolIdentityMatches = (
-  protocol: JevProtocol,
-  strategyProtocolHash: string,
-  batchVersion?: JevBatchPlanVersion,
-): boolean => {
-  const parameterHash = canonicalHashV1Result(protocol)
-  if (Result.isFailure(parameterHash)) return false
-  if (protocol.schemaVersion === 'bayn.jev.protocol.v2') {
-    const candidateHash = canonicalHashV1Result(momentumFirstJevProtocolDocument)
-    const candidateIdentity = makeStrategyProtocolHashResult({
-      name: 'jev',
-      behaviorHash: momentumFirstJevBehaviorHash,
-      parameterHash: parameterHash.success,
-      parameterSchemaVersion: protocol.schemaVersion,
-    })
-    return (
-      (batchVersion === undefined || batchVersion === JevBatchPlanVersion.V4) &&
-      Result.isSuccess(candidateHash) &&
-      candidateHash.success === parameterHash.success &&
-      Result.isSuccess(candidateIdentity) &&
-      candidateIdentity.success === strategyProtocolHash
-    )
-  }
-  const retained =
-    parameterHash.success === retainedJevParameterHash && strategyProtocolHash === retainedJevStrategyProtocolHash
-  if (batchVersion === JevBatchPlanVersion.V1 || batchVersion === JevBatchPlanVersion.V2) return retained
-  const activeParameterHash = canonicalHashV1Result(defaultJevProtocolDocument)
-  const activeStrategyProtocolHash = parameterHash.pipe(
-    Result.flatMap((hash) =>
-      makeStrategyProtocolHashResult({
-        name: 'jev',
-        behaviorHash: jevBehaviorHash,
-        parameterHash: hash,
-        parameterSchemaVersion: protocol.schemaVersion,
-      }),
-    ),
-  )
-  const active =
-    Result.isSuccess(activeParameterHash) &&
-    parameterHash.success === activeParameterHash.success &&
-    Result.isSuccess(activeStrategyProtocolHash) &&
-    activeStrategyProtocolHash.success === strategyProtocolHash
-  const retainedV3 =
-    parameterHash.success === retainedJevV3ParameterHash && strategyProtocolHash === retainedJevV3StrategyProtocolHash
-  if (batchVersion === JevBatchPlanVersion.V3) return retainedV3 || active
-  return batchVersion === undefined && (retained || retainedV3 || active)
+export const jevProtocolIdentityMatches = (protocol: JevProtocol, strategyProtocolHash: string): boolean => {
+  const parameters = canonicalHashV1Result(protocol)
+  const expected = canonicalHashV1Result(defaultJevProtocolDocument)
+  if (Result.isFailure(parameters) || Result.isFailure(expected) || parameters.success !== expected.success)
+    return false
+  const identity = makeStrategyProtocolHashResult({
+    name: 'jev',
+    behaviorHash: jevBehaviorHash,
+    parameterHash: parameters.success,
+    parameterSchemaVersion: protocol.schemaVersion,
+  })
+  return Result.isSuccess(identity) && identity.success === strategyProtocolHash
 }
 
 const jevEntryEvidenceIssues = (
@@ -1237,11 +1192,7 @@ const jevEntryEvidenceIssues = (
     return Result.isSuccess(a) && Result.isSuccess(b) && a.success === b.success
   }
   if (
-    !jevProtocolIdentityMatches(
-      observation.protocol,
-      document.bindings.strategyProtocolHash,
-      batchPlan.schemaVersion,
-    ) ||
+    !jevProtocolIdentityMatches(observation.protocol, document.bindings.strategyProtocolHash) ||
     observation.cycleId !== document.bindings.cycleId ||
     observation.authorityGenerationHash !== document.bindings.authorityGenerationHash ||
     observation.portfolio.brokerState.account.accountId !== document.bindings.accountId ||
@@ -1268,7 +1219,7 @@ const jevEntryEvidenceIssues = (
       issue: 'Jev source rows and snapshot must exactly match the recorded observation',
     })
   if (
-    document.plannerInput.brokerState.positions.some((position) => BigInt(position.quantityMicros) !== 0n) ||
+    document.plannerInput.brokerState.positions.some((position) => BigInt(position.quantityAtoms) !== 0n) ||
     document.plannerInput.brokerState.reconciliation.reconciledAt <
       observation.portfolio.brokerState.reconciliation.reconciledAt ||
     !equal(document.plannerInput.targetWeights, jevPlanningTargetWeights(target)) ||
@@ -1283,8 +1234,8 @@ const jevEntryEvidenceIssues = (
     !isSnapshotExecutionMarketDataBinding(pricing) ||
     !sameSourceUniverse(source, pricing) ||
     document.executionSession === undefined ||
-    source.calendar.normalizedResponseHash !== document.executionSession.calendar.normalizedResponseHash ||
-    pricing.calendar.normalizedResponseHash !== source.calendar.normalizedResponseHash ||
+    !sameMarketHours(source.calendar, document.executionSession.calendar) ||
+    !sameMarketHours(pricing.calendar, source.calendar) ||
     source.sessionDate !== target.sessionDate ||
     pricing.sessionDate !== target.sessionDate ||
     target.sessionDate !== document.executionSession.executionSession.date ||
@@ -1313,7 +1264,7 @@ const jevExitEvidenceIssues = (
   if (target?.schemaVersion !== 'bayn.jev-exit-target.v1') return []
   const evidence = target.evidence
   const input = document.plannerInput
-  const position = evidence.portfolio.brokerState.positions.find(({ quantityMicros }) => BigInt(quantityMicros) > 0n)
+  const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
   if (
     input === undefined ||
     position === undefined ||
@@ -1327,10 +1278,10 @@ const jevExitEvidenceIssues = (
     input.brokerState.reconciliation.reconciledAt < evidence.portfolio.brokerState.reconciliation.reconciledAt ||
     input.brokerState.positions.some(
       (held) =>
-        BigInt(held.quantityMicros) !== 0n &&
+        BigInt(held.quantityAtoms) !== 0n &&
         (held.symbol !== position.symbol ||
-          BigInt(held.quantityMicros) < 0n ||
-          BigInt(held.quantityMicros) > BigInt(position.quantityMicros)),
+          BigInt(held.quantityAtoms) < 0n ||
+          BigInt(held.quantityAtoms) > BigInt(position.quantityAtoms)),
     ) ||
     Object.values(input.targetWeights).some((weight) => weight !== 0) ||
     document.targetPlan.intentTargets.some(
@@ -1537,18 +1488,18 @@ const executionMaterialIssues = (
       if (
         executionSession === undefined ||
         decisionMarketData.sessionDate !== executionSession.executionSession.date ||
-        decisionMarketData.calendar.normalizedResponseHash !== executionSession.calendar.normalizedResponseHash ||
+        !sameMarketHours(decisionMarketData.calendar, executionSession.calendar) ||
         executionMarketData.sessionDate !== executionSession.executionSession.date ||
-        executionMarketData.calendar.normalizedResponseHash !== executionSession.calendar.normalizedResponseHash
+        !sameMarketHours(executionMarketData.calendar, executionSession.calendar)
       ) {
         issues.push({
           path: ['bindings', 'executionMarketData', 'calendar'],
           issue: 'intraday-momentum decision and execution market-data calendars must match the execution session',
         })
       }
-      const selectedCalendarSession = decisionMarketData.calendar.sessions.find(
-        ({ date }) => date === decisionMarketData.sessionDate,
-      )
+      const selectedCalendarSession = isContinuousMarket(decisionMarketData.calendar)
+        ? undefined
+        : exchangeSessions(decisionMarketData.calendar).find(({ date }) => date === decisionMarketData.sessionDate)
       const executionCalendar =
         selectedCalendarSession === undefined
           ? undefined
@@ -1676,14 +1627,15 @@ const executionMaterialIssues = (
       reconciledPositionBinding.positions.length === targets.length &&
       reconciledPositionBinding.positions.every((position, index) => {
         const target = targets[index]
-        const normalizedMarketPrice = quantizeAlpacaLimitPriceMicros(
+        const normalizedMarketPrice = quantizeInstrumentPriceMicros(
+          position.symbol,
           BigInt(position.marketPriceMicros),
-          BigInt(position.quantityMicros) < 0n ? 'UP' : 'DOWN',
+          BigInt(position.quantityAtoms) < 0n ? 'UP' : 'DOWN',
         ).toString()
         return (
           target !== undefined &&
           position.symbol === target.symbol &&
-          position.quantityMicros === target.currentQuantityMicros &&
+          position.quantityAtoms === target.currentQuantityAtoms &&
           normalizedMarketPrice === target.referencePriceMicros
         )
       })
@@ -1778,10 +1730,11 @@ const executionMaterialIssues = (
         plannedTarget === undefined
           ? undefined
           : deriveExecutionIntentPricing({
+              symbol: target.symbol,
               side: target.side,
               orderType: target.orderType,
               timeInForce: target.timeInForce,
-              quantityMicros: BigInt(target.quantityMicros),
+              quantityAtoms: BigInt(target.quantityAtoms),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               executionModel: intradayMomentumExecutionModel,
               limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),

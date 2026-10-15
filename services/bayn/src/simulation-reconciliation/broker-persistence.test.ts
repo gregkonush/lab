@@ -26,6 +26,10 @@ const evidence = (identity: string): ReadEvidence => ({
 })
 
 const account: Account = {
+  cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -119,6 +123,8 @@ const store: ReconciliationPersistence = {
     hasAccountBaseline: () => Effect.die(new Error('empty successful reconciliation must not read a baseline')),
   },
   reconciliation: {
+    recoverFees: () => Effect.void,
+    retainCashReporting: () => Effect.void,
     bindings: (boundAccountId) => {
       expect(boundAccountId).toBe(accountId)
       return Effect.succeed([])

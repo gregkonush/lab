@@ -40,6 +40,7 @@ const context: CycleRunContext = {
   authorityGenerationHash: '4'.repeat(64),
   executionPolicy: policy,
   buildDecision: forbidden,
+  buildDecisionEvidence: forbidden,
 }
 const session = { date: '2026-09-18', openAt: '2026-09-18T13:30:00.000Z', closeAt: '2026-09-18T20:00:00.000Z' }
 const calendar: MarketCalendarObservation = {
@@ -51,7 +52,7 @@ const calendar: MarketCalendarObservation = {
   normalizedResponseHash: '5'.repeat(64),
 }
 const blockedAt = '2026-09-18T13:05:00.000Z'
-const rearmAt = '2026-09-18T13:06:00.000Z'
+const rearmAt = '2026-09-18T14:06:00.000Z'
 const blockedCycle = (ordinal = 1, overrides: Record<string, unknown> = {}): AutonomousCycle =>
   Effect.runSync(
     decodeAutonomousCycle({
@@ -131,7 +132,25 @@ const fixture = (
 }
 
 describe('unbound pre-submission cycle recovery', () => {
-  test('retains a supported v3 record and acquires a v4 successor under the same immutable context', async () => {
+  test('completed attempts alternate markets even when lease and cooldown return to the same UTC minute parity', async () => {
+    const { terminalReason: _, ...prior } = blockedCycle(1, {
+      bindings: { snapshotId: '7'.repeat(64), decisionHash: '8'.repeat(64) },
+      terminalAt: '2026-09-18T14:05:00.000Z',
+      updatedAt: '2026-09-18T14:05:00.000Z',
+    })
+    const result = await fixture({ ...prior, state: CycleState.Completed }).run()
+    expect(result).toMatchObject({
+      outcome: 'ACQUIRED',
+      receipt: {
+        cycle: {
+          identity: { entryAttemptOrdinal: 2 },
+          window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
+        },
+      },
+    })
+  })
+
+  test('rejects reinterpreting a retired v3 cycle under the current execution context', async () => {
     const candidate = { ...context, strategyName: 'intraday-momentum' as const }
     const current = Result.getOrThrow(makeIntradayCycleDraft(candidate, calendar, session))
     if (current.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') throw new Error('expected v4 fixture')
@@ -145,12 +164,8 @@ describe('unbound pre-submission cycle recovery', () => {
     const prior = blockedCycle(1, original)
     const f = fixture(prior)
     const result = await f.run(candidate)
-    expect(result.outcome).toBe('ACQUIRED')
-    if (result.outcome !== 'ACQUIRED') throw new Error('legacy successor not acquired')
-    expect(result.receipt.cycle.identity).toMatchObject({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
-      entryAttemptOrdinal: 2,
-    })
+    expect(result.outcome).toBe('ALREADY_TERMINAL')
+    expect(f.acquisitions()).toBe(0)
     expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
     const mismatched = fixture(prior)
     expect((await mismatched.run({ ...candidate, strategyProtocolHash: 'a'.repeat(64) })).outcome).toBe(
@@ -168,7 +183,7 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(result.receipt.cycle.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: session.date })
     expect(result.receipt.cycle.identity.cycleId).not.toBe(prior.identity.cycleId)
     expect(result.receipt.cycle.bindings).toEqual({})
-    expect(result.receipt.cycle.window).toEqual(prior.window)
+    expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
     expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
     expect((await f.run()).outcome).toBe('ALREADY_ACQUIRED')
     expect(f.acquisitions()).toBe(1)
@@ -181,12 +196,15 @@ describe('unbound pre-submission cycle recovery', () => {
     expect(result.receipt.cycle.identity).toMatchObject({ entryAttemptOrdinal: 4 })
   })
 
-  test('retains the existing rearm cooldown and strict submission cutoff', async () => {
+  test('retains the rearm cooldown and hands the closing equity session to continuous markets', async () => {
     const f = fixture()
     expect((await f.run(context, '2026-09-18T13:05:59.999Z')).outcome).toBe('ALREADY_TERMINAL')
     const cutoffResult = await f.run(context, '2026-09-18T19:55:00.000Z').catch((cause: unknown) => cause)
-    expect(cutoffResult).toMatchObject({ failure: 'calendar-unavailable' })
-    expect(f.acquisitions()).toBe(0)
+    expect(cutoffResult).toMatchObject({
+      outcome: 'ACQUIRED',
+      receipt: { cycle: { window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' } } },
+    })
+    expect(f.acquisitions()).toBe(1)
   })
 
   test('cannot recover without current execution authority', async () => {
@@ -230,7 +248,7 @@ describe('unbound pre-submission cycle recovery', () => {
   }
 
   test('rejects changed exchange-calendar evidence', async () => {
-    const f = fixture(blockedCycle(), { ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] })
+    const f = fixture(blockedCycle(2), { ...calendar, sessions: [{ ...session, closeAt: '2026-09-18T19:00:00.000Z' }] })
     expect((await f.run()).outcome).toBe('ALREADY_TERMINAL')
     expect(f.acquisitions()).toBe(0)
   })

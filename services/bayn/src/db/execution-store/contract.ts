@@ -77,6 +77,10 @@ export interface ValuationStoreShape {
 }
 
 export interface ReconciliationStoreShape {
+  readonly retainCashReporting: (
+    snapshot: Pick<BrokerSnapshot, 'account' | 'accountEventId' | 'cashReportingQuantumMicros'>,
+  ) => Effect.Effect<void, ExecutionStoreError>
+  readonly recoverFees: (accountId: string) => Effect.Effect<void, ExecutionStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], ExecutionStoreError>
   readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationWriteResult, ExecutionStoreError>
 }
@@ -86,15 +90,15 @@ export interface AuthorityGenerationStoreShape {
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Initializes the configured OBSERVE root only when no authority state exists; otherwise returns the current state. */
-  readonly readOrInitializeObserveAuthority?: (
+  readonly readOrInitializeObserveAuthority: (
     input: EnsureAuthorityGenerationInput,
   ) => Effect.Effect<AuthorityState, ExecutionStoreError>
   /** Read-only recovery view used to resume a durable execution close lease after process restart. */
-  readonly readAuthorityState?: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readResearchAuthorityGeneration?: (
+  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
+  readonly readResearchAuthorityGeneration: (
     generationHash: string,
   ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
-  readonly readAuthorityGenerationLineage?: (
+  readonly readAuthorityGenerationLineage: (
     generationHash: string,
   ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
 }

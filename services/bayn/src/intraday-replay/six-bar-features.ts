@@ -1,3 +1,5 @@
+import { isContinuousMarket } from '../market-hours'
+import { exchangeSessions } from '../market-hours'
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -97,14 +99,17 @@ type RecordEntry = ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTra
 /** Research evidence only. The cursor must come from verified original-capture replay, advanced no later than observation. */
 export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor, query: IntradaySnapshotQuery) =>
   Result.gen(function* () {
-    const request = yield* verifyIntradaySnapshotQuery(query)
+    const verified = yield* verifyIntradaySnapshotQuery(query)
+    if (isContinuousMarket(verified.calendar))
+      return yield* Result.fail(fail('Six-bar equity research requires exchange hours'))
+    const request = { ...verified, calendar: verified.calendar }
     const source = yield* Schema.decodeUnknownResult(SimulatedSnapshotSourceSchema, strictParseOptions)(cursor.source)
     const candidate = request.candidateSymbols?.[0]
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
     const minute = 60_000_000_000n
-    const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
+    const session = exchangeSessions(request.calendar).find((entry) => entry.date === request.sessionDate)
     if (
       candidate === undefined ||
       candidate === sixBarResearchDefinition.benchmarkSymbol ||

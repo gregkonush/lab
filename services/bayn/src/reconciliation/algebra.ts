@@ -1,15 +1,11 @@
+import { submittedOrderEvidence } from '../execution/submission-evidence'
 import { Result, Schema } from 'effect'
 
 import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import {
-  compatibleOrderRequestBody,
-  MutationOperation,
-  orderPriceBoundaryMicros,
-  orderRequestNotionalMicros,
-} from '../broker/alpaca-mutations'
+import { MutationOperation } from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
@@ -34,7 +30,6 @@ import {
   type Valuation,
 } from '../execution/contracts'
 import {
-  legacyAccountingStateSchemaVersion,
   legacyAuthorityStateSchemaVersion,
   legacyReconciliationIdSchemaVersion,
   legacyReconciliationSchemaVersion,
@@ -52,6 +47,8 @@ import {
 } from '../reconciliation'
 import { strictParseOptions, type IsoDate } from '../schemas'
 import { Pipeable } from '../pipeable'
+import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
+import type { FeeAccrual } from '../accounting/fee-accrual'
 
 export interface IntentProjectionRow {
   readonly intent_id: string
@@ -60,7 +57,7 @@ export interface IntentProjectionRow {
   readonly side: OrderSide
   readonly order_type: OrderType
   readonly time_in_force: TimeInForce
-  readonly quantity_micros: string
+  readonly quantity_atoms: string
   readonly notional_limit_micros: string
   readonly state: IntentState
   readonly terminal_outcome: TerminalOutcome | null
@@ -68,6 +65,7 @@ export interface IntentProjectionRow {
   readonly mutation_operation: MutationOperation | null
   readonly mutation_event_type: MutationEventType | null
   readonly mutation_occurred_at: string | null
+  readonly submit_request_body?: unknown
   readonly submit_request_hash: string | null
 }
 
@@ -83,6 +81,7 @@ export interface OpeningCashRow {
 
 export interface ReconciliationSnapshotMaterial {
   readonly account: AccountSnapshot
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: readonly Position[]
   readonly positionsObservedAt: string
   readonly orders: readonly Order[]
@@ -232,7 +231,7 @@ const fail = (failure: ReconciliationAlgebraFailure): Result.Result<never, Recon
 
 type SubmittedOrderRepresentation = Pick<
   IntentExpectation,
-  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityMicros'
+  'submittedLimitPriceMicros' | 'submittedNotionalMicros' | 'submittedOrderType' | 'submittedQuantityAtoms'
 >
 
 const invalidSubmitRepresentation = (row: IntentProjectionRow, cause: unknown): ReconciliationAlgebraFailure => ({
@@ -252,42 +251,12 @@ const submittedOrderRepresentation = (
     )
   }
 
-  const requestIntent = {
-    clientOrderId: row.client_order_id,
-    notionalLimitMicros: row.notional_limit_micros,
-    orderType: row.order_type,
-    quantityMicros: row.quantity_micros,
-    side: row.side,
+  return submittedOrderEvidence(row.submit_request_body, {
+    requestHash: row.submit_request_hash,
     symbol: row.symbol,
-    timeInForce: row.time_in_force,
-  }
-  return Result.flatMap(
-    Result.mapError(compatibleOrderRequestBody(requestIntent, row.submit_request_hash), (cause) =>
-      invalidSubmitRepresentation(row, cause),
-    ),
-    (body) => {
-      if (!('limit_price' in body)) {
-        if ('notional' in body) {
-          const submittedNotionalMicros = orderRequestNotionalMicros(body)
-          return submittedNotionalMicros === undefined
-            ? Result.fail(invalidSubmitRepresentation(row, 'accepted broker notional is not canonical micros'))
-            : Result.succeed({ submittedOrderType: OrderType.Market, submittedNotionalMicros })
-        }
-        return Result.succeed({
-          submittedOrderType: OrderType.Market,
-          submittedQuantityMicros: row.quantity_micros,
-        })
-      }
-      return Result.map(
-        Result.mapError(orderPriceBoundaryMicros(requestIntent), (cause) => invalidSubmitRepresentation(row, cause)),
-        (boundary): SubmittedOrderRepresentation => ({
-          submittedOrderType: OrderType.Limit,
-          submittedQuantityMicros: row.quantity_micros,
-          submittedLimitPriceMicros: boundary.toString(),
-        }),
-      )
-    },
-  )
+    side: row.side,
+    clientOrderId: row.client_order_id,
+  }).pipe(Result.mapError((cause) => invalidSubmitRepresentation(row, cause)))
 }
 
 const mutationIsUnresolved = (row: IntentProjectionRow): boolean =>
@@ -308,7 +277,7 @@ const projectIntentExpectation = (
     orderType: row.order_type,
     ...submitted,
     timeInForce: row.time_in_force,
-    quantityMicros: row.quantity_micros,
+    quantityAtoms: row.quantity_atoms,
     state: row.state,
     ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
     expectsBrokerOrder: row.broker_order_id !== null,
@@ -448,6 +417,9 @@ export const compareOpeningCash = (input: {
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
   readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
+  readonly brokerFeeAccruals: readonly FeeAccrual[]
+  readonly cashReportingOffsetMicros: string
+  readonly brokerFeeCashDeltaMicros: string
   readonly receipts: readonly AccountingReceipt[]
   readonly ledgerExact: boolean
   readonly snapshot: ReconciliationSnapshotMaterial
@@ -481,15 +453,23 @@ export const compareOpeningCash = (input: {
           feeDate: fee.date,
           openingObservedAt: input.openingCash.observed_at,
         })
-      expectedCash += yield* parseAccountingAmount('transaction-cash-delta', fee.netAmountMicros, fee.activityId)
     }
-    const expectedCashMicros = expectedCash.toString()
+    expectedCash += yield* parseAccountingAmount('transaction-cash-delta', input.brokerFeeCashDeltaMicros)
+    const reportingOffset = yield* parseAccountingAmount('transaction-cash-delta', input.cashReportingOffsetMicros)
+    const expectedCashMicros = reportedCashMicros(
+      (expectedCash + reportingOffset).toString(),
+      input.snapshot.cashReportingQuantumMicros,
+    )
     const accountingHashValue = yield* accountingHash({
-      schemaVersion: legacyAccountingStateSchemaVersion,
+      schemaVersion: 'bayn.accounting-state.v3',
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
       ...(input.fees === undefined || input.fees.length === 0 ? {} : { brokerFees: input.fees }),
+      brokerFeeAccruals: input.brokerFeeAccruals,
+      brokerFeeCashDeltaMicros: input.brokerFeeCashDeltaMicros,
+      cashReportingQuantumMicros: input.snapshot.cashReportingQuantumMicros,
+      cashReportingOffsetMicros: input.cashReportingOffsetMicros,
       receipts: input.receipts,
       ledgerExact: input.ledgerExact,
     })

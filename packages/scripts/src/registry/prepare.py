@@ -110,7 +110,7 @@ def run(context, plan_path, reference_path):
                     "--",
                     "python3",
                     "-c",
-                    "import runpy,signal;signal.alarm(1700);runpy.run_path("
+                    "import runpy,signal;signal.alarm(2700);runpy.run_path("
                     + repr(prefix + ".py")
                     + ",run_name='__main__')",
                     "prepare",
@@ -121,12 +121,13 @@ def run(context, plan_path, reference_path):
                 ],
                 stdout=output,
                 stderr=errors,
-                timeout=1760,
+                timeout=2760,
             )
         if process.returncode:
+            log = plan_path.with_suffix(".prepare.log")
             raise RuntimeError(
-                "Preparation failed; inspect "
-                + str(plan_path.with_suffix(".prepare.log"))
+                f"Preparation failed (exit {process.returncode}): {log.read_text()[-8192:]}"
+                f"\nFull preparation log: {log}"
             )
         current_pvc = client.get("registry", "pvc", "registry-data")
         if (

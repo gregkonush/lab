@@ -20,6 +20,9 @@ import { Authority, KillState } from '../../execution/contracts'
 import { canonicalHashV1 } from '../../hash'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
+import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
+import { defaultJevProtocolDocument } from '../../jev/protocol'
+import { makeIntradayCycleDraft } from '../runner/calendar-decisions'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { CycleObservability, CycleObservabilityLive, CycleStore, CycleStoreLive } from '.'
 
@@ -213,7 +216,7 @@ const seedUnresolvedMutation = (cycleId: string, startedAt = '2026-08-28T14:32:0
       INSERT INTO intents (
         intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
         decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-        quantity_micros, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
+        quantity_atoms, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
       ) VALUES (
         ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
         ${'7'.repeat(64)}, ${'8'.repeat(64)}, ${accountId}, 'bayn-observability-unresolved', 'SPY', 'BUY',
@@ -311,6 +314,40 @@ describePostgres('PostgreSQL intraday observability projection', () => {
 
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('projects the persisted continuous calendar for a native crypto admission', async () => {
+    const window = value(
+      tradingWindow(continuousMarketHours, activatedAt, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
+    )
+    if (window === null) throw new Error('Expected continuous admission')
+    const executionPolicy = value(makeCycleExecutionPolicyFromModel(defaultJevProtocolDocument.executionModel))
+    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+      throw new Error('Expected native policy')
+    const candidate = value(
+      makeIntradayCycleDraft(
+        {
+          cycleBindingId: qualificationRunId,
+          strategyName: 'jev',
+          strategyProtocolHash: '6'.repeat(64),
+          accountId,
+          executionPolicy,
+        },
+        continuousMarketHours,
+        window,
+      ),
+    )
+    const projection = await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* CycleStore).acquire(candidate, activatedAt)
+        return yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+      }),
+    )
+    expect(projection.current).toMatchObject({
+      cycleId: candidate.identity.cycleId,
+      executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
+      submissionOpenAt: activatedAt,
+    })
   })
 
   test('projects the active intraday cycle with exact safety and zero execution facts', async () => {
@@ -413,17 +450,17 @@ describePostgres('PostgreSQL intraday observability projection', () => {
               yield* sql`
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
-            side, order_type, time_in_force, quantity_micros, filled_quantity_micros, limit_price_micros, status
+            side, order_type, time_in_force, quantity_atoms, filled_quantity_atoms, limit_price_micros, status
           ) VALUES (
-            ${'e'.repeat(64)}, ${accountId}, 'bayn.paper-order.v1', 'latency-order', 'bayn-observability-unresolved',
+            ${'e'.repeat(64)}, ${accountId}, 'bayn.order.v3', 'latency-order', 'bayn-observability-unresolved',
             ${'6'.repeat(64)}, 'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 500000, 1000000, 'CANCELED'
           )`
               yield* sql`
           INSERT INTO fills (
             event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id, intent_id,
-            symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp
+            symbol, side, quantity_atoms, price_atoms, fee_micros, source_timestamp
           ) VALUES (
-            ${'f'.repeat(64)}, ${accountId}, 'bayn.paper-fill.v1', 'latency-fill', 'latency-order',
+            ${'f'.repeat(64)}, ${accountId}, 'bayn.fill.v2', 'latency-fill', 'latency-order',
             'bayn-observability-unresolved', ${'6'.repeat(64)}, 'SPY', 'BUY', 500000, 1000000, 0,
             ${fillAt}
           )`

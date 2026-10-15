@@ -1,15 +1,17 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
+import { createConnection, createServer as tcpServer, type Socket } from 'node:net'
 import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
+import { accessCommandSchema, MAX_ACCESS_COMMAND_BYTES } from './access-schemas'
 import { createSpiffeFixture } from './spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
@@ -17,24 +19,56 @@ const identityTest = process.env.OFZ_IDENTITY_FIXTURE === '1' ? test : test.skip
 const root = path.resolve(import.meta.dir, '../../../../..')
 const processes: ReturnType<typeof spawn>[] = []
 const cleanups: (() => unknown)[] = []
+
+async function routingEndpoint(port: number, firstBackend: number) {
+  let backend = firstBackend
+  const connections = new Set<Socket>()
+  const service = tcpServer((incoming) => {
+    const upstream = createConnection(backend, '127.0.0.1')
+    for (const socket of [incoming, upstream]) {
+      connections.add(socket)
+      socket.once('close', () => connections.delete(socket))
+      socket.on('error', () => {
+        incoming.destroy()
+        upstream.destroy()
+      })
+    }
+    incoming.once('close', () => upstream.destroy())
+    upstream.once('close', () => incoming.destroy())
+    incoming.pipe(upstream).pipe(incoming)
+  })
+  service.listen(port, '127.0.0.1')
+  await once(service, 'listening')
+  const disconnect = () => {
+    for (const socket of connections) socket.destroy()
+  }
+  cleanups.push(() => {
+    disconnect()
+    return new Promise<void>((resolve) => service.close(() => resolve()))
+  })
+  return {
+    route(nextBackend: number) {
+      backend = nextBackend
+      disconnect()
+    },
+  }
+}
+
 afterAll(async () => {
-  for (const child of processes) child.kill('SIGTERM')
   await Promise.all(
     processes.map(async (child) => {
-      if (child.exitCode !== null) return
-      await Promise.race([
-        once(child, 'exit'),
-        new Promise((resolve) =>
-          setTimeout(() => {
-            child.kill('SIGKILL')
-            resolve(undefined)
-          }, 5000),
-        ),
-      ])
+      if (child.exitCode !== null || child.signalCode !== null) return
+      child.kill('SIGTERM')
+      const deadline = setTimeout(() => child.kill('SIGKILL'), 5000)
+      try {
+        await once(child, 'exit')
+      } finally {
+        clearTimeout(deadline)
+      }
     }),
   )
   for (const cleanup of cleanups.reverse()) await cleanup()
-})
+}, 15_000)
 
 identityTest(
   'real browser, GitHub broker, passkey, BFF, SPIFFE Ofz and shared SQL sessions',
@@ -42,7 +76,7 @@ identityTest(
     const fixture = await createSpiffeFixture()
     cleanups.push(() => fixture.close())
     const ofz = fixture.certificate('ofz', 'spiffe://proompteng.ai/ns/ofz/sa/ofz-api')
-    fixture.include(ofz.svid)
+    fixture.include(ofz.svid, fixture.peer.svid)
     const settings = { ...process.env }
     cleanups.push(() => {
       for (const key of Object.keys(process.env)) if (!(key in settings)) delete process.env[key]
@@ -66,7 +100,7 @@ identityTest(
     })
     cleanups.push(() => admin.end())
     await admin.query(
-      "CREATE ROLE ofz_api LOGIN PASSWORD 'fixture-api'; CREATE ROLE ofz_archiver NOLOGIN; CREATE ROLE tengri_bff LOGIN PASSWORD 'fixture-bff'; CREATE ROLE tengri_controller NOLOGIN; CREATE ROLE tengri_migrator LOGIN PASSWORD 'fixture-migrator';",
+      "CREATE ROLE ofz_api LOGIN PASSWORD 'fixture-api'; CREATE ROLE ofz_archiver NOLOGIN; CREATE ROLE tengri_bff LOGIN PASSWORD 'fixture-bff'; CREATE ROLE tengri_controller LOGIN PASSWORD 'fixture-controller'; CREATE ROLE tengri_supervisor NOLOGIN; CREATE ROLE tengri_migrator LOGIN PASSWORD 'fixture-migrator';",
     )
     await admin.query('CREATE DATABASE tengri_control OWNER tengri_migrator')
     await admin.query('CREATE DATABASE keycloak')
@@ -89,6 +123,7 @@ identityTest(
     })
     cleanups.push(() => bffAdmin.end())
     const migration = readFileSync(path.join(root, 'services/tengri/migrations/0001_control.sql'))
+    const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -109,16 +144,23 @@ identityTest(
       OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_migrator sslmode=require`,
       OFZ_DATABASE_PASSWORD_FILE: secret('runtime-owner-password', 'fixture-migrator'),
     }
+    const expectedChecksum = createHash('sha256').update(migration).digest()
+    const replayChecksum = createHash('sha256').update(replayMigration).digest()
+    await bffAdmin.query('SET ROLE tengri_migrator')
+    await bffAdmin.query(migration.toString())
+    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
+    await bffAdmin.query('RESET ROLE')
     for (let attempt = 0; attempt < 2; attempt++) {
       execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })
     }
-    const expectedChecksum = createHash('sha256').update(migration).digest()
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
-      'SELECT version,checksum FROM tengri.schema_version',
+      'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(1)
+    expect(versions.rowCount).toBe(2)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
+    expect(versions.rows[1]?.version).toBe(2)
+    expect(versions.rows[1]?.checksum.equals(replayChecksum)).toBe(true)
     expect(() =>
       execFileSync(binary, ['migrate-runtime'], {
         env: {
@@ -128,9 +170,9 @@ identityTest(
         stdio: 'pipe',
       }),
     ).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [Buffer.alloc(32)])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [expectedChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [replayChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {
@@ -171,12 +213,18 @@ identityTest(
     updates.push(relation('policy_version', 'lab', 'current', 'workload', 'version_1'))
     await nativeCall('/v1/relationships/write', { updates })
     await control.query('UPDATE ofz.platform_state SET version=1,fenced=false')
-    const heartbeat = setInterval(
-      () => void control.query('UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()').catch(() => undefined),
-      1000,
-    )
+    // Synthetic acknowledgements keep identity scenarios independent of the archive-loss gate.
+    const acknowledgeFixtureArchive = () =>
+      control.query(
+        "BEGIN; UPDATE ofz.audit_outbox SET acknowledged_at_ms=ofz.now_ms(),archive_receipt='identity-fixture-only'; UPDATE ofz.archive_state SET acknowledged_sequence=coalesce((SELECT max(sequence) FROM ofz.audit),0),acknowledged_at_ms=ofz.now_ms(); COMMIT;",
+      )
+    const heartbeat = setInterval(() => {
+      void acknowledgeFixtureArchive().catch((cause: unknown) => {
+        throw new Error('Synthetic identity archive acknowledgement failed', { cause })
+      })
+    }, 1000)
     cleanups.push(() => clearInterval(heartbeat))
-    await control.query('UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()')
+    await acknowledgeFixtureArchive()
     const codes = new Map<string, string>(),
       tokens = new Map<string, string>()
     let githubSecret = 'fixture-github-secret'
@@ -351,14 +399,14 @@ identityTest(
       try {
         const url = new URL(request.url || '/', process.env.TENGRI_DESKTOP_ORIGIN)
         if (url.pathname === '/') {
-          response.setHeader('Content-Type', 'text/html')
+          response.setHeader('Content-Type', 'text/html; charset=utf-8')
           response.end(
             '<!doctype html><html><body><div id="root"></div><script src="/fixture.js"></script></body></html>',
           )
           return
         }
         if (url.pathname === '/fixture.js') {
-          response.setHeader('Content-Type', 'text/javascript')
+          response.setHeader('Content-Type', 'text/javascript; charset=utf-8')
           response.end(javascript)
           return
         }
@@ -367,7 +415,7 @@ identityTest(
           if (value) headers.set(name, Array.isArray(value) ? value.join(',') : value)
         const chunks = []
         for await (const chunk of request) chunks.push(Buffer.from(chunk))
-        const incoming = new Request(url, {
+        const incoming = new Request(new URL(url.pathname + url.search, 'http://0.0.0.0:3000'), {
           method: request.method,
           headers,
           ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
@@ -412,6 +460,9 @@ identityTest(
     const kcHttp = await freePort(),
       kcHttps = await freePort(),
       ofzPort = await freePort()
+    const kcPrimaryHttps = await freePort(),
+      kcSecondaryHttp = await freePort(),
+      kcSecondaryHttps = await freePort()
     const base = `https://proompteng.ai:${bffAddress.port}`,
       issuer = `https://auth.proompteng.ai:${kcHttps}/realms/tengri`
     Object.assign(process.env, {
@@ -423,49 +474,110 @@ identityTest(
       TENGRI_DATABASE_DSN: `postgres://tengri_bff@localhost:${port}/tengri_control`,
       TENGRI_DATABASE_PASSWORD_FILE: secret('bff-password', 'fixture-bff'),
       TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE,
-      TENGRI_DATABASE_SCHEMA_FILE: path.join(root, 'services/tengri/migrations/0001_control.sql'),
       OFZ_GRPC_ENDPOINT: `localhost:${ofzPort}`,
       SPIFFE_ID: fixture.ownId,
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
       SPIFFE_WORKLOAD_API_PROTO_PATH: fixture.protoPath,
     })
-    const kcLog = secret('keycloak.log', '')
-    const kc = spawn(
-      z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN),
-      [
-        'start-dev',
-        '--db=postgres',
-        `--db-url=jdbc:postgresql://localhost:${port}/keycloak?sslmode=verify-full&sslrootcert=${process.env.OFZ_TEST_CA_FILE}`,
-        '--db-username=postgres',
-        '--http-host=127.0.0.1',
-        `--http-port=${kcHttp}`,
-        `--https-port=${kcHttps}`,
-        `--hostname=https://auth.proompteng.ai:${kcHttps}`,
-        `--https-certificate-file=${certPath}`,
-        `--https-certificate-key-file=${keyPath}`,
-      ],
-      {
-        env: {
-          ...process.env,
-          KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
-          KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
-          JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    )
-    processes.push(kc)
-    kc.stdout?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
-    kc.stderr?.on('data', (chunk) => writeFileSync(kcLog, chunk, { flag: 'a' }))
-    const adminBase = `http://127.0.0.1:${kcHttp}`
-    for (let attempt = 0; ; attempt++) {
-      if (kc.exitCode !== null || attempt > 180)
-        throw new Error(`Fixture Keycloak startup failed: ${readFileSync(kcLog, 'utf8').slice(-1000)}`)
-      try {
-        if ((await fetch(adminBase + '/realms/master/.well-known/openid-configuration')).ok) break
-      } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 500))
+    const freeCachePort = async () => {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const candidate = 10000 + Math.floor(Math.random() * 5000)
+        const sockets = [tcpServer(), tcpServer()]
+        try {
+          for (const [index, socket] of sockets.entries()) {
+            socket.listen(candidate + index * 50000, '127.0.0.1')
+            await once(socket, 'listening')
+          }
+          return candidate
+        } catch {
+        } finally {
+          await Promise.all(
+            sockets
+              .filter((socket) => socket.listening)
+              .map((socket) => new Promise<void>((resolve) => socket.close(() => resolve()))),
+          )
+        }
+      }
+      throw new Error('No isolated Keycloak transport and failure-detection port pair')
     }
+    const primaryHome = path.join(fixture.directory, 'keycloak-primary')
+    const secondaryHome = path.join(fixture.directory, 'keycloak-secondary')
+    cpSync(path.dirname(path.dirname(z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN))), primaryHome, {
+      recursive: true,
+    })
+    cpSync(path.join(root, 'argocd/applications/keycloak/tengri/theme'), path.join(primaryHome, 'themes/tengri'), {
+      recursive: true,
+    })
+    const startKeycloak = async (
+      home: string,
+      name: string,
+      httpPort: number,
+      httpsPort: number,
+      optimized: boolean,
+    ) => {
+      const log = secret(`keycloak-${name}.log`, '')
+      const server = spawn(
+        path.join(home, 'bin/kc.sh'),
+        [
+          'start',
+          ...(optimized ? ['--optimized'] : ['--db=postgres', '--health-enabled=true']),
+          '--cache=ispn',
+          '--cache-stack=jdbc-ping',
+          '--cache-embedded-mtls-enabled=true',
+          '--cache-embedded-network-bind-address=127.0.0.1',
+          `--cache-embedded-network-bind-port=${await freeCachePort()}`,
+          `--spi-cache-embedded--default--node-name=${name}`,
+          `--db-url=jdbc:postgresql://localhost:${port}/keycloak?sslmode=verify-full&sslrootcert=${process.env.OFZ_TEST_CA_FILE}`,
+          '--db-username=postgres',
+          '--db-pool-max-size=20',
+          '--http-enabled=true',
+          '--http-host=127.0.0.1',
+          `--http-port=${httpPort}`,
+          `--https-port=${httpsPort}`,
+          `--http-management-port=${await freePort()}`,
+          `--hostname=https://auth.proompteng.ai:${kcHttps}`,
+          `--https-certificate-file=${certPath}`,
+          `--https-certificate-key-file=${keyPath}`,
+        ],
+        {
+          env: {
+            ...process.env,
+            KC_BOOTSTRAP_ADMIN_USERNAME: 'fixture-admin',
+            KC_BOOTSTRAP_ADMIN_PASSWORD: 'fixture-only-password',
+            JAVA_OPTS_APPEND: '-Xms128m -Xmx768m',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      processes.push(server)
+      server.stdout?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
+      server.stderr?.on('data', (chunk) => writeFileSync(log, chunk, { flag: 'a' }))
+      const startupDeadline = Date.now() + 120_000
+      for (;;) {
+        if (server.exitCode !== null || server.signalCode !== null || Date.now() >= startupDeadline)
+          throw new Error(`Fixture Keycloak ${name} startup failed: ${readFileSync(log, 'utf8').slice(-3000)}`)
+        try {
+          if ((await fetch(`http://127.0.0.1:${httpPort}/realms/master/.well-known/openid-configuration`)).ok) break
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      return { server, log }
+    }
+    const kc = await startKeycloak(primaryHome, 'primary', kcHttp, kcPrimaryHttps, false)
+    cpSync(primaryHome, secondaryHome, { recursive: true })
+    const kcSecondary = await startKeycloak(secondaryHome, 'secondary', kcSecondaryHttp, kcSecondaryHttps, true)
+    for (let attempt = 0; ; attempt++) {
+      if (
+        [kc.log, kcSecondary.log].every((log) =>
+          /ISPN000094: Received new cluster view.*\(2\)/.test(readFileSync(log, 'utf8')),
+        )
+      )
+        break
+      if (attempt > 100) throw new Error('Production Keycloak instances did not form a two-member jdbc-ping cluster')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    const keycloakEndpoint = await routingEndpoint(kcHttps, kcPrimaryHttps)
+    let adminBase = `http://127.0.0.1:${kcHttp}`
     const bootstrap = (providerSecret: string, clientSecret: string) =>
       execFileSync('python3', [path.join(root, 'argocd/applications/keycloak/tengri/bootstrap.py')], {
         env: {
@@ -480,17 +592,18 @@ identityTest(
         stdio: 'pipe',
       })
     bootstrap(githubSecret, 'fixture-bff-secret-not-production-0000000')
-    const tokenResponse = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
-      method: 'POST',
-      body: new URLSearchParams({
-        client_id: 'admin-cli',
-        grant_type: 'password',
-        username: 'fixture-admin',
-        password: 'fixture-only-password',
-      }),
-    })
-    const token = z.object({ access_token: z.string() }).parse(await tokenResponse.json()).access_token
     const adminCall = async (endpoint: string, method = 'GET', body?: unknown) => {
+      const tokenResponse = await fetch(adminBase + '/realms/master/protocol/openid-connect/token', {
+        method: 'POST',
+        body: new URLSearchParams({
+          client_id: 'admin-cli',
+          grant_type: 'password',
+          username: 'fixture-admin',
+          password: 'fixture-only-password',
+        }),
+      })
+      if (!tokenResponse.ok) throw new Error(`Fixture administrator authentication ${tokenResponse.status}`)
+      const token = z.object({ access_token: z.string() }).parse(await tokenResponse.json()).access_token
       const response = await fetch(adminBase + '/admin/realms/tengri' + endpoint, {
         method,
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -520,35 +633,47 @@ identityTest(
       redirectUris: [base + '/api/auth/callback'],
       webOrigins: [base],
     })
-    const api = spawn(binary, ['serve'], {
-      env: {
-        ...common,
-        RUST_LOG: 'ofz=debug',
-        OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=ofz_control user=ofz_api sslmode=require`,
-        OFZ_DATABASE_PASSWORD_FILE: apiPassword,
-        OFZ_SPICEDB_ENDPOINT: native,
-        OFZ_SPICEDB_KEY_FILE: process.env.OFZ_TEST_NATIVE_KEY_FILE,
-        OFZ_OIDC_ISSUER: issuer,
-        OFZ_OIDC_CLIENT_ID: 'tengri-bff',
-        OFZ_OIDC_CONNECT_IP: '127.0.0.1',
-        OFZ_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
-        OFZ_LISTEN: `127.0.0.1:${ofzPort}`,
-        SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    processes.push(api)
     let apiLogs = ''
-    api.stdout?.on('data', (chunk) => {
-      apiLogs += String(chunk)
-    })
-    api.stderr?.on('data', (chunk) => {
-      apiLogs += String(chunk)
-    })
-    for (let attempt = 0; !apiLogs.includes('Ofz authorization API listening'); attempt++) {
-      if (api.exitCode !== null || attempt > 350) throw new Error('Fixture Ofz startup failed: ' + apiLogs.slice(-2000))
-      await new Promise((resolve) => setTimeout(resolve, 100))
+    const startApi = async (listenPort: number) => {
+      const api = spawn(binary, ['serve'], {
+        env: {
+          ...common,
+          RUST_LOG: 'ofz=debug',
+          OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=ofz_control user=ofz_api sslmode=require`,
+          OFZ_DATABASE_PASSWORD_FILE: apiPassword,
+          OFZ_SPICEDB_ENDPOINT: native,
+          OFZ_SPICEDB_KEY_FILE: process.env.OFZ_TEST_NATIVE_KEY_FILE,
+          OFZ_OIDC_ISSUER: issuer,
+          OFZ_OIDC_CLIENT_ID: 'tengri-bff',
+          OFZ_OIDC_CONNECT_IP: '127.0.0.1',
+          OFZ_OIDC_CA_FILE: path.join(fixture.directory, 'ca.pem'),
+          OFZ_LISTEN: `127.0.0.1:${listenPort}`,
+          SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      processes.push(api)
+      let replicaLogs = ''
+      api.stdout?.on('data', (chunk) => {
+        replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
+        apiLogs = (apiLogs + String(chunk)).slice(-16000)
+      })
+      api.stderr?.on('data', (chunk) => {
+        replicaLogs = (replicaLogs + String(chunk)).slice(-16000)
+        apiLogs = (apiLogs + String(chunk)).slice(-16000)
+      })
+      for (let attempt = 0; !replicaLogs.includes('Ofz authorization API listening'); attempt++) {
+        if (api.exitCode !== null || attempt > 350)
+          throw new Error('Fixture Ofz startup failed: ' + apiLogs.slice(-2000))
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return api
     }
+    const firstApiPort = await freePort()
+    const secondApiPort = await freePort()
+    const firstApi = await startApi(firstApiPort)
+    await startApi(secondApiPort)
+    const apiEndpoint = await routingEndpoint(ofzPort, firstApiPort)
     const { ofzCall } = await import('./ofz')
     const { AuthorizationService } = await import('./generated/proompteng/authz/v1/authz_pb')
     await ofzCall(AuthorizationService.method.getPolicyState, {}).catch((error) => {
@@ -563,6 +688,11 @@ identityTest(
     })
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
+    await context.addInitScript(() => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+    })
     const page = await context.newPage()
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
@@ -586,17 +716,22 @@ identityTest(
           'Isolated broker page: ' +
             (await page.locator('body').innerText()).slice(0, 1500) +
             '\n' +
-            readFileSync(kcLog, 'utf8')
+            readFileSync(kc.log, 'utf8')
               .split('\n')
               .filter((line) => line.includes('WARN') || line.includes('ERROR'))
               .slice(-8)
               .join('\n'),
         )
       })
-    page.on('dialog', (dialog) => void dialog.accept('Isolated virtual passkey'))
     await page.waitForLoadState('domcontentloaded')
     await page.getByRole('button', { name: /Register/ }).click()
-    await page.waitForURL((url) => url.origin === base, { timeout: 20_000 })
+    await page
+      .waitForURL((url) => url.origin === base, { timeout: 20_000 })
+      .catch(async (cause: unknown) => {
+        throw new Error('Isolated passkey enrollment: ' + (await page.locator('body').innerText()).slice(0, 1200), {
+          cause,
+        })
+      })
     if (new URL(page.url()).pathname !== '/') {
       const denied = await control.query(
         "SELECT receipt->>'reason' AS reason FROM ofz.audit WHERE (receipt->>'allowed')::boolean=false ORDER BY sequence DESC LIMIT 3",
@@ -635,6 +770,82 @@ identityTest(
     const inspected = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
     expect(inspected?.session.githubId).toBe('1')
 
+    if (!inspected) throw new Error('Verified fixture session missing')
+    await new Promise<void>((resolve, reject) => {
+      const runtime = spawn(
+        'cargo',
+        [
+          'test',
+          '--manifest-path',
+          path.join(root, 'services/tengri/Cargo.toml'),
+          '--locked',
+          '--bin',
+          'tengri',
+          'ofz_wire_runtime_lifecycle_and_authority',
+          '--',
+          '--ignored',
+          '--nocapture',
+        ],
+        {
+          env: {
+            ...process.env,
+            TENGRI_OFZ_WIRE_FIXTURE: '1',
+            TENGRI_OFZ_FIXTURE_HUMAN: inspected.session.humanId,
+            TENGRI_OFZ_FIXTURE_SESSION: inspected.session.id,
+            TENGRI_RUNTIME_STATE_FIXTURE: '1',
+            TENGRI_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_controller sslmode=require`,
+            TENGRI_DATABASE_PASSWORD_FILE: secret('controller-password', 'fixture-controller'),
+            TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE || '',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      processes.push(runtime)
+      let output = ''
+      const retain = (bytes: Buffer) => {
+        output = (output + bytes.toString()).slice(-16000)
+      }
+      runtime.stdout?.on('data', retain)
+      runtime.stderr?.on('data', retain)
+      runtime.once('error', reject)
+      runtime.once('exit', (code) => {
+        if (code !== 0 || !output.includes('test result: ok. 1 passed; 0 failed')) {
+          reject(new Error(`Runtime Ofz wire fixture failed: ${output}`))
+          return
+        }
+        console.log(output.split('\n').find((line) => line.startsWith('PASS: real controller Ofz mTLS')))
+        resolve()
+      })
+    })
+
+    // Routing removes the failed backend; the unchanged gRPC target must reconnect to the surviving process.
+    const failoverStarted = Date.now()
+    apiEndpoint.route(secondApiPort)
+    firstApi.kill('SIGKILL')
+    await once(firstApi, 'exit')
+    let survivingIdentity: Awaited<ReturnType<typeof getTengriIdentity>> | undefined
+    let failoverError: unknown
+    while (Date.now() - failoverStarted < 30_000) {
+      try {
+        survivingIdentity = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))
+        break
+      } catch (error) {
+        failoverError = error
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+    if (!survivingIdentity)
+      throw new Error('Surviving Ofz replica did not recover the shared browser session within 30 seconds', {
+        cause: failoverError,
+      })
+    expect(survivingIdentity.session.id).toBe(inspected.session.id)
+    expect(Date.now() - failoverStarted).toBeLessThan(30_000)
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
+    console.log(
+      'PASS: two real Ofz processes share SQL authority; unchanged client target recovers the same passkey session after SIGKILL of the serving replica',
+    )
+
     // Repeated bootstrap must rotate both credentials while retaining enrolled users/passkeys.
     const usersBefore = z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())
     const firstUser = usersBefore[0]
@@ -654,7 +865,11 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
+    await adminCall('', 'PUT', { loginTheme: 'keycloak', sslRequired: 'none' })
+    expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
+    await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
+    expect(z.object({ loginTheme: z.string() }).parse(await (await adminCall('')).json()).loginTheme).toBe('tengri')
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z
@@ -690,6 +905,9 @@ identityTest(
       )
     }
 
+    const administrationVersion = BigInt(
+      (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+    )
     const applyChange = async (status: number) => {
       const result = page.waitForResponse(
         (response) => response.url() === base + '/api/tengri/access' && response.request().method() === 'POST',
@@ -697,6 +915,15 @@ identityTest(
       await page.getByRole('button', { name: 'Apply change', exact: true }).click()
       expect((await result).status()).toBe(status)
     }
+    const postAccess = (command: Record<string, unknown>) =>
+      page.evaluate(async (input) => {
+        const response = await fetch('/api/tengri/access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        })
+        return { status: response.status, body: await response.json() }
+      }, command)
     await page.getByLabel('Change', { exact: true }).selectOption('quota')
     await page.getByLabel('GitHub username', { exact: true }).fill('fixture-1')
     await page.getByLabel('total', { exact: true }).fill('3')
@@ -705,7 +932,9 @@ identityTest(
     await page.getByLabel('Reason', { exact: true }).fill('Isolated quota qualification')
     await applyChange(200)
     expect(identityLookups).toBeGreaterThan(0)
-    await browserExpect(page.getByText('Policy version 2', { exact: true })).toBeVisible()
+    await browserExpect(
+      page.getByText(`Policy version ${administrationVersion + BigInt(1)}`, { exact: true }),
+    ).toBeVisible()
     expect(
       (
         await control.query(
@@ -729,8 +958,218 @@ identityTest(
     await page.getByLabel('Enable this access', { exact: true }).check()
     await page.getByLabel('Reason', { exact: true }).fill('Admit an isolated member through the browser')
     await applyChange(200)
-    await browserExpect(page.getByText('Policy version 3', { exact: true })).toBeVisible()
+    await browserExpect(
+      page.getByText(`Policy version ${administrationVersion + BigInt(2)}`, { exact: true }),
+    ).toBeVisible()
     await browserExpect(page.getByText('GitHub #3', { exact: true })).toBeVisible()
+
+    // Seed a stopped, enrolled workspace; creation and enrollment are exercised by the controller wire fixture above.
+    const scopedWorkspace = randomUUID()
+    const scopedHome = randomUUID()
+    await control.query(
+      "WITH enrolled AS (INSERT INTO ofz.reservations(id,owner_id,home_bytes,workspace_uid,state) VALUES($1,$2,34359738368,$3,'enrolled') RETURNING id) INSERT INTO ofz.workspaces(uid,owner_id,home_uid,reservation_id,home_bytes) SELECT $3,$2,$4,id,34359738368 FROM enrolled",
+      [randomUUID(), inspected.session.humanId, scopedWorkspace, scopedHome],
+    )
+    await nativeCall('/v1/relationships/write', {
+      updates: [
+        relation('workspace', scopedWorkspace, 'platform', 'platform', 'lab'),
+        relation('workspace', scopedWorkspace, 'owner', 'human', inspected.session.humanId),
+      ],
+    })
+    await page.goto(base + '/?workspace=' + scopedWorkspace)
+    const contentOptIn = page.getByLabel('Approve bounded Viewer content access', { exact: true })
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
+    await page.getByLabel('Reason', { exact: true }).fill('Grant metadata-only Viewer access')
+    await applyChange(200)
+    const viewerRow = page.getByRole('row').filter({ has: page.getByText('GitHub #3', { exact: true }) })
+    await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    const viewerId = createHash('sha256').update('github:3').digest('hex')
+    const storedViewer = async () =>
+      (
+        await control.query('SELECT role,scope FROM ofz.collaborators WHERE workspace_uid=$1 AND human_id=$2', [
+          scopedWorkspace,
+          viewerId,
+        ])
+      ).rows[0]
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+
+    await contentOptIn.check()
+    const roots = page.getByLabel('File roots under /workspace', { exact: true })
+    await roots.fill('/workspace/../private')
+    const lookupsBeforeInvalidScope = identityLookups
+    const versionBeforeInvalidScope = (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version
+    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await browserExpect(roots).toHaveAttribute('aria-invalid', 'true')
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'canonical path under /workspace' })).toBeVisible()
+    expect(identityLookups).toBe(lookupsBeforeInvalidScope)
+    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
+      versionBeforeInvalidScope,
+    )
+    await roots.fill(
+      Array.from({ length: 16 }, (_, index) => {
+        const prefix = `/workspace/project-${index}/`
+        return prefix + 'x'.repeat(4096 - prefix.length)
+      }).join('\n'),
+    )
+    await page.getByRole('button', { name: 'Apply change', exact: true }).click()
+    await browserExpect(page.getByRole('alert').filter({ hasText: 'Access request exceeds 64 KiB' })).toBeVisible()
+    expect(identityLookups).toBe(lookupsBeforeInvalidScope)
+    expect((await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version).toBe(
+      versionBeforeInvalidScope,
+    )
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    await roots.fill('/workspace/src ')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill(' shared-id ')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill(' shared-id ')
+    await page.getByLabel('Maximum bytes', { exact: true }).fill('4096')
+    await page.getByLabel('Maximum items', { exact: true }).fill('20')
+    await browserExpect(page.getByLabel('Allow browser screenshots', { exact: true })).not.toBeChecked()
+    await applyChange(200)
+    for (const [label, target] of [
+      ['File roots', '/workspace/src '],
+      ['Codex thread IDs', ' shared-id '],
+      ['Terminal IDs', ' shared-id '],
+    ]) {
+      const group = viewerRow.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) })
+      await browserExpect(group.getByText(JSON.stringify(target), { exact: true })).toBeVisible()
+    }
+    const approvedScope = {
+      file_roots: ['/workspace/src '],
+      thread_ids: [' shared-id '],
+      terminal_ids: [' shared-id '],
+      browser_screenshot: false,
+      max_bytes: 4096,
+      max_items: 20,
+    }
+    expect(await storedViewer()).toEqual({ role: 3, scope: approvedScope })
+    await browserExpect(viewerRow.getByText(/Browser status · up to 4096 bytes \/ 20 items/)).toBeVisible()
+
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-2')
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await page.getByLabel('GitHub username', { exact: true }).fill('fixture-3')
+    await browserExpect(contentOptIn).not.toBeChecked()
+    await contentOptIn.check()
+    await roots.fill('/workspace/narrow')
+    await page.getByLabel('Codex thread IDs', { exact: true }).fill('')
+    await page.getByLabel('Terminal IDs', { exact: true }).fill('')
+    await page.getByLabel('Allow browser screenshots', { exact: true }).check()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText(JSON.stringify('/workspace/narrow'), { exact: true })).toBeVisible()
+    await browserExpect(viewerRow.getByText(/Browser status and screenshots/)).toBeVisible()
+    expect(await storedViewer()).toEqual({
+      role: 3,
+      scope: {
+        ...approvedScope,
+        file_roots: ['/workspace/narrow'],
+        thread_ids: [],
+        terminal_ids: [],
+        browser_screenshot: true,
+      },
+    })
+    await contentOptIn.uncheck()
+    await applyChange(200)
+    await browserExpect(viewerRow.getByText('Metadata only', { exact: true })).toBeVisible()
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    const boundaryRoots = Array.from({ length: 15 }, (_, index) => {
+      const prefix = `/workspace/maximum-${index}/`
+      return prefix + 'x'.repeat(4096 - prefix.length)
+    })
+    const finalPrefix = '/workspace/maximum-final/'
+    boundaryRoots.push(finalPrefix)
+    const boundaryCommand = {
+      action: 'collaborator',
+      operationId: randomUUID(),
+      expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+      reason: 'Maximum accepted Viewer command',
+      workspaceUid: scopedWorkspace,
+      login: 'fixture-3',
+      role: 'viewer',
+      enabled: true,
+      scope: {
+        fileRoots: boundaryRoots,
+        threadIds: [],
+        terminalIds: [],
+        browserScreenshot: false,
+        maxBytes: 1024,
+        maxItems: 20,
+      },
+    }
+    boundaryRoots[15] =
+      finalPrefix + 'x'.repeat(MAX_ACCESS_COMMAND_BYTES - Buffer.byteLength(JSON.stringify(boundaryCommand)))
+    accessCommandSchema.parse(boundaryCommand)
+    expect(Buffer.byteLength(JSON.stringify(boundaryCommand))).toBe(MAX_ACCESS_COMMAND_BYTES)
+    expect((await postAccess(boundaryCommand)).status).toBe(200)
+    expect((await storedViewer()).scope.file_roots).toEqual(boundaryRoots)
+    expect(
+      (
+        await postAccess({
+          ...boundaryCommand,
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          scope: undefined,
+        })
+      ).status,
+    ).toBe(200)
+    expect(await storedViewer()).toEqual({ role: 3, scope: null })
+    const metadataGrant = randomUUID()
+    expect(
+      (
+        await postAccess({
+          action: 'grant',
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          reason: 'Verify metadata-only diagnostic scope display',
+          workspaceUid: scopedWorkspace,
+          grantId: metadataGrant,
+          agentId: randomUUID(),
+          resource: { kind: 'workspace', id: scopedWorkspace },
+          permissions: ['metadata'],
+          scope: {
+            fileRoots: [],
+            threadIds: [],
+            terminalIds: [],
+            browserScreenshot: false,
+            maxBytes: 1024,
+            maxItems: 20,
+          },
+          expiresAt: new Date(Date.now() + 300000).toISOString(),
+          proofKeyThumbprint: Buffer.alloc(32, 1).toString('base64url'),
+        })
+      ).status,
+    ).toBe(200)
+    await page.reload()
+    const diagnosticRow = page
+      .getByRole('row')
+      .filter({ has: page.getByText(`Grant ${metadataGrant}`, { exact: true }) })
+    await browserExpect(diagnosticRow).toBeVisible()
+    await browserExpect(diagnosticRow).not.toContainText('Browser status')
+    await browserExpect(diagnosticRow.getByText('up to 1024 bytes / 20 items', { exact: true })).toBeVisible()
+    expect(
+      (
+        await postAccess({
+          action: 'revoke',
+          operationId: randomUUID(),
+          expectedVersion: (await control.query('SELECT version FROM ofz.platform_state')).rows[0]?.version,
+          reason: 'Remove isolated metadata diagnostic',
+          workspaceUid: scopedWorkspace,
+          grantId: metadataGrant,
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (await control.query('SELECT home_uid,state,running FROM ofz.workspaces WHERE uid=$1', [scopedWorkspace]))
+        .rows[0],
+    ).toEqual({
+      home_uid: scopedHome,
+      state: 'active',
+      running: false,
+    })
+    console.log(
+      'PASS: real Access UI and BFF preserve metadata-only Viewers, reject invalid scope inline before identity lookup, commit exact bounded scopes, require a new subject opt-in, narrow targets and remove content without starting the retained workspace',
+    )
+    await page.goto(base)
+    await browserExpect(page.getByRole('button', { name: 'Apply change', exact: true })).toBeVisible()
 
     await control.query('UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms()-300001 WHERE id=$1', [inspected?.session.id])
     await page.getByLabel('Change', { exact: true }).selectOption('quota')
@@ -742,12 +1181,38 @@ identityTest(
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
+    const subjectBeforeFailover = (
+      await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [inspected.session.id])
+    ).rows[0]?.identity_subject
+    const credentialIdentities = async () =>
+      z
+        .array(z.object({ id: z.string(), type: z.string() }))
+        .parse(await (await adminCall(`/users/${subjectBeforeFailover}/credentials`)).json())
+    const passkeysBeforeFailover = await credentialIdentities()
+    const keycloakFailoverStarted = Date.now()
+    keycloakEndpoint.route(kcSecondaryHttps)
+    adminBase = `http://127.0.0.1:${kcSecondaryHttp}`
+    kc.server.kill('SIGKILL')
+    await once(kc.server, 'exit')
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
     expect(await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${opaque?.value}` }))).toBeNull()
     const replacement = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
     expect(replacement?.value).not.toBe(opaque?.value)
+    expect(Date.now() - keycloakFailoverStarted).toBeLessThan(30_000)
+    expect(await credentialIdentities()).toEqual(passkeysBeforeFailover)
+    const survivingSession = await getTengriIdentity(
+      new Headers({ cookie: `__Host-tengri-session=${replacement?.value}` }),
+    )
+    expect(survivingSession?.session.humanId).toBe(inspected.session.humanId)
+    expect(
+      (await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [survivingSession?.session.id]))
+        .rows[0]?.identity_subject,
+    ).toBe(subjectBeforeFailover)
+    console.log(
+      'PASS: two production Keycloak 26.7.4 nodes with jdbc-ping and transport mTLS preserve an in-flight passkey challenge, subject and credentials after serving-node SIGKILL within 30 seconds',
+    )
 
     // A second numeric GitHub identity has the same verified email upstream.
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
@@ -764,7 +1229,11 @@ identityTest(
         automaticPresenceSimulation: true,
       },
     })
-    secondPage.on('dialog', (dialog) => void dialog.accept('Second isolated passkey'))
+    await secondContext.addInitScript(() => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+    })
     const enroll = async (id: string) => {
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
@@ -773,15 +1242,35 @@ identityTest(
       await secondPage.waitForLoadState('domcontentloaded')
       await secondPage.getByRole('button', { name: /Register/ }).click()
       await secondPage
-        .waitForURL((url) => url.origin === base, { timeout: 10_000 })
+        .waitForURL((url) => url.origin === base && (id === '999' || url.pathname === '/'), {
+          timeout: 10_000,
+        })
         .catch(async () => {
           throw new Error(
             'Isolated enrollment result: ' + (await secondPage.locator('body').innerText()).slice(0, 1200),
           )
         })
+      if (id !== '999') {
+        await browserExpect(secondPage.getByRole('button', { name: 'Sign out', exact: true }))
+          .toBeVisible()
+          .catch(async (cause: unknown) => {
+            const denied = await control.query(
+              "SELECT receipt->>'reason' AS reason FROM ofz.audit WHERE (receipt->>'allowed')::boolean=false ORDER BY sequence DESC LIMIT 3",
+            )
+            throw new Error(
+              `Fixture ${id} enrollment result: ` +
+                (await secondPage.locator('body').innerText()).slice(0, 1600) +
+                '\n' +
+                JSON.stringify(denied.rows),
+              { cause },
+            )
+          })
+        const credential = (await secondContext.cookies(base)).find((value) => value.name === '__Host-tengri-session')
+        const identity = await getTengriIdentity(new Headers({ cookie: `__Host-tengri-session=${credential?.value}` }))
+        expect(identity?.session.githubId).toBe(id)
+      }
     }
     await enroll('2')
-    await browserExpect(secondPage.getByText('GitHub #2', { exact: true }).first()).toBeVisible()
     const distinct = await control.query(
       "SELECT DISTINCT identity_subject,github_id FROM ofz.sessions WHERE github_id IN ('1','2')",
     )
@@ -868,15 +1357,6 @@ identityTest(
     await page.goto(base)
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
 
-    const postAccess = (command: Record<string, unknown>) =>
-      page.evaluate(async (input) => {
-        const response = await fetch('/api/tengri/access', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input),
-        })
-        return { status: response.status, body: await response.json() }
-      }, command)
     const promote = await postAccess({
       action: 'membership',
       operationId: randomUUID(),
@@ -944,5 +1424,5 @@ identityTest(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )
   },
-  180_000,
+  300_000,
 )

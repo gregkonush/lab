@@ -1,8 +1,12 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { OrderSide } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
+import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { makeJevObservation } from '../jev/observation'
 import type { IntradayQuote } from '../market-data/intraday/model'
@@ -12,8 +16,9 @@ import {
   prepareSignalStudyBatch,
   SignalScreenRule,
   signalStudyDefinition,
-  studyIoc,
+  studyOrder,
   studyRoundTrip,
+  summarizeSignalFactorOutcomes,
 } from './signal-study'
 
 const fixture = nativeJevFixture()
@@ -22,7 +27,13 @@ const batch = (action = 'enter') => {
   return evidence
 }
 const at = Date.parse(fixture.observation.payload.observedAt)
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const original = fixture.snapshot.latestQuotes['AAPL']
 if (original === undefined) throw new Error('Fixture has no AAPL quote')
 const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
@@ -107,6 +118,51 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   const wait = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
   expect(wait.selected[SignalScreenRule.Jev]).toBeNull()
   expect(wait.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
+  const factors = wait.signals.find((signal) => signal.symbol === 'AAPL')?.factors
+  expect(factors?.status).toBe('AVAILABLE')
+  if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
+  expect(Object.keys(factors.answers).sort()).toEqual([
+    'action',
+    'continuation',
+    'exhaustion',
+    'regime',
+    'setup_quality',
+  ])
+  expect(factors.answers['action']).toMatchObject({ type: 'choice', choice: 'wait' })
+})
+
+test('factor outcomes retain unselected candidates and unresolved labels in each denominator', () => {
+  const prepared = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
+  const factors = prepared.signals.find((signal) => signal.symbol === 'AAPL')?.factors
+  if (factors === undefined) throw new Error('Missing candidate')
+  const rows = [
+    {
+      observedAt: fixture.observation.payload.observedAt,
+      symbol: 'AAPL',
+      factors,
+      outcome: { status: 'UNRESOLVED' as const, reason: 'missing-future-quote' },
+    },
+    {
+      observedAt: fixture.observation.payload.observedAt,
+      symbol: 'AAPL',
+      factors: { status: 'UNAVAILABLE' as const },
+      outcome: { status: 'NO_ENTRY_FILL' as const, reason: 'no-entry-fill' },
+    },
+  ]
+  const summaries = summarizeSignalFactorOutcomes(rows)
+  expect(summaries.find((row) => row.dimension === 'all' && row.factor === 'coverage')).toMatchObject({
+    candidateCount: 2,
+    unresolvedCount: 1,
+    noEntryFillCount: 1,
+    resolvedCount: 0,
+    meanExecutionReturnBpsAmongResolved: null,
+  })
+  expect(summaries.find((row) => row.dimension === 'symbol' && row.factor === 'action')).toMatchObject({
+    value: 'AAPL',
+    bin: 'wait',
+    candidateCount: 1,
+    unresolvedCount: 1,
+  })
 })
 
 test('missing model batch remains unavailable while deterministic rules retain the observation', () => {
@@ -117,16 +173,52 @@ test('missing model batch remains unavailable while deterministic rules retain t
   expect(prepared.signals.every((signal) => signal.enterProbability === null)).toBeTrue()
 })
 
-test.each([
-  [0.00005, 'AAPL'],
-  [0, null],
-  [-0.00005, null],
-] as const)('relative momentum applies exact positive return to premium %d', (premium, selected) => {
+test.each(['partial', 'expired'] as const)('retains received factors from an unusable %s batch', (status) => {
+  const evidence = batch()
+  const missing = evidence.batchResult.candidates.find(
+    (candidate) => candidate.status === JevCandidateResultStatus.Resolved && candidate.symbol !== 'AAPL',
+  )
+  if (missing?.status !== JevCandidateResultStatus.Resolved) throw new Error('Missing requested candidate')
+  const prepared = Result.getOrThrow(
+    prepareSignalStudyBatch({
+      ...evidence,
+      batchResult: Result.getOrThrow(
+        makeJevBatchResult(evidence.batchPlan, {
+          schemaVersion: evidence.batchResult.schemaVersion,
+          batchId: evidence.batchResult.batchId,
+          completedAt: evidence.batchPlan.expiresAt,
+          candidates: evidence.batchResult.candidates.map((candidate) =>
+            status === 'partial' && candidate.symbol === missing.symbol
+              ? {
+                  status: JevCandidateResultStatus.Unattempted,
+                  symbol: candidate.symbol,
+                  requestId: missing.requestId,
+                }
+              : candidate,
+          ),
+        }),
+      ),
+    }),
+  )
+  expect(prepared.modelStatus).toBe('UNAVAILABLE')
+  expect(prepared.selected[SignalScreenRule.Jev]).toBeNull()
+  expect(prepared.signals.every((signal) => signal.enterProbability === null)).toBeTrue()
+  expect(prepared.signals.find((signal) => signal.symbol === 'AAPL')?.factors.status).toBe('AVAILABLE')
+  expect(prepared.signals.find((signal) => signal.symbol === missing.symbol)?.factors.status).toBe(
+    status === 'partial' ? 'UNAVAILABLE' : 'AVAILABLE',
+  )
+})
+
+test.each<{ premium: number; selected: string | null }>([
+  { premium: 0.00005, selected: 'AAPL' },
+  { premium: 0, selected: null },
+  { premium: -0.00005, selected: null },
+])('relative momentum applies exact positive return to premium $premium', ({ premium, selected }) => {
   const base = streamingFixture()
   const query = {
     ...base.query,
-    symbols: [...fixture.protocol.candidateSymbols, fixture.protocol.benchmarkSymbol].sort(),
-    candidateSymbols: fixture.protocol.candidateSymbols,
+    symbols: [...equityMarketProfile.candidateSymbols, 'SPY'].sort(),
+    candidateSymbols: equityMarketProfile.candidateSymbols,
     ...(fixture.protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: fixture.protocol.candidateEvidencePolicy }),
@@ -150,7 +242,8 @@ test.each([
   )
   const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, snapshot, observation })
   const result = Result.getOrThrow(prepareSignalStudyBatch(evidence))
-  expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe(selected)
+  if (selected === null) expect(result.selected[SignalScreenRule.RelativeMomentum]).toBeNull()
+  else expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe(selected)
   if (premium > 0) expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.metrics.lookbackReturnBps).toBe(0)
 })
 
@@ -185,8 +278,8 @@ test('round trip charges both adverse executions and fees against actual whole-s
     throw new Error('Missing resolved fills')
   expect(BigInt(entry.priceMicros)).toBeGreaterThan(100_020_000n)
   expect(BigInt(exit.priceMicros)).toBeLessThan(101_000_000n)
-  expect(entry.quantityMicros).toBe(exit.quantityMicros)
-  expect(BigInt(entry.quantityMicros) % 1_000_000n).toBe(0n)
+  expect(entry.quantityAtoms).toBe(exit.quantityAtoms)
+  expect(BigInt(entry.quantityAtoms) % 1_000_000n).toBe(0n)
   expect(BigInt(entry.notionalMicros)).toBeLessThanOrEqual(BigInt(signalStudyDefinition.entryBudgetMicros))
   expect(BigInt(result.outcome.netExecutionPnlMicros)).toBeLessThan(
     BigInt(exit.notionalMicros) - BigInt(entry.notionalMicros),
@@ -198,7 +291,7 @@ test('partial entry limits the exit to the actual acquired quantity', () => {
   const input = roundTrip()
   const result = Result.getOrThrow(studyRoundTrip({ ...input, entryArrivalQuote: quote(at + 100, { askSize: 5 }) }))
   expect(result.outcome.status).toBe('RESOLVED')
-  expect(result.fills.map((fill) => fill.quantityMicros)).toEqual(['5000000', '5000000'])
+  expect(result.fills.map((fill) => fill.quantityAtoms)).toEqual(['5000000000', '5000000000'])
 })
 
 test.each([1_000_000, 10_000_000])(
@@ -213,7 +306,7 @@ test.each([1_000_000, 10_000_000])(
       }),
     )
     expect(result.outcome.status).toBe('RESOLVED')
-    expect(result.fills.map((fill) => fill.quantityMicros)).toEqual(['99000000', '99000000'])
+    expect(result.fills.map((fill) => fill.quantityAtoms)).toEqual(['99000000000', '99000000000'])
     expect(result.fills[0]?.priceMicros).toBe('100000000')
   },
 )
@@ -226,7 +319,7 @@ test('a share whose notional fits but fees exceed cash remains an explicit unfil
       entryArrivalQuote: quote(at + 100, { bidPrice: 9998.99, askPrice: 9999 }),
     }),
   )
-  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-one-share' })
+  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-instrument-minimum' })
   expect(result.fills).toHaveLength(0)
 })
 
@@ -244,7 +337,7 @@ test('partial exit retains unresolved exposure instead of reporting flat profit'
   )
   expect(result.outcome).toEqual({ status: 'UNRESOLVED', reason: 'partial-exit' })
   expect(result.fills).toHaveLength(2)
-  expect(result.fills[1]?.quantityMicros).toBe('2000000')
+  expect(result.fills[1]?.quantityAtoms).toBe('2000000000')
 })
 
 test('a canceled entry is a no-fill result and missing exit evidence is unresolved', () => {
@@ -266,10 +359,11 @@ test.each([
   ['wrong symbol', quote(at + 100, { symbol: 'AMZN' }), 'arrival-quote-identity-mismatch'],
 ] as const)('IOC retains %s as unresolved', (_name, arrivalQuote, reason) => {
   const result = Result.getOrThrow(
-    studyIoc({
+    studyOrder({
+      orderType: OrderType.Limit,
       symbol: 'AAPL',
       side: OrderSide.Buy,
-      quantityMicros: 10_000_000n,
+      quantityAtoms: 10000000000n,
       decisionQuote: quote(at),
       arrivalQuote,
       decisionAtMs: at,
@@ -284,10 +378,11 @@ test.each([
 test('execution cannot silently omit the registered routing latency', () => {
   expect(
     Result.isFailure(
-      studyIoc({
+      studyOrder({
+        orderType: OrderType.Limit,
         symbol: 'AAPL',
         side: OrderSide.Buy,
-        quantityMicros: 10_000_000n,
+        quantityAtoms: 10000000000n,
         decisionQuote: quote(at),
         arrivalQuote: quote(at),
         decisionAtMs: at,

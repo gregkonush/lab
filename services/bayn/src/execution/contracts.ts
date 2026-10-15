@@ -25,7 +25,6 @@ import {
   legacyBrokerEventSchemaVersion,
   legacyExecutionIntentSchemaVersion,
   legacyFillSchemaVersion,
-  legacyOrderV1SchemaVersion,
   legacyOrderV2SchemaVersion,
   legacyPositionSchemaVersion,
   legacyRateLimitSchemaVersion,
@@ -194,7 +193,7 @@ const LegacyPositionSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyPositionSchemaVersion),
   accountId: NonEmptyString,
   symbol: SymbolName,
-  quantityMicros: SignedMicros,
+  quantityAtoms: SignedMicros,
   averageEntryPriceMicros: UnsignedMicros,
   marketPriceMicros: UnsignedMicros,
   marketValueMicros: SignedMicros,
@@ -212,7 +211,7 @@ export const PositionSchema = Schema.Union([
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({
-  schemaVersion: Schema.Literals([legacyOrderV1SchemaVersion, legacyOrderV2SchemaVersion]),
+  schemaVersion: Schema.Literal(legacyOrderV2SchemaVersion),
   accountId: NonEmptyString,
   brokerOrderId: NonEmptyString,
   clientOrderId: NonEmptyString,
@@ -221,9 +220,9 @@ const OrderBase = Schema.Struct({
   side: Schema.Enum(OrderSide),
   orderType: Schema.Enum(OrderType),
   timeInForce: Schema.Enum(TimeInForce),
-  quantityMicros: Schema.optionalKey(PositiveMicros),
+  quantityAtoms: Schema.optionalKey(PositiveMicros),
   notionalMicros: Schema.optionalKey(PositiveMicros),
-  filledQuantityMicros: UnsignedMicros,
+  filledQuantityAtoms: UnsignedMicros,
   limitPriceMicros: Schema.optionalKey(PositiveMicros),
   status: Schema.Enum(OrderStatus),
   observedAt: UtcInstant,
@@ -232,30 +231,24 @@ const OrderBase = Schema.Struct({
 export const OrderSchema = OrderBase.check(
   Schema.makeFilter((order: typeof OrderBase.Type): readonly Schema.FilterIssue[] => {
     const issues: Schema.FilterIssue[] = []
-    const hasQuantity = order.quantityMicros !== undefined
+    const hasQuantity = order.quantityAtoms !== undefined
     const hasNotional = order.notionalMicros !== undefined
-    if (order.schemaVersion === legacyOrderV1SchemaVersion && (!hasQuantity || hasNotional)) {
-      issues.push({ path: ['schemaVersion'], issue: 'v1 orders must contain quantityMicros only' })
+    if (hasQuantity === hasNotional) {
+      issues.push({ path: ['quantityAtoms'], issue: 'provider order must contain exactly one quantity or notional' })
     }
-    if (order.schemaVersion === legacyOrderV2SchemaVersion && hasQuantity === hasNotional) {
-      issues.push({
-        path: ['quantityMicros'],
-        issue: 'v2 orders must contain exactly one of quantityMicros or notionalMicros',
-      })
-    }
-    const filledQuantity = BigInt(order.filledQuantityMicros)
-    if (order.quantityMicros !== undefined) {
-      const quantity = BigInt(order.quantityMicros)
+    const filledQuantity = BigInt(order.filledQuantityAtoms)
+    if (order.quantityAtoms !== undefined) {
+      const quantity = BigInt(order.quantityAtoms)
       if (filledQuantity > quantity) {
-        issues.push({ path: ['filledQuantityMicros'], issue: 'must not exceed quantityMicros' })
+        issues.push({ path: ['filledQuantityAtoms'], issue: 'must not exceed quantityAtoms' })
       }
       if (order.status === OrderStatus.Filled && filledQuantity !== quantity) {
-        issues.push({ path: ['filledQuantityMicros'], issue: 'must equal quantityMicros for a filled order' })
+        issues.push({ path: ['filledQuantityAtoms'], issue: 'must equal quantityAtoms for a filled order' })
       }
       if (order.status === OrderStatus.PartiallyFilled && (filledQuantity === 0n || filledQuantity >= quantity)) {
         issues.push({
-          path: ['filledQuantityMicros'],
-          issue: 'must be between zero and quantityMicros for a partial fill',
+          path: ['filledQuantityAtoms'],
+          issue: 'must be between zero and quantityAtoms for a partial fill',
         })
       }
       if (
@@ -265,18 +258,18 @@ export const OrderSchema = OrderBase.check(
         filledQuantity >= quantity
       ) {
         issues.push({
-          path: ['filledQuantityMicros'],
-          issue: 'must be less than quantityMicros for an unfilled terminal order',
+          path: ['filledQuantityAtoms'],
+          issue: 'must be less than quantityAtoms for an unfilled terminal order',
         })
       }
     } else if (
       (order.status === OrderStatus.Filled || order.status === OrderStatus.PartiallyFilled) &&
       filledQuantity === 0n
     ) {
-      issues.push({ path: ['filledQuantityMicros'], issue: 'must be positive for a filled notional order' })
+      issues.push({ path: ['filledQuantityAtoms'], issue: 'must be positive for a filled notional order' })
     }
     if ((order.status === OrderStatus.New || order.status === OrderStatus.Pending) && filledQuantity !== 0n) {
-      issues.push({ path: ['filledQuantityMicros'], issue: 'must be zero before any fill' })
+      issues.push({ path: ['filledQuantityAtoms'], issue: 'must be zero before any fill' })
     }
     if (order.orderType === OrderType.Limit && order.limitPriceMicros === undefined) {
       issues.push({ path: ['limitPriceMicros'], issue: 'is required for a limit order' })
@@ -301,8 +294,8 @@ export const FillSchema = Schema.Struct({
   intentId: Schema.optionalKey(Sha256),
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  quantityMicros: PositiveMicros,
-  priceMicros: PositiveMicros,
+  quantityAtoms: PositiveMicros,
+  priceAtoms: PositiveMicros,
   feeMicros: UnsignedMicros,
   occurredAt: UtcInstant,
 })
@@ -422,7 +415,7 @@ const intentFields = {
   side: Schema.Enum(OrderSide),
   orderType: Schema.Enum(OrderType),
   timeInForce: Schema.Enum(TimeInForce),
-  quantityMicros: PositiveMicros,
+  quantityAtoms: PositiveMicros,
   notionalLimitMicros: PositiveMicros,
   /** Hash of the prior close plan that authorizes a distinct residual close generation. */
   replanGenerationHash: Schema.optionalKey(Sha256),

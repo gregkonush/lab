@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Fiber, Logger, Option, References, Result } from 'effect'
+import { Clock, Effect, Fiber, Logger, Option, References, Result, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 import { NodeServices } from '@effect/platform-node'
 
@@ -19,9 +19,11 @@ import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime
 import { utcInstantFromEpochMillis } from '../time'
 import { canonicalHashV1 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
+import { defaultJevProtocolDocument } from './protocol'
 
 const scenario = (
   options: {
+    readonly symbol?: string
     readonly consumed?: boolean
     readonly pending?: boolean
     readonly protective?: boolean
@@ -40,12 +42,31 @@ const scenario = (
     readonly brokerEvidenceAgeMs?: number
     readonly interruptionDelayMs?: number
     readonly expiredObservation?: boolean
+    readonly entryCutoffAt?: string
+    readonly modelExit?: boolean
   } = {},
 ) => {
   const fixture = nativeJevFixture(JevPurpose.Manage, options.observedAt ?? '2026-09-04T14:30:32.000Z')
   const original = fixture.portfolio
   if (original.purpose !== JevPurpose.Manage) throw new Error('Expected held-position fixture')
   let brokerState = original.brokerState
+  if (options.symbol !== undefined) {
+    const positions = brokerState.positions.map((position) => ({
+      ...position,
+      symbol: options.symbol ?? position.symbol,
+      quantityAtoms: '4987500000',
+    }))
+    const material = {
+      ...brokerState,
+      positions,
+      orders: brokerState.orders.map((order) => ({ ...order, symbol: options.symbol ?? order.symbol })),
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(material))
+    brokerState = {
+      ...material,
+      reconciliation: { ...material.reconciliation, expectedHash: stateHash, observedHash: stateHash },
+    }
+  }
   if (options.brokerEvidenceAgeMs !== undefined) {
     const at = utcInstantFromEpochMillis(
       Date.parse(fixture.observation.payload.observedAt) - options.brokerEvidenceAgeMs,
@@ -74,15 +95,24 @@ const scenario = (
   const portfolio = {
     ...original,
     brokerState,
+    entryInventoryDebit:
+      options.symbol === undefined
+        ? original.entryInventoryDebit
+        : { quantityAtoms: '12500000', costBasisMicros: '1250000' },
     entryFills: options.maximumHold
       ? original.entryFills.map((fill) => ({ ...fill, occurredAt: '2026-09-04T14:15:32.000Z' }))
       : original.entryFills.map((fill, index) => ({
           ...fill,
+          symbol: options.symbol ?? fill.symbol,
           occurredAt: (index === 0 ? options.firstFillAt : options.laterFillAt) ?? fill.occurredAt,
         })),
   }
   const cycle: AutonomousCycle = {
     ...fixture.draft,
+    window: {
+      ...fixture.draft.window,
+      submissionCutoffAt: options.entryCutoffAt ?? fixture.draft.window.submissionCutoffAt,
+    },
     state: CycleState.Active,
     bindings: {},
     stateVersion: 1,
@@ -199,7 +229,9 @@ const scenario = (
                     }),
                   ),
                 )
-              const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () => 'hold')
+              const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () =>
+                options.modelExit ? 'exit' : 'hold',
+              )
               if (options.inferenceDelayMs !== undefined) yield* TestClock.adjust(options.inferenceDelayMs)
               return { plan, result }
             })
@@ -247,6 +279,21 @@ const scenario = (
 }
 
 describe('Jev management observation admission', () => {
+  test('continues model management after the entry deadline while the position hold remains valid', async () => {
+    const check = scenario({ consumed: false, completedHold: true, entryCutoffAt: '2026-09-04T14:30:00.000Z' })
+    expect(await check.run()).toMatchObject({ _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } })
+    expect(check.calls.signal).toBe(1)
+  })
+  test('commits a model exit after the entry deadline within the same execution session', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      modelExit: true,
+      entryCutoffAt: '2026-09-04T14:30:00.000Z',
+    })
+    expect(await check.run()).toMatchObject({ _tag: 'Exit', target: { reason: JevExitReason.Model } })
+    expect(check.calls.signal).toBe(1)
+  })
   test.each([
     ['consumed signal', {}, 'SIGNAL_WINDOW_OBSERVED'],
     ['pending inference', { pending: true }, 'DECISION_PENDING'],
@@ -441,10 +488,22 @@ describe('Jev management observation admission', () => {
     expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
   })
 
-  test.each([JevPurpose.Entry, JevPurpose.Manage])(
-    '%s retains typed expiry and structured admission diagnostics',
-    async (purpose) => {
-      const fixture = nativeJevFixture(purpose, '2026-09-04T14:30:32.000Z')
+  test.each([
+    [JevPurpose.Entry, 'current', defaultJevProtocolDocument],
+    [JevPurpose.Manage, 'current', defaultJevProtocolDocument],
+    [JevPurpose.Entry, 'single-candidate', { ...defaultJevProtocolDocument, candidateSymbols: ['AAPL'] }],
+  ] as const)(
+    '%s %s retains typed expiry and structured admission diagnostics',
+    async (purpose, _label, protocolDocument) => {
+      const fixture = nativeJevFixture(purpose, '2026-09-04T14:30:32.000Z', undefined, protocolDocument)
+      const spans: Tracer.NativeSpan[] = []
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options)
+          spans.push(span)
+          return span
+        },
+      })
       const logs: { message: unknown; annotations: Readonly<Record<string, unknown>> }[] = []
       const logger = Logger.make(({ message, fiber }) => {
         logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) })
@@ -494,6 +553,7 @@ describe('Jev management observation admission', () => {
           Effect.provide(TestClock.layer()),
           Effect.provide(Logger.layer([logger])),
           Effect.provide(NodeServices.layer),
+          Effect.provideService(Tracer.Tracer, tracer),
         ),
       )
       expect(Result.isFailure(result)).toBe(true)
@@ -514,6 +574,18 @@ describe('Jev management observation admission', () => {
         ),
         admissionLagMs: fixture.protocol.inferenceValidityMs + 100,
       })
+      const planning = spans.find((span) => span.name === 'bayn.jev.batch-plan')
+      expect(planning?.attributes.get('bayn.entry_timing.input_available_at')).toBe(
+        fixture.observation.payload.observedAt,
+      )
+      expect(planning?.attributes.get('bayn.entry_timing.snapshot_hash')).toBe(fixture.snapshot.manifest.contentHash)
+      expect(planning?.attributes.get('bayn.entry_timing.batch_id')).toMatch(/^[0-9a-f]{64}$/)
+      expect(planning?.attributes.get('bayn.entry_timing.observation_hash')).toBe(fixture.observation.contentHash)
+      if (purpose === JevPurpose.Entry)
+        expect(planning?.attributes.get('bayn.entry_timing.deterministic_selected_at')).toBe(
+          warning?.annotations['checkedAt'],
+        )
+      else expect(planning?.attributes.has('bayn.entry_timing.deterministic_selected_at')).toBe(false)
     },
   )
 
@@ -541,4 +613,30 @@ describe('Jev management observation admission', () => {
     expect(failure).toMatchObject({ message: expect.stringContaining('differs from its admitted window') })
     expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
   })
+})
+
+for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+  test(`${symbol} recovers an overdue position from the prior UTC day before any model or market-data dependency`, async () => {
+    const check = scenario({
+      symbol,
+      firstFillAt: '2026-09-03T23:50:00.000Z',
+      pending: true,
+      pricingUnavailable: true,
+      storeFailure: true,
+    })
+    const result = await check.run()
+    expect(result).toMatchObject({
+      _tag: 'Exit',
+      target: { reason: JevExitReason.MaximumHold, symbols: [symbol], targetWeights: { [symbol]: 0 } },
+    })
+    expect(check.calls).toEqual({ pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 })
+  })
+}
+test('an overdue position with expired broker evidence waits for reconciliation before authorizing a sell', async () => {
+  const check = scenario({ maximumHold: true, brokerEvidenceAgeMs: 60_000, pending: true, pricingUnavailable: true })
+  expect(await check.run()).toMatchObject({
+    _tag: 'Wait',
+    details: { waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION' },
+  })
+  expect(check.calls).toEqual({ pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 })
 })

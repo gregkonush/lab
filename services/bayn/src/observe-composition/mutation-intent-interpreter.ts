@@ -198,7 +198,7 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
   stored.side === expected.side &&
   stored.orderType === expected.orderType &&
   stored.timeInForce === expected.timeInForce &&
-  stored.quantityMicros === expected.quantityMicros &&
+  stored.quantityAtoms === expected.quantityAtoms &&
   stored.notionalLimitMicros === expected.notionalLimitMicros &&
   stored.createdAt === expected.createdAt
 
@@ -210,10 +210,11 @@ const validateCurrentMutationExecutionTerms = (
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
 ): Result.Result<void, CycleRunnerError> => {
   const pricing = deriveExecutionIntentPricing({
+    symbol: targetIntent.symbol,
     side: targetIntent.side,
     orderType: targetIntent.orderType,
     timeInForce: targetIntent.timeInForce,
-    quantityMicros: BigInt(targetIntent.quantityMicros),
+    quantityAtoms: BigInt(targetIntent.quantityAtoms),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     executionModel: preparation.executionModel,
     limitSlippageBps: BigInt(limitSlippageBps),
@@ -258,7 +259,7 @@ const hasBoundSellExposure = (prepared: PreparedExecutionIntent, positions: read
     (position) =>
       position.accountId === prepared.intent.accountId &&
       position.symbol === prepared.intent.symbol &&
-      BigInt(position.quantityMicros) !== 0n,
+      BigInt(position.quantityAtoms) !== 0n,
   )
 
 const entryCloseObligationIsUnresolved = (

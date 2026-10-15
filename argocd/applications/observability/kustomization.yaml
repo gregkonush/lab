@@ -34,7 +34,7 @@ resources:
   - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
-  - bayn-model-dashboard-configmap.yaml
+  - bayn-cache-performance-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
   - mimir-config-check.yaml
@@ -194,7 +194,7 @@ patches:
           argocd.argoproj.io/sync-wave: "3"
       - op: add
         path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
-        value: "2026-10-11-1"
+        value: "2026-10-13-warning-email-1"
       - op: replace
         path: /spec/template/spec/volumes/4
         value:

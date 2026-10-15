@@ -117,7 +117,7 @@ actual="$(
     "${image_id}" \
     --help
 )"
-expected='Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
+expected='Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
 if [[ "${actual}" != "${expected}" ]]; then
   printf 'Unexpected Bayn forward-performance help output:\n%s\n' "${actual}" >&2
   exit 1
@@ -216,7 +216,7 @@ if [[ "${compiled_study_export_actual}" != "${expected_study_export}" ]]; then
 fi
 
 # Loading diagnostics also loads the external Kafka client and its codec dependencies.
-expected_streaming='Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
+expected_streaming='Usage: bayn-streaming-diagnostics --query <query.json> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help'
 streaming_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
   --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \

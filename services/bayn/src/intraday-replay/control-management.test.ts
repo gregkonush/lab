@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { OrderSide, OrderStatus } from '../execution/contracts'
@@ -37,9 +38,15 @@ const input = (): Parameters<typeof makeControlManagementBatch>[0] => ({
   entryOrder: {
     symbol: 'AAPL',
     side: OrderSide.Buy,
-    quantityMicros: 10_000_000n,
+    quantityAtoms: 10000000000n,
     protocol: fixture.protocol,
-    assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
+    assumptions: {
+      instruments: replayTestInstruments,
+      latencyMs: 100,
+      slippageBps: 0,
+      availableLiquidityPpm: 1_000_000,
+      feeMultiplierPpm: 1_000_000,
+    },
     decisionAtMs: observedAtMs - 180_100,
     arrivalAtMs: observedAtMs - 180_000,
     decisionQuote: quote(observedAtMs - 180_100),
@@ -81,14 +88,14 @@ test('recorded model exit persists across partial IOC fills without another infe
     applyControlOrder(result.portfolio, {
       ...i.entryOrder,
       side: OrderSide.Sell,
-      quantityMicros: 5_000_000n,
+      quantityAtoms: 5000000000n,
       decisionAtMs: sellAt,
       arrivalAtMs: sellAt + 100,
       decisionQuote: quote(sellAt),
       arrivalQuote: quote(sellAt + 100, 5, 100, 2),
     }),
   ).portfolio
-  expect(partial.ledger.positions[0]?.quantityMicros).toBe('3000000')
+  expect(partial.ledger.positions[0]?.quantityAtoms).toBe('3000000000')
   expect(partial.episodes).toHaveLength(0)
   expect(partial.inventory).toEqual(result.portfolio.inventory)
   const retryAt = Date.parse(value.batch.expiresAt) + 5_000
@@ -96,7 +103,7 @@ test('recorded model exit persists across partial IOC fills without another infe
     applyControlOrder(partial, {
       ...i.entryOrder,
       side: OrderSide.Sell,
-      quantityMicros: 3_000_000n,
+      quantityAtoms: 3000000000n,
       decisionAtMs: retryAt,
       arrivalAtMs: retryAt + 100,
       decisionQuote: quote(retryAt),
@@ -107,7 +114,7 @@ test('recorded model exit persists across partial IOC fills without another infe
   expect(closed.ledger.positions).toHaveLength(0)
   expect(closed.episodes).toHaveLength(1)
   expect(closed.episodes[0]?.reason).toBe(ControlExit.Model)
-  expect(closed.ledger.fills.map((fill) => fill.quantityMicros)).toEqual(['5000000', '2000000', '3000000'])
+  expect(closed.ledger.fills.map((fill) => fill.quantityAtoms)).toEqual(['5000000000', '2000000000', '3000000000'])
 })
 
 test('hold and below-threshold exit responses preserve the held control', () => {
@@ -247,7 +254,7 @@ describe('native control management requests', () => {
       makeJevTradingSignalBatch({
         observation: nativeObservation.payload,
         expiresAt: new Date(observedAtMs + fixture.protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V3,
+        planVersion: JevBatchPlanVersion.V4,
       }),
     )
     const candidate = result.batch.candidates[0]
@@ -258,12 +265,14 @@ describe('native control management requests', () => {
     )
       throw new Error('Expected native management requests')
     expect(result.batch.candidates).toHaveLength(1)
+    if (result.observation.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected managed portfolio')
+    expect(result.observation.portfolio.entryFills[0]?.priceAtoms).toBe('100000000000')
     expect(candidate.request.request).toEqual(nativeCandidate.request.request)
     expect(candidate.request.request.state).toMatchObject({
-      schemaVersion: 'bayn.jev-trading-signal-state.v2',
+      schemaVersion: 'bayn.jev-trading-signal-state.v3',
       task: { decisionPurpose: 'MANAGE' },
       position: {
-        quantityShares: 5,
+        quantityUnits: 5,
         costBasisUsd: 500,
         averageEntryPriceUsd: 100,
         heldForMinutes: 3,
@@ -273,8 +282,8 @@ describe('native control management requests', () => {
     })
     expect(result.controlPortfolio.ledger.cashMicros).toBe('99499990000')
     expect(result.observation.portfolio.brokerState.orders[0]?.status).toBe(OrderStatus.Canceled)
-    expect(result.observation.portfolio.brokerState.orders[0]?.quantityMicros).toBe('10000000')
-    expect(result.observation.portfolio.brokerState.orders[0]?.filledQuantityMicros).toBe('5000000')
+    expect(result.observation.portfolio.brokerState.orders[0]?.quantityAtoms).toBe('10000000000')
+    expect(result.observation.portfolio.brokerState.orders[0]?.filledQuantityAtoms).toBe('5000000000')
     expect(Result.isSuccess(reproduceJevTradingSignalBatchEvidence(result.observation, result.batch))).toBe(true)
   })
 
@@ -283,7 +292,7 @@ describe('native control management requests', () => {
     const result = prepared({ ...i, entryOrder: { ...i.entryOrder, arrivalQuote: quote(i.entryOrder.arrivalAtMs, 2) } })
     const candidate = result.batch.candidates[0]
     if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing management request')
-    expect(candidate.request.request.state).toMatchObject({ position: { quantityShares: 2, costBasisUsd: 200 } })
+    expect(candidate.request.request.state).toMatchObject({ position: { quantityUnits: 2, costBasisUsd: 200 } })
     expect(result.entryIdentity).not.toBe(prepared().entryIdentity)
   })
 
@@ -295,7 +304,7 @@ describe('native control management requests', () => {
       Result.isFailure(
         makeControlManagementBatch({
           ...i,
-          beforeEntry: { ...i.beforeEntry, consumedLiquidity: new Map([[`AAPL:BUY:${q.recordHash}`, 5_000_000n]]) },
+          beforeEntry: { ...i.beforeEntry, consumedLiquidity: new Map([[`AAPL:BUY:${q.recordHash}`, 5_000_000_000n]]) },
         }),
       ),
     ).toBe(true)
@@ -368,7 +377,7 @@ describe('native control management requests', () => {
     const i = input()
     const a = prepared(i)
     expect(prepared(i)).toEqual(a)
-    expect(a.observation.portfolio.brokerState.account.accountId).toStartWith('research-control-management-')
+    expect(a.observation.portfolio.brokerState.account.accountId).toStartWith('research-control-')
     expect(prepared({ ...i, runId: '5'.repeat(64) }).batch.batchId).not.toBe(a.batch.batchId)
     expect(prepared({ ...i, entryDecisionHash: '6'.repeat(64) }).batch.batchId).not.toBe(a.batch.batchId)
     expect(Result.isFailure(makeControlManagementBatch({ ...i, runId: 'invalid' }))).toBe(true)

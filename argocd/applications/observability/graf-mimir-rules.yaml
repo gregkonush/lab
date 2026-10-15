@@ -13,7 +13,7 @@ data:
               (time() - max(bayn_research_worker_heartbeat_seconds) > 120
                 or absent_over_time(bayn_research_worker_heartbeat_seconds[10m]))
               and on()
-              (sum(kube_deployment_spec_replicas{namespace="bayn",deployment=~"bayn-research.*"}) > 0)
+              (sum(kube_replicaset_spec_replicas{namespace="bayn",replicaset=~"bayn-research.*"}) > 0)
             for: 5m
             labels:
               severity: warning
@@ -24,8 +24,26 @@ data:
               summary: Bayn research worker stopped publishing telemetry
               description: Inspect the isolated research worker and database access. Trading execution has no research dependency.
               runbook_url: services/bayn/README.md#independent-alpha-r1-research
+          - alert: BaynPublicInformationStale
+            expr: |
+              (
+                time() - max by (source) (bayn_public_information_last_success_timestamp_seconds{source="SEC_FILINGS"}) > 5400
+                or time() - max by (source) (bayn_public_information_last_success_timestamp_seconds{source="MACRO_CALENDAR"}) > 10800
+                or absent_over_time(bayn_public_information_last_success_timestamp_seconds{source="SEC_FILINGS"}[90m])
+                or absent_over_time(bayn_public_information_last_success_timestamp_seconds{source="MACRO_CALENDAR"}[3h])
+              ) and on() (max(bayn_public_information_enabled) == 1)
+            for: 15m
+            labels:
+              severity: warning
+              service: bayn-research
+              namespace: bayn
+              team: platform
+              component: public-information
+            annotations:
+              summary: Bayn public information research inputs are stale
+              description: Inspect the source-keyed BaynPublicInformation Restate object, its last run, failed URLs, proxy status and object uploads. Trading and protective closures do not depend on these jobs. Last successful artifacts retain their original fetch clocks; missing inputs remain explicit.
           - alert: BaynResearchAttemptsFailing
-            expr: sum(increase(bayn_research_attempts_total{outcome!="COMPLETE"}[15m])) >= 3
+            expr: sum(increase(bayn_research_attempts{outcome!="COMPLETE"}[15m])) >= 3
             for: 5m
             labels:
               severity: warning
@@ -1399,6 +1417,40 @@ data:
               summary: Torghut signal pipeline checkpoints are stalled
               description: The {{ $labels.service }} job is running but its last completed checkpoint is over three minutes old, zero or missing for five minutes. Inspect Kafka resolution, task failures, backpressure and checkpoint storage. This check runs outside market hours because an idle streaming job must still checkpoint.
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
+      - name: signal-publications.rules
+        rules:
+          - alert: SignalAdjustedDailyPublicationMissed
+            expr: |
+              (
+                max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                )
+                > on (namespace, cronjob)
+                (
+                  max by (namespace, cronjob) (
+                    kube_cronjob_status_last_successful_time{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                  )
+                  or on (namespace, cronjob)
+                  0 * max by (namespace, cronjob) (
+                    kube_cronjob_created{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                  )
+                )
+              )
+              and on (namespace, cronjob)
+              (
+                time() - max by (namespace, cronjob) (
+                  kube_cronjob_status_last_schedule_time{namespace="torghut",cronjob="signal-adjusted-daily-publisher"}
+                ) > 7200
+              )
+            for: 5m
+            labels:
+              severity: warning
+              team: trading
+              notify: email
+            annotations:
+              summary: Signal adjusted-daily publication missed its deadline
+              description: The latest scheduled publisher run has no successful completion after its two-hour start and execution budget. Inspect the CronJob, failed Job logs, quorum deadlines and finalized manifests on both ClickHouse replicas. A successful owned recovery resolves this incident; retained failed Jobs do not keep it firing.
+              runbook_url: docs/signal/adjusted-daily-publications.md
       - name: torghut-trading.rules
         rules:
           - alert: TorghutActiveApiRevisionMetricsDown
@@ -2957,6 +3009,7 @@ data:
               summary: Restate Operator is waiting for a required CRD
               description: At least one operator controller has been unable to discover its required CRD for five minutes.
       - name: bayn-cycle-operations.rules
+        interval: 15s
         rules:
           - alert: BaynMetricsUnavailable
             expr: |
@@ -3247,7 +3300,7 @@ data:
                 and on(job, namespace, service, instance)
                 (up{job="bayn",namespace="bayn",service="bayn"} == 1)
               )
-            for: 1m
+            for: 0s
             labels:
               severity: warning
               team: trading
@@ -3255,7 +3308,7 @@ data:
               notify: email
             annotations:
               summary: Bayn consumer input window is unavailable
-              description: An active unbound cycle reports unavailable inputs after its first complete observation time and before submission cutoff for one minute, on a scraped replica with current runtime and cycle projections. Producer acknowledgements do not prove a complete consumer window.
+              description: An active unbound cycle reports unavailable inputs after its first complete observation time and before submission cutoff. The warning fires on the first matching evaluation of a scraped replica with current runtime and cycle projections because admissions can expire in one minute. Producer acknowledgements do not prove a complete consumer window.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionDecisionLagging
             expr: |
@@ -3802,3 +3855,134 @@ data:
               summary: Tengri is rejecting agent creation at the global quota
               description: At least one agent creation request was rejected because the six-agent quota was exhausted.
               runbook_url: docs/tengri/operations.md
+      - name: bayn-cache-performance.rules
+        interval: 15s
+        rules:
+        - alert: BaynValkeyMetricsUnavailable
+          expr: (sum(up{job="bayn-valkey",namespace="bayn"} == 1) < 2 or sum(absent(up{job="bayn-valkey",namespace="bayn"}))
+            > 0) or (sum(redis_up{job="bayn-valkey",namespace="bayn"}) < 2 or sum(absent(redis_up{job="bayn-valkey",namespace="bayn"}))
+            > 0)
+          for: 2m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-valkey
+            notify: email
+            severity: critical
+          annotations:
+            summary: Bayn cannot observe both Valkey data servers
+            description: Both exporters and both server observations must be available. Check collector discovery, exporter
+              health and the two data pods.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynValkeyReplicaUnavailable
+          expr: max(redis_connected_slaves{job="bayn-valkey",namespace="bayn"}) < 1 or max(redis_master_link_up{job="bayn-valkey",namespace="bayn"})
+            < 1 or sum(absent(redis_connected_slaves{job="bayn-valkey",namespace="bayn"})) > 0 or sum(absent(redis_master_link_up{job="bayn-valkey",namespace="bayn"})) > 0
+          for: 1m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-valkey
+            notify: email
+            severity: critical
+          annotations:
+            summary: Bayn Valkey has lost its required replica
+            description: Bayn requires one acknowledged replica before publishing broker observations. Recover the peer
+              and inspect link/offset history; do not weaken WAIT.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynValkeyMemoryPressure
+          expr: max(redis_memory_used_bytes{job="bayn-valkey",namespace="bayn"} / redis_memory_max_bytes{job="bayn-valkey",namespace="bayn"})
+            > 0.85
+          for: 10m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-valkey
+            notify: email
+            severity: warning
+          annotations:
+            summary: Bayn Valkey is approaching its memory limit
+            description: The cache uses noeviction. Inspect memory, payload sizes, publication rate and expired keys before
+              writes begin failing.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynValkeyPublicationFailure
+          expr: sum(increase(bayn_valkey_failures_total{namespace="bayn",service=~"bayn|bayn-execution-controller",operation="put"}[5m]))
+            > 0
+          for: 1m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-valkey
+            notify: email
+            severity: warning
+          annotations:
+            summary: Bayn could not publish a replicated broker cache value
+            description: Inspect failure category, replica acknowledgement duration, server memory and the matching publication
+              trace.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynValkeyLatencyHigh
+          expr: (histogram_quantile(0.99, sum by (le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace="bayn",service=~"bayn|bayn-execution-controller",stage=~"bayn.valkey.get|bayn.valkey.put",outcome="succeeded"}[5m])))
+            > 0.25) and on(stage) (sum by (stage) (increase(bayn_operation_duration_seconds_count{namespace="bayn",service=~"bayn|bayn-execution-controller",stage=~"bayn.valkey.get|bayn.valkey.put",outcome="succeeded"}[5m]))
+            >= 20)
+          for: 5m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-valkey
+            notify: email
+            severity: warning
+          annotations:
+            summary: Bayn cache latency is consuming its command budget
+            description: Successful get/put p99 exceeds 250ms, one quarter of the one-second command deadline, with at
+              least twenty samples. Compare SET, replica acknowledgement and queue time.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynOperationMetricsUnavailable
+          expr: label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"} ==
+            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"})
+            >= time() - 90), "service", "bayn", "source_revision", ".*") or label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
+            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"})
+            >= time() - 90), "service", "bayn-execution-controller", "source_revision", ".*")
+          for: 2m
+          labels:
+            team: trading
+            namespace: bayn
+            notify: email
+            severity: warning
+          annotations:
+            summary: Bayn native operation metrics are unavailable
+            description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older
+              retained workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress
+              allowance.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynGenerationIndexUnavailable
+          expr: ((min(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or sum(absent(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}))
+            > 0) or (min(cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or
+            sum(absent(cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"})) > 0)) and
+            on() (max(bayn_operation_metrics_expected{job="bayn",namespace="bayn"}) == 1)
+          for: 2m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-db
+            notify: email
+            severity: critical
+          annotations:
+            summary: Bayn generation lookup index is unavailable
+            description: Check migration 104, index validity/readiness and CNPG monitoring query collection. Do not recreate
+              or drop the production index without investigation.
+            runbook_url: docs/runbooks/bayn-cache-observability.md
+        - alert: BaynGenerationSettlementSlow
+          expr: (histogram_quantile(0.95, sum by(le) (rate(bayn_operation_duration_seconds_bucket{namespace="bayn",service=~"bayn|bayn-execution-controller",stage="bayn.postgres.generation-settlement",outcome="succeeded"}[5m])))
+            > 0.5) and on() (sum(increase(bayn_operation_duration_seconds_count{namespace="bayn",service=~"bayn|bayn-execution-controller",stage="bayn.postgres.generation-settlement",outcome="succeeded"}[5m]))
+            >= 20)
+          for: 10m
+          labels:
+            team: trading
+            namespace: bayn
+            service: bayn-db
+            notify: email
+            severity: warning
+          annotations:
+            summary: Bayn generation settlement query is slow
+            description: The named statement p95 exceeds 500ms with at least twenty samples. Inspect its trace, PostgreSQL
+              waits and generation-index scan history; catalog counters alone do not prove query plan choice.
+            runbook_url: docs/runbooks/bayn-cache-observability.md

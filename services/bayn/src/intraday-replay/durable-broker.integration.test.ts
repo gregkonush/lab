@@ -25,7 +25,7 @@ import { makeReplayBroker } from './broker'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
 
-durableTest.each(['ioc', 'fractional'] as const)(
+durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
   'production %s accounting survives client restart against PostgreSQL and real TigerBeetle',
   async (scenario) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -37,6 +37,8 @@ durableTest.each(['ioc', 'fractional'] as const)(
       !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress)
     )
       throw new Error('Durable replay acceptance requires local PostgreSQL _test and local TigerBeetle')
+    const continuous = scenario.includes('/')
+    const symbol = continuous ? scenario : 'AAPL'
     const runId = Result.getOrThrow(canonicalHashV1Result({ acceptanceAttempt: randomUUID() }))
     const accountId = `replay-${runId}`
     const authorityGenerationHash = 'e'.repeat(64)
@@ -66,7 +68,7 @@ durableTest.each(['ioc', 'fractional'] as const)(
     const { protocol, snapshot } = streamingFixture()
     const quote = snapshot.quotes.find((value) => value.symbol === 'AAPL')
     if (quote === undefined) throw new Error('Missing AAPL fixture')
-    const entryMs = Date.parse('2026-09-04T14:31:00.000Z')
+    const entryMs = Date.parse(continuous ? '2026-10-11T23:59:59.950Z' : '2026-09-04T14:31:00.000Z')
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-04T00:00:00.000Z'))
@@ -81,21 +83,24 @@ durableTest.each(['ioc', 'fractional'] as const)(
             availableLiquidityPpm: 1_000_000,
             feeMultiplierPpm: 1_000_000,
           },
-          fractionalTrading: scenario === 'fractional',
-          calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+          fractionalTrading: scenario === 'fractional' || continuous,
+          calendar: continuous ? [] : [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
           assets: [
             Result.getOrThrow(
               normalizeAssetResult(
                 {
                   id: '12345678-1234-4234-8234-123456789abc',
-                  symbol: 'AAPL',
-                  class: AssetClass.UsEquity,
-                  exchange: AssetExchange.Nasdaq,
+                  symbol,
+                  class: continuous ? AssetClass.Crypto : AssetClass.UsEquity,
+                  exchange: continuous ? AssetExchange.Crypto : AssetExchange.Nasdaq,
                   status: AssetStatus.Active,
                   tradable: true,
                   fractionable: true,
+                  ...(continuous
+                    ? { min_order_size: '0.00001', min_trade_increment: '0.000000001', price_increment: '0.000000001' }
+                    : {}),
                 },
-                'AAPL',
+                symbol,
                 '2026-09-04T00:00:00.000Z',
               ),
             ),
@@ -104,6 +109,10 @@ durableTest.each(['ioc', 'fractional'] as const)(
             const price = nowMs >= entryMs + 200 ? 101 : 100
             const value = {
               ...quote,
+              symbol,
+              ...(continuous
+                ? { feed: 'us' as const, delayClass: 'real_time_crypto' as const, marketSession: 'continuous' as const }
+                : {}),
               eventAt: new Date(nowMs).toISOString(),
               ingestedAt: new Date(nowMs).toISOString(),
               bidPrice: price,
@@ -157,24 +166,33 @@ durableTest.each(['ioc', 'fractional'] as const)(
           policyHash: '6'.repeat(64),
           accountId,
           clientOrderId: `replay-${side}`,
-          symbol: 'AAPL',
+          symbol,
           side,
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: '3000000',
+          quantityAtoms: '3000000000',
           notionalLimitMicros: '300000000',
           state: IntentState.IoStarted,
-          createdAt: '2026-09-04T14:31:00.000Z',
+          createdAt: new Date(entryMs).toISOString(),
         })
-        const orders =
-          scenario === 'ioc'
+        const orders = continuous
+          ? [
+              order(OrderSide.Buy),
+              {
+                ...order(OrderSide.Sell),
+                quantityAtoms: '2992500000',
+                orderType: OrderType.Market,
+                timeInForce: TimeInForce.GoodUntilCanceled,
+              },
+            ]
+          : scenario === 'ioc'
             ? [order(OrderSide.Buy), order(OrderSide.Sell)]
             : [
                 order(OrderSide.Buy),
-                ...['500000', '2500000'].map((quantityMicros, index) => ({
+                ...['500000000', '2500000000'].map((quantityAtoms, index) => ({
                   ...order(OrderSide.Sell),
                   clientOrderId: `fractional-${index}`,
-                  quantityMicros,
+                  quantityAtoms,
                   orderType: OrderType.Market,
                   timeInForce: TimeInForce.Day,
                 })),
@@ -201,11 +219,21 @@ durableTest.each(['ioc', 'fractional'] as const)(
     )
     expect(result.first.report.metrics.accountingExact).toBe(true)
     expect(result.restarted.report.metrics.accountingExact).toBe(true)
-    expect(result.rows[0]).toEqual({ fills: scenario === 'ioc' ? 2 : 3, transactions: scenario === 'ioc' ? 2 : 3 })
+    expect(result.rows[0]).toEqual({
+      fills: scenario === 'fractional' ? 3 : 2,
+      transactions: scenario === 'fractional' ? 3 : 2,
+    })
     expect(result.restarted.brokerState.account.cashMicros).toBe(result.broker.ledger.cashMicros)
     expect(result.restarted.brokerState.positions).toEqual([])
+    if (continuous) {
+      expect(result.broker.fees).toHaveLength(2)
+      expect(result.broker.fees[0]?.coinDebit?.quantityAtoms).toBe('7500000')
+      expect(result.broker.fees[1]?.netAmountMicros).toBe('-760000')
+      expect(result.broker.ledger.executionFeesMicros).toBe('1510000')
+      expect(result.broker.fills.map((fill) => fill.transactionTime.slice(0, 10))).toEqual(['2026-10-12', '2026-10-12'])
+    }
     // These externally supplied broker orders deliberately have no production intent bindings.
-    expect(result.restarted.brokerState.unknownOrderCount).toBe(scenario === 'ioc' ? 2 : 3)
+    expect(result.restarted.brokerState.unknownOrderCount).toBe(scenario === 'fractional' ? 3 : 2)
   },
   60_000,
 )

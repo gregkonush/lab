@@ -103,7 +103,7 @@ func main() {
 		}
 		switch os.Args[1] {
 		case "/app/services/bayn/dist/forward-performance-command.js":
-			fmt.Println("Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help")
+			fmt.Println("Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help")
 		case "/app/services/bayn/dist/research-command.js":
 			fmt.Println("Usage: bayn-research --validate <run.json> | --run <run.json> --output <new-receipt.json> | --help")
 		case "/app/services/bayn/dist/inference-cost-command.js":
@@ -115,7 +115,7 @@ func main() {
 		case "/app/services/bayn/dist/jev-study-export-command.js":
 			fmt.Println("Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help")
 		case "/app/services/bayn/dist/streaming-diagnostics-command.js":
-			fmt.Println("Usage: bayn-streaming-diagnostics --since <UTC-instant> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
+			fmt.Println("Usage: bayn-streaming-diagnostics --query <query.json> [--bootstrap-timeout-seconds <1..14400>] | --codecs | --help")
 		default:
 			os.Exit(2)
 		}
@@ -161,12 +161,12 @@ verify_image() {
 }
 
 pack_image
-test "$(verify_image)" = 'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
+test "$(verify_image)" = 'Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
 
 chmod u+w "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 cat > "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance" <<'EOF'
 #!/bin/sh
-printf '%s\n' 'Usage: bayn-forward-performance [--authority-generation <sha256> [--persist-receipt]] | --help'
+printf '%s\n' 'Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
 EOF
 chmod 0555 "${root}/nix/store/test-bayn-forward-performance/bin/bayn-forward-performance"
 pack_image

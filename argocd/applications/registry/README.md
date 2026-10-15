@@ -41,10 +41,30 @@ rate causes storage or Kafka stalls.
 `registry-cleanup` runs daily at **03:23 America/Los_Angeles**. Its CronJob,
 service account, permissions and scripts are committed with this Application.
 Runs cannot overlap; failed runs are retained and are not automatically retried.
+Kubernetes can start the most recent missed run up to 24 hours late after
+maintenance suspension or a controller interruption. Older missed runs are skipped.
 Each run resumes receipted quarantine purges, prepares online, refreshes protected
 references, collects for at most four minutes and purges with uploads open.
-An empty plan skips the read-only restart. Missing protected content or incomplete
-cluster discovery fails the run before collection.
+An empty plan skips the read-only restart. Missing protected content or a failed
+read of a configured image owner fails the run before collection.
+If collection reaches its deadline after writing a durable receipt, the controller
+restores uploads, releases its hold and purges the partial batch online. Completion
+reports `collectionTimedOut: true`. A missing or invalid receipt fails the run.
+Restoration allows five minutes for the registry's existing startup probes.
+Online preparation allows 45 minutes for cold filesystem metadata scans. The Job
+keeps its two-hour deadline and allows seven minutes for shutdown recovery.
+
+Protection reads only the workload and release resources named in
+`packages/scripts/src/registry/protected_resources.json`. RBAC grants list access
+to those exact resources. Cleanup does not enumerate CRDs or read unrelated
+operators such as Valkey. Maintenance writes are confined to namespace `registry`
+and the named `registry` Application in namespace `argocd`.
+
+Preparation validates retained blobs once while traversing their manifest graph;
+the candidate scan skips those already protected blobs. If preparation fails, the
+Job log includes its exit status and final diagnostics before collection can start.
+Recent revision links retain only manifest payloads that still exist. Missing
+content referenced by retained tags, protected images or image indexes fails the run.
 
 Keep at least five recent build tags per repository, every image uploaded in the
 last seven days, and all digests referenced by workload templates or retained Kargo

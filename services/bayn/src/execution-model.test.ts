@@ -6,14 +6,14 @@ import {
   accrueCashYield,
   calculateSessionFees,
   defaultExecutionModel,
-  desiredQuantityMicros,
+  desiredQuantityAtoms,
   elapsedCalendarDays,
   makeFillTerms,
   makeOrderOutcome,
   notionalMicros,
   referencePriceMicros,
   saleCostBasisMicros,
-  scaleQuantityMicros,
+  scaleQuantityAtoms,
   type ExecutionModelFailure,
 } from './execution-model'
 import {
@@ -65,7 +65,7 @@ describe('explicit execution model', () => {
 
     expect(intradayMomentumExecutionModel).toMatchObject({
       schemaVersion: 'bayn.execution-model.v5',
-      venue: 'alpaca-us-equity',
+      venue: 'alpaca-cash-spot',
       order: {
         type: 'limit',
         timeInForce: 'ioc',
@@ -73,7 +73,7 @@ describe('explicit execution model', () => {
         warmupAfterOpenMs: 0,
         submissionCutoffBeforeCloseMs: 300_000,
       },
-      precision: { quantityIncrementMicros: '1000000' },
+      precision: { quantityIncrementAtoms: '1' },
     })
     expect(Result.isSuccess(decodeExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
     expect(Result.isSuccess(decodeCycleExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
@@ -107,8 +107,8 @@ describe('explicit execution model', () => {
 
   test('rounds price adversely and separates spread from slippage', () => {
     const reference = success(referencePriceMicros(100, defaultExecutionModel))
-    const buy = success(makeFillTerms('buy', MICROS, reference, defaultExecutionModel, MICROS))
-    const sell = success(makeFillTerms('sell', MICROS, reference, defaultExecutionModel, MICROS))
+    const buy = success(makeFillTerms('buy', 1_000_000_000n, reference, defaultExecutionModel, MICROS))
+    const sell = success(makeFillTerms('sell', 1_000_000_000n, reference, defaultExecutionModel, MICROS))
 
     expect(buy).toMatchObject({
       referencePriceMicros: 100_000_000n,
@@ -129,13 +129,15 @@ describe('explicit execution model', () => {
     const u128Maximum = (1n << 128n) - 1n
 
     expect(success(referencePriceMicros(100.12345, defaultExecutionModel))).toBe(100_123_500n)
-    expect(success(notionalMicros(500_000n, 100_000_001n))).toBe(50_000_001n)
+    expect(success(notionalMicros(500_000_000n, 100_000_001n))).toBe(50_000_001n)
     expect(success(saleCostBasisMicros(1n, 1n, 2n))).toBe(1n)
-    expect(success(notionalMicros(u128Maximum, 1_000_001n))).toBe(340_282_707_203_305_384_401_838_070_806_375_643_223n)
+    expect(success(notionalMicros(u128Maximum * 1000n, 1_000_001n))).toBe(
+      340_282_707_203_305_384_401_838_070_806_375_643_223n,
+    )
     expect(failure(notionalMicros(-1n, 1n))).toEqual({
       _tag: 'NegativeUnsignedRoundHalfUpNumerator',
       numerator: -1n,
-      denominator: MICROS,
+      denominator: 1_000_000_000n,
       minimumNumerator: 0n,
     })
   })
@@ -152,19 +154,19 @@ describe('explicit execution model', () => {
     const input = {
       identity: { decisionId: 'a'.repeat(64), symbol: 'SPY', side: 'buy' },
       side: 'buy' as const,
-      requestedQuantityMicros: 2_000_000n,
+      requestedQuantityAtoms: 2000000000n,
       referencePriceMicros: 100_000_000n,
     }
 
     expect(success(makeOrderOutcome({ ...input, model: fullModel }))).toMatchObject({
-      filledQuantityMicros: 2_000_000n,
+      filledQuantityAtoms: 2000000000n,
       status: 'filled',
       unfilledRemainder: 'none',
     })
     const partial = success(makeOrderOutcome({ ...input, model: partialModel }))
     expect(partial).toEqual(success(makeOrderOutcome({ ...input, model: partialModel })))
     expect(partial).toMatchObject({
-      filledQuantityMicros: 1_000_000n,
+      filledQuantityAtoms: 1000000000n,
       status: 'partially-filled',
       unfilledRemainder: 'canceled',
     })
@@ -172,7 +174,7 @@ describe('explicit execution model', () => {
       success(
         makeOrderOutcome({
           ...input,
-          requestedQuantityMicros: 5_000n,
+          requestedQuantityAtoms: 5000000n,
           referencePriceMicros: 100_000_000n,
           model: fullModel,
         }),
@@ -184,8 +186,8 @@ describe('explicit execution model', () => {
     const fees = success(
       calculateSessionFees(
         [
-          { side: 'buy', quantityMicros: 1_000_000n, notionalMicros: 100_000_000n },
-          { side: 'sell', quantityMicros: 10_000_000n, notionalMicros: 1_000_000_000n },
+          { symbol: 'NVDA', side: 'buy', quantityAtoms: 1000000000n, notionalMicros: 100_000_000n },
+          { symbol: 'NVDA', side: 'sell', quantityAtoms: 10000000000n, notionalMicros: 1_000_000_000n },
         ],
         defaultExecutionModel,
         MICROS,
@@ -196,12 +198,21 @@ describe('explicit execution model', () => {
       secMicros: 30_000n,
       tafMicros: 10_000n,
       catMicros: 10_000n,
+      cryptoMicros: 0n,
+      cashMicros: 50_000n,
       totalMicros: 50_000n,
     })
 
     const capped = success(
       calculateSessionFees(
-        [{ side: 'sell', quantityMicros: 100_000_000n * MICROS, notionalMicros: 100_000_000n * MICROS }],
+        [
+          {
+            symbol: 'NVDA',
+            side: 'sell',
+            quantityAtoms: 100000000000n * MICROS,
+            notionalMicros: 100_000_000n * MICROS,
+          },
+        ],
         defaultExecutionModel,
         MICROS,
       ),
@@ -220,10 +231,10 @@ describe('explicit execution model', () => {
 
   test('accepts exact twelve-decimal weights despite binary floating-point representation', () => {
     expect(
-      success(desiredQuantityMicros(1_000n * MICROS, 0.123_456_789_012, 100n * MICROS, defaultExecutionModel)),
-    ).toBe(1_234_567n)
+      success(desiredQuantityAtoms(1_000n * MICROS, 0.123_456_789_012, 100n * MICROS, defaultExecutionModel)),
+    ).toBe(1234567000n)
     expect(
-      failure(desiredQuantityMicros(1_000n * MICROS, 0.123_456_789_012_3, 100n * MICROS, defaultExecutionModel)),
+      failure(desiredQuantityAtoms(1_000n * MICROS, 0.123_456_789_012_3, 100n * MICROS, defaultExecutionModel)),
     ).toMatchObject({
       _tag: 'InvalidFixedPointNumber',
       field: 'target weight',
@@ -237,16 +248,16 @@ describe('explicit execution model', () => {
       makeOrderOutcome({
         identity,
         side: 'sell',
-        requestedQuantityMicros: 2_000_000n,
+        requestedQuantityAtoms: 2000000000n,
         referencePriceMicros: 100_000_000n,
         model: defaultExecutionModel,
       }),
     )
     const base = success(
-      makeFillTerms('sell', outcome.filledQuantityMicros, 100_000_000n, defaultExecutionModel, MICROS),
+      makeFillTerms('sell', outcome.filledQuantityAtoms, 100_000_000n, defaultExecutionModel, MICROS),
     )
     const doubled = success(
-      makeFillTerms('sell', outcome.filledQuantityMicros, 100_000_000n, defaultExecutionModel, 2n * MICROS),
+      makeFillTerms('sell', outcome.filledQuantityAtoms, 100_000_000n, defaultExecutionModel, 2n * MICROS),
     )
 
     expect(doubled.spreadCostMicros).toBe(2n * base.spreadCostMicros)
@@ -256,7 +267,7 @@ describe('explicit execution model', () => {
         makeOrderOutcome({
           identity,
           side: 'sell',
-          requestedQuantityMicros: 2_000_000n,
+          requestedQuantityAtoms: 2000000000n,
           referencePriceMicros: 100_000_000n,
           model: defaultExecutionModel,
         }),
@@ -289,7 +300,7 @@ describe('explicit execution model', () => {
       _tag: 'InvalidSaleCostBasis',
       reason: 'quantity-exceeds-position',
     })
-    expect(failure(scaleQuantityMicros(1n, 1_000_001n, defaultExecutionModel))).toMatchObject({
+    expect(failure(scaleQuantityAtoms(1n, 1_000_001n, defaultExecutionModel))).toMatchObject({
       _tag: 'InvalidQuantityScale',
     })
   })
@@ -302,7 +313,7 @@ describe('explicit execution model', () => {
     const result = makeOrderOutcome({
       identity: { invalid: 1n },
       side: 'sell',
-      requestedQuantityMicros: MICROS,
+      requestedQuantityAtoms: MICROS,
       referencePriceMicros: 100n * MICROS,
       model: partialModel,
     })

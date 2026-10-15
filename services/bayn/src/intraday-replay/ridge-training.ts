@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
@@ -73,7 +74,7 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
       input.backtest.source.transport !== 'original-capture' ||
       input.backtest.source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       calendar.normalizedResponseHash !== input.expectedCalendarHash ||
-      input.candidateSymbols.join(',') !== prepared.protocol.candidateSymbols.join(',') ||
+      input.candidateSymbols.join(',') !== equityMarketProfile.candidateSymbols.join(',') ||
       !Number.isSafeInteger(Number(input.allocationBudgetMicros)) ||
       prepared.input.cadence.pollIntervalMs > 60_000 ||
       prepared.input.assumptions.latencyMs > 60_000 ||
@@ -130,7 +131,7 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
 export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: BacktestSourceReceipt) =>
   Effect.gen(function* () {
     const { input, prepared, calendar } = yield* Effect.fromResult(prepareRidgeTraining(raw, receipt))
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, prepared.protocol.universe)
+    const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
     const executionLabelDefinition = ridgeExecutionLabelDefinition(
       {
         protocol: prepared.protocol,
@@ -203,7 +204,6 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
               dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
               targetWeight: 1,
               management: null,
-              accountScheduledOpportunities: true,
               decisionLatencyMs: input.decisionLatencyMs,
               pollIntervalMs: prepared.input.cadence.pollIntervalMs,
               turnoverPolicy: input.turnoverPolicy,

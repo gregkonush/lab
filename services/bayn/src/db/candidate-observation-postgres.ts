@@ -8,7 +8,7 @@ import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import { reproduceJevCandidateObservation } from '../jev/observation'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
-import { jevBehaviorHash, momentumFirstJevBehaviorHash } from '../jev/protocol'
+import { jevBehaviorHash } from '../jev/protocol'
 
 export const makeCandidateObservationStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -56,9 +56,7 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
             makeStrategyProtocolHashResult({
               name: 'jev',
               behaviorHash:
-                reproduced.protocol.schemaVersion === 'bayn.jev.protocol.v2'
-                  ? momentumFirstJevBehaviorHash
-                  : jevBehaviorHash,
+                reproduced.protocol.schemaVersion === 'bayn.jev.protocol.v3' ? jevBehaviorHash : jevBehaviorHash,
               parameterHash,
               parameterSchemaVersion: reproduced.protocol.schemaVersion,
             }),

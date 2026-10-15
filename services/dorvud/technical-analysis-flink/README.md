@@ -4,6 +4,16 @@ The TA job consumes the existing Alpaca bars, quotes, and trades. It retains the
 publish rolling market features for Bayn. The separate market-data archive job retains raw records and feature
 messages in ClickHouse. See the [streaming design](../../../docs/bayn/streaming-market-data-design.md).
 
+## Continuous crypto feature branch
+
+The same TA job can consume the native crypto topic with `TA_CRYPTO_TOPIC`, `TA_CRYPTO_LOCATION`, `TA_CRYPTO_SYMBOLS`,
+and `TA_CRYPTO_FEATURES_TOPIC`. This branch publishes `dorvud.crypto-continuous-1m.v1`, using provider minute bars and
+updated bars, the shared indicator calculations, continuous recursive seeds, and bounded canonical correction state.
+It uses no equity session calendar and carries state through midnight and weekends. Raw events remain in the separate
+raw archive. Derived messages go through Kafka to `signal.crypto_market_features_v1` in the archive job.
+See [the crypto feature contract](../README.md#crypto-flink-features) for readiness, precision, provenance, retention,
+and rollout acceptance. The equity feature contracts below retain their own source and session definitions.
+
 ## Event-time microbars and canonical technical signals
 
 Microbars use Kafka topic, partition, and offset to deduplicate transport redelivery. Each event-time second has its
@@ -88,6 +98,13 @@ The equity TA sinks bound `TA_CLICKHOUSE_BATCH_SIZE` to 1–1,000 rows. The depl
 batch instead of being silently reduced to 100. The existing flush interval still publishes a partial batch when
 input is sparse. The bound limits buffered rows while allowing retained corrections to use the configured batching.
 Rollout acceptance checks actual ClickHouse insert sizes and completed Flink checkpoints after savepoint restore.
+
+The raw archive permits bounded batches of up to 10,000 rows, allowing retained quote backlogs to amortize the
+replicated insert cost. Its one-second flush interval still publishes sparse input without waiting for a full batch.
+Each source partition retains one ordered writer, so its archive watermark continues to identify a committed prefix.
+Source and sink checkpoint IDs, consumer offsets, replication quorum and synchronous acknowledgement are unchanged.
+Acceptance requires current quotes within Bayn's existing age limit, a draining retained backlog and successful
+checkpoints; a running Flink job is insufficient.
 
 ## Rolling feature branch
 

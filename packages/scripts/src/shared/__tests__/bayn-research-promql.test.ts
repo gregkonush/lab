@@ -20,7 +20,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
     }[]
   }
   const group = document.groups.find(({ name }) => name === 'bayn-research.rules')
-  if (group?.rules.length !== 3) throw new Error('All three research alerts are required')
+  if (group?.rules.length !== 4) throw new Error('All four research alerts are required')
   const expected = (name: string) => {
     const rule = group.rules.find(({ alert }) => alert === name)
     if (rule === undefined) throw new Error(`Missing ${name}`)
@@ -28,7 +28,7 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   }
   const series = (name: string, values: string) => ({ series: name, values })
   const desired = (values = '1+0x30') =>
-    series('kube_deployment_spec_replicas{namespace="bayn",deployment="bayn-research-v1"}', values)
+    series('kube_replicaset_spec_replicas{namespace="bayn",replicaset="bayn-research-v1"}', values)
   const heartbeat = series('bayn_research_worker_heartbeat_seconds', '0+60x30')
   const stale = 'BaynResearchWorkerStale'
   const failing = 'BaynResearchAttemptsFailing'
@@ -50,6 +50,11 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   check('no desired worker', [])
   check('paused worker has no stale alert', [desired('0+0x30')])
   check('missing heartbeat while worker is desired', [desired()], [stale])
+  check(
+    'retired revision does not hide a missing heartbeat',
+    [desired(), series('kube_replicaset_spec_replicas{namespace="bayn",replicaset="bayn-research-v0"}', '0+0x30')],
+    [stale],
+  )
   check('stopped heartbeat', [desired(), series('bayn_research_worker_heartbeat_seconds', '0+0x30')], [stale])
   check('missing heartbeat stays pending before five minutes', [desired()], [], '4m')
   check('heartbeat recovery clears stale alert', [
@@ -58,18 +63,18 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
   ])
   check(
     'three failures in the window',
-    [desired(), heartbeat, series('bayn_research_attempts_total{outcome="EXPIRED"}', '0+1x30')],
+    [desired(), heartbeat, series('bayn_research_attempts{outcome="EXPIRED"}', '0+1x30')],
     [failing],
   )
   check('successful attempts do not count as failures', [
     desired(),
     heartbeat,
-    series('bayn_research_attempts_total{outcome="COMPLETE"}', '0+1x30'),
+    series('bayn_research_attempts{outcome="COMPLETE"}', '0+1x30'),
   ])
   check('one failure does not alert', [
     desired(),
     heartbeat,
-    series('bayn_research_attempts_total{outcome="INVALID"}', '0 1+0x29'),
+    series('bayn_research_attempts{outcome="REJECTED"}', '0 1+0x29'),
   ])
   for (const metric of ['bayn_research_unpriced_attempts', 'bayn_research_ambiguous_attempts']) {
     check(`${metric} blocks cost qualification`, [desired(), heartbeat, series(metric, '1+0x30')], [costs])
@@ -94,6 +99,49 @@ test('research alerts distinguish paused workers, lost telemetry, failed attempt
       'bayn_research_oldest_pending_expense_seconds',
     ].map((metric) => series(metric, '0+0x30')),
   ])
+  const publicStale = 'BaynPublicInformationStale'
+  const publicCheck = (name: string, input: ReturnType<typeof series>[], sources: string[] = [], at = '20m') => {
+    const rule = expected(publicStale)
+    cases.push({
+      name,
+      interval: '1m',
+      input_series: input,
+      alert_rule_test: [
+        {
+          alertname: publicStale,
+          eval_time: at,
+          exp_alerts: sources.map((source) => ({ ...rule, exp_labels: { ...rule.exp_labels, source } })),
+        },
+      ],
+    })
+  }
+  const enabled = series('bayn_public_information_enabled', '1+0x300')
+  const freshSource = (source: string) =>
+    series(`bayn_public_information_last_success_timestamp_seconds{source="${source}"}`, '0+60x300')
+  publicCheck('public jobs not deployed', [])
+  publicCheck('public jobs disabled', [series('bayn_public_information_enabled', '0+0x300')])
+  publicCheck('both enabled public jobs missing', [enabled], ['SEC_FILINGS', 'MACRO_CALENDAR'])
+  publicCheck('fresh public jobs', [enabled, freshSource('SEC_FILINGS'), freshSource('MACRO_CALENDAR')])
+  publicCheck(
+    'only filings stale',
+    [
+      enabled,
+      series('bayn_public_information_last_success_timestamp_seconds{source="SEC_FILINGS"}', '0+0x300'),
+      freshSource('MACRO_CALENDAR'),
+    ],
+    ['SEC_FILINGS'],
+    '120m',
+  )
+  publicCheck(
+    'only macro stale',
+    [
+      enabled,
+      freshSource('SEC_FILINGS'),
+      series('bayn_public_information_last_success_timestamp_seconds{source="MACRO_CALENDAR"}', '0+0x300'),
+    ],
+    ['MACRO_CALENDAR'],
+    '210m',
+  )
   const directory = mkdtempSync(join(tmpdir(), 'bayn-research-promql-'))
   try {
     writeFileSync(join(directory, 'rules.yaml'), YAML.stringify({ groups: [group] }))

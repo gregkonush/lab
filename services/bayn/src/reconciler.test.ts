@@ -45,7 +45,12 @@ import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationClock, ReconciliationError, runOnce } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { decideContainment } from './simulation-reconciliation/broker-containment'
-import { decideFillPage, decideOrderPage, decideStableHistory } from './simulation-reconciliation/broker-history'
+import {
+  decideFillPage,
+  decideOrderPage,
+  decideStableHistory,
+  readStableBrokerSnapshot,
+} from './simulation-reconciliation/broker-history'
 import { decideAccountBaseline } from './simulation-reconciliation/broker-normalization'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
@@ -60,6 +65,10 @@ const evidence = (identity: string): ReadEvidence => ({
 })
 
 const account: BrokerAccount = {
+  cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: BrokerAccountStatus.Active,
   currency: 'USD',
@@ -83,8 +92,8 @@ const order = (index: number): BrokerOrder => ({
   assetId: `asset-${index}`,
   symbol: 'NVDA',
   assetClass: AssetClass.UsEquity,
-  quantityMicros: '1000000',
-  filledQuantityMicros: '1000000',
+  quantityAtoms: '1000000000',
+  filledQuantityAtoms: '1000000000',
   filledAveragePriceMicros: '100000000',
   orderClass: OrderClass.Simple,
   orderType: BrokerOrderType.Market,
@@ -98,10 +107,10 @@ const order = (index: number): BrokerOrder => ({
 const fill = (index: number, sourceOrder = order(index)): FillActivity => ({
   accountId,
   activityId: `fill-${index}`,
-  cumulativeQuantityMicros: '1000000',
-  leavesQuantityMicros: '0',
-  priceMicros: '100000000',
-  quantityMicros: '1000000',
+  cumulativeQuantityAtoms: '1000000000',
+  leavesQuantityAtoms: '0',
+  priceAtoms: '100000000000',
+  quantityAtoms: '1000000000',
   side: sourceOrder.side,
   symbol: sourceOrder.symbol,
   transactionTime: observedAt,
@@ -220,6 +229,8 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
       return valuation
     }),
   hasAccountBaseline: () => Effect.succeed(hasAccountBaseline),
+  recoverFees: () => Effect.void,
+  retainCashReporting: () => Effect.void,
   bindings: () => Effect.succeed([{ intentId: hash('intent'), clientOrderId: order(0).clientOrderId }]),
   reconcile: (snapshot) =>
     Effect.sync(() => {
@@ -441,7 +452,7 @@ describe('execution reconciliation loop', () => {
 
   test('reads every broker page before persisting and binds fills to their orders', async () => {
     const allOrders = Array.from({ length: 501 }, (_, index) =>
-      index < 101 ? order(index) : { ...order(index), status: BrokerOrderStatus.New, filledQuantityMicros: '0' },
+      index < 101 ? order(index) : { ...order(index), status: BrokerOrderStatus.New, filledQuantityAtoms: '0' },
     )
     const allFills = Array.from({ length: 101 }, (_, index) => fill(index, allOrders[index]))
     const orderCursors: Array<string | undefined> = []
@@ -608,7 +619,7 @@ describe('execution reconciliation loop', () => {
   })
 
   test('retains the exact typed cause of a normalization failure', async () => {
-    const malformedOrder = { ...order(0), extendedHours: true, filledQuantityMicros: '0' }
+    const malformedOrder = { ...order(0), extendedHours: true, filledQuantityAtoms: '0' }
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: () => Effect.succeed({ value: [malformedOrder], evidence: evidence('orders') }),
@@ -781,6 +792,49 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
+  test('retains current UTC-day crypto fees through daily pagination and stable capture', async () => {
+    const cut = '2026-10-15T09:56:00.000Z'
+    const fees = [
+      {
+        accountId,
+        activityId: 'same-day-coin',
+        date: '2026-10-15',
+        netAmountMicros: '0',
+        coinDebit: { symbol: 'ETH/USD', quantityAtoms: '82708', priceAtoms: '2364150000000' },
+      },
+      {
+        accountId,
+        activityId: 'same-day-cash',
+        date: '2026-10-15',
+        netAmountMicros: '-200000',
+        cryptoCashFee: true as const,
+      },
+    ] as const
+    let reads = 0
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      feeActivities: (query) => {
+        reads += 1
+        // Observed PAPER behavior: timestamp-bounded non-trade reads omit current-day CFEE receipts.
+        const items = Object.hasOwn(query ?? {}, 'until') ? [] : [fees[query?.pageToken === undefined ? 0 : 1]]
+        return Effect.succeed({
+          value: {
+            items,
+            ...(items.length > 0 && query?.pageToken === undefined ? { nextPageToken: 'same-day-coin' } : {}),
+          },
+          evidence: { ...evidence('current-day-fees'), observedAt: cut },
+        })
+      },
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    await Effect.runPromise(
+      provide(read, makeStore(control)).pipe(Effect.provideService(ReconciliationClock, Effect.succeed(cut))),
+    )
+    expect(control.reconciliations[0]?.fees.map((row) => row.value)).toEqual([...fees])
+    expect(reads).toBe(4)
+    expect(control.restrictions).toEqual([])
+  })
+
   test('recaptures late fee postings before persisting an account snapshot', async () => {
     let reads = 0
     const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
@@ -788,13 +842,17 @@ describe('execution reconciliation loop', () => {
       ...emptyRead(),
       feeActivities: () => {
         reads += 1
-        return Effect.succeed({ value: { items: reads === 1 ? [] : [fee] }, evidence: evidence(`fees-${reads}`) })
+        return Effect.succeed({
+          value: { items: reads === 1 ? [] : [fee] },
+          evidence: { ...evidence(`fees-${reads}`), observedAt: '2026-07-22T12:00:00.000Z' },
+        })
       },
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-07-22T12:00:00.000Z'))
           const fiber = yield* provide(read, makeStore(control)).pipe(Effect.forkScoped({ startImmediately: true }))
           yield* TestClock.adjust(500)
           yield* Fiber.join(fiber)
@@ -806,6 +864,38 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
+  test.each([1, 101])(
+    'retains %d available fee settlements excluded by the provider creation-time filter',
+    async (count) => {
+      const cut = '2026-10-15T08:00:00.000Z'
+      const fees = Array.from({ length: count }, (_, index) => ({
+        accountId,
+        activityId: `available-fee-${String(index).padStart(3, '0')}`,
+        date: '2026-10-15',
+        netAmountMicros: '-230000',
+      }))
+      const feeEvidence = { ...evidence('available-fee'), observedAt: cut }
+      const read: BrokerReadShape = {
+        ...emptyRead(),
+        feeActivities: (query) => {
+          const start = query?.pageToken === undefined ? 0 : 100
+          const items = Object.hasOwn(query ?? {}, 'until') ? [] : fees.slice(start, start + 100)
+          const last = items.at(-1)
+          return Effect.succeed({
+            value: {
+              items,
+              ...(items.length === 100 && last !== undefined ? { nextPageToken: last.activityId } : {}),
+            },
+            evidence: feeEvidence,
+          })
+        },
+      }
+
+      const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(cut)))
+      expect(snapshot.history.fees).toEqual(fees.map((value) => ({ value, evidence: feeEvidence })))
+    },
+  )
+
   test('rejects duplicate fee history before accounting', async () => {
     const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
     const read: BrokerReadShape = {
@@ -814,6 +904,27 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+    expect(failure).toMatchObject({ failure: { _tag: 'Pagination', reason: 'InvalidFeeHistory' } })
+    expect(control.writes).toBe(0)
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('rejects a future UTC-day fee before accounting', async () => {
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      feeActivities: () =>
+        Effect.succeed({
+          value: { items: [{ accountId, activityId: 'future-fee', date: '2026-10-16', netAmountMicros: '-200000' }] },
+          evidence: { ...evidence('future-fee'), observedAt: '2026-10-15T23:59:59.999Z' },
+        }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const failure = await Effect.runPromise(
+      provide(read, makeStore(control)).pipe(
+        Effect.provideService(ReconciliationClock, Effect.succeed('2026-10-15T23:59:59.999Z')),
+        Effect.flip,
+      ),
+    )
     expect(failure).toMatchObject({ failure: { _tag: 'Pagination', reason: 'InvalidFeeHistory' } })
     expect(control.writes).toBe(0)
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
@@ -1030,14 +1141,23 @@ describe('execution reconciliation loop', () => {
     const store: TestStore = {
       ...baseStore,
       ingest: (input) => insideTransaction(baseStore.ingest(input)),
+      retainCashReporting: (input) => insideTransaction(baseStore.retainCashReporting(input)),
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
       completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
       verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
-      hasAccountBaseline: (id) => insideTransaction(baseStore.hasAccountBaseline(id)),
-      bindings: (id) => insideTransaction(baseStore.bindings(id)),
-      reconcile: () => insideTransaction(Effect.fail(persistenceFailure)),
+      hasAccountBaseline: (id) =>
+        Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),
+      recoverFees: () =>
+        writerFence.transaction(insideTransaction(Effect.void)).pipe(Effect.mapError(() => persistenceFailure)),
+      bindings: (id) =>
+        Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.bindings(id))),
+      reconcile: () =>
+        writerFence.transaction(insideTransaction(Effect.void)).pipe(
+          Effect.andThen(writerFence.transaction(insideTransaction(Effect.fail(persistenceFailure)))),
+          Effect.mapError(() => persistenceFailure),
+        ),
       restrictAuthority: (reason, updatedAt) => insideTransaction(baseStore.restrictAuthority(reason, updatedAt)),
     }
 
@@ -1048,7 +1168,7 @@ describe('execution reconciliation loop', () => {
       const failures = exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
       expect(failures).toEqual([persistenceFailure])
     }
-    expect(transactionEvents).toEqual(['begin', 'end', 'begin', 'end'])
+    expect(transactionEvents).toEqual(Array.from({ length: 5 }, () => ['begin', 'end']).flat())
     expect(transactionDepth).toBe(0)
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })

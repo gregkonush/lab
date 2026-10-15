@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { makeReplayCheckpointStore } from './checkpoint-store'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
@@ -106,7 +107,7 @@ const main = Effect.scoped(
         assumptions: { latencyMs: 10, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
         fractionalTrading: false,
         calendar: Result.getOrThrow(Schema.decodeUnknownResult(MarketCalendarResponseSchema)(fixture.input.calendar)),
-        assets: fixture.protocol.universe.map((symbol, index) =>
+        assets: equityMarketProfile.universe.map((symbol, index) =>
           Result.getOrThrow(
             normalizeAssetResult(
               {
@@ -178,8 +179,6 @@ const main = Effect.scoped(
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
       const state = yield* broker.snapshot
       const readAuthority = runtime.store.authorityGeneration.readAuthorityState
-      if (readAuthority === undefined)
-        return yield* new ReplayBrokerFailure({ message: 'Restart acceptance requires durable authority readback' })
       const authority = yield* readAuthority
       yield* fs.writeFileString(
         resultPath,

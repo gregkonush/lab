@@ -46,7 +46,7 @@ describe('Tengri image workflow', () => {
     expect(workflow.jobs.publish.needs).toContain('validate-kvm')
   })
 
-  it('exports registry caches only on main and reuses the native harness cache', () => {
+  it('separates main and same-repository PR caches and reuses the native harness cache', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<
         string,
@@ -55,6 +55,12 @@ describe('Tengri image workflow', () => {
     }
     const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
     expect(runtime?.with?.['cache-to']).toContain("github.event_name != 'pull_request'")
+    for (const setting of ['cache-from', 'cache-to']) {
+      expect(runtime?.with?.[setting]).toContain(
+        "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository",
+      )
+      expect(runtime?.with?.[setting]).toContain(':cache-pr-{1}-{2}')
+    }
     expect(runtime?.with?.['cache-to']).toContain('mode=max')
     expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
     expect(runtime?.['continue-on-error']).not.toBe(true)
@@ -109,6 +115,10 @@ describe('Tengri image workflow', () => {
             CALLS: calls,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_NETWORK: 'disposable-fixture-network',
+            TENGRI_KVM_DATABASE_HOST: 'disposable-fixture-database',
+            TENGRI_DATABASE_CA_FILE: resolve(fixture, 'ca.crt'),
+            TENGRI_DATABASE_PASSWORD_FILE: resolve(fixture, 'runtime.password'),
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: samples,
             TENGRI_KVM_SECCOMP: resolve(repositoryRoot, 'devices/galactic/omni/tengri-runner-amd64.json'),
@@ -126,12 +136,24 @@ describe('Tengri image workflow', () => {
     'requires a retained lifecycle receipt when the fixture exits successfully: %s',
     (receipt) => {
       const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-kvm-receipt-'))
+      const guestDns = resolve(fixture, 'guest-resolv.conf')
       try {
+        writeFileSync(resolve(fixture, 'ca.crt'), 'disposable-ca')
+        writeFileSync(resolve(fixture, 'runtime.password'), 'disposable-password')
         writeFileSync(resolve(fixture, 'ip'), '#!/bin/sh\nprintf "1.1.1.1 dev fixture0\\n"\n', { mode: 0o755 })
         writeFileSync(resolve(fixture, 'cat'), '#!/bin/sh\nprintf "1500\\n"\n', { mode: 0o755 })
         writeFileSync(
           resolve(fixture, 'docker'),
           `#!/bin/sh
+if [ "$1" = run ]; then
+  consume_stdin=false
+  input_destination=/dev/null
+  for argument do
+    if [ "$argument" = -i ]; then consume_stdin=true; fi
+    if [ "$argument" = /artifacts/resolv.conf ]; then input_destination="$GUEST_DNS"; fi
+  done
+  if [ "$consume_stdin" = true ]; then /bin/cat > "$input_destination"; fi
+fi
 if [ "$1" = cp ]; then
   case "$2" in *:/work/result.json)
   case "$RECEIPT" in
@@ -149,14 +171,20 @@ exit 0
             ...process.env,
             PATH: `${fixture}:${process.env.PATH}`,
             RECEIPT: receipt,
+            GUEST_DNS: guestDns,
             TENGRI_KVM_TEST_IMAGE: 'private-fixture',
             TENGRI_KVM_GUEST_IMAGE: 'private-guest',
+            TENGRI_KVM_NETWORK: 'disposable-fixture-network',
+            TENGRI_KVM_DATABASE_HOST: 'disposable-fixture-database',
+            TENGRI_DATABASE_CA_FILE: resolve(fixture, 'ca.crt'),
+            TENGRI_DATABASE_PASSWORD_FILE: resolve(fixture, 'runtime.password'),
             TENGRI_KVM_OUTPUT: fixture,
             TENGRI_KVM_SAMPLES: '3',
             TENGRI_KVM_SECCOMP: resolve(repositoryRoot, 'devices/galactic/omni/tengri-runner-amd64.json'),
           },
         })
         expect(result.exitCode === 0).toBe(receipt === 'present')
+        expect(readFileSync(guestDns, 'utf8')).toBe('nameserver 1.1.1.1\nnameserver 8.8.8.8\n')
       } finally {
         rmSync(fixture, { recursive: true, force: true })
       }
@@ -389,7 +417,7 @@ exit 0
     expect(validation).toContain('cargo fmt --check')
     expect(validation).toContain('cargo clippy --locked --all-targets -- -D warnings')
     expect(validation).toContain('cargo test --locked --all-targets')
-    expect(validation).toContain('bash test-authz.sh')
+    expect(validation).toContain('bash test-runtime.sh')
     expect(validation).toContain('bash test-rpc-interop.sh')
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')

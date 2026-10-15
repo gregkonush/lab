@@ -68,12 +68,11 @@ type RecoveryFirstDecisionBuilder = (
 
 const reconciliationReusableUntil = (
   cached: ReconciliationPassResult,
-  authority: AuthorityState | undefined,
+  authority: AuthorityState,
   now: number,
   maximumAgeMs: number,
 ): number | undefined => {
   if (
-    authority === undefined ||
     cached.riskContext.authority?.generationHash !== authority.generationHash ||
     cached.riskContext.authority.version !== authority.version ||
     cached.report.reconciliation.status !== ReconciliationStatus.Exact ||
@@ -98,7 +97,7 @@ const reconciliationReusableUntil = (
 export const reconciliationForPreparation = <R>(
   initial: ReconciliationPassResult | undefined,
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
-  readAuthority: Effect.Effect<AuthorityState | undefined, ReconciliationPassError, R>,
+  readAuthority: Effect.Effect<AuthorityState, ReconciliationPassError, R>,
   maximumAgeMs: number,
   pricingMaximumAgeMs = maximumAgeMs,
 ) =>
@@ -119,9 +118,8 @@ export const reconciliationForPreparation = <R>(
         if (
           cached !== undefined &&
           firstUse &&
-          (authority === undefined ||
-            (cached.riskContext.authority?.generationHash === authority.generationHash &&
-              cached.riskContext.authority.version === authority.version))
+          cached.riskContext.authority?.generationHash === authority.generationHash &&
+          cached.riskContext.authority.version === authority.version
         )
           return cached
         if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
@@ -379,7 +377,7 @@ export const recoveryFirstCycleNextDelayMs = (input: {
 }
 
 /** Expected quote or broker publication waits use a short continuation; source failures keep their backoff. */
-export const closeQuoteContinuationDelayMs = (
+export const executionEvidenceContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
   observedAt: string,
@@ -387,7 +385,9 @@ export const closeQuoteContinuationDelayMs = (
   if (
     result.outcome !== 'RECOVERED' ||
     result.action !== 'WAITING' ||
-    (result.waitReason !== 'CLOSE_QUOTE_PENDING' && result.waitReason !== 'BROKER_OBSERVATION_PENDING')
+    (result.waitReason !== 'CLOSE_QUOTE_PENDING' &&
+      result.waitReason !== 'BROKER_OBSERVATION_PENDING' &&
+      result.waitReason !== 'JEV_POSITION_AWAITING_RECONCILIATION')
   )
     return undefined
   const remainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
@@ -534,7 +534,7 @@ const makeRecoveryFirstCycleDriverEffect = (
         } = yield* reconciliationForPreparation(
           preflight,
           reconcile,
-          authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
+          authorityStore.readAuthorityState,
           Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
           policy.maxBrokerStateAgeMs,
         )
@@ -605,7 +605,7 @@ const makeRecoveryFirstCycleDriverEffect = (
           Effect.map((observedAt) => {
             const cadence = advanced.nextDelayMs ?? nextDelayMs
             const continuation =
-              closeQuoteContinuationDelayMs(advanced.result, cadence, observedAt) ??
+              executionEvidenceContinuationDelayMs(advanced.result, cadence, observedAt) ??
               decisionReadinessContinuationDelayMs(advanced.result, cadence, observedAt)
             const maximumHold = maximumHoldContinuationDelayMs(advanced.result, cadence, observedAt)
             if (maximumHold !== undefined) {

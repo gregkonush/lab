@@ -15,6 +15,7 @@ import { Clock, Config, Effect, Layer, Metric, Schema } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import { embeddedBuildMetadata } from '../build'
+import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 import { PostgresClientLive } from '../db/postgres-client'
 import { GitSourceRevisionSchema } from '../schemas'
 import { validateResearchApprovalKey } from '../research-inference/approval'
@@ -24,6 +25,13 @@ import { makeResearchStore } from '../research-inference/store'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
+import {
+  makePublicInformationServices,
+  submitPublicInformationActivation,
+  submitPublicInformationJobs,
+} from './restate-public-information'
+import { publicInformationEnabled, publicInformationIntervalMs } from '../public-information'
+import { runPublicInformation } from '../public-information-resources'
 import { makeBaynResearchRun } from './restate-research-run'
 import { acquireRestateTelemetry, currentOpenTelemetryParentSpan } from './restate-telemetry'
 
@@ -48,8 +56,9 @@ export const researchServerProgram = Effect.gen(function* () {
   if (embeddedBuildMetadata !== undefined && embeddedBuildMetadata.sourceRevision !== config.sourceRevision)
     return yield* new ResearchError({ message: 'Research server source revision differs from its immutable image' })
   const identityKeys = yield* Effect.fromResult(decodeRestateRequestIdentityKeys(config.identityKeys))
+  const telemetryConfig = yield* telemetryRuntimeConfig('bayn-research')
   const telemetry = yield* acquireRestateTelemetry({
-    ...(yield* telemetryRuntimeConfig('bayn-research')),
+    ...telemetryConfig,
     serviceVersion: config.sourceRevision,
   })
   const servingPolicyHash = yield* Effect.fromResult(hashResearch(config.policy))
@@ -105,9 +114,51 @@ export const researchServerProgram = Effect.gen(function* () {
       config.approvalKey,
       telemetry.hooks,
     )
+    const publicServices = makePublicInformationServices(
+      {
+        sourceRevision: config.sourceRevision,
+        approvalKey: config.approvalKey,
+        intervalMs: publicInformationIntervalMs,
+      },
+      {
+        collect: (source, previous, signal) => {
+          const parent = currentOpenTelemetryParentSpan()
+          const collect = runPublicInformation(source, config.sourceRevision, previous)
+          return Effect.runPromiseWith(context)(
+            parent === undefined ? collect : collect.pipe(Effect.withParentSpan(parent)),
+            { signal },
+          )
+        },
+      },
+      telemetry.hooks,
+    )
     yield* acquireRestateHttp2Server(
-      createServer(restate.createEndpointHandler({ services: [workflow], identityKeys: [...identityKeys] })),
+      createServer(
+        restate.createEndpointHandler({ services: [workflow, ...publicServices], identityKeys: [...identityKeys] }),
+      ),
       config.port,
+    )
+    yield* Effect.gen(function* () {
+      const enabled = yield* Config.Boolean('BAYN_PUBLIC_INFORMATION_ENABLED').pipe(Config.withDefault(false))
+      yield* Metric.update(publicInformationEnabled, enabled ? 1 : 0)
+      if (!enabled) return
+      yield* submitPublicInformationJobs((source) =>
+        submitPublicInformationActivation(
+          {
+            sourceRevision: config.sourceRevision,
+            approvalKey: config.approvalKey,
+            ingressOrigin: 'http://restate.restate.svc.cluster.local:8080',
+          },
+          source,
+        ),
+      )
+    }).pipe(
+      Effect.catchCause(() =>
+        Effect.logWarning(
+          'Public information job activation unavailable; trading and model research remain independent',
+        ),
+      ),
+      Effect.forkScoped,
     )
     yield* Effect.logInfo('Bayn independent research endpoint is listening').pipe(
       Effect.annotateLogs({ sourceRevision: config.sourceRevision, servingPolicyHash, port: config.port }),
@@ -120,7 +171,13 @@ export const researchServerProgram = Effect.gen(function* () {
       Layer.mergeAll(
         OtlpMetrics.layer({
           url: 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
-          resource: { serviceName: 'bayn-research', serviceVersion: config.sourceRevision },
+          resource: {
+            serviceName: 'bayn-research',
+            serviceVersion: config.sourceRevision,
+            ...(telemetryConfig.instanceId === undefined
+              ? {}
+              : { attributes: { 'service.instance.id': telemetryConfig.instanceId } }),
+          },
           exportInterval: '30 seconds',
           shutdownTimeout: '3 seconds',
         }).pipe(Layer.provide(Layer.mergeAll(NodeHttpClient.layerNodeHttp, OtlpSerialization.layerProtobuf))),
@@ -135,10 +192,12 @@ export const researchServerProgram = Effect.gen(function* () {
   )
 }).pipe(Effect.scoped)
 
-if (import.meta.main)
+if (import.meta.main) {
+  initializeErrorTracking('bayn-research')
   NodeRuntime.runMain(
-    Layer.effectDiscard(researchServerProgram).pipe(
+    Layer.effectDiscard(researchServerProgram.pipe(reportTerminalFailure('bayn-research'))).pipe(
       Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-research')),
       Layer.launch,
     ),
   )
+}

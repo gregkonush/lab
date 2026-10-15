@@ -10,6 +10,7 @@ import {
   assetObservationSource,
   defaultFillActivitiesPageSize,
   type FillActivitiesQuery,
+  type FeeActivitiesQuery,
   type MarketCalendarQuery,
   type OrdersQuery,
   type ReadEvidence,
@@ -110,10 +111,11 @@ const fillActivitiesRequestDataFirst = (
 export const fillActivitiesRequest = Pipeable.dual(2, fillActivitiesRequestDataFirst)
 export const feeActivitiesRequest = (
   connection: BrokerConnection,
-  query: FillActivitiesQuery,
+  query: FeeActivitiesQuery,
 ): FillActivitiesRequest => {
   const request = fillActivitiesRequest(connection, query)
-  request.url.pathname = '/v2/account/activities/FEE'
+  request.url.pathname = '/v2/account/activities'
+  request.url.searchParams.set('activity_types', 'FEE,CFEE')
   return request
 }
 

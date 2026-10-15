@@ -71,18 +71,21 @@ adds intraday protocol v3 to the durable authority contracts while preserving v1
 ## Retained-input verification
 
 ```sh
-node dist/streaming-diagnostics-command.js --since 2026-09-11T19:00:00Z
+node dist/streaming-diagnostics-command.js --query query.json
 ```
 
 This bounded probe uses the configured Bayn Kafka identity and the production consumer/reducer. It captures source
 bounds, consumes retained records at explicit offsets in a unique group without committing offsets, verifies exact feature-to-bar
-matches, and closes the connection. Receipt times are the actual diagnostic times. Its output identifies retained
-input joins observed now; it does not claim those features were available in a past trading session. The image
+matches, and closes the connection. The query is an exact `IntradaySnapshotQuery` JSON object with calendar, universe, window and observation time.
+The receipt evaluates eligibility with `selectStreamingInputs`, reports exact missing minute timestamps, quote ages
+and source coordinates, and retains every excluded candidate even when no candidate can trade. Late arrivals
+remain unavailable at the requested observation. A fresh diagnostic consumer cannot recover original historical
+arrival times; use retained original capture evidence for historical availability claims. The image
 check loads this command with `--help` and runs `--codecs` to round-trip gzip, Snappy, LZ4 and Zstd from the
 finished image without network access.
 
 Historical probes may need to consume a large retained backfill whose Kafka timestamps reflect recent publication.
-Use `--bootstrap-timeout-seconds 7200` with `--since` to allow two hours for that read-only bootstrap. The default
+Use `--bootstrap-timeout-seconds 7200` with `--query` to allow two hours for that read-only bootstrap. The default
 is 300 seconds, and the accepted range is 1–14400 seconds (four hours). Estimate the budget from retained record
 count and observed processing rate, allowing time for bounded connection recovery. The receipt records the
 selected `bootstrapTimeoutMs`.
@@ -194,6 +197,8 @@ boundary, and its source-reference suffix matches the currently selected raw bar
 hashes. The producer retains complete session provenance; Bayn independently verifies the decision-window suffix,
 not older raw bars outside its retained window. The full technical payload and source references are hashed into the
 snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
+The selected market source owns the optional topic. Sharing a consumer with equities does not attach their technical
+topic to a crypto snapshot or its bootstrap evidence.
 
 An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
 correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement

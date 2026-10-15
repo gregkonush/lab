@@ -1,3 +1,5 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
 import { gzipSync } from 'node:zlib'
 import { Result } from 'effect'
 
@@ -26,7 +28,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
   const inputs: SixBarFixtureInput[] = []
   for (const session of trainingSessions) {
     const openMs = Date.parse(session.openAt)
-    for (const symbol of protocol.universe) {
+    for (const symbol of equityMarketProfile.universe) {
       for (let minute = 0; minute < 40; minute++)
         inputs.push({
           channel: 'bars',
@@ -100,7 +102,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
   const input = {
     schemaVersion: 'bayn.ridge-training-input.v1',
     sampling: 'INDEPENDENT_SERIAL_FIXED_CANDIDATES',
-    candidateSymbols: protocol.candidateSymbols,
+    candidateSymbols: equityMarketProfile.candidateSymbols,
     calendar: rawCalendar,
     expectedCalendarHash: calendar.normalizedResponseHash,
     sessions: calendar.sessions.map((session, index) => ({
@@ -125,7 +127,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v2',
+        inputDefinition: 'bayn.jev-trading-signal-state.v3',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
@@ -133,8 +135,14 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       sessionDates: trainingSessions.map((session) => session.date),
       calendar: rawCalendar.slice(0, 3),
       build,
-      assumptions: { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
-      assets: protocol.universe.map((symbol, index) => ({
+      assumptions: {
+        instruments: replayTestInstruments,
+        latencyMs: 100,
+        slippageBps: 1,
+        availableLiquidityPpm: 1_000_000,
+        feeMultiplierPpm: 1_000_000,
+      },
+      assets: equityMarketProfile.universe.map((symbol, index) => ({
         id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
         symbol,
         class: 'us_equity',

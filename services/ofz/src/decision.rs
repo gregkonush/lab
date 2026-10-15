@@ -8,7 +8,7 @@ use crate::{
     policy::{self, BFF_ID, CONNECTOR_BROKER_ID, CONTROLLER_ID, KUBE_BROKER_ID},
     proto::{
         Action, Actor, CheckRequest, CheckResponse, ObservationScope, RequestContext, Resource,
-        actor::Identity,
+        WorkspaceRole, actor::Identity,
     },
     store::{self, Database, State, sql_error},
 };
@@ -88,12 +88,12 @@ pub fn actor_id(context: &RequestContext) -> Result<String, Status> {
     actor.subject().map(|(_, id)| id)
 }
 
-pub async fn workload(native: &Native, peer: &str, action: Action) -> Result<(), Status> {
+pub async fn workload(native: &Native, peer: &str, action: Action) -> Result<String, Status> {
     if !policy::allowed_workload(peer) {
         return Err(Status::unauthenticated("unattested workload"));
     }
     let permission = action.permission()?;
-    let (allowed, _) = native
+    let (allowed, revision) = native
         .check(&[Check::new(
             "platform",
             "lab",
@@ -105,7 +105,7 @@ pub async fn workload(native: &Native, peer: &str, action: Action) -> Result<(),
     if !allowed {
         return Err(Status::permission_denied("workload action denied"));
     }
-    Ok(())
+    Ok(revision)
 }
 
 pub async fn session(
@@ -183,7 +183,8 @@ pub fn clean_absolute(path: &str) -> bool {
         && path.len() > 1
         && path.len() <= 4096
         && !path.ends_with('/')
-        && !path.contains(['\0', '\\'])
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
         && path
             .split('/')
             .skip(1)
@@ -229,7 +230,12 @@ pub fn validate_scope(actions: &[i32], scope: &ObservationScope) -> Result<(), S
         .thread_ids
         .iter()
         .chain(&scope.terminal_ids)
-        .any(|id| id.is_empty() || id.len() > 128 || id.contains(['/', '\\', '\0']))
+        .any(|id| {
+            id.is_empty()
+                || id.len() > 128
+                || id.contains(['/', '\\'])
+                || id.chars().any(char::is_control)
+        })
     {
         return Err(Status::invalid_argument("invalid observation scope"));
     }
@@ -242,6 +248,87 @@ pub fn validate_scope(actions: &[i32], scope: &ObservationScope) -> Result<(), S
         ));
     }
     Ok(())
+}
+
+struct HumanObservation {
+    allowed: bool,
+    scope: Option<ObservationScope>,
+    state: State,
+}
+
+fn content_observation(action: Action) -> bool {
+    matches!(
+        action,
+        Action::FilesObserve
+            | Action::CodexObserve
+            | Action::TerminalObserve
+            | Action::BrowserObserve
+    )
+}
+
+async fn human_observation_scope(
+    database: &Database,
+    context: &RequestContext,
+    action: Action,
+    target: &str,
+) -> Result<HumanObservation, Status> {
+    let human = human(context)?;
+    let uid = parse_uuid(&context.workspace_uid)?;
+    let session = parse_uuid(&context.session_id)?;
+    let epoch = if context.runtime_epoch.is_empty() {
+        None
+    } else {
+        Some(parse_uuid(&context.runtime_epoch)?)
+    };
+    let client = database
+        .pool
+        .get()
+        .await
+        .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+    let query = format!(
+        "WITH authority(version,recovery_generation,fenced,now_ms,archive_healthy) AS ({}) SELECT w.owner_id,c.role,c.scope,EXISTS(SELECT 1 FROM ofz.emergency_access e WHERE e.workspace_uid=w.uid AND e.human_id=$2 AND e.expires_at_ms>a.now_ms),COALESCE(w.state='active' AND w.running AND w.runtime_epoch=$3,false),EXISTS(SELECT 1 FROM ofz.sessions s JOIN ofz.memberships m ON m.human_id=s.human_id AND m.role=1 WHERE s.id=$4 AND s.human_id=$2 AND NOT s.revoked AND s.recovery_generation=a.recovery_generation AND s.expires_at_ms>a.now_ms AND s.idle_deadline_ms>a.now_ms),a.version,a.recovery_generation,a.fenced,a.now_ms,a.archive_healthy FROM ofz.workspaces w LEFT JOIN ofz.collaborators c ON c.workspace_uid=w.uid AND c.human_id=$2 CROSS JOIN authority a WHERE w.uid=$1",
+        store::STATE_QUERY,
+    );
+    let row = client
+        .query_opt(&query, &[&uid, &human, &epoch, &session])
+        .await
+        .map_err(sql_error)?
+        .ok_or_else(|| Status::permission_denied("workspace observation denied"))?;
+    let state = State {
+        version: row.get::<_, i64>(6) as u64,
+        recovery_generation: row.get::<_, i64>(7) as u64,
+        fenced: row.get(8),
+        now_ms: row.get::<_, i64>(9) as u64,
+        archive_healthy: row.get(10),
+    };
+    let role: Option<i32> = row.get(1);
+    let privileged = row.get::<_, String>(0) == human
+        || role == Some(WorkspaceRole::Developer as i32)
+        || row.get::<_, bool>(3);
+    let scope = if privileged {
+        None
+    } else if role == Some(WorkspaceRole::Viewer as i32) {
+        let value: serde_json::Value =
+            row.get::<_, Option<serde_json::Value>>(2).ok_or_else(|| {
+                Status::permission_denied("Viewer content requires an approved scope")
+            })?;
+        let scope: ObservationScope = store::decode(value)?;
+        validate_scope(&[], &scope)
+            .map_err(|_| Status::unavailable("stored Viewer scope is invalid"))?;
+        if !scope_allows(&scope, action, target) {
+            return Err(Status::permission_denied(
+                "target is outside the approved Viewer scope",
+            ));
+        }
+        Some(scope)
+    } else {
+        None
+    };
+    Ok(HumanObservation {
+        allowed: (privileged || scope.is_some()) && row.get::<_, bool>(4) && row.get::<_, bool>(5),
+        scope,
+        state,
+    })
 }
 
 pub fn grant_checks(grant: &Grant, action: Action) -> Result<Vec<Check>, Status> {
@@ -347,7 +434,7 @@ pub async fn evaluate(
     peer: &str,
     evaluation: Evaluation<'_>,
     allow_fenced_revoke: bool,
-) -> Result<(bool, String, u64, State), Status> {
+) -> Result<(bool, String, u64, State, Option<ObservationScope>), Status> {
     let Evaluation {
         context,
         action,
@@ -382,6 +469,7 @@ pub async fn evaluate(
                 | Action::WorkspaceTransfer
         );
     let mut grant_workspace = None;
+    let mut effective_scope = None;
     let mut checks = match actor.identity.as_ref() {
         Some(Identity::HumanId(_)) => {
             if !matches!(peer, BFF_ID | CONTROLLER_ID) {
@@ -419,6 +507,7 @@ pub async fn evaluate(
                 return Err(Status::permission_denied("access denied"));
             }
             valid_until = valid_until.min(grant.expires_at_ms);
+            effective_scope = Some(grant.scope.clone());
             grant_checks(&grant, action)?
         }
         Some(Identity::WorkloadId(id))
@@ -487,6 +576,11 @@ pub async fn evaluate(
             };
         }
     }
+    if allowed && kind == "workspace" && actor_kind == "human" && content_observation(action) {
+        let observation = human_observation_scope(database, context, action, target).await?;
+        allowed = observation.allowed;
+        effective_scope = observation.scope;
+    }
     // A dependency response arriving beyond the bound cannot authorize a disclosure.
     let after = database.state().await?;
     if after.now_ms >= valid_until
@@ -495,7 +589,10 @@ pub async fn evaluate(
     {
         return Err(Status::deadline_exceeded("authorization decision expired"));
     }
-    Ok((allowed, revision, valid_until, after))
+    if after.version != state.version {
+        return Err(Status::aborted("policy changed while authorizing"));
+    }
+    Ok((allowed, revision, valid_until, after, effective_scope))
 }
 
 pub async fn check(
@@ -527,7 +624,7 @@ pub async fn check(
         false,
     )
     .await;
-    let (allowed, revision, valid_until, state) = match result {
+    let (allowed, revision, valid_until, state, effective_scope) = match result {
         Ok(result) => result,
         Err(mut error) => {
             if request.stream_receipt_id.is_empty()
@@ -594,12 +691,57 @@ pub async fn check(
         }
         request.stream_receipt_id
     };
+    if allowed
+        && resource.kind == crate::proto::ResourceKind::Workspace as i32
+        && matches!(
+            context
+                .actor
+                .as_ref()
+                .and_then(|actor| actor.identity.as_ref()),
+            Some(Identity::HumanId(_))
+        )
+        && content_observation(action)
+    {
+        // Audit and receipt lookup may block while restrictive intent commits.
+        let failure =
+            match human_observation_scope(database, context, action, &request.target).await {
+                Ok(current)
+                    if current.allowed
+                        && current.scope == effective_scope
+                        && current.state.version == state.version
+                        && current.state.recovery_generation == state.recovery_generation
+                        && current.state.now_ms < valid_until
+                        && !current.state.fenced
+                        && current.state.archive_healthy =>
+                {
+                    None
+                }
+                Ok(_) => Some(Status::aborted(
+                    "workspace observation changed before disclosure",
+                )),
+                Err(error) => Some(error),
+            };
+        if let Some(error) = failure {
+            let denial = store::receipt(
+                context,
+                peer,
+                resource.clone(),
+                action,
+                false,
+                "",
+                "workspace observation changed before disclosure",
+            );
+            database.audit(&denial, &request.target).await?;
+            return Err(error);
+        }
+    }
     Ok(CheckResponse {
         allowed,
         revision,
         audit_receipt_id,
         valid_until_unix_ms: valid_until,
         recovery_generation: state.recovery_generation,
+        effective_scope: if allowed { effective_scope } else { None },
     })
 }
 
@@ -619,6 +761,35 @@ pub fn workload_actor(peer: &str) -> Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observation_scope_rejects_control_characters() {
+        let approved = ObservationScope {
+            file_roots: vec!["/workspace/project".into()],
+            thread_ids: vec!["thread-approved".into()],
+            terminal_ids: vec!["terminal-approved".into()],
+            browser_screenshot: false,
+            max_bytes: 1024,
+            max_items: 20,
+        };
+        validate_scope(&[], &approved).unwrap();
+        for control in ['\n', '\r', '\u{1b}', '\u{7f}', '\u{85}'] {
+            for field in 0..3 {
+                let mut scope = approved.clone();
+                match field {
+                    0 => scope.file_roots = vec![format!("/workspace/project{control}other")],
+                    1 => scope.thread_ids = vec![format!("thread{control}other")],
+                    _ => scope.terminal_ids = vec![format!("terminal{control}other")],
+                }
+                assert_eq!(
+                    validate_scope(&[], &scope).unwrap_err().code(),
+                    tonic::Code::InvalidArgument,
+                    "scope field {field} contains {control:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn diagnostic_scope_does_not_escape_selected_content() {
         let scope = ObservationScope {

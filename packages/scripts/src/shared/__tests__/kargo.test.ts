@@ -160,6 +160,14 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  ofz: {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('ofz')],
+    apps: ['ofz'],
+    includePaths: [],
+  },
   devbox: {
     creationCriteria: 'single',
     requiresBuildReceipt: true,
@@ -220,43 +228,10 @@ const expected = {
     ],
   },
   bayn: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('bayn')],
     apps: ['bayn'],
-    includePaths: [
-      'services/bayn',
-      'packages/scripts/src/bayn',
-      'nix/images/bayn.nix',
-      'nix/images/bayn-runtime-root.nix',
-      'nix/images/bun-workspace-service.nix',
-      'nix/images/bun-workspace-deps-source.nix',
-      'nix/images/bun-workspace-deps-source.test.sh',
-      'nix/images/prune-bun-dependency-metadata.sh',
-      'nix/packages.nix',
-      'nix/cache-push.sh',
-      'nix/ci-nix-oci-summary.sh',
-      'nix/ci-run-timed.sh',
-      'nix/oci-inspect-archive.sh',
-      'nix/oci-push.sh',
-      'nix/verify-bayn-image-command.sh',
-      'nix/verify-bayn-image-command.test.sh',
-      'packages/scripts/src/shared/oci.ts',
-      'flake.nix',
-      'flake.lock',
-      'bun.lock',
-      'glob:**/package.json',
-      '.npmrc',
-      'bunfig.toml',
-      'patches',
-      'tsconfig.base.json',
-      '.github/actions/setup-nix-toolchain',
-      'glob:.github/workflows/bayn-*.yml',
-      '.github/workflows/common-monorepo.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      'argocd/applications/bayn',
-      'argocd/applications/kargo',
-      'argocd/applicationsets/product.yaml',
-    ],
+    includePaths: [],
   },
   proompteng: {
     creationCriteria: 'single',
@@ -925,7 +900,8 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('aligns each product Warehouse source paths with its exact image build filter', () => {
     expect(productNixWorkflow.concurrency).toEqual({
-      group: 'product-nix-images-${{ github.event.pull_request.number || github.run_id }}',
+      group:
+        "product-nix-images-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'source' }}",
       'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
     })
 
@@ -952,7 +928,9 @@ describe('Kargo direct-push GitOps contract', () => {
     const workflow = YAML.parse(readRepoFile('.github/workflows/temporal-worker-images.yml'))
     for (const event of ['pull_request', 'push']) {
       const buildPaths = workflow.on[event].paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-      expect(sourcePaths).toEqual(buildPaths)
+      expect(
+        event === 'push' ? sourcePaths : sourcePaths.filter((path: string) => !path.endsWith('/kargo.test.ts')),
+      ).toEqual(buildPaths)
     }
   })
 
@@ -1119,7 +1097,9 @@ describe('Kargo direct-push GitOps contract', () => {
                 ? '45m0s'
                 : stageName === 'bayn-model'
                   ? '4h0m0s'
-                  : '20m0s',
+                  : stageName === 'bayn'
+                    ? '30m0s'
+                    : '20m0s',
         errorThreshold: 3,
       })
       const apps = argocdUpdate?.config?.apps as Array<Record<string, any>>
@@ -1168,6 +1148,24 @@ describe('Kargo direct-push GitOps contract', () => {
     expect(torghutVerifierWorkflow).toContain('torghut-ws; do')
     expect(torghutVerifierWorkflow).not.toContain('torghut-options')
     expect(torghutVerifierWorkflow).not.toContain('torghut-hyperliquid-runtime')
+  })
+
+  it('predeclares and preserves string types for every Ofz provenance annotation', () => {
+    const source = YAML.parse(readRepoFile('argocd/applications/ofz/kustomization.yaml')) as {
+      commonAnnotations?: Record<string, unknown>
+    }
+    const ofz = byName(stages).get('ofz')
+    const steps = ofz?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
+    const update = steps.find((step) => step.uses === 'yaml-update')
+    expect(update?.config?.path).toBe('./out/argocd/applications/ofz/kustomization.yaml')
+    expect(update?.config?.updates).toHaveLength(3)
+    for (const change of update?.config?.updates ?? []) {
+      expect(change.key).toStartWith('commonAnnotations.')
+      const key = String(change.key).slice('commonAnnotations.'.length).replaceAll('\\.', '.')
+      expect(typeof source.commonAnnotations?.[key]).toBe('string')
+      expect(source.commonAnnotations?.[key]).not.toBe('')
+      expect(change.value).toMatch(/^\$\{\{ quote\(.+\) \}\}$/)
+    }
   })
 
   it('uses Kargo to write image and provenance data, never live Argo image overrides', () => {

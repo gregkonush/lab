@@ -15,6 +15,7 @@ export enum JevFailure {
   Status = 'STATUS',
   Response = 'RESPONSE',
   Timeout = 'TIMEOUT',
+  NotDispatched = 'NOT_DISPATCHED',
 }
 
 export const jevModel = 'jev-1.13.0' as const

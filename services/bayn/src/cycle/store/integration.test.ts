@@ -128,6 +128,36 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     await runtime?.dispose()
   })
 
+  test('unused entry expiry is persisted after its lease and rejected early by PostgreSQL', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const sql = yield* PgClient.PgClient
+        const at = '2026-08-28T14:31:00.000Z'
+        const cycle = (yield* store.acquire(draft(), at)).cycle
+        yield* store.activate(cycle.identity.cycleId, at)
+        const early = yield* sql`UPDATE autonomous_cycles SET state='BLOCKED',
+        terminal_reason='BLOCKED_UNUSED_ENTRY_EXPIRED',state_version=state_version+1,
+        updated_at='2026-08-28T14:31:59.999Z',terminal_at='2026-08-28T14:31:59.999Z'
+        WHERE cycle_id=${cycle.identity.cycleId}`.pipe(Effect.result)
+        expect(Result.isFailure(early)).toBe(true)
+        if (Result.isSuccess(early) || early.failure.reason._tag !== 'ConstraintError')
+          throw new Error('Expected the database admission deadline guard')
+        expect(String(early.failure.reason.cause)).toContain('unused entry admission must expire')
+        expect(Option.getOrThrow(yield* store.read(cycle.identity.cycleId)).state).toBe(CycleState.Active)
+        const expired = yield* store.block(
+          cycle.identity.cycleId,
+          CycleTerminalReason.UnusedEntryExpired,
+          '2026-08-28T14:32:00.000Z',
+        )
+        expect(expired.cycle).toMatchObject({
+          state: CycleState.Blocked,
+          terminalReason: CycleTerminalReason.UnusedEntryExpired,
+        })
+      }),
+    )
+  })
+
   test('converges concurrent acquisition on one immutable intraday cycle', async () => {
     const candidate = draft()
     const result = await runtime.runPromise(
@@ -156,6 +186,26 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     ])
     expect(Option.getOrThrow(result.stored)).toMatchObject({ state: CycleState.Pending, stateVersion: 1 })
     expect(Option.getOrThrow(result.slot).identity.cycleId).toBe(candidate.identity.cycleId)
+  })
+
+  test('activation at the equity cutoff persists unused expiry without binding evidence', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        const candidate = draft()
+        const acquiredAt = '2026-08-28T19:54:59.000Z'
+        yield* store.acquire(candidate, acquiredAt)
+        const receipt = yield* store.activate(candidate.identity.cycleId, candidate.window.submissionCutoffAt)
+        expect(receipt.cycle).toMatchObject({
+          state: CycleState.Blocked,
+          terminalReason: CycleTerminalReason.UnusedEntryExpired,
+          bindings: {},
+          terminalAt: candidate.window.submissionCutoffAt,
+        })
+        expect(Option.isNone(yield* store.readDecisionDocument(candidate.identity.cycleId))).toBe(true)
+        expect(Option.getOrThrow(yield* store.read(candidate.identity.cycleId))).toEqual(receipt.cycle)
+      }),
+    )
   })
 
   test('stores successive immutable attempts in one session and converges retries on the latest authority slot', async () => {
@@ -256,7 +306,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             CycleTerminalReason.ProvenanceMismatch,
             '2026-08-28T13:10:00.000Z',
           )
-          yield* TestClock.setTime(Date.parse('2026-08-28T13:11:00.000Z'))
+          yield* TestClock.setTime(Date.parse('2026-08-28T14:12:00.000Z'))
           const discover = discoverAutonomousCyclePass({
             cycleBindingId: qualificationRunId,
             accountId,
@@ -265,6 +315,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             authorityGenerationHash: '7'.repeat(64),
             executionPolicy,
             buildDecision: forbidden,
+            buildDecisionEvidence: forbidden,
           })
           const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
           const sql = yield* PgClient.PgClient
@@ -284,11 +335,18 @@ describePostgres('PostgreSQL intraday cycle store', () => {
       )
       expect(Option.getOrThrow(result.previous)).toEqual(result.blocked)
       const current = Option.getOrThrow(result.current)
+      if (version === 'v3') {
+        expect(current).toEqual(result.blocked)
+        expect(result.attempts.every((attempt) => attempt.outcome === 'ALREADY_TERMINAL')).toBe(true)
+        expect(result.intentCount).toBe('0')
+        return
+      }
       expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
       expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
       expect(current.state).toBe(CycleState.Pending)
       expect(current.bindings).toEqual({})
-      expect(current.window).toEqual(candidate.window)
+      expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
+      expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
       expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
       expect(result.intentCount).toBe('0')
     })
@@ -555,7 +613,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           INSERT INTO intents (
             intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
             decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-            quantity_micros, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
+            quantity_atoms, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
           ) VALUES (
             ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum',
             ${'f'.repeat(64)}, ${'0'.repeat(64)}, ${policyHash}, ${accountId}, 'bayn-risk-cutoff-test',
@@ -847,6 +905,78 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     )
   })
 
+  test('uses bounded account-time reads for reconciliation and every broker event kind', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Copy the migrated table/index definitions without the unrelated typed-payload triggers.
+            yield* sql`CREATE TEMP TABLE broker_events (LIKE public.broker_events INCLUDING INDEXES) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE reconciliations (LIKE public.reconciliations INCLUDING INDEXES) ON COMMIT DROP`
+            yield* sql`
+          INSERT INTO broker_events (
+            event_id, schema_version, content_hash, normalized_content_hash, event_kind, broker, account_id,
+            source_event_id, source_sequence, occurred_at, observed_at
+          )
+          SELECT lpad(to_hex(sequence), 64, '0'), 'bayn.paper-broker-event.v1', repeat('a', 64), repeat('a', 64),
+            'ORDER', 'ALPACA', CASE WHEN sequence % 2 = 0 THEN 'account' ELSE 'other' END,
+            sequence::text, sequence, '2026-09-08T17:00:00Z'::timestamptz,
+            '2026-09-08T17:00:00Z'::timestamptz + sequence * interval '1 millisecond'
+          FROM generate_series(1, 20000) AS sequence
+        `
+            yield* sql`
+          INSERT INTO reconciliations (
+            reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
+            content_hash, status, discrepancies, reconciled_at
+          )
+          SELECT lpad(to_hex(sequence), 64, '0'), 'bayn.paper-reconciliation.v1',
+            CASE WHEN sequence % 2 = 0 THEN 'account' ELSE 'other' END,
+            repeat('a', 64), repeat('a', 64), repeat('b', 64), 'EXACT', '[]'::jsonb,
+            '2026-09-08T17:00:00Z'::timestamptz + sequence * interval '1 millisecond'
+          FROM generate_series(1, 20000) AS sequence
+        `
+            yield* sql`ANALYZE broker_events`
+            yield* sql`ANALYZE reconciliations`
+
+            const cutoff = '2026-09-08T17:00:19.999Z'
+            const decodeInstants = Schema.decodeUnknownEffect(
+              Schema.Tuple([Schema.Struct({ observed_at: Schema.String })]),
+            )
+            const broker = yield* sql`
+          SELECT to_char(max(observed_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
+          FROM broker_events WHERE account_id = 'account' AND observed_at <= ${cutoff}::timestamptz
+        `.pipe(Effect.flatMap(decodeInstants))
+            const reconciliation = yield* sql`
+          SELECT to_char(reconciled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
+          FROM reconciliations
+          WHERE account_id = 'account' AND reconciled_at <= ${cutoff}::timestamptz
+          ORDER BY reconciled_at DESC LIMIT 1
+        `.pipe(Effect.flatMap(decodeInstants))
+            expect(broker).toEqual([{ observed_at: '2026-09-08T17:00:19.998Z' }])
+            expect(reconciliation).toEqual(broker)
+
+            const brokerPlan = yield* sql`
+          EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+          SELECT max(observed_at) FROM broker_events
+          WHERE account_id = 'account' AND observed_at <= ${cutoff}::timestamptz
+        `
+            const reconciliationPlan = yield* sql`
+          EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+          SELECT reconciled_at FROM reconciliations
+          WHERE account_id = 'account' AND reconciled_at <= ${cutoff}::timestamptz
+          ORDER BY reconciled_at DESC LIMIT 1
+        `
+            for (const plan of [brokerPlan, reconciliationPlan]) {
+              expect(JSON.stringify(plan)).not.toContain('Seq Scan')
+              expect(JSON.stringify(plan)).toContain('Index Only Scan')
+            }
+          }),
+        )
+      }),
+    )
+  }, 30_000)
+
   test('bounds terminal recovery reads over a large history without admitting stale or incomplete evidence', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -867,7 +997,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               intent_id text, account_id text, cycle_id text, strategy_name text, decision_hash text,
               policy_hash text, authority_generation_hash text, risk_decision_id text, state text,
               terminal_outcome text, order_type text, time_in_force text, client_order_id text,
-              symbol text, side text, quantity_micros numeric, updated_at timestamptz
+              symbol text, side text, quantity_atoms numeric, updated_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE mutation_events (
               intent_id text, operation text, event_type text, sequence bigint,
@@ -876,7 +1006,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`CREATE TEMP TABLE orders (
               event_id text, account_id text, broker_order_id text, client_order_id text,
               intent_id text, symbol text, side text, order_type text, time_in_force text,
-              quantity_micros numeric, filled_quantity_micros numeric, status text
+              quantity_atoms numeric, filled_quantity_atoms numeric, status text
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE broker_events (
               event_id text, source_sequence bigint, observed_at timestamptz,
@@ -885,7 +1015,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`CREATE TEMP TABLE fills (
               account_id text, broker_order_id text, intent_id text,
               client_order_id text DEFAULT 'client', symbol text DEFAULT 'AMZN', side text DEFAULT 'BUY',
-              quantity_micros numeric DEFAULT 1000000
+              quantity_atoms numeric DEFAULT 1000000
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE position_snapshots (
               snapshot_id text, account_id text, position_count integer, observed_at timestamptz,
@@ -972,7 +1102,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* completionMatches()).toBe(false)
             yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
 
-            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 1000000`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id)
               VALUES ('account', 'broker-order', 'intent')`
@@ -981,9 +1111,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* completionMatches()).toBe(false)
             yield* sql`UPDATE position_snapshots SET position_count = 0`
             expect(yield* completionMatches()).toBe(true)
-            yield* sql`UPDATE fills SET quantity_micros = 500000`
+            yield* sql`UPDATE fills SET quantity_atoms = 500000`
             expect(yield* completionMatches()).toBe(false)
-            yield* sql`UPDATE fills SET quantity_micros = 1000000, client_order_id = 'wrong-client'`
+            yield* sql`UPDATE fills SET quantity_atoms = 1000000, client_order_id = 'wrong-client'`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`UPDATE fills SET client_order_id = 'client'`
             yield* sql`UPDATE position_snapshots SET ingestion_order_trusted = false`
@@ -995,13 +1125,13 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:03:00Z'`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
-            yield* sql`UPDATE orders SET filled_quantity_micros = quantity_micros`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = quantity_atoms`
             expect(yield* completionMatches()).toBe(false)
-            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 1000000`
             expect(yield* completionMatches()).toBe(true)
             yield* sql`DELETE FROM fills`
             yield* sql`DELETE FROM position_snapshots`
-            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 0`
             yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account', 'broker-order', 'intent')`
             expect(yield* completionMatches()).toBe(false)
             yield* sql`DELETE FROM fills`
@@ -1056,9 +1186,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account', 'broker-order', 'intent')`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`DELETE FROM fills`
-            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 1000000`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
-            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 0`
             yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:03:00Z'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE broker_events SET observed_at = '2026-09-08T17:02:00Z'`
@@ -1070,7 +1200,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE intents SET terminal_outcome = 'REJECTED'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE intents SET terminal_outcome = 'CANCELED'`
-            yield* sql`UPDATE orders SET filled_quantity_micros = 1000000`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 1000000`
             yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id)
               VALUES ('account', 'broker-order', 'intent')`
             yield* sql`INSERT INTO position_snapshots(snapshot_id,account_id,position_count,observed_at)
@@ -1084,9 +1214,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`UPDATE position_snapshots SET position_count = 1`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             yield* sql`UPDATE position_snapshots SET position_count = 0`
-            yield* sql`UPDATE fills SET quantity_micros = 500000`
+            yield* sql`UPDATE fills SET quantity_atoms = 500000`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
-            yield* sql`UPDATE fills SET quantity_micros = 1000000`
+            yield* sql`UPDATE fills SET quantity_atoms = 1000000`
             yield* sql`UPDATE authority_state SET reason = 'operator kill switch'`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
             const authority = yield* sql`SELECT effective, kill_state FROM authority_state`
@@ -1156,7 +1286,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               authority_generation_hash text
             ) ON COMMIT DROP`
             yield* sql`DELETE FROM fills`
-            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 0`
             yield* sql`UPDATE autonomous_cycles SET qualification_run_id = ${researchPlanHash},
               strategy_protocol_hash = 'protocol'`
             for (const expiry of [
@@ -1172,9 +1302,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             yield* sql`INSERT INTO fills(account_id,broker_order_id,intent_id) VALUES ('account','broker-order','intent')`
             expect(yield* rearmEligible).toBe(false)
             yield* sql`DELETE FROM fills`
-            yield* sql`UPDATE orders SET filled_quantity_micros = 1`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 1`
             expect(yield* rearmEligible).toBe(false)
-            yield* sql`UPDATE orders SET filled_quantity_micros = 0`
+            yield* sql`UPDATE orders SET filled_quantity_atoms = 0`
             yield* sql`INSERT INTO accounting_transactions VALUES ('intent')`
             expect(yield* rearmEligible).toBe(false)
             yield* sql`DELETE FROM accounting_transactions`
