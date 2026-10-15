@@ -123,6 +123,7 @@ identityTest(
     })
     cleanups.push(() => bffAdmin.end())
     const migration = readFileSync(path.join(root, 'services/tengri/migrations/0001_control.sql'))
+    const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -143,16 +144,23 @@ identityTest(
       OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_migrator sslmode=require`,
       OFZ_DATABASE_PASSWORD_FILE: secret('runtime-owner-password', 'fixture-migrator'),
     }
+    const expectedChecksum = createHash('sha256').update(migration).digest()
+    const replayChecksum = createHash('sha256').update(replayMigration).digest()
+    await bffAdmin.query('SET ROLE tengri_migrator')
+    await bffAdmin.query(migration.toString())
+    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
+    await bffAdmin.query('RESET ROLE')
     for (let attempt = 0; attempt < 2; attempt++) {
       execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })
     }
-    const expectedChecksum = createHash('sha256').update(migration).digest()
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
-      'SELECT version,checksum FROM tengri.schema_version',
+      'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(1)
+    expect(versions.rowCount).toBe(2)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
+    expect(versions.rows[1]?.version).toBe(2)
+    expect(versions.rows[1]?.checksum.equals(replayChecksum)).toBe(true)
     expect(() =>
       execFileSync(binary, ['migrate-runtime'], {
         env: {
@@ -162,9 +170,9 @@ identityTest(
         stdio: 'pipe',
       }),
     ).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [Buffer.alloc(32)])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [expectedChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [replayChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {
@@ -466,7 +474,6 @@ identityTest(
       TENGRI_DATABASE_DSN: `postgres://tengri_bff@localhost:${port}/tengri_control`,
       TENGRI_DATABASE_PASSWORD_FILE: secret('bff-password', 'fixture-bff'),
       TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE,
-      TENGRI_DATABASE_SCHEMA_FILE: path.join(root, 'services/tengri/migrations/0001_control.sql'),
       OFZ_GRPC_ENDPOINT: `localhost:${ofzPort}`,
       SPIFFE_ID: fixture.ownId,
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
