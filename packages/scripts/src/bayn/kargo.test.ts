@@ -209,6 +209,7 @@ test('writes source, digest, and research lineage into the correct field in ever
     expect(assignments.has('BAYN_BROKER_ACCESS')).toBe(false)
     expect(assignments.has('BAYN_CAPITAL_AUTHORITY')).toBe(false)
     expect(assignments.has('BAYN_CAPITAL_ACTIVATION_REQUEST')).toBe(false)
+    expect(assignments.has('BAYN_GLITCHTIP_DSN')).toBe(false)
     if (file !== 'deployment') {
       expect(update.config.updates).toContainEqual({
         key: 'spec.template.spec.containers.0.image',

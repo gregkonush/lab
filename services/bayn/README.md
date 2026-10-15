@@ -315,6 +315,11 @@ for interpreting and persisting broker history.
 
 ## Active strategy
 
+Entry and position-management observations share the native Jev reader and declare their purpose. New entries
+must meet the cycle's submission deadline. Management of an already filled position remains valid after that
+deadline and within the execution session; it retains the original fill-based holding deadline, freshness checks,
+and the controller's forced-close window. This includes continuous crypto cycles whose entry lease lasts one minute.
+
 Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
 indicators, quotes, benchmark relationships and actual position context. Bayn computes quantities, cost basis,
 holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
@@ -842,6 +847,18 @@ an abandoned gap without posting the request twice. Earlier sessions remain outs
 
 The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
 Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
+
+Expense reports capture requests and frozen quotes in one PostgreSQL statement, including inside the execution
+writer transaction. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
+history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
+while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
+contribute to the report subtotal. Trading and expense posting continue throughout the read.
+
+The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` identifies the PostgreSQL capture;
+`ledgerTimestampMax`, `verifiedSessionTransferCount` and `exactLedgerPrefix` identify the verified native prefix. `transferCount` and
+`knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
+timestamps belong to different systems and are never compared to infer ordering. Pending quotes remain explicitly
+unverified, and verification does not establish invoice reconciliation.
 
 ```sh
 node dist/inference-cost-command.js --ledger-session 2026-10-06

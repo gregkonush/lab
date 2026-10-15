@@ -199,6 +199,12 @@ const dependencies = (
           observedLimits.transfers = Math.max(observedLimits.transfers ?? 0, filter.limit)
         return transfers.filter((transfer) => transfer.timestamp >= filter.timestamp_min).slice(0, filter.limit)
       },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     }) satisfies TigerBeetleClient,
 })
