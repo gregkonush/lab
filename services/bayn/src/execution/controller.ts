@@ -134,8 +134,8 @@ export type ExecutionDeploymentActivationDecision =
 
 const sameBinding = (
   state: ExecutionControllerState,
-  request: Pick<ExecutionControllerActivation, 'planHash'>,
-): boolean => state.planHash === request.planHash
+  request: Pick<ExecutionControllerActivation, 'planHash' | 'sourceRevision'>,
+): boolean => state.planHash === request.planHash && state.sourceRevision === request.sourceRevision
 
 const conflict = (
   operation: ExecutionControllerDecisionError['operation'],

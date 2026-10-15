@@ -72,7 +72,7 @@ describe('execution controller decisions', () => {
     }
   })
 
-  test('activates once and treats the same controller plan across worker revisions as idempotent', () => {
+  test('activates once and replays only the same controller plan and source revision', () => {
     const state = activated()
 
     expect(state).toEqual({
@@ -88,24 +88,22 @@ describe('execution controller decisions', () => {
       _tag: 'Replayed',
       state,
     })
-    expect(
-      Result.getOrThrow(decideExecutionControllerActivation(state, activation({ sourceRevision: nextSourceRevision }))),
-    ).toEqual({ _tag: 'Replayed', state })
     for (const conflicting of [
       activation({ epoch: 2 }),
       activation({ firstSequence: 1 }),
       activation({ planHash: nextPlanHash }),
+      activation({ sourceRevision: nextSourceRevision }),
     ]) {
       expect(Result.isFailure(decideExecutionControllerActivation(state, conflicting))).toBe(true)
     }
   })
 
-  test('requires an exact previous binding before rotating durable controller state', () => {
+  test.each([planHash, nextPlanHash])('requires the exact predecessor when rotating into plan %s', (targetPlanHash) => {
     const state = { ...activated(), nextSequence: 9 }
     const request = {
       schemaVersion: 'bayn.execution-deployment-activation.v1' as const,
       controllerKey,
-      planHash: nextPlanHash,
+      planHash: targetPlanHash,
       sourceRevision: nextSourceRevision,
       previousBinding: { planHash, sourceRevision },
     }
@@ -126,7 +124,7 @@ describe('execution controller decisions', () => {
     expect(
       Result.getOrThrow(
         decideExecutionDeploymentActivation(
-          { ...state, planHash: nextPlanHash, sourceRevision: nextSourceRevision },
+          { ...state, planHash: targetPlanHash, sourceRevision: nextSourceRevision },
           request,
         ),
       ),
@@ -140,7 +138,7 @@ describe('execution controller decisions', () => {
       decideExecutionDeploymentActivation(state, {
         schemaVersion: 'bayn.execution-deployment-activation.v1',
         controllerKey,
-        planHash: nextPlanHash,
+        planHash: targetPlanHash,
         sourceRevision: nextSourceRevision,
       }),
       decideExecutionDeploymentActivation(null, request),

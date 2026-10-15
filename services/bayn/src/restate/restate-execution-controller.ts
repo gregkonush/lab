@@ -290,7 +290,12 @@ const verifyTickBinding = (
     config.previousBinding !== undefined &&
     state.planHash === config.previousBinding.planHash &&
     state.sourceRevision === config.previousBinding.sourceRevision
-  if (key !== config.controllerKey || (state !== null && !matchesPrevious && state.planHash !== config.planHash)) {
+  if (
+    key !== config.controllerKey ||
+    (state !== null &&
+      !matchesPrevious &&
+      (state.planHash !== config.planHash || state.sourceRevision !== config.sourceRevision))
+  ) {
     throw terminal('execution controller durable state does not match this immutable deployment')
   }
 }

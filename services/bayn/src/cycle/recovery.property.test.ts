@@ -5,12 +5,103 @@ import fc from 'fast-check'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { checkProperty } from '../testing/property-test-support'
 import { continuousExecutionPolicy } from '../market-hours'
+import {
+  decideExecutionControllerActivation,
+  decideExecutionControllerDeactivation,
+  decideExecutionControllerTick,
+  decideExecutionDeploymentActivation,
+  type ExecutionControllerState,
+} from '../execution/controller'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from './model'
 import { selectCycleRecovery } from './recovery'
 
 const { draft } = nativeJevFixture()
 const openMs = Date.parse(draft.window.submissionOpenAt)
 const iso = (ms: number) => new Date(ms).toISOString()
+
+test('property: changing source with the same plan requires a replay-safe controller handoff', () => {
+  checkProperty(
+    'controller-source-handoff',
+    fc.property(
+      fc.record({
+        source: fc.bigInt({ min: 0n, max: (1n << 160n) - 2n }),
+        epoch: fc.integer({ min: 1, max: 1_000_000 }),
+        sequence: fc.integer({ min: 0, max: 1_000_000 }),
+      }),
+      ({ source, epoch, sequence }) => {
+        const controllerKey = 'a'.repeat(64)
+        const planHash = 'b'.repeat(64)
+        const sourceRevision = source.toString(16).padStart(40, '0')
+        const nextSourceRevision = (source + 1n).toString(16).padStart(40, '0')
+        const state: ExecutionControllerState = {
+          schemaVersion: 1,
+          active: true,
+          epoch,
+          planHash,
+          sourceRevision,
+          initialSequence: sequence,
+          nextSequence: sequence,
+        }
+        const request = {
+          schemaVersion: 'bayn.execution-deployment-activation.v1' as const,
+          controllerKey,
+          planHash,
+          sourceRevision: nextSourceRevision,
+          previousBinding: { planHash, sourceRevision },
+        }
+        const rotation = Result.getOrThrow(decideExecutionDeploymentActivation(state, request))
+        expect(rotation._tag).toBe('Rotate')
+        if (rotation._tag !== 'Rotate') throw new Error('Missing exact source handoff')
+        const inactive = Result.getOrThrow(decideExecutionControllerDeactivation(state, rotation.deactivation)).state
+        expect(inactive).toMatchObject({ active: false, epoch: epoch + 1, sourceRevision })
+        expect(Result.getOrThrow(decideExecutionControllerDeactivation(inactive, rotation.deactivation))).toEqual({
+          _tag: 'Replayed',
+          state: inactive,
+        })
+        const activation = {
+          schemaVersion: 'bayn.execution-controller-activation.v1' as const,
+          controllerKey,
+          epoch: inactive.epoch,
+          firstSequence: sequence,
+          planHash,
+          sourceRevision: nextSourceRevision,
+        }
+        expect(Result.isFailure(decideExecutionControllerActivation(state, activation))).toBe(true)
+        const active = Result.getOrThrow(decideExecutionControllerActivation(inactive, activation)).state
+        expect(active).toMatchObject({
+          active: true,
+          epoch: epoch + 1,
+          nextSequence: sequence,
+          sourceRevision: nextSourceRevision,
+        })
+        expect(Result.getOrThrow(decideExecutionControllerActivation(active, activation))).toEqual({
+          _tag: 'Replayed',
+          state: active,
+        })
+        expect(
+          Result.getOrThrow(
+            decideExecutionControllerTick(
+              active,
+              { schemaVersion: 'bayn.execution-controller-tick.v1', epoch, sequence },
+              controllerKey,
+              draft.window.submissionOpenAt,
+              nextSourceRevision,
+            ),
+          ),
+        ).toEqual({ _tag: 'Ignored', reason: 'StaleEpoch' })
+        expect(
+          Result.isFailure(
+            decideExecutionDeploymentActivation(state, {
+              ...request,
+              previousBinding: { planHash, sourceRevision: nextSourceRevision },
+            }),
+          ),
+        ).toBe(true)
+      },
+    ),
+  )
+})
+
 interface GenerationInput {
   readonly createdAfterOpenMs: number
   readonly lateMs: number

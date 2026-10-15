@@ -272,6 +272,81 @@ describeRestate('Real Restate execution deployment activation', () => {
           ).toEqual(output)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
+
+          const replacementConfig = {
+            ...config,
+            sourceRevision: 'f'.repeat(40),
+            previousBinding: { planHash: config.planHash, sourceRevision: config.sourceRevision },
+          }
+          const replacementAdvances: Array<{ epoch: number; sequence: number; sourceRevision: string }> = []
+          const projected: Array<{ active: boolean; epoch: number; sourceRevision: string }> = []
+          const replacementController = makeBaynExecutionController(replacementConfig, {
+            advance: async (command) => {
+              replacementAdvances.push(command)
+              return {
+                completedAt: command.issuedAt,
+                observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
+                outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'f'.repeat(64), nextDelayMs: 500 },
+              }
+            },
+            projectState: async (_key, next) => {
+              projected.push(next)
+            },
+            log: () => Promise.resolve(),
+          })
+          const replacementObservations = makeBaynBrokerObservations(
+            { ...replacementConfig, pollIntervalMs: 1_000 },
+            {
+              activate: () => Promise.resolve(),
+              poll: async () => {
+                const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+                return {
+                  poll: { _tag: 'Published', snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs: 0 },
+                  startedAtMs: now,
+                  completedAtMs: now,
+                }
+              },
+            },
+          )
+          yield* register(
+            createServer(restate.createEndpointHandler({ services: [replacementController, replacementObservations] })),
+          )
+          const rotation = restateExecutionActivationRequest(
+            { ...replacementConfig, ...(yield* loadAttempt(randomUUID())) },
+            token,
+          )
+          const rotationOptions = { timeoutMs: 5_000, headers: rotation.headers }
+          const rotationReceipt = yield* sendRestateInvocation(url, rotation.body, rotationOptions)
+          const rotatedOutput = yield* awaitRestateInvocation(ingress, rotationReceipt.invocationId, {
+            maximumAttempts: 200,
+            pollIntervalMs: 100,
+            requestTimeoutMs: 5_000,
+          })
+          const rotated = Result.getOrThrow(decodeExecutionControllerState(rotatedOutput))
+          expect(rotated).toMatchObject({
+            active: true,
+            epoch: 2,
+            planHash: config.planHash,
+            sourceRevision: replacementConfig.sourceRevision,
+          })
+          expect(rotated.initialSequence).toBeGreaterThanOrEqual(state.nextSequence)
+          expect(rotated.lastCompletion?.sequence).toBeGreaterThan(rotated.initialSequence)
+          expect(projected).toEqual([
+            expect.objectContaining({ active: false, epoch: 2, sourceRevision: config.sourceRevision }),
+            expect.objectContaining({ active: true, epoch: 2, sourceRevision: replacementConfig.sourceRevision }),
+          ])
+          expect(replacementAdvances.length).toBeGreaterThanOrEqual(2)
+          expect(
+            replacementAdvances.every(
+              (command) => command.epoch === 2 && command.sourceRevision === replacementConfig.sourceRevision,
+            ),
+          ).toBe(true)
+          expect(new Set([...advanced, ...replacementAdvances.map((command) => command.sequence)]).size).toBe(
+            advanced.length + replacementAdvances.length,
+          )
+          const replayedRotation = yield* sendRestateInvocation(url, rotation.body, rotationOptions)
+          expect(replayedRotation.invocationId).toBe(rotationReceipt.invocationId)
+          expect(projected).toHaveLength(2)
         }),
       ),
     )
