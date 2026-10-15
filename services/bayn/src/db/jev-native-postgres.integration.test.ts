@@ -140,6 +140,7 @@ const acquireEntryCycle = (at = fixture.observation.payload.observedAt) =>
 
 const seedManagedPosition = (
   options: {
+    readonly symbol?: string
     readonly omitReceipt?: boolean
     readonly receiptAt?: string
     readonly observedAt?: string
@@ -151,6 +152,22 @@ const seedManagedPosition = (
     const managed = nativeJevFixture(JevPurpose.Manage, options.observedAt)
     let portfolio = managed.portfolio
     if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected management fixture')
+    if (options.symbol !== undefined) {
+      const state = {
+        ...portfolio.brokerState,
+        positions: portfolio.brokerState.positions.map((position) => ({
+          ...position,
+          symbol: options.symbol ?? position.symbol,
+        })),
+        orders: portfolio.brokerState.orders.map((order) => ({ ...order, symbol: options.symbol ?? order.symbol })),
+      }
+      const hash = Result.getOrThrow(reconciledStateHash(state))
+      portfolio = {
+        ...portfolio,
+        brokerState: { ...state, reconciliation: { ...state.reconciliation, expectedHash: hash, observedHash: hash } },
+        entryFills: portfolio.entryFills.map((fill) => ({ ...fill, symbol: options.symbol ?? fill.symbol })),
+      }
+    }
     const heldMinutes = options.heldMinutes
     if (heldMinutes !== undefined)
       portfolio = {
@@ -226,7 +243,7 @@ const seedManagedPosition = (
       yield* sql`INSERT INTO intents (intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
         time_in_force, quantity_atoms, notional_limit_micros, state, created_at, updated_at, cycle_id,
         strategy_name, decision_hash, policy_hash, authority_generation_hash)
-        VALUES (${intentId}, 'bayn.paper-intent.v3', ${r.accountId}, ${portfolio.entryFills[0]?.clientOrderId ?? 'entry-client'}, 'AAPL', 'BUY', 'LIMIT', 'IOC',
+        VALUES (${intentId}, 'bayn.paper-intent.v3', ${r.accountId}, ${portfolio.entryFills[0]?.clientOrderId ?? 'entry-client'}, ${options.symbol ?? 'AAPL'}, 'BUY', 'LIMIT', 'IOC',
         '10000000000', '1000000000', 'PLANNED', ${entryAt}, ${entryAt}, ${nativeInput.cycleId}, 'jev',
         ${document.bindings.strategyDecisionHash}, ${'3'.repeat(64)}, ${nativeInput.authorityGenerationHash})`
     }
@@ -1280,6 +1297,53 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       ),
     )
   })
+
+  test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
+    'loads the exact net %s position only with posted inventory debit evidence',
+    async (symbol) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const { portfolio } = yield* seedManagedPosition({ symbol, heldMinutes: 20 })
+          const sql = yield* PgClient.PgClient
+          const at = portfolio.brokerState.reconciliation.reconciledAt
+          const state = {
+            ...portfolio.brokerState,
+            positions: portfolio.brokerState.positions.map((position) => ({
+              ...position,
+              quantityAtoms: '4987500000',
+              costBasisMicros: '498750000',
+            })),
+          }
+          const hash = Result.getOrThrow(reconciledStateHash(state))
+          const r = {
+            ...state.reconciliation,
+            reconciliationId: '8'.repeat(64),
+            expectedHash: hash,
+            observedHash: hash,
+          }
+          yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+        VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${hash},${hash},${r.contentHash},'EXACT','[]'::jsonb,${at})`
+          const brokerState = { ...state, reconciliation: r }
+          const store = yield* JevPositionStore
+          const input = { cycleId: nativeInput.cycleId, entryDecisionHash: portfolio.entryDecisionHash, brokerState }
+          expect(Result.isFailure(yield* store.read(input).pipe(Effect.result))).toBeTrue()
+          const fee = {
+            accountId: r.accountId,
+            activityId: 'native-coin-fee',
+            date: at.slice(0, 10),
+            netAmountMicros: '0',
+            coinDebit: { symbol, quantityAtoms: '12500000', priceAtoms: '100000000000' },
+          }
+          yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at,posted_at,coin_cost_basis_micros)
+        VALUES (${r.accountId},${fee.activityId},${fee.date},0,${sql.json(fee)},'{}'::jsonb,${'9'.repeat(64)},${'9'.repeat(64)},1,1,${at},${at},1250000)`
+          const actual = yield* store.read(input)
+          expect(actual.entryFills).toEqual(portfolio.entryFills)
+          expect(actual.entryInventoryDebit).toEqual({ quantityAtoms: '12500000', costBasisMicros: '1250000' })
+          expect(actual.brokerState.positions[0]?.quantityAtoms).toBe('4987500000')
+        }),
+      )
+    },
+  )
 
   test.each([{ omitReceipt: true }, { receiptAt: '2026-09-04T14:31:00.000Z' }])(
     'rejects management when accounting was incomplete at reconciliation (%j)',

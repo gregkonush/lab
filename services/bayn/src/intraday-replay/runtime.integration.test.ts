@@ -725,7 +725,10 @@ durableTest.each(
           expect(pass.observation).toMatchObject({
             result: 'SUCCESS',
             recoveryAction: 'WAITING',
-            readiness: { reason: 'SNAPSHOT_UNAVAILABLE', snapshotQuery: { symbols: ['BTC/USD', 'ETH/USD'] } },
+            readiness: {
+              reason: 'SNAPSHOT_UNAVAILABLE',
+              snapshotQuery: { symbols: ['BTC/USD', 'ETH/USD', 'SOL/USD'] },
+            },
           })
           expect((yield* broker.snapshot).orders).toEqual([])
           expect(
@@ -907,7 +910,10 @@ durableTest.each(
           expect(successor.observation).toMatchObject({
             result: 'SUCCESS',
             recoveryAction: 'WAITING',
-            readiness: { reason: 'SNAPSHOT_UNAVAILABLE', snapshotQuery: { symbols: ['BTC/USD', 'SOL/USD'] } },
+            readiness: {
+              reason: 'SNAPSHOT_UNAVAILABLE',
+              snapshotQuery: { symbols: ['BTC/USD', 'ETH/USD', 'SOL/USD'] },
+            },
           })
           expect(
             yield* sql`SELECT state, entry_attempt_ordinal::int AS ordinal FROM autonomous_cycles
