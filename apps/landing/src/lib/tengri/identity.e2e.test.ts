@@ -123,6 +123,7 @@ identityTest(
     })
     cleanups.push(() => bffAdmin.end())
     const migration = readFileSync(path.join(root, 'services/tengri/migrations/0001_control.sql'))
+    const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -143,16 +144,23 @@ identityTest(
       OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_migrator sslmode=require`,
       OFZ_DATABASE_PASSWORD_FILE: secret('runtime-owner-password', 'fixture-migrator'),
     }
+    const expectedChecksum = createHash('sha256').update(migration).digest()
+    const replayChecksum = createHash('sha256').update(replayMigration).digest()
+    await bffAdmin.query('SET ROLE tengri_migrator')
+    await bffAdmin.query(migration.toString())
+    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
+    await bffAdmin.query('RESET ROLE')
     for (let attempt = 0; attempt < 2; attempt++) {
       execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })
     }
-    const expectedChecksum = createHash('sha256').update(migration).digest()
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
-      'SELECT version,checksum FROM tengri.schema_version',
+      'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(1)
+    expect(versions.rowCount).toBe(2)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
+    expect(versions.rows[1]?.version).toBe(2)
+    expect(versions.rows[1]?.checksum.equals(replayChecksum)).toBe(true)
     expect(() =>
       execFileSync(binary, ['migrate-runtime'], {
         env: {
@@ -162,9 +170,9 @@ identityTest(
         stdio: 'pipe',
       }),
     ).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [Buffer.alloc(32)])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [expectedChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [replayChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {
@@ -407,7 +415,7 @@ identityTest(
           if (value) headers.set(name, Array.isArray(value) ? value.join(',') : value)
         const chunks = []
         for await (const chunk of request) chunks.push(Buffer.from(chunk))
-        const incoming = new Request(url, {
+        const incoming = new Request(new URL(url.pathname + url.search, 'http://0.0.0.0:3000'), {
           method: request.method,
           headers,
           ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
@@ -466,7 +474,6 @@ identityTest(
       TENGRI_DATABASE_DSN: `postgres://tengri_bff@localhost:${port}/tengri_control`,
       TENGRI_DATABASE_PASSWORD_FILE: secret('bff-password', 'fixture-bff'),
       TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE,
-      TENGRI_DATABASE_SCHEMA_FILE: path.join(root, 'services/tengri/migrations/0001_control.sql'),
       OFZ_GRPC_ENDPOINT: `localhost:${ofzPort}`,
       SPIFFE_ID: fixture.ownId,
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
@@ -496,6 +503,9 @@ identityTest(
     const primaryHome = path.join(fixture.directory, 'keycloak-primary')
     const secondaryHome = path.join(fixture.directory, 'keycloak-secondary')
     cpSync(path.dirname(path.dirname(z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN))), primaryHome, {
+      recursive: true,
+    })
+    cpSync(path.join(root, 'argocd/applications/keycloak/tengri/theme'), path.join(primaryHome, 'themes/tengri'), {
       recursive: true,
     })
     const startKeycloak = async (
@@ -678,6 +688,11 @@ identityTest(
     })
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
+    await context.addInitScript(() => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+    })
     const page = await context.newPage()
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
@@ -708,10 +723,15 @@ identityTest(
               .join('\n'),
         )
       })
-    page.on('dialog', (dialog) => void dialog.accept('Isolated virtual passkey'))
     await page.waitForLoadState('domcontentloaded')
     await page.getByRole('button', { name: /Register/ }).click()
-    await page.waitForURL((url) => url.origin === base, { timeout: 20_000 })
+    await page
+      .waitForURL((url) => url.origin === base, { timeout: 20_000 })
+      .catch(async (cause: unknown) => {
+        throw new Error('Isolated passkey enrollment: ' + (await page.locator('body').innerText()).slice(0, 1200), {
+          cause,
+        })
+      })
     if (new URL(page.url()).pathname !== '/') {
       const denied = await control.query(
         "SELECT receipt->>'reason' AS reason FROM ofz.audit WHERE (receipt->>'allowed')::boolean=false ORDER BY sequence DESC LIMIT 3",
@@ -845,7 +865,11 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
+    await adminCall('', 'PUT', { loginTheme: 'keycloak', sslRequired: 'none' })
+    expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
+    await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
+    expect(z.object({ loginTheme: z.string() }).parse(await (await adminCall('')).json()).loginTheme).toBe('tengri')
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z
@@ -1205,7 +1229,11 @@ identityTest(
         automaticPresenceSimulation: true,
       },
     })
-    secondPage.on('dialog', (dialog) => void dialog.accept('Second isolated passkey'))
+    await secondContext.addInitScript(() => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+    })
     const enroll = async (id: string) => {
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()

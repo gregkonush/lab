@@ -198,6 +198,20 @@ const transactionTotalsMatch = (
     }
     fees = nextFees
   }
+  for (const accrual of input.brokerFeeAccruals ?? []) {
+    const expense = parseSignedMicros(accrual.expenseMicros)
+    if (expense === undefined || expense < 0n || accrual.accountId !== input.account.accountId) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, expense)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
+    if (!accrual.settled) reasons.add('BROKER_FEE_SETTLEMENT_PENDING')
+  }
   if (gains !== totals.realizedGains || losses !== totals.realizedLosses || fees !== totals.brokerExecutionFees) {
     reasons.add('LEDGER_MISMATCH')
   }

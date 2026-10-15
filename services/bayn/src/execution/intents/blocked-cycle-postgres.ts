@@ -1,4 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
+import { withObservedStage } from '../../telemetry'
 import { Effect, Layer, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
@@ -322,6 +323,8 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
                   SELECT 1
                   FROM autonomous_cycle_shadow_decisions AS decision
                   WHERE decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+                  -- Retain correlation so the planner cannot hash and decode every historical JSON document.
+                  OFFSET 0
                 )
                 AND NOT EXISTS (
                   SELECT 1
@@ -432,7 +435,10 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
           intent_counts.terminal_intent_count,
           intent_counts.nonterminal_intent_count
         FROM terminalized_counts, intent_counts
-      `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(CurrentSettlementRows, strictParseOptions))),
+      `.pipe(
+        withObservedStage('bayn.postgres.generation-settlement', { dependency: 'postgresql' }),
+        Effect.flatMap(Schema.decodeUnknownEffect(CurrentSettlementRows, strictParseOptions)),
+      ),
     ),
     Effect.flatMap(
       ([receipt]): Effect.Effect<CurrentTerminalGenerationSettlementReceipt, BlockedCycleIntentStoreError> => {

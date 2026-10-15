@@ -62,13 +62,13 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-V3hT0BNmtio0O9VkMpG++a4pOd+/z9kYmfeQPVqtK4s=";
-    aarch64-linux = "sha256-fZdAwOSNSRrN9QZZrtIoXSc0kf/hunKzoVgsWpHwLrU=";
+    x86_64-linux = "sha256-G7Vaqs7D5eDYjxgIba2kGn0+sQRn7FL/ikaalLlLiFo=";
+    aarch64-linux = "sha256-TqKJESlWRykrievwAo1gi1F4BIFLjmW4NeX0KlGFcVQ=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/valkey-command.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/glitchtip-smoke-command.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/valkey-command.ts --target=node "
       + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -106,6 +106,7 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/glitchtip-smoke-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/inference-cost-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/backtest-command.js" "$out/app/services/bayn/dist/"

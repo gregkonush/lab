@@ -50,7 +50,14 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { Authority, OrderType, TimeInForce, type AuthorityState, type Position } from '../execution/contracts'
+import {
+  Authority,
+  OrderType,
+  ReconciliationStatus,
+  TimeInForce,
+  type AuthorityState,
+  type Position,
+} from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
@@ -309,6 +316,14 @@ export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('Executio
   readonly cause?: unknown
   /** A verified snapshot exists, but its executable quote must be refreshed. */
   readonly quotePending?: boolean
+}> {}
+
+export class ExecutionCloseAwaitingReconciliation extends Data.TaggedError('ExecutionCloseAwaitingReconciliation')<{
+  readonly observedAt: string
+  readonly reconciliationId: string
+  readonly status: ReconciliationStatus
+  readonly unknownMutationCount: number
+  readonly unknownOrderCount: number
 }> {}
 
 export const executionCloseMarketDataDiagnostics = (failure: ExecutionCloseAwaitingMarketData) => {
@@ -899,7 +914,7 @@ const compileObserveStrategyDecision = <R>(
       decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
     )
     const query = yield* Effect.fromResult(
-      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt),
+      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
     const { snapshot, evidence } = yield* evaluateJevObservationFromSnapshot(
       {
@@ -1532,7 +1547,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   source: 'archive' | 'reconciled-position',
 ): Effect.Effect<
   { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
-  CycleRunnerError | ExecutionCloseAwaitingMarketData,
+  CycleRunnerError | ExecutionCloseAwaitingMarketData | ExecutionCloseAwaitingReconciliation,
   R
 > => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
@@ -1551,7 +1566,8 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       const closeAt = Date.parse(cycle.window.executionCloseAt)
       const observed = Date.parse(observedAt)
       return observed >= closeAt - intradayParameters.flattenBeforeCloseMinutes * 60_000 &&
-        observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000 &&
+        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' ||
+          observed < closeAt - intradayParameters.hardFlatBeforeCloseMinutes * 60_000) &&
         observedAt < closeExpiresAt
         ? Effect.void
         : Effect.fail(
@@ -1585,6 +1601,25 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       return yield* mutationRunnerError({
         message: 'execution close does not match the active intraday strategy identity',
         failure: 'contract',
+      })
+    }
+    // A preflight block has no executable targets. Keep the bound position recoverable rather than
+    // trying to bind liquidation evidence to that empty plan or terminalizing an unfinished close.
+    // Check the actual cut here as the fallback can acquire a newer, no-longer-exact reconciliation.
+    if (
+      reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact ||
+      reconciliation.brokerState.reconciliation.status !== ReconciliationStatus.Exact ||
+      reconciliation.brokerState.reconciliation.discrepancies.length !== 0 ||
+      !reconciliation.report.metrics.accountingExact ||
+      reconciliation.riskContext.unknownMutationCount !== 0 ||
+      reconciliation.brokerState.unknownOrderCount !== 0
+    ) {
+      return yield* new ExecutionCloseAwaitingReconciliation({
+        observedAt: evaluatedAt,
+        reconciliationId: reconciliation.brokerState.reconciliation.reconciliationId,
+        status: reconciliation.brokerState.reconciliation.status,
+        unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+        unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
       })
     }
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
@@ -1635,7 +1670,12 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         }),
     )
     const closeExecutionMarketData = yield* Effect.gen(function* () {
-      if (closingPass.kind === 'broker-position' || source === 'reconciled-position') {
+      if (
+        closingPass.kind === 'broker-position' ||
+        source === 'reconciled-position' ||
+        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' &&
+          evaluatedAt >= cycle.window.executionCloseAt)
+      ) {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
         ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))

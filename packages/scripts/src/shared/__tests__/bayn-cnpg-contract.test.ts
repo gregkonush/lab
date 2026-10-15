@@ -73,9 +73,24 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
   expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
   const queries = YAML.parse(monitor.data.queries)
-  expect(Object.keys(queries).sort()).toEqual(['bayn_io', 'bayn_io_timing', 'bayn_replication', 'bayn_waits'])
+  expect(Object.keys(queries).sort()).toEqual([
+    'bayn_generation_index',
+    'bayn_io',
+    'bayn_io_timing',
+    'bayn_replication',
+    'bayn_waits',
+  ])
   expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
   expect(queries.bayn_replication.primary).toBe(true)
+  expect(queries.bayn_generation_index.primary).toBe(true)
+  expect(queries.bayn_generation_index.query).toContain('autonomous_cycle_shadow_decisions_generation_idx')
+  expect(queries.bayn_generation_index.metrics.map((entry: Record<string, unknown>) => Object.keys(entry)[0])).toEqual([
+    'valid',
+    'ready',
+    'scans_total',
+    'tuples_read_total',
+    'tuples_fetched_total',
+  ])
 })
 
 test('Bayn preserves three ledger identities across the two 100G hosts', () => {
@@ -555,7 +570,17 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
+  expect(activationPolicy.spec.egress[0]).toEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'glitchtip' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'glitchtip', 'app.kubernetes.io/component': 'web' } },
+      },
+    ],
+    ports: [{ port: 8000, protocol: 'TCP' }],
+  })
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
+    { port: 8000, protocol: 'TCP' },
     { port: 53, protocol: 'UDP' },
     { port: 53, protocol: 'TCP' },
     { port: 8080, protocol: 'TCP' },

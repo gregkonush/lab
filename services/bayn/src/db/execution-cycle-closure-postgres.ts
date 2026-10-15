@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Schema } from 'effect'
 
+import { continuousExecutionPolicy } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result } from '../hash'
 import { JevExitReason } from '../jev/exit'
@@ -145,10 +146,19 @@ const makeStore = Effect.gen(function* () {
         const prior = closure.document.replanGenerationHash
         const latest = yield* readLatestReplanByCycleId(sql, closure.cycleId)
         const predecessor = Option.getOrElse(latest, () => original)
+        const [recovery] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
+        )(
+          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_calendar_schema_version='bayn.continuous-market-hours.v1' AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+        )
+        const boundedRecoveryLease =
+          recovery.allowed &&
+          closure.expiresAt > closure.createdAt &&
+          Date.parse(closure.expiresAt) <= Date.parse(closure.createdAt) + continuousExecutionPolicy.closeRecoveryMs
         if (
           first !== next ||
           closure.entryDecisionHash !== original.entryDecisionHash ||
-          closure.expiresAt !== original.expiresAt ||
+          (closure.expiresAt !== original.expiresAt && !boundedRecoveryLease) ||
           prior !== predecessor.contentHash ||
           closure.createdAt <= predecessor.createdAt
         )

@@ -67,6 +67,7 @@ export const jevObservationQuery = (
   protocol: JevProtocol,
   calendar: MarketHours,
   observedAt: string,
+  purpose: JevPurpose,
   candidates = jevCycleCandidates(cycle, protocol.candidateSymbols),
 ): Result.Result<IntradaySnapshotQuery, JevContractError | JevAwaitingEvidence> => {
   const end = Math.floor((Date.parse(observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
@@ -75,9 +76,9 @@ export const jevObservationQuery = (
     cycle.identity.strategyName !== 'jev' ||
     cycle.schemaVersion !== 'bayn.autonomous-cycle.v4' ||
     observedAt < cycle.window.submissionOpenAt ||
-    observedAt >= cycle.window.submissionCutoffAt
+    observedAt >= (purpose === JevPurpose.Entry ? cycle.window.submissionCutoffAt : cycle.window.executionCloseAt)
   )
-    return Result.fail(new JevContractError({ message: 'Jev observation is outside its native entry cycle' }))
+    return Result.fail(new JevContractError({ message: 'Jev observation is outside its native purpose window' }))
   if (!isContinuousMarket(calendar) && start < Date.parse(cycle.window.executionOpenAt))
     return Result.fail(
       new JevAwaitingEvidence({
@@ -348,8 +349,10 @@ export const evaluateJevPositionManagement = (input: {
       maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, input.protocol.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt
       maximumHoldEvidence = { ...evidence, trigger: { reason: JevExitReason.MaximumHold } }
-      if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt))
+      if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt)) {
+        if (Date.parse(observedAt) >= jevBrokerEvidenceFreshUntilMs(portfolio.brokerState)) return undefined
         return yield* Effect.fromResult(decideJevExit({ ...evidence, trigger: { reason: JevExitReason.MaximumHold } }))
+      }
       const managementBudgetMs = Math.max(
         0,
         Math.min(
@@ -406,7 +409,9 @@ export const evaluateJevPositionManagement = (input: {
           return target
         }
         const query = yield* Effect.fromResult(
-          jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, [position.symbol]),
+          jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, JevPurpose.Manage, [
+            position.symbol,
+          ]),
         )
         const { evidence: inference } = yield* evaluateJevObservationFromSnapshot(
           {
@@ -418,7 +423,7 @@ export const evaluateJevPositionManagement = (input: {
           query.rangeEndAt,
           Effect.suspend(() => loadIntradaySnapshot(input.marketData, query)),
         )
-        if (inference.decidedAt >= input.cycle.window.submissionCutoffAt) return undefined
+        if (inference.decidedAt >= input.cycle.window.executionCloseAt) return undefined
         const decision = yield* Effect.fromResult(decideJevManagement(inference))
         return decision.action === JevManagementAction.Exit
           ? yield* Effect.fromResult(

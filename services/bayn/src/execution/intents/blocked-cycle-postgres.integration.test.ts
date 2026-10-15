@@ -5,10 +5,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result } from 'effect'
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 'effect'
+import type { Statement } from 'effect/sql/Statement'
 
 import { recoverPreopenAuthorityCycle } from '../../../migrations/0057_recover_preopen_authority_cycle'
 import { recoverIntradayAuthorityCycle } from '../../../migrations/0071_recover_intraday_authority_cycle'
+import { recoverExpiredNativeEntryAdmission } from '../../../migrations/0101_reclassify_expired_native_entry'
+import shadowDecisionGenerationIndex from '../../../migrations/0104_shadow_decision_generation_index'
+import { canRearmUnusedCycle } from '../../cycle/runner/calendar-decisions'
+import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
 import {
   CycleState,
@@ -123,6 +128,47 @@ const makeFixture = (openSession = false) => {
     restrictedAt: instant(now - 2 * 60_000),
     reconciledAt: instant(now - 60_000),
     positionsObservedAt: instant(now - 90_000),
+  }
+}
+
+const makeExpiredNativeFixture = () => {
+  const original = makeFixture(true)
+  const date = instant(Date.now() - 24 * 60 * 60_000).slice(0, 10)
+  const calendar = value(
+    makeExecutionCalendarObservation({
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      source: 'alpaca-v2-calendar',
+      date,
+      openAt: `${date}T00:00:00.000Z`,
+      closeAt: `${date}T23:59:59.999Z`,
+    }),
+  )
+  const policy = original.cycle.identity.executionPolicy
+  if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('Expected native policy')
+  const identity = value(
+    makeCycleIdentity({
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: original.cycle.identity.strategyName,
+      qualificationRunId: planHash,
+      strategyProtocolHash: original.cycle.identity.strategyProtocolHash,
+      accountId,
+      executionSessionDate: date,
+      executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
+      executionCalendarSource: calendar.executionCalendarSource,
+      executionCalendarHash: calendar.executionCalendarHash,
+      executionPolicy: policy,
+    }),
+  )
+  const cycle = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, policy))))
+  if (!isIntradayCycleDraft(cycle)) throw new Error('Expected native cycle')
+  return {
+    ...original,
+    cycle,
+    generationActivatedAt: `${date}T00:59:00.000Z`,
+    acquiredAt: `${date}T01:00:00.000Z`,
+    cycleActivatedAt: `${date}T01:00:01.000Z`,
+    restrictedAt: cycle.window.submissionCutoffAt,
   }
 }
 
@@ -258,6 +304,103 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
 
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test.each(['clear', 'operator', 'position'] as const)(
+    'native expired-entry migration requires clear flat authority: %s',
+    async (scenario) => {
+      const fixture = makeExpiredNativeFixture()
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const cycles = yield* CycleStore
+          yield* seedRepairableCycle(sql, cycles, fixture)
+          if (scenario === 'operator')
+            yield* sql`UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',
+        reason='operator stop',version=version+1,updated_at=clock_timestamp() WHERE singleton`
+          if (scenario === 'position')
+            yield* sql`INSERT INTO position_snapshots
+        (snapshot_id,schema_version,account_id,source_hash,observed_at,position_count,content_hash,ingestion_order_trusted)
+        VALUES (${'9'.repeat(64)},'bayn.paper-position-snapshot.v1',${accountId},${'9'.repeat(64)},
+        ${instant(Date.parse(fixture.reconciledAt) - 1)},1,${'9'.repeat(64)},true)`
+          const before = Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))
+          const repair = yield* Effect.all([recoverExpiredNativeEntryAdmission, recoverExpiredNativeEntryAdmission], {
+            concurrency: 2,
+          }).pipe(Effect.result)
+          const first = Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))
+          const replay = yield* recoverExpiredNativeEntryAdmission.pipe(Effect.result)
+          const repeated = Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))
+          const triggers =
+            yield* sql`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='autonomous_cycles'::regclass
+        AND tgname IN ('autonomous_cycle_lifecycle','autonomous_cycles_unused_entry_admission') ORDER BY tgname`
+          return { before, first, repeated, triggers, repair, replay }
+        }),
+      )
+      expect(Result.isSuccess(result.repair)).toBe(scenario === 'clear')
+      expect(Result.isSuccess(result.replay)).toBe(scenario === 'clear')
+      expect(result.first.state).toBe(CycleState.Blocked)
+      expect(result.first.terminalReason).toBe(
+        scenario === 'clear' ? CycleTerminalReason.UnusedEntryExpired : CycleTerminalReason.Authority,
+      )
+      expect(result.first.stateVersion).toBe(result.before.stateVersion + (scenario === 'clear' ? 1 : 0))
+      expect(result.repeated).toEqual(result.first)
+      expect(result.triggers).toEqual([
+        { tgname: 'autonomous_cycle_lifecycle', tgenabled: 'O' },
+        { tgname: 'autonomous_cycles_unused_entry_admission', tgenabled: 'O' },
+      ])
+      if (scenario === 'clear') {
+        const policy = fixture.cycle.identity.executionPolicy
+        if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+          throw new Error('Expected native policy')
+        const at = instant(Date.now())
+        const session = value(
+          tradingWindow(continuousMarketHours, at, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
+        )
+        if (session === null) throw new Error('Expected continuous session')
+        expect(
+          canRearmUnusedCycle(
+            result.first,
+            {
+              cycleBindingId: planHash,
+              strategyName: 'intraday-momentum',
+              strategyProtocolHash: fixture.cycle.identity.strategyProtocolHash,
+              accountId,
+              executionPolicy: policy,
+            },
+            continuousMarketHours,
+            session,
+            at,
+          ),
+        ).toBe(true)
+      }
+    },
+  )
+
+  test('a failed native expiry migration restores the terminal row and both lifecycle guards', async () => {
+    const fixture = makeExpiredNativeFixture()
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        yield* seedRepairableCycle(sql, cycles, fixture)
+        const before = yield* cycles.read(fixture.cycle.identity.cycleId)
+        yield* sql`CREATE FUNCTION reject_fixture_expiry() RETURNS trigger LANGUAGE plpgsql AS $body$
+        BEGIN RAISE EXCEPTION 'fixture expiry write failure' USING ERRCODE='23514'; END $body$`
+        yield* sql`CREATE TRIGGER reject_fixture_expiry AFTER UPDATE ON autonomous_cycles
+        FOR EACH ROW EXECUTE FUNCTION reject_fixture_expiry()`
+        const failed = yield* recoverExpiredNativeEntryAdmission.pipe(Effect.result)
+        const after = yield* cycles.read(fixture.cycle.identity.cycleId)
+        const triggers = yield* sql`SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid='autonomous_cycles'::regclass
+        AND tgname IN ('autonomous_cycle_lifecycle','autonomous_cycles_unused_entry_admission') ORDER BY tgname`
+        return { before, after, failed, triggers }
+      }),
+    )
+    expect(Result.isFailure(result.failed)).toBe(true)
+    expect(result.after).toEqual(result.before)
+    expect(result.triggers).toEqual([
+      { tgname: 'autonomous_cycle_lifecycle', tgenabled: 'O' },
+      { tgname: 'autonomous_cycles_unused_entry_admission', tgenabled: 'O' },
+    ])
   })
 
   test('reads and locks capital authority persisted with the active intraday protocol', async () => {
@@ -400,6 +543,86 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
       }).pipe(Effect.provide(WriterFenceLive)),
     )
   })
+  test('generation settlement avoids decoding unrelated historical decision evidence', async () => {
+    const fixture = makeFixture(true)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+          reason = 'execution cycle loop restricted effective authority: run-cycle-pass: mutation autonomous cycle pass did not complete or reconcile within 30000ms',
+          version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text PRIMARY KEY, decision_hash text NOT NULL, document jsonb NOT NULL
+            ) ON COMMIT DROP`
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              SELECT md5(n::text) || md5('cycle-' || n::text),
+                md5('decision-' || n::text) || md5(n::text),
+                jsonb_build_object(
+                  'schemaVersion', 'bayn.paper-cycle-decision.v1', 'mode', 'PAPER',
+                  'bindings', jsonb_build_object('authorityGenerationHash', md5(n::text) || md5(n::text)),
+                  'retainedEvidence', (SELECT jsonb_agg(md5(k::text)) FROM generate_series(1, 2048) AS k)
+                )
+              FROM generate_series(1, 256) AS n`
+            yield* shadowDecisionGenerationIndex
+            yield* sql`ANALYZE autonomous_cycle_shadow_decisions`
+            let lookup: Statement<Record<string, unknown>> | undefined
+            const monitored = new Proxy(sql, {
+              apply(target, receiver, argumentsList) {
+                const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+                if (statement.compile()[0].includes('WITH current_generation AS MATERIALIZED')) lookup = statement
+                return statement
+              },
+            })
+            const settle = Effect.gen(function* () {
+              const blocked = yield* BlockedCycleIntentStore
+              return yield* blocked.settleCurrentTerminalGeneration({ accountId, observedAt: fixture.reconciledAt })
+            }).pipe(
+              Effect.provide(
+                Layer.fresh(BlockedCycleIntentStoreLive).pipe(
+                  Layer.provide(Layer.succeed(PgClient.PgClient, monitored)),
+                ),
+              ),
+            )
+            expect(yield* settle).toMatchObject({
+              _tag: 'TerminalGenerationSettled',
+              authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+              intentCount: 0,
+              terminalIntentCount: 0,
+            })
+            if (lookup === undefined) throw new Error('Settlement did not inspect the current generation')
+            const [query, parameters] = lookup.compile()
+            const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+            const plans = yield* Schema.decodeUnknownEffect(
+              Schema.Array(
+                Schema.Struct({
+                  'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Record(Schema.String, Schema.Unknown) })),
+                }),
+              ),
+            )(explanation)
+            const root = plans[0]?.['QUERY PLAN'][0]?.Plan
+            if (root === undefined) throw new Error('PostgreSQL did not return the settlement query plan')
+            const touchedBlocks = [
+              'Shared Hit Blocks',
+              'Shared Read Blocks',
+              'Local Hit Blocks',
+              'Local Read Blocks',
+            ].reduce((sum, key) => sum + Number(root[key] ?? 0), 0)
+            expect(touchedBlocks).toBeLessThan(128)
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
+              SELECT ${'f'.repeat(64)}, ${'e'.repeat(64)},
+                jsonb_set(document, '{bindings,authorityGenerationHash}',
+                  to_jsonb(${canonicalHashV1({ generation: 'execution' })}::text))
+              FROM autonomous_cycle_shadow_decisions LIMIT 1`
+            expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
+          }),
+        )
+      }),
+    )
+  })
+
   test('recovers a generation restricted before its first cycle only after fresh exact reconciliation', async () => {
     const fixture = makeFixture(true)
     const successorHash = canonicalHashV1({ generation: 'unused-successor' })

@@ -1,3 +1,4 @@
+import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile } from '../jev/markets'
 
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
@@ -118,6 +119,7 @@ export const BacktestInputSchema = Schema.Struct({
   assetObservationPolicy: Schema.Literals(['retained-as-of-session', 'counterfactual-current-asset-eligibility']),
   build: Schema.Struct({ ...EmbeddedBuildMetadataSchema.fields, imageDigest: ImageDigestSchema }),
   assumptions: Schema.Struct({
+    instruments: ReplayInstrumentsSchema,
     latencyMs: NonNegativeIntegerSchema,
     slippageBps: NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
     availableLiquidityPpm: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
@@ -248,6 +250,18 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const assets = yield* Result.all(
       decoded.assets.map((asset) => normalizeAssetResult(asset, asset.symbol, decoded.assetObservationAt)),
     )
+    for (const asset of assets) {
+      const instrument = decoded.assumptions.instruments[asset.symbol]
+      if (
+        instrument === undefined ||
+        instrument.minimumQuantityAtoms !== asset.minimumQuantityAtoms ||
+        instrument.quantityIncrementAtoms !== asset.quantityIncrementAtoms ||
+        instrument.priceIncrementAtoms !== asset.priceIncrementAtoms
+      )
+        return yield* Result.fail(
+          new ReplayBrokerFailure({ message: 'Frozen instrument terms differ from retained broker assets' }),
+        )
+    }
     const runId = yield* canonicalHashV1Result({ ...decoded, assets, sourceReceiptHash: sourceReceipt.contentHash })
     const identity = yield* makeBrokerIdentity({
       schemaVersion: 'bayn.broker-identity.v2',

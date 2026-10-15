@@ -12,6 +12,7 @@ const generation = '1'.repeat(64)
 const fixture = (): ReconciliationPassResult => {
   const cached = cachedBrokerStateFixture({
     cryptoStatus: null,
+    cashReportingQuantumMicros: '1' as const,
     nonMarginableBuyingPowerMicros: null,
 
     id: accountId,

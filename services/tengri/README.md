@@ -73,8 +73,13 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.3`; journals from another VMM revision require fenced recovery. Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
-guest RAM. Full snapshot capture resets normal readahead before reading every page. Snapshot restore consumes the
+`1.16.1+tengri-async-io.6`; journals from another VMM revision require fenced recovery. Disk writes start on the
+bounded io_uring workers, so buffered writes cannot run inline on the VMM thread that also handles terminal vsock traffic.
+The ring requires pre-registered files and permits only read, write, and flush operations.
+New full memory snapshots retain zero pages as file holes, with the same logical length and byte contents. Existing
+nonempty snapshot files still overwrite zero pages, including a snapshot backing the current guest mapping; diff
+snapshots keep their existing dirty-page writes. This reduces disk writes and cold reads without retaining resident
+snapshot pages during sleep. Snapshot restore uses upstream demand paging and normal read-ahead. Snapshot restore consumes the
 generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
@@ -145,6 +150,9 @@ survive snapshot sleep. Root and memory are local to the slot Pod and reset afte
 the home PVC remains the durable boundary. No guest process receives the host Workload API socket or host identity.
 
 ## Transport and workload identity
+
+Controller renewal timeouts retry only within the last confirmed lease deadline. Ownership loss or a returned error
+closes authority immediately; late renewal replies cannot revive expired authority.
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
 SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
@@ -236,6 +244,15 @@ whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
+Replay admission hashes each nonce into one of 64 independently locked buckets, each capped at 128 unexpired entries.
+An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
+controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
+Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
+both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
+resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
+Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
+Unused slots continue through the normal retirement and preparation path for the promoted controller/guest pair.
 
 Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the `ofz-database-ca` Secret's `ca.crt`
 only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,

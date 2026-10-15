@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { gzipSync } from 'node:zlib'
 import { Result } from 'effect'
@@ -134,7 +135,13 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       sessionDates: trainingSessions.map((session) => session.date),
       calendar: rawCalendar.slice(0, 3),
       build,
-      assumptions: { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
+      assumptions: {
+        instruments: replayTestInstruments,
+        latencyMs: 100,
+        slippageBps: 1,
+        availableLiquidityPpm: 1_000_000,
+        feeMultiplierPpm: 1_000_000,
+      },
       assets: equityMarketProfile.universe.map((symbol, index) => ({
         id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
         symbol,

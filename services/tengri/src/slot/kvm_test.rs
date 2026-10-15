@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -13,8 +13,8 @@ use tokio::{fs, net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{
-    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient, runner,
-    supervisor,
+    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient,
+    probe_output::ProbeOutput, runner, supervisor,
 };
 use crate::{
     guest::rpc::{RpcClient, proto},
@@ -563,6 +563,7 @@ async fn terminal_round_trip(
 struct TerminalProbe {
     sender: mpsc::Sender<proto::TerminalInput>,
     stream: tonic::Streaming<proto::TerminalOutput>,
+    output: ProbeOutput,
 }
 
 impl TerminalProbe {
@@ -590,7 +591,11 @@ impl TerminalProbe {
             matches!(first.event, Some(proto::terminal_output::Event::Ready(_))),
             "probe terminal was not ready"
         );
-        Ok(Self { sender, stream })
+        Ok(Self {
+            sender,
+            stream,
+            output: ProbeOutput::default(),
+        })
     }
 
     async fn input(&self, command: &[u8]) -> anyhow::Result<()> {
@@ -604,16 +609,15 @@ impl TerminalProbe {
 
     async fn marker(&mut self, marker: &[u8]) -> anyhow::Result<()> {
         tokio::time::timeout(Duration::from_secs(15), async {
-            let mut output = Vec::new();
-            while let Some(message) = self.stream.message().await? {
+            loop {
+                if self.output.take_marker(marker) {
+                    return Ok(());
+                }
+                let message = self
+                    .message()
+                    .await?
+                    .context("probe terminal closed before marker")?;
                 match message.event {
-                    Some(proto::terminal_output::Event::Output(data)) => {
-                        output.extend(data.data);
-                        ensure!(output.len() <= 1 << 20, "probe output exceeded its limit");
-                        if output.windows(marker.len()).any(|window| window == marker) {
-                            return Ok(());
-                        }
-                    }
                     Some(proto::terminal_output::Event::Error(error)) => {
                         anyhow::bail!("probe terminal: {error}")
                     }
@@ -623,10 +627,25 @@ impl TerminalProbe {
                     _ => {}
                 }
             }
-            anyhow::bail!("probe terminal closed before marker")
         })
         .await
-        .context("probe marker timed out")?
+        .with_context(|| {
+            format!(
+                "probe marker {:?} timed out; terminal output tail: {:?}",
+                String::from_utf8_lossy(marker),
+                self.output.diagnostic_tail()
+            )
+        })?
+    }
+
+    async fn message(&mut self) -> anyhow::Result<Option<proto::TerminalOutput>> {
+        let message = self.stream.message().await?;
+        if let Some(proto::terminal_output::Event::Output(data)) =
+            message.as_ref().and_then(|message| message.event.as_ref())
+        {
+            self.output.append(&data.data)?;
+        }
+        Ok(message)
     }
 
     async fn ping(&mut self) -> anyhow::Result<Duration> {
@@ -637,7 +656,7 @@ impl TerminalProbe {
             })
             .await?;
         tokio::time::timeout(Duration::from_secs(2), async {
-            while let Some(message) = self.stream.message().await? {
+            while let Some(message) = self.message().await? {
                 match message.event {
                     Some(proto::terminal_output::Event::Pong(_)) => return Ok(started.elapsed()),
                     Some(proto::terminal_output::Event::Error(error)) => {
@@ -670,6 +689,8 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     let editor_ms = started.elapsed().as_secs_f64() * 1000.0;
     terminal.input(b"\x1b:qall!\r").await?;
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
+    let cpu_before = fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?;
+    let io_before = optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await;
     terminal.input(b"timeout 8s sh -c 'while :; do dd if=/dev/zero of=/workspace/.tengri-kvm-io bs=1M count=16 conv=fdatasync status=none || exit 1; done' >/tmp/tengri-kvm-io.log 2>&1 & TENGRI_IO=$!; printf '\\036TENGRI_IO_READY\\037'; wait \"$TENGRI_IO\"; TENGRI_IO_RESULT=$?; rm -f /workspace/.tengri-kvm-io; printf '\\036TENGRI_IO_END_%s\\037' \"$TENGRI_IO_RESULT\"\n").await?;
     terminal.marker(b"\x1eTENGRI_IO_READY\x1f").await?;
     let mut heartbeats = Vec::with_capacity(50);
@@ -683,6 +704,15 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     heartbeats.sort_by(f64::total_cmp);
     let p95_ms = heartbeats[47];
     let pids_limit = fs::read_to_string("/sys/fs/cgroup/pids.max").await?;
+    let responsiveness = json!({
+        "terminalFirstOutputMs":first_output_ms,"neovimFirstScreenMs":editor_ms,
+        "heartbeatSamples":50,"heartbeatP95Ms":p95_ms,"heartbeatMaxMs":heartbeats[49],
+        "heartbeatMs":heartbeats,"peakUringWorkers":peak_workers,"workerCgroupVerified":true,"pidsMax":pids_limit.trim().parse::<u64>()?,
+        "cpuBefore":cpu_before,"cpuAfter":fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?,
+        "ioBefore":io_before,"ioAfter":optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await,
+        "storageActivity":"eight seconds of repeated 16 MiB guest writes with fdatasync on the fixture home disk"
+    });
+    eprintln!("real KVM responsiveness: {responsiveness}");
     ensure!(
         pids_limit.trim() == "512",
         "fixture PID limit is not enforced"
@@ -709,12 +739,24 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
             action: Some(proto::terminal_input::Action::Terminate(proto::Empty {})),
         })
         .await?;
-    Ok(
-        json!({"terminalFirstOutputMs":first_output_ms,"neovimFirstScreenMs":editor_ms,
-        "heartbeatSamples":50,"heartbeatP95Ms":p95_ms,"heartbeatMaxMs":heartbeats[49],
-        "heartbeatMs":heartbeats,"peakUringWorkers":peak_workers,"workerCgroupVerified":true,"pidsMax":512,
-        "storageActivity":"eight seconds of repeated 16 MiB guest writes with fdatasync on the fixture home disk"}),
-    )
+    Ok(responsiveness)
+}
+
+async fn optional_counter(path: &Path) -> serde_json::Value {
+    match fs::read_to_string(path).await {
+        Ok(value) => json!({ "value": value }),
+        Err(error) => json!({
+            "unavailable": { "kind": format!("{:?}", error.kind()), "message": error.to_string() }
+        }),
+    }
+}
+
+#[tokio::test]
+async fn missing_optional_counter_reports_its_absence_without_failing() {
+    let path = std::env::temp_dir().join(format!("tengri-missing-psi-{}", uuid::Uuid::new_v4()));
+    let diagnostic = optional_counter(&path).await;
+    assert_eq!(diagnostic["unavailable"]["kind"], "NotFound");
+    assert!(diagnostic["unavailable"]["message"].is_string());
 }
 
 async fn uring_workers() -> anyhow::Result<usize> {
@@ -758,8 +800,14 @@ async fn uring_workers() -> anyhow::Result<usize> {
 
 async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
     let mut terminal = TerminalProbe::open(rpc, "fixture-disk-error").await?;
+    // Start the privileged probe before faulting the guest home.
     terminal
-        .input(b"printf '\\036TENGRI_DISK_READY\\037'\n")
+        .input(b"exec sudo -n /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -c 'printf \"\\036TENGRI_ROOT_READY\\037\"; exec /bin/bash --noprofile --norc -i'\n")
+        .await?;
+    terminal.marker(b"\x1eTENGRI_ROOT_READY\x1f").await?;
+    // Quiesce home writers so an outstanding write cannot extend the truncated fixture disk.
+    terminal
+        .input(b"cd / && test \"$EUID\" -eq 0 && fsfreeze -f /home/nanoagent && printf '\\036TENGRI_DISK_READY\\037'\n")
         .await?;
     terminal.marker(b"\x1eTENGRI_DISK_READY\x1f").await?;
     // Fault only the disposable fixture disk, after continuity and browser acceptance.
@@ -769,7 +817,7 @@ async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
         .await?
         .set_len(0)
         .await?;
-    terminal.input(b"LC_ALL=C sudo -n /usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
+    terminal.input(b"/usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && /usr/bin/grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else /usr/bin/cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
     terminal.marker(b"\x1eTENGRI_DISK_ERROR_OK\x1f").await?;
     terminal.ping().await?;
     Ok(())
