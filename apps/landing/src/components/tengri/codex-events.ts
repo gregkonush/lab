@@ -82,6 +82,13 @@ export function appendCodexEvent(
   event: CodexBufferedEvent,
   restoredPrefix = '',
 ): CodexBufferedEvent[] {
+  if (codexEventIsRuntimeError(event)) {
+    if (current.some((candidate) => codexEventIsRuntimeError(candidate) && candidate.sequence >= event.sequence))
+      return current
+    current = current.filter((candidate) => !codexEventIsRuntimeError(candidate))
+  } else if (codexEventConfirmsRuntimeReady(event)) {
+    current = current.filter((candidate) => !codexEventIsRuntimeError(candidate) || candidate.sequence > event.sequence)
+  }
   const resolvedApprovalId = codexResolvedApprovalId(event)
   if (resolvedApprovalId) {
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
@@ -309,6 +316,17 @@ export function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent)
   return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
 }
 
+export function codexEventIsRuntimeError(event: TengriCodexEvent) {
+  return event.kind === 'error' && event.method === 'error' && !event.threadId && !event.turnId && !event.itemId
+}
+
+export function codexEventConfirmsRuntimeReady(event: TengriCodexEvent) {
+  return (
+    (event.method === 'turn/started' && Boolean(event.turnId)) ||
+    (event.method === 'thread/started' && Boolean(event.threadId))
+  )
+}
+
 function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
   return codexEventIsIndependentOfThreadSnapshot(event) || Boolean(codexResolvedApprovalId(event))
 }
@@ -390,6 +408,7 @@ export function appendCodexEventAfterRestore(
   snapshotSequence: number,
   itemSequences?: ReadonlyMap<string, number>,
 ) {
+  if (codexEventIsRuntimeError(event) && event.sequence <= snapshotSequence) return current
   const restoredItem = restoredHistory.get(event.itemId)
   const itemSequence = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
   if (event.sequence <= itemSequence && !codexEventRequiresReplayAfterRestore(event)) {

@@ -57,8 +57,10 @@ import {
   codexActiveTurnIdFromThread,
   codexApprovalDecisions,
   codexApprovalTitle,
+  codexEventConfirmsRuntimeReady,
   codexEventDisplayText,
   codexEventIsIndependentOfThreadSnapshot,
+  codexEventIsRuntimeError,
   codexEventKey,
   codexEventMatchesThread,
   codexEventShouldRender,
@@ -317,14 +319,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [active, compactDrawerOpen, replayRecovering, submitting, threadId, threadReady])
 
   useEffect(() => {
-    if (!active) return
     const controller = new AbortController()
     void refreshAccountAndRecoverLogin(controller.signal)
     return () => controller.abort()
-  }, [active, refreshAccountAndRecoverLogin])
+  }, [refreshAccountAndRecoverLogin])
 
   useEffect(() => {
-    if (!active || !account?.authenticated) return
+    if (!account?.authenticated) return
     const controller = new AbortController()
     setModels(null)
     setModelError('')
@@ -338,10 +339,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
       })
     return () => controller.abort()
-  }, [account?.authenticated, active, agentId, modelReload])
+  }, [account?.authenticated, agentId, modelReload])
 
   useEffect(() => {
-    if (!active || !login || account?.authenticated) return
+    if (!login || account?.authenticated) return
     const expiresAt = Date.parse(login.expiresAt)
     if (!Number.isFinite(expiresAt)) {
       loginIdRef.current = ''
@@ -366,7 +367,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       stopped = true
       window.clearTimeout(timer)
     }
-  }, [account?.authenticated, active, login, refreshAccount])
+  }, [account?.authenticated, login, refreshAccount])
 
   const commitThreadState = useCallback(
     (thread: TengriCodexThread, commitActiveTurn = true) => {
@@ -378,6 +379,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       restoredItemSequencesRef.current = itemSequences
       restoredHistorySequenceRef.current = sequence
       setRestoredHistorySequence(sequence)
+      retainedEvents.current = reconcileCodexEventsWithRestoredHistory(
+        retainedEvents.current,
+        restoredById,
+        sequence,
+        itemSequences,
+      )
       setEvents((current) => reconcileCodexEventsWithRestoredHistory(current, restoredById, sequence, itemSequences))
       const restoredActiveTurnId = codexReconciledActiveTurnId(restored.activeTurnId, completedTurns.current)
       const activeTurnId = commitActiveTurn ? restoredActiveTurnId : activeTurnIdRef.current
@@ -400,14 +407,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   )
 
   useEffect(() => {
-    if (
-      !active ||
-      !account?.authenticated ||
-      !threadId ||
-      threadReady ||
-      replayRecoveryRef.current ||
-      (!models && !modelError)
-    )
+    if (!account?.authenticated || !threadId || threadReady || replayRecoveryRef.current || (!models && !modelError))
       return
     const controller = new AbortController()
     const resumeSequence = lastEventSequence.current
@@ -436,7 +436,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
       })
     return () => controller.abort()
-  }, [account?.authenticated, active, agentId, commitThreadState, modelError, models, threadId, threadReady])
+  }, [account?.authenticated, agentId, commitThreadState, modelError, models, threadId, threadReady])
 
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
@@ -478,7 +478,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [agentId, commitThreadState])
 
   useEffect(() => {
-    if (!active || !accountChecked) return
+    if (!accountChecked) return
     setEventStreamState('connecting')
     const source = new EventSource(
       `/api/tengri/events?agentId=${encodeURIComponent(agentId)}&after=${lastEventSequence.current}`,
@@ -495,7 +495,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       setEvents((current) =>
         batch.reduce(
           (next, event) =>
-            event.threadId === threadIdRef.current &&
+            codexEventMatchesThread(event, threadIdRef.current) &&
             (!codexEventIsIndependentOfThreadSnapshot(event) || retainedKeys.has(codexEventKey(event)))
               ? appendCodexEventAfterRestore(
                   next,
@@ -505,7 +505,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   restoredItemSequencesRef.current,
                 )
               : next,
-          current.filter((event) => event.kind !== 'approval' || retainedKeys.has(codexEventKey(event))),
+          current.filter(
+            (event) =>
+              (event.kind !== 'approval' && !codexEventIsRuntimeError(event)) || retainedKeys.has(codexEventKey(event)),
+          ),
         ),
       )
     }
@@ -516,11 +519,14 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         return
       }
       const currentThread = threadIdRef.current
-      const event = { ...parsed, threadId: parsed.threadId || currentThread }
+      const event = codexEventIsRuntimeError(parsed)
+        ? parsed
+        : { ...parsed, threadId: parsed.threadId || currentThread }
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
       if (
         codexEventIsIndependentOfThreadSnapshot(event) ||
         codexResolvedApprovalId(event) ||
+        codexEventConfirmsRuntimeReady(event) ||
         event.method === 'turn/completed'
       ) {
         retainedEvents.current = appendCodexEvent(retainedEvents.current, event).filter(
@@ -565,7 +571,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       source.close()
       flush()
     }
-  }, [accountChecked, active, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
+  }, [accountChecked, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
 
   useEffect(() => {
     if (!active || !followingConversation) return
@@ -772,8 +778,25 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setFollowingConversation(true)
     setError('')
     const previousItemIds = new Set(transcriptCards.map((item) => item.id))
+    const submissionId = crypto.randomUUID()
+    setSubmittedPrompts((current) => [
+      ...current,
+      {
+        id: submissionId,
+        threadId: threadIdRef.current,
+        text: [text, ...inputImages.map(() => '[Image]')].filter(Boolean).join('\n'),
+        previousItemIds,
+      },
+    ])
+    setPrompt('')
+    commitImages([])
     try {
       const currentThread = await ensureThread()
+      setSubmittedPrompts((current) =>
+        current.map((submitted) =>
+          submitted.id === submissionId ? { ...submitted, threadId: currentThread.id } : submitted,
+        ),
+      )
       if (currentThread.activeTurnId) {
         await runTengriAction<TengriCodexTurn>({
           action: 'steer-turn',
@@ -794,23 +817,13 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         })
         if (!completedTurns.current.has(turn.id)) setCurrentActiveTurnId(turn.id)
       }
-      setSubmittedPrompts((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          threadId: currentThread.id,
-          text: [text, ...inputImages.map(() => '[Image]')].filter(Boolean).join('\n'),
-          previousItemIds,
-        },
-      ])
-      setPrompt('')
-      commitImages([])
       draftsRef.current.delete(currentThread.id)
       // The turn was accepted, so its prompt can now title a still-untitled conversation.
       if (text) {
         setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
       }
     } catch (cause) {
+      setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
       setError(cause instanceof Error ? cause.message : 'Message could not be sent')
       setPrompt(text)
       commitImages(draftImages)
@@ -830,9 +843,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
     if (!threadId) {
       draftsRef.current.delete('')
-      const assignThread = (event: CodexBufferedEvent) => (event.threadId ? event : { ...event, threadId: thread.id })
+      const assignThread = (event: CodexBufferedEvent) =>
+        event.threadId || codexEventIsRuntimeError(event) ? event : { ...event, threadId: thread.id }
       retainedEvents.current = retainedEvents.current.map(assignThread)
-      const retained = retainedEvents.current.filter((event) => event.threadId === thread.id)
+      const retained = retainedEvents.current.filter((event) => codexEventMatchesThread(event, thread.id))
       setEvents((current) => retained.reduce((next, event) => appendCodexEvent(next, event), current.map(assignThread)))
     }
     const state = commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
@@ -887,7 +901,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function resetTranscriptUi(nextThreadId: string) {
-    if (!nextThreadId) retainedEvents.current = retainedEvents.current.filter((event) => event.threadId)
+    if (!nextThreadId)
+      retainedEvents.current = retainedEvents.current.filter(
+        (event) => event.threadId || codexEventIsRuntimeError(event),
+      )
     if (!threadIdRef.current && !nextThreadId) {
       draftsRef.current.delete('')
     } else {
@@ -907,7 +924,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setCurrentActiveTurnId('')
     setHistoryItems([])
     setRestoredHistorySequence(0)
-    setEvents(retainedEvents.current.filter((event) => event.threadId === nextThreadId))
+    setEvents(retainedEvents.current.filter((event) => codexEventMatchesThread(event, nextThreadId)))
     setFollowingConversation(true)
     setReplayRecovering(false)
     replayRecoveryRef.current = false

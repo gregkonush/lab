@@ -20,7 +20,11 @@ import {
 } from './restate-execution-controller'
 import { acquireRestateTelemetry } from './restate-telemetry'
 import { GitSourceRevisionSchema, Sha256Schema } from '../schemas'
-import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
+import {
+  makeConfiguredMetricsRuntimeLayer,
+  makeConfiguredTelemetryRuntimeLayer,
+  telemetryRuntimeConfig,
+} from '../telemetry'
 import { startInferenceExpenseProjection } from '../inference-expense-runtime'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
@@ -129,7 +133,12 @@ if (import.meta.main) {
       restateExecutionServerProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-controller' })),
     ).pipe(
       Layer.provide(ValkeyCacheLive),
-      Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.provide(
+        Layer.mergeAll(
+          makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
+          makeConfiguredMetricsRuntimeLayer('bayn-execution-controller'),
+        ),
+      ),
       Layer.launch,
     ),
   )

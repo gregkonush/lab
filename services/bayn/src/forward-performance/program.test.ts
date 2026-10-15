@@ -1297,25 +1297,26 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     const { request, archive, bars } = makeFixture()
     let volumeReads = 0
     let watermarkReads = 0
-    const statement = (strings: TemplateStringsArray) => {
-      const text = strings.join('?')
-      if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
-      if (text.includes('GROUP BY source_topic, source_partition')) {
-        watermarkReads += 1
-        return Effect.succeed(
-          archive.archiveWatermarks.map((item) => ({
-            source_topic: item.sourceTopic,
-            source_partition: String(item.sourcePartition),
-            inclusive_last_offset: item.inclusiveLastOffset,
-          })),
-        )
-      }
-      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
-        volumeReads += 1
-        return Effect.succeed(bars)
-      }
-      return Effect.die(new Error('Unexpected market-data query'))
-    }
+    const statement = (strings: TemplateStringsArray): Effect.Effect<readonly Record<string, unknown>[]> =>
+      Effect.suspend<readonly Record<string, unknown>[], never, never>(() => {
+        const text = strings.join('?')
+        if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
+        if (text.includes('GROUP BY source_topic, source_partition')) {
+          watermarkReads += 1
+          return Effect.succeed(
+            archive.archiveWatermarks.map((item) => ({
+              source_topic: item.sourceTopic,
+              source_partition: String(item.sourcePartition),
+              inclusive_last_offset: item.inclusiveLastOffset,
+            })),
+          )
+        }
+        if (text.includes('toString(volume) AS volume')) {
+          volumeReads += 1
+          return Effect.succeed(bars)
+        }
+        return Effect.die(new Error('Unexpected market-data query'))
+      })
     const client = Object.assign(statement, {
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient

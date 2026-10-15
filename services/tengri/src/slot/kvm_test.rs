@@ -13,8 +13,8 @@ use tokio::{fs, net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{
-    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient, runner,
-    supervisor,
+    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient,
+    probe_output::ProbeOutput, runner, supervisor,
 };
 use crate::{
     guest::rpc::{RpcClient, proto},
@@ -563,6 +563,7 @@ async fn terminal_round_trip(
 struct TerminalProbe {
     sender: mpsc::Sender<proto::TerminalInput>,
     stream: tonic::Streaming<proto::TerminalOutput>,
+    output: ProbeOutput,
 }
 
 impl TerminalProbe {
@@ -590,7 +591,11 @@ impl TerminalProbe {
             matches!(first.event, Some(proto::terminal_output::Event::Ready(_))),
             "probe terminal was not ready"
         );
-        Ok(Self { sender, stream })
+        Ok(Self {
+            sender,
+            stream,
+            output: ProbeOutput::default(),
+        })
     }
 
     async fn input(&self, command: &[u8]) -> anyhow::Result<()> {
@@ -604,16 +609,15 @@ impl TerminalProbe {
 
     async fn marker(&mut self, marker: &[u8]) -> anyhow::Result<()> {
         tokio::time::timeout(Duration::from_secs(15), async {
-            let mut output = Vec::new();
-            while let Some(message) = self.stream.message().await? {
+            loop {
+                if self.output.take_marker(marker) {
+                    return Ok(());
+                }
+                let message = self
+                    .message()
+                    .await?
+                    .context("probe terminal closed before marker")?;
                 match message.event {
-                    Some(proto::terminal_output::Event::Output(data)) => {
-                        output.extend(data.data);
-                        ensure!(output.len() <= 1 << 20, "probe output exceeded its limit");
-                        if output.windows(marker.len()).any(|window| window == marker) {
-                            return Ok(());
-                        }
-                    }
                     Some(proto::terminal_output::Event::Error(error)) => {
                         anyhow::bail!("probe terminal: {error}")
                     }
@@ -623,10 +627,19 @@ impl TerminalProbe {
                     _ => {}
                 }
             }
-            anyhow::bail!("probe terminal closed before marker")
         })
         .await
         .context("probe marker timed out")?
+    }
+
+    async fn message(&mut self) -> anyhow::Result<Option<proto::TerminalOutput>> {
+        let message = self.stream.message().await?;
+        if let Some(proto::terminal_output::Event::Output(data)) =
+            message.as_ref().and_then(|message| message.event.as_ref())
+        {
+            self.output.append(&data.data)?;
+        }
+        Ok(message)
     }
 
     async fn ping(&mut self) -> anyhow::Result<Duration> {
@@ -637,7 +650,7 @@ impl TerminalProbe {
             })
             .await?;
         tokio::time::timeout(Duration::from_secs(2), async {
-            while let Some(message) = self.stream.message().await? {
+            while let Some(message) = self.message().await? {
                 match message.event {
                     Some(proto::terminal_output::Event::Pong(_)) => return Ok(started.elapsed()),
                     Some(proto::terminal_output::Event::Error(error)) => {

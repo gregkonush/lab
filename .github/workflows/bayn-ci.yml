@@ -240,7 +240,7 @@ jobs:
           "
           echo "BAYN_TEST_CLICKHOUSE_GUARD_TOKEN=${guard_token}" >> "${GITHUB_ENV}"
       - name: Verify Bayn ClickHouse Date query semantics
-        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts
+        run: bun test services/bayn/src/market-data.clickhouse.integration.test.ts services/bayn/src/market-data/crypto-archive.integration.test.ts
       - name: Set up Java 25 for shared Dorvud features
         uses: actions/setup-java@v4
         with:

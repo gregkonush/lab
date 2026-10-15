@@ -5,6 +5,7 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { IntradaySnapshotFailure, type IntradaySnapshotRequest } from '../market-data/intraday/model'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
+import { nativePayloadNumericFields } from '../market-data/native-json'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { verifyIntradayArchiveWatermarks, verifyIntradaySnapshotRequest } from '../market-data/intraday/verification'
 import { IntradayPerformanceDecisionManifestSchema, IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
@@ -176,6 +177,7 @@ export const makeIntradayPerformanceVolumeEvidence = (
     const cutoff = intradayInstantNanos(request.evidenceCutoffAt)
     let lastEvent: bigint | undefined
     let quantity = 0n
+    let price: bigint | undefined
     let finalizedAt = request.windowClosedAt
     for (const bar of bars) {
       const event = intradayInstantNanos(bar.event_at)
@@ -209,13 +211,20 @@ export const makeIntradayPerformanceVolumeEvidence = (
           failure('intraday performance bar violates identity, ordering, availability or watermark bounds'),
         )
       }
-      const volumeResult = quantityFromDecimal(String(bar.volume))
+      const native =
+        bar.native_payload === undefined
+          ? undefined
+          : yield* nativePayloadNumericFields(bar.native_payload).pipe(
+              Result.mapError((cause) => failure('invalid native bar payload', cause)),
+            )
+      const volumeResult = quantityFromDecimal(native === undefined ? String(bar.volume) : (native['v'] ?? ''))
       const volume = Result.isSuccess(volumeResult) ? volumeResult.success : undefined
       if (volume === undefined)
         return yield* Result.fail(
           failure('intraday performance volume cannot be represented exactly in quantity atoms'),
         )
       quantity += volume
+      price = micros(native === undefined ? bar.close : (native['c'] ?? ''))
       lastEvent = event
       if (ingested > intradayInstantNanos(finalizedAt))
         finalizedAt = new Date(Date.parse(bar.ingested_at)).toISOString()
@@ -227,8 +236,6 @@ export const makeIntradayPerformanceVolumeEvidence = (
     for (let minute = open; minute < close; minute += minuteNanos) {
       if (!observed.has(minute)) missingMinutes.push(new Date(Number(minute / 1_000_000n)).toISOString())
     }
-    const last = bars.at(-1)
-    const price = last === undefined ? undefined : micros(last.close)
     if (quantity <= 0n || price === undefined || price <= 0n) return undefined
     const material = {
       ...request,

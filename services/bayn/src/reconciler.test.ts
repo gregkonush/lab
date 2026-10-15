@@ -225,6 +225,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
     }),
   hasAccountBaseline: () => Effect.succeed(hasAccountBaseline),
   recoverFees: () => Effect.void,
+  retainCashReporting: () => Effect.void,
   bindings: () => Effect.succeed([{ intentId: hash('intent'), clientOrderId: order(0).clientOrderId }]),
   reconcile: (snapshot) =>
     Effect.sync(() => {
@@ -1035,6 +1036,7 @@ describe('execution reconciliation loop', () => {
     const store: TestStore = {
       ...baseStore,
       ingest: (input) => insideTransaction(baseStore.ingest(input)),
+      retainCashReporting: (input) => insideTransaction(baseStore.retainCashReporting(input)),
       ingestPositions: (input) => insideTransaction(baseStore.ingestPositions(input)),
       completeHistory: (inputs) => insideTransaction(baseStore.completeHistory(inputs)),
       account: (input) => insideTransaction(baseStore.account(input)),
