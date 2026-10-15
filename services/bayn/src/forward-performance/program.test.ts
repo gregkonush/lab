@@ -29,6 +29,7 @@ import {
   type ForwardPerformanceReaders,
 } from './program'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
+import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
 const identityResult = makeBrokerIdentity({
   schemaVersion: 'bayn.broker-identity.v2',
@@ -800,6 +801,78 @@ describe('forward performance read program', () => {
       accountedCashDeltaMicros: '0',
       cashYieldMicros: '200',
     })
+  })
+
+  test('uses verified cumulative coin fees for episodes independently of the selected financial scope', async () => {
+    const sql = makeReadOnlySql({ statements: [] })
+    const accountId = identityResult.success.accountId
+    const { fills, accrual, accounting } = coinRoundTrip(0, accountId)
+    const fee = coinActivity('82625', accountId)
+    const receipts = accounting.map((prepared) => ({
+      ...success(planAccountingReceipt(prepared, '2001', 7001)),
+      recordedAt: '2026-09-18T16:00:00.000Z',
+    }))
+    const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
+      marketVolume: () => Effect.succeed([]),
+      postgres: () =>
+        Effect.succeed({
+          cycles: [],
+          durableExecutionBindings: [],
+          reconciliation: {
+            reconciliationId: hash('1'),
+            contentHash: hash('2'),
+            status: 'EXACT',
+            performanceExact: true,
+            cashYieldAdjustedExact: false,
+            reconciledAt: '2026-09-18T21:00:00.000Z',
+          },
+          startingCapitalMicros: '100000000',
+          cashReportingPrecisionKnown: true,
+          transactions: fills.slice(1),
+          ledgerTransactions: fills,
+          receipts: receipts.slice(1),
+          ledgerReceipts: receipts,
+          transactionEvidence: fills.slice(1).map((transaction) => ({ ...transaction, cycleId: hash('f') })),
+          brokerFeeAccrualRecords: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+          brokerFeeRecords: [fee],
+          generationBrokerFeeIds: [],
+          executionEvidence: [],
+          marketVolumeRequests: [],
+          unclosedCycleCount: 0,
+          unresolvedMutationCount: 0,
+          openPositionCount: 1,
+          accountOpenPositionCount: 0,
+          unaccountedFillCount: 0,
+          postReconciliationActivityCount: 0,
+        }),
+      ledger: () =>
+        Effect.succeed({
+          totals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: null,
+            cashYieldMicros: '0',
+          },
+          ledgerExact: true,
+          missingLedgerAccountCount: 0,
+          openPositionCount: 0,
+          cashYieldEvidenceRequired: false,
+        }),
+    }
+    const report = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(report.positionEpisodes).toMatchObject({
+      schemaVersion: 'bayn.position-episode-evidence.v2',
+      status: 'MEASURED',
+      completedCount: 0,
+      crossScopeCount: 1,
+      openCount: 0,
+    })
+    expect(report.receipt.totals.brokerExecutionFeesMicros).toBe('0')
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
   test('keeps performance and expense reads on one cut when new work commits between them', async () => {

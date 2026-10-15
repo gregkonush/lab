@@ -344,12 +344,16 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
   ClickhouseClient.ClickhouseClient
 > => {
   if (requests.length === 0) return Effect.succeed([])
-  if (config.historicalSignal === undefined && requests.some((request) => request.sourceFeed === 'sip'))
+  if (config.historicalSignal === undefined && requests.some((request) => !('decisionManifest' in request)))
     return Effect.fail(missingHistoricalMarketConfig())
   return Effect.gen(function* () {
     const sql = yield* ClickhouseClient.ClickhouseClient
     const groups = yield* Effect.forEach(
-      groupMarketVolumeRequests(requests.filter((request) => request.sourceFeed === 'sip')),
+      groupMarketVolumeRequests(
+        requests.filter(
+          (request): request is ForwardPerformanceDailyMarketVolumeRequest => !('decisionManifest' in request),
+        ),
+      ),
       (group) =>
         Effect.gen(function* () {
           const request = group[0]
@@ -458,7 +462,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
       { concurrency: 2 },
     )
     const intraday = yield* Effect.forEach(
-      requests.filter((request) => request.sourceFeed === 'iex'),
+      requests.filter((request) => 'decisionManifest' in request),
       readIntradayPerformanceVolume,
       { concurrency: 2 },
     )
@@ -488,7 +492,7 @@ const readForwardPerformanceMarketVolumeDataFirst = (
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> => {
   if (requests.length === 0) return Effect.succeed([])
-  if (config.historicalSignal === undefined && requests.some((request) => request.sourceFeed === 'sip'))
+  if (config.historicalSignal === undefined && requests.some((request) => !('decisionManifest' in request)))
     return Effect.fail(missingHistoricalMarketConfig())
   const client = ClickhouseClient.layer({
     url: config.clickhouse.url,
@@ -689,6 +693,13 @@ const readForwardPerformanceInput = (
         ? {}
         : { startingCapitalMicros: postgres.startingCapitalMicros }),
       transactions: postgres.transactionEvidence,
+      accountFeeAccruals: postgres.brokerFeeAccrualRecords,
+      ...(postgres.brokerFeeRecords === undefined ? {} : { accountBrokerFees: feeRecords }),
+      ...(postgres.accountOpenPositionCount === undefined
+        ? {}
+        : {
+            accountPositionCounts: { postgres: postgres.accountOpenPositionCount, ledger: ledger.openPositionCount },
+          }),
       ...(Result.isSuccess(ledgerVerification) &&
       ledgerVerification.success.exactReceipts.size === postgres.ledgerTransactions.length &&
       [...ledgerVerification.success.exactReceipts.values()].every(Boolean)

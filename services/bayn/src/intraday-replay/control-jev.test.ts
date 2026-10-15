@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
@@ -112,7 +113,13 @@ const simulate = (
         targetWeight: 0.1,
         decisionLatencyMs: 1000,
         pollIntervalMs: 30_000,
-        assumptions: { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
+        assumptions: {
+          instruments: replayTestInstruments,
+          latencyMs: 100,
+          slippageBps: 1,
+          availableLiquidityPpm: 1_000_000,
+          feeMultiplierPpm: 1_000_000,
+        },
         eligibleSymbols: new Set(equityMarketProfile.candidateSymbols),
         market,
         management: {

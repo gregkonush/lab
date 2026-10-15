@@ -355,7 +355,10 @@ still require a later refresh. The model evidence remains immutable, current rec
 final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
 freshness limits are unchanged; the preparation ordering does not guarantee submission.
 
-Position management uses accounted entry fills and fresh reconciliation. A model exit requires probability of at
+Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
+The gross fills minus posted coin debits must equal the held quantity. A missing or unposted debit cannot authorize
+management. Overdue positions are evaluated before archive or model work, including crypto positions from a prior
+UTC date. Expired broker evidence waits for reconciliation before authorizing a close. A model exit requires probability of at
 least 0.65. A 15-minute holding limit starts at the first actual fill. A verified adverse bid can trigger the
 50-basis-point protective stop. Its initial close must commit before the triggering quote expires, measured from the
 quote's event time. The immutable exit target binds that deadline. These deterministic exits do not require Jev.
@@ -363,7 +366,7 @@ PostgreSQL checks the initial exit deadline in a deferred constraint at transact
 and insertion. A late transaction rolls back. Production uses the database wall clock; replay uses its persisted
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the inference deadline.
-New entries and quote-backed whole-share closes use
+New entries and quote-backed instrument-quantized closes use
 IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
 verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
 decision retains the original quote, phase-specific allowance, exact limit notional, and risk evidence; historical decisions without
@@ -1091,6 +1094,22 @@ The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains t
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
 change the immutable per-generation receipt schema.
+Position episode evidence uses `bayn.position-episode-evidence.v2`. It replays gross fills together with posted,
+observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
+provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
+Episode validation compares an independent cumulative PostgreSQL quantity-and-cost projection with ledger inventory;
+the existing generation-scoped financial position count retains its current meaning. Either disagreement blocks measurement.
+Missing coin-fee history, unmatched activities with only a trading date, ambiguous ordering, or inconsistent quantities
+leave episode counts `UNDETERMINED`. Fee receipt allocation does not establish an individual trade's origin.
+Measured episode counts do not remove financial settlement uncertainty or qualify profitability.
+
+The offline regression below constructs a synthetic `0.03305` ETH buy, `0.032967375` ETH sell and observed
+`0.000082625` ETH debit. It proves the reporting arithmetic only; it is not account or profitability evidence:
+
+```sh
+bun test services/bayn/src/forward-performance/position-episodes.test.ts --test-name-pattern 'closes gross fractional'
+```
+
 The default report reads performance and inference-expense records in one read-only repeatable-read PostgreSQL
 transaction. `--persist-receipt` inherits the existing writer-fence transaction instead.
 Research strategy identity follows the cycle's saved PAPER decision or execution intent generation. A cycle may be
@@ -1529,3 +1548,24 @@ closures, native execution activation and trading readiness neither invoke nor a
 upload, configuration and activation failures stay with the public job. Each failed poll retains its next scheduled
 attempt. Source-labelled duration, completed/incomplete polls, bytes, document counts, last-success metrics and traced
 fetch/upload spans support session diagnosis. The stale-input alert is a research warning and does not stop trading.
+
+### Continuous-market reporting and replay
+
+The forward-performance reader uses the same snapshot calendar and feed contract as native execution. Crypto
+reports retain `us`, `real_time_crypto`, fractional quantities, and the finite execution window. Volume evidence v2
+uses complete recorded minute bars within that window; it does not label a short crypto cycle as a whole-day volume.
+Missing bars leave capacity unknown. Retained reports keep their original hashes.
+
+Each crypto observation evaluates BTC/USD, ETH/USD, and SOL/USD together. Candidate exclusions preserve independent
+opportunities and required benchmark failures. Snapshot failure logs include per-symbol bar coverage, quote age, and
+matching feature availability. Admission, inference ranking, account allocation, risk checks, and the execution writer
+remain shared with equities.
+
+Research inputs require frozen instrument metadata. The single replay execution core handles IOC orders and market
+recovery; simulated broker checkpoint v2 reconstructs coin and cash fee activities before exposing restored state.
+Study input v2 and checkpoint v2 replace their prior contracts. Existing frozen studies keep their original revision
+and receipts; reruns require newly registered inputs and cannot inherit qualification from an older report. New native
+management observations require `entryInventoryDebit`, verified from posted accounting even when both values are zero.
+Historical observations remain immutable; readers reject records missing this evidence instead of inventing a fee debit.
+The [matched comparison](../../docs/bayn/matched-entry-study.md) retains its five-session, twenty-different-selection,
+original timing, capacity, and complete-cost requirements. Missing evidence cannot qualify Jev.
