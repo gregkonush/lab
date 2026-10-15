@@ -713,7 +713,7 @@ const readForwardPerformanceInput = (
         : { unverifiedDecisionHashes: postgres.unverifiedDecisionHashes }),
       marketVolumeEvidence,
       ledgerTotals: ledger.totals,
-      cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired,
+      cashYieldEvidenceRequired: ledger.cashYieldEvidenceRequired || !postgres.cashReportingPrecisionKnown,
       ...(ledger.cashYieldEvidence === undefined ? {} : { cashYieldEvidence: ledger.cashYieldEvidence }),
       accountingReceiptsExact,
       ledgerExact: ledger.ledgerExact,

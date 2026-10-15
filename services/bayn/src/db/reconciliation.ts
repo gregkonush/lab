@@ -64,7 +64,7 @@ import {
   type ReconciliationAlgebraFailure,
 } from '../reconciliation/algebra'
 import { Pipeable } from '../pipeable'
-import { readOpeningCash } from './account-baseline'
+import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } from './broker-fees'
 import {
@@ -780,6 +780,7 @@ export const makeReconciliation = (
         yield* requireAutocommit
         yield* writerFence.transaction(
           Effect.gen(function* () {
+            yield* retainAccountCashReporting(sql, snapshot)
             yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
             yield* prepareFeeActivities(sql, snapshot.account.accountId, snapshot.fees, config.tigerBeetle)
             yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)

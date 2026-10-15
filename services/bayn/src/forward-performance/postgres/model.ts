@@ -1,3 +1,4 @@
+import { CashReportingQuantumSchema } from '../../broker/alpaca/cash-reporting'
 import { Data, Schema } from 'effect'
 import type { AccountingTransaction } from '../../accounting/schema'
 import { FinalizedSnapshotProvenanceSchema } from '../../contracts'
@@ -65,11 +66,13 @@ export const CashYieldEvidenceRow = Schema.Struct({
   opening_account_event_id: Sha256,
   opening_observed_at: Schema.Date,
   opening_cash_micros: Schema.String,
+  opening_cash_reporting_quantum_micros: Schema.NullOr(CashReportingQuantumSchema),
   pre_window_accounted_cash_delta_micros: Schema.String,
   pre_window_cash_residual_micros: Schema.String,
   closing_account_event_id: Sha256,
   closing_observed_at: Schema.Date,
   closing_cash_micros: Schema.String,
+  closing_cash_reporting_quantum_micros: Schema.NullOr(CashReportingQuantumSchema),
   accounted_cash_delta_micros: Schema.String,
   cash_yield_micros: Schema.String,
 })
@@ -212,6 +215,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly transactions: readonly AccountingTransaction[]
   /** All account transactions through the selected reconciliation, for stable-account ledger replay. */
   readonly ledgerTransactions: readonly AccountingTransaction[]
+  readonly cashReportingPrecisionKnown: boolean
   readonly brokerFeeAccrualRecords: readonly (typeof import('../../db/fee-accruals').StoredAccrual.Type)[]
   readonly brokerFeeRecords?: readonly import('../../accounting/broker-fees').StoredBrokerFee[]
   readonly generationBrokerFeeIds?: readonly string[]

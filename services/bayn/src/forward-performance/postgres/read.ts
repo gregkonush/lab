@@ -275,9 +275,11 @@ export const readForwardPerformancePostgresDataFirst = (
             SELECT
               event.event_id,
               event.observed_at,
-              snapshot.cash_micros
+              snapshot.cash_micros,
+              reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+            LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
             CROSS JOIN latest_reconciliation
             CROSS JOIN first_cycle
             WHERE snapshot.account_id = ${accountId}
@@ -303,9 +305,11 @@ export const readForwardPerformancePostgresDataFirst = (
             SELECT
               event.event_id,
               event.observed_at,
-              snapshot.cash_micros
+              snapshot.cash_micros,
+              reporting.quantum_micros::text AS cash_reporting_quantum_micros
             FROM account_snapshots AS snapshot
             JOIN broker_events AS event ON event.event_id = snapshot.event_id
+            LEFT JOIN account_cash_reporting reporting ON reporting.account_event_id = snapshot.event_id
             CROSS JOIN latest_reconciliation
             WHERE snapshot.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'snapshot')}
@@ -338,20 +342,20 @@ export const readForwardPerformancePostgresDataFirst = (
             opening_snapshot.event_id AS opening_account_event_id,
             opening_snapshot.observed_at AS opening_observed_at,
             opening_snapshot.cash_micros::text AS opening_cash_micros,
+            opening_snapshot.cash_reporting_quantum_micros AS opening_cash_reporting_quantum_micros,
             pre_window_accounted_cash.cash_delta_micros::text AS pre_window_accounted_cash_delta_micros,
             (
               opening_snapshot.cash_micros
-              - baseline_snapshot.cash_micros
-              - pre_window_accounted_cash.cash_delta_micros
+              - round((baseline_snapshot.cash_micros + pre_window_accounted_cash.cash_delta_micros)/COALESCE(opening_snapshot.cash_reporting_quantum_micros::numeric,1))*COALESCE(opening_snapshot.cash_reporting_quantum_micros::numeric,1)
             )::text AS pre_window_cash_residual_micros,
             closing_snapshot.event_id AS closing_account_event_id,
             closing_snapshot.observed_at AS closing_observed_at,
             closing_snapshot.cash_micros::text AS closing_cash_micros,
+            closing_snapshot.cash_reporting_quantum_micros AS closing_cash_reporting_quantum_micros,
             accounted_cash.cash_delta_micros::text AS accounted_cash_delta_micros,
             (
               closing_snapshot.cash_micros
-              - opening_snapshot.cash_micros
-              - accounted_cash.cash_delta_micros
+              - round((opening_snapshot.cash_micros + accounted_cash.cash_delta_micros)/COALESCE(closing_snapshot.cash_reporting_quantum_micros::numeric,1))*COALESCE(closing_snapshot.cash_reporting_quantum_micros::numeric,1)
             )::text AS cash_yield_micros
           FROM latest_reconciliation
           CROSS JOIN baseline_snapshot
@@ -818,10 +822,12 @@ export const readForwardPerformancePostgresDataFirst = (
                 reconciledAt: reconciliationRow.reconciled_at.toISOString(),
               }
         const cashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined =
-          cashYieldRow === undefined
+          cashYieldRow === undefined ||
+          cashYieldRow.opening_cash_reporting_quantum_micros === null ||
+          cashYieldRow.closing_cash_reporting_quantum_micros === null
             ? undefined
             : {
-                schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+                schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
                 reconciliationId: cashYieldRow.reconciliation_id,
                 reconciliationContentHash: cashYieldRow.reconciliation_content_hash,
                 reconciledAt: cashYieldRow.reconciled_at.toISOString(),
@@ -831,11 +837,13 @@ export const readForwardPerformancePostgresDataFirst = (
                 openingAccountEventId: cashYieldRow.opening_account_event_id,
                 openingObservedAt: cashYieldRow.opening_observed_at.toISOString(),
                 openingCashMicros: cashYieldRow.opening_cash_micros,
+                openingCashReportingQuantumMicros: cashYieldRow.opening_cash_reporting_quantum_micros,
                 preWindowAccountedCashDeltaMicros: cashYieldRow.pre_window_accounted_cash_delta_micros,
                 preWindowCashResidualMicros: cashYieldRow.pre_window_cash_residual_micros,
                 closingAccountEventId: cashYieldRow.closing_account_event_id,
                 closingObservedAt: cashYieldRow.closing_observed_at.toISOString(),
                 closingCashMicros: cashYieldRow.closing_cash_micros,
+                closingCashReportingQuantumMicros: cashYieldRow.closing_cash_reporting_quantum_micros,
                 accountedCashDeltaMicros: cashYieldRow.accounted_cash_delta_micros,
                 cashYieldMicros: cashYieldRow.cash_yield_micros,
               }
@@ -880,6 +888,7 @@ export const readForwardPerformancePostgresDataFirst = (
           ...(cashYieldEvidence === undefined ? {} : { cashYieldEvidence }),
           transactions,
           ledgerTransactions,
+          cashReportingPrecisionKnown: cashYieldRow === undefined || cashYieldEvidence !== undefined,
           brokerFeeAccrualRecords,
           brokerFeeRecords: brokerFeeRows.map(
             ({

@@ -25,3 +25,25 @@ export const readOpeningCash = (sql: PgClient.PgClient, accountId: string) =>
         }),
     ),
   )
+
+export const retainAccountCashReporting = (
+  sql: PgClient.PgClient,
+  snapshot: import('./reconciliation').BrokerSnapshot,
+) =>
+  Effect.gen(function* () {
+    yield* sql`INSERT INTO account_cash_reporting(account_event_id,quantum_micros)
+    SELECT a.event_id,${snapshot.cashReportingQuantumMicros}::integer FROM account_snapshots a JOIN broker_events e USING(event_id)
+    WHERE a.event_id=${snapshot.accountEventId} AND a.account_id=${snapshot.account.accountId}
+      AND a.cash_micros=${snapshot.account.cashMicros}::numeric AND e.observed_at=${snapshot.account.observedAt}::timestamptz
+    ON CONFLICT(account_event_id) DO NOTHING`
+    const [row] = yield* Schema.decodeUnknownEffect(
+      Schema.Tuple([Schema.Struct({ quantum_micros: Schema.Int })]),
+      strictParseOptions,
+    )(yield* sql`SELECT quantum_micros FROM account_cash_reporting WHERE account_event_id=${snapshot.accountEventId}`)
+    if (String(row.quantum_micros) !== snapshot.cashReportingQuantumMicros)
+      return yield* new ReconciliationStoreError({
+        operation: 'reconcile',
+        failure: 'invariant',
+        message: 'Cash reporting precision differs from its retained account observation',
+      })
+  })

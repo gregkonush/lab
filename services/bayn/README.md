@@ -33,7 +33,9 @@ Crypto settlement records gross fills unchanged and accrues only debits observed
 Accruals require the active native cycle, accounted fills, the complete observed order quantity and the corresponding
 retained broker snapshot. Fee bounds reject unrelated balance changes. USD cash comparisons use the precision
 reported by the provider, while the ledger retains six-decimal micros.
-Migration 102 adds immutable settlement accruals and receipt matches. Preparation commits before ledger posting;
+Migration 102 adds immutable settlement accruals, receipt matches and account reporting precision. Cash-yield evidence
+uses that retained quantum; historical snapshots without it cannot qualify economic results. Residual sells use their
+latest trading date, so directly settled sells from an earlier date cannot block a later close. Preparation commits before ledger posting;
 recovery posts the same deterministic plans before accounting later fills. Delayed coin and USD fee activities match
 those accruals and post only the remaining adjustment. Activity allocation does not establish individual trade origin:
 qualification waits until every accrual for the account, asset and trading date is covered. A partial pooled receipt

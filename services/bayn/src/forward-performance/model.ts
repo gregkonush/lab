@@ -275,7 +275,7 @@ export interface ForwardPerformanceLedgerTotals {
 }
 
 export interface ForwardPerformanceCashYieldEvidence {
-  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1'
+  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2'
   readonly reconciliationId: string
   readonly reconciliationContentHash: string
   readonly reconciledAt: string
@@ -285,11 +285,13 @@ export interface ForwardPerformanceCashYieldEvidence {
   readonly openingAccountEventId: string
   readonly openingObservedAt: string
   readonly openingCashMicros: string
+  readonly openingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly preWindowAccountedCashDeltaMicros: string
   readonly preWindowCashResidualMicros: string
   readonly closingAccountEventId: string
   readonly closingObservedAt: string
   readonly closingCashMicros: string
+  readonly closingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly accountedCashDeltaMicros: string
   readonly cashYieldMicros: string
 }

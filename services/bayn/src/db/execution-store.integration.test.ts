@@ -45,7 +45,7 @@ import {
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 import { verifyBrokerStateVersion } from './reconciliation'
-import { readOpeningCash } from './account-baseline'
+import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 import { makeCycleStore } from '../cycle/store/postgres'
@@ -873,7 +873,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         yield* cycles.activate(acquired.cycle.identity.cycleId, start)
         const cycleId = acquired.cycle.identity.cycleId
         const opening = flatAccountEvent()
-        yield* events.ingest({
+        const openingReceipt = yield* events.ingest({
           ...opening,
           sourceEventId: 'settlement-opening',
           observedAt: start,
@@ -965,6 +965,12 @@ describePostgres('PostgreSQL execution persistence', () => {
           valuation,
           reconciledAt: observedAt,
         }
+        yield* retainAccountCashReporting(sql, {
+          ...snapshot,
+          account: { ...opening.account, observedAt: start },
+          accountEventId: openingReceipt.eventId,
+          cashReportingQuantumMicros: '1',
+        })
         yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
         journalControl.failPosts = true
         expect(
@@ -1000,6 +1006,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           orders: [buyOrder, sellOrder],
           reconciledAt: sellAt,
         }
+        yield* retainAccountCashReporting(sql, cashSnapshot)
         yield* fence.transaction(prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle))
         yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
         expect(
@@ -1038,6 +1045,22 @@ describePostgres('PostgreSQL execution persistence', () => {
         expect(journalControl.postCount).toBe(posts)
         expect(result.cashDeltaMicros).toBe('-6046')
         expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual([6046n])
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at) VALUES(${hash('settlement-report-cut')},'bayn.paper-reconciliation.v1',${accountId},${hash('settlement-report-state')},${hash('settlement-report-state')},${hash('settlement-report-content')},'EXACT','[]'::jsonb,${sellAt})`
+        yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE autonomous_cycles ON COMMIT DROP AS SELECT * FROM public.autonomous_cycles`
+            yield* sql`UPDATE autonomous_cycles SET state='COMPLETED',terminal_at=${sellAt},execution_close_at=${sellAt}`
+            const report = yield* readForwardPerformancePostgres(sql, accountId, undefined, fence)
+            expect(report.cashReportingPrecisionKnown).toBe(true)
+            expect(report.cashYieldEvidence).toMatchObject({
+              schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
+              cashYieldMicros: '0',
+              openingCashReportingQuantumMicros: '1',
+              closingCashReportingQuantumMicros: '10000',
+            })
+            expect(report.cashYieldEvidence?.accountedCashDeltaMicros).toBe('2055896')
+          }),
+        )
         yield* accounting.verifyCompleted([buy, sell])
         expect(
           yield* sql`SELECT sum(quantity_atoms)::text AS quantity,sum(cost_basis_micros)::text AS cost FROM broker_inventory_debits WHERE posted`,
@@ -1148,7 +1171,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           fees: [],
           cashReportingQuantumMicros: '1' as const,
           positionSnapshotId: hash('fixture-position-snapshot'),
-          accountEventId: hash('fixture-account-event'),
+          accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const
@@ -1240,7 +1263,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           fees: [],
           cashReportingQuantumMicros: '1' as const,
           positionSnapshotId: hash('fixture-position-snapshot'),
-          accountEventId: hash('fixture-account-event'),
+          accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const

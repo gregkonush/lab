@@ -1,8 +1,9 @@
+import { OrderSide } from '../execution/contracts'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import { hashLedgerPlanResult } from '../ledger-plan'
-import { feeAccrualCohortSettled, type StoredAccrual } from './fee-accruals'
+import { feeAccrualSources, feeAccrualCohortSettled, type StoredAccrual } from './fee-accruals'
 
 const accrual = (kind: 'COIN' | 'CASH', cycle: string, amount: number, matched: number): typeof StoredAccrual.Type => {
   const common = {
@@ -67,3 +68,15 @@ test.each(['COIN', 'CASH'] as const)(
     )
   },
 )
+
+test('unaccrued directly settled sells do not contaminate a later trading date', () => {
+  const rows = [
+    { date: '2026-10-14', transactionId: 'old-directly-settled' },
+    { date: '2026-10-15', transactionId: 'new-residual-close' },
+    { date: '2026-10-15', transactionId: 'new-partial-close' },
+  ]
+  expect(feeAccrualSources(rows, OrderSide.Sell)).toEqual(rows.slice(1))
+  expect(feeAccrualSources(rows.slice(0, 1), OrderSide.Sell)).toEqual(rows.slice(0, 1))
+  expect(feeAccrualSources(rows, OrderSide.Buy)).toEqual(rows)
+  expect(feeAccrualSources([], OrderSide.Sell)).toEqual([])
+})

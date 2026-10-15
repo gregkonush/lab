@@ -135,6 +135,14 @@ export const postFeeAccruals = (
     }
     return rows
   })
+export const feeAccrualSources = <A extends { readonly date: string }>(
+  rows: readonly A[],
+  side: OrderSide,
+): readonly A[] => {
+  const latestDate = rows.reduce((date, row) => (row.date > date ? row.date : date), '')
+  return side === OrderSide.Sell ? rows.filter((row) => row.date === latestDate) : rows
+}
+
 const sourcesFor = (sql: PgClient.PgClient, snapshot: BrokerSnapshot, side: OrderSide, symbol: string | null) =>
   Effect.gen(function* () {
     const rows = yield* fromResult(
@@ -159,13 +167,14 @@ const sourcesFor = (sql: PgClient.PgClient, snapshot: BrokerSnapshot, side: Orde
   `,
       ),
     )
-    const first = rows[0]
+    const selected = feeAccrualSources(rows, side)
+    const first = selected[0]
     if (first === undefined) return null
-    if (rows.some((row) => row.cycleId !== first.cycleId || row.date !== first.date))
+    if (rows.some((row) => row.cycleId !== first.cycleId) || selected.some((row) => row.date !== first.date))
       return yield* invariant('Fee settlement mixes active cycles or trading dates')
-    for (const id of new Set(rows.map((row) => row.brokerOrderId))) {
+    for (const id of new Set(selected.map((row) => row.brokerOrderId))) {
       const order = snapshot.orders.find((value) => value.brokerOrderId === id)
-      const source = rows.find((row) => row.brokerOrderId === id)
+      const source = selected.find((row) => row.brokerOrderId === id)
       if (
         order === undefined ||
         source === undefined ||
@@ -176,7 +185,7 @@ const sourcesFor = (sql: PgClient.PgClient, snapshot: BrokerSnapshot, side: Orde
     return {
       cycleId: first.cycleId,
       date: first.date,
-      sourceTrades: rows.map(({ transactionId, quantityAtoms, priceAtoms }) => ({
+      sourceTrades: selected.map(({ transactionId, quantityAtoms, priceAtoms }) => ({
         transactionId,
         quantityAtoms,
         priceAtoms,
@@ -250,8 +259,6 @@ export const prepareObservedCoinFees = (sql: PgClient.PgClient, snapshot: Broker
 export const prepareObservedCashFees = (sql: PgClient.PgClient, snapshot: BrokerSnapshot, identity: Identity) =>
   Effect.gen(function* () {
     const accountId = snapshot.account.accountId
-    const sources = yield* sourcesFor(sql, snapshot, OrderSide.Sell, null)
-    if (sources === null) return
     const [balance] = yield* fromResult(
       Schema.decodeUnknownResult(
         Schema.Tuple([Schema.Struct({ cash: Schema.String })]),
@@ -269,6 +276,8 @@ export const prepareObservedCashFees = (sql: PgClient.PgClient, snapshot: Broker
       BigInt(snapshot.account.cashMicros)
     )
       return
+    const sources = yield* sourcesFor(sql, snapshot, OrderSide.Sell, null)
+    if (sources === null) return
     if (!fresh(snapshot.account.observedAt, snapshot.reconciledAt))
       return yield* invariant('Cash settlement cannot use a stale account observation')
     const bound =

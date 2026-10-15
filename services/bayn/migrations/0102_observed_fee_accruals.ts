@@ -3,6 +3,12 @@ import { SqlClient } from 'effect/sql'
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
+  yield* sql`CREATE TABLE account_cash_reporting (
+    account_event_id text PRIMARY KEY REFERENCES account_snapshots(event_id),
+    quantum_micros integer NOT NULL CHECK(quantum_micros IN(1,10,100,1000,10000))
+  )`
+  yield* sql`CREATE TRIGGER account_cash_reporting_immutable BEFORE UPDATE OR DELETE ON account_cash_reporting FOR EACH ROW EXECUTE FUNCTION reject_evidence_mutation()`
+  yield* sql`CREATE TRIGGER account_cash_reporting_no_truncate BEFORE TRUNCATE ON account_cash_reporting FOR EACH STATEMENT EXECUTE FUNCTION reject_evidence_mutation()`
   yield* sql`CREATE TABLE broker_fee_accruals (
     accrual_id text PRIMARY KEY CHECK(accrual_id ~ '^[0-9a-f]{64}$'),account_id text NOT NULL,
     kind text NOT NULL CHECK(kind IN('COIN','CASH')),symbol text NOT NULL,cycle_id text NOT NULL REFERENCES autonomous_cycles(cycle_id),fee_date date NOT NULL,
