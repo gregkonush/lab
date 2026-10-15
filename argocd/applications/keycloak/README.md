@@ -14,6 +14,10 @@ an unlimited transaction log on the primary. Keep the slot budget below one quar
 If a standby falls behind that budget and its required WAL is absent from the archive, rebuild that standby from
 the healthy primary. Never remove WAL files manually. Expand storage through this Cluster manifest when recovering
 a full volume; CloudNativePG resizes the existing PVCs through the storage class.
+During an existing full-disk outage, its safety check can stop before automatic PVC resizing. After the Cluster
+change merges and syncs, expand the affected PVC to that same reviewed size following the
+[full-storage recovery procedure](https://cloudnative-pg.io/docs/1.28/troubleshooting/#storage-is-full).
+Verify free space on the mounted filesystem before PostgreSQL restarts.
 
 The existing DNS-01 `letsencrypt-prod` issuer provides the certificate for `auth.proompteng.ai`. Traefik exposes only
 HTTPS. The exact Cloudflare tunnel route verifies the origin certificate with that hostname before the wildcard route.

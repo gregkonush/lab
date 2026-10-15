@@ -503,6 +503,49 @@ def validate(targets):
         and keycloak_ca.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
         "keycloak: mount only the public database CA certificate with mode 0440",
     )
+    theme_mounts = [
+        mount
+        for mount in container(targets, "keycloak", "StatefulSet", "keycloak")[
+            "volumeMounts"
+        ]
+        if mount["name"] == "login-theme"
+    ]
+    require(
+        theme_mounts
+        == [
+            {
+                "name": "login-theme",
+                "mountPath": "/opt/keycloak/themes/tengri/login",
+                "readOnly": True,
+            }
+        ],
+        "keycloak: the dedicated login theme must be mounted read-only",
+    )
+    theme = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "login-theme"
+    )["configMap"]
+    require(
+        theme["items"]
+        == [
+            {"key": "theme.properties", "path": "theme.properties"},
+            {
+                "key": "webauthnRegister.js",
+                "path": "resources/js/webauthnRegister.js",
+            },
+        ],
+        "keycloak: registration assets must use the paths imported by the built-in template",
+    )
+    theme_root = Path("argocd/applications/keycloak/tengri/theme/login")
+    require(
+        resource(targets, "keycloak", "ConfigMap", theme["name"])["data"]
+        == {
+            "theme.properties": (theme_root / "theme.properties").read_text(),
+            "webauthnRegister.js": (
+                theme_root / "resources/js/webauthnRegister.js"
+            ).read_text(),
+        },
+        "keycloak: the deployed theme must contain the browser-qualified registration module",
+    )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
         "keycloak: bounded connection pool required",
@@ -830,6 +873,16 @@ def main():
         lambda data: container(data, "keycloak", "StatefulSet", "keycloak")[
             "env"
         ].append({"name": "KC_CACHE_EMBEDDED_MTLS_ENABLED", "value": "false"}),
+        lambda data: container(data, "keycloak", "StatefulSet", "keycloak").update(
+            volumeMounts=[]
+        ),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "login-theme"
+        )["configMap"]["items"].pop(),
         lambda data: resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
             "template"
         ]["spec"]["volumes"][0]["secret"].update(defaultMode=440),

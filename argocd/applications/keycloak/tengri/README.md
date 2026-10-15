@@ -10,6 +10,13 @@ client secrets through the administrator API and verify the BFF secret readback.
 broker links. The isolated browser fixture rotates both secrets after passkey enrollment, rejects the old BFF secret
 and completes a fresh login using the rotated GitHub and BFF credentials.
 
+The dedicated `tengri` login theme extends Keycloak's built-in theme. Its registration module uses Keycloak 26.7.4's
+WebAuthn implementation and default authenticator label without calling `window.prompt()`, which embedded browsers
+reject after creating the credential. Bootstrap reconciles only this presentation setting after verifying the
+security configuration. The real browser fixture disables prompts, enrolls passkeys and verifies that theme migration
+preserves existing credentials while security drift still fails.
+The upstream module retains its [Apache 2.0 license](theme/LICENSE.txt).
+
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note
 is included in the ID token. The account clients, direct grants, implicit flow and refresh tokens are disabled.
