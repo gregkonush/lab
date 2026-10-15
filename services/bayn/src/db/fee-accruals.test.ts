@@ -28,9 +28,12 @@ const accrual = (kind: 'COIN' | 'CASH', cycle: string, amount: number, matched: 
         }
       : {
           ...common,
+          schemaVersion: 'bayn.broker-fee-accrual.v2',
           kind,
           symbol: 'USD',
           accountEventId: 'a'.repeat(64),
+          openingAccountEventId: 'd'.repeat(64),
+          openingCashReportingQuantumMicros: '1',
           projectedCashMicros: '100000000',
           observedCashMicros: String(100000000 - amount),
           cashReportingQuantumMicros: '1',
