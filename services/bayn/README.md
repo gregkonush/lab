@@ -1594,6 +1594,11 @@ its UTC cut and compares the complete before/after history before persisting or 
 Cash-yield evidence v3 binds the baseline, opening and closing reporting residuals to posted accruals and settlements
 visible at each cut. Reporting uses the native residual calculation and applies only the change between cuts. It
 does not post a transfer or treat a reporting-precision difference as income. Earlier evidence versions are rejected.
+Migration 107 records an immutable database-clock acknowledgement only after the native journal verifies each fee
+or accrual plan. A failed post leaves no acknowledgement; a retry or retained-plan verification acknowledges the
+actual successful check without backdating it to the provider observation. Historical cuts without an acknowledgement
+by that cut withhold cash-yield evidence and financial qualification. Existing ledger records and provider clocks
+remain immutable; an earlier posting time is never inferred from a later successful verification.
 The forward-performance command requires an explicit authority generation. The unbounded account-history command
 has been removed; cumulative accounting and ledger verification still accompany every scoped report.
 

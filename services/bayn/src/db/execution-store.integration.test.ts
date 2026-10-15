@@ -1036,7 +1036,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           cashReportingQuantumMicros: '1',
         })
         yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
-        if (historical) yield* fence.transaction(postRetainedAccrual('COIN'))
+        if (historical || overreleased) yield* fence.transaction(postRetainedAccrual('COIN'))
         else {
           journalControl.failPosts = true
           expect(
@@ -1140,7 +1140,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             VALUES(${legacy.accrualId},${accountId},'CASH','USD',${cycleId},'2026-08-28',${cashReceipt.eventId},${sellAt},
               ${legacy.cashDebitMicros},${legacy.expenseMicros},${sql.json(legacy.data)},${legacy.contentHash},${legacyPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger})`)
         } else yield* fence.transaction(prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle))
-        if (historical) yield* fence.transaction(postRetainedAccrual('CASH'))
+        if (historical || overreleased) yield* fence.transaction(postRetainedAccrual('CASH'))
         else yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
         const regulatory = {
           accountId,
@@ -1423,17 +1423,17 @@ describePostgres('PostgreSQL execution persistence', () => {
             { count: 0 },
           ])
         }
-        const [correctionCut] = yield* sql<{
-          posted_at: Date | null
-        }>`SELECT max(posted_at) AS posted_at FROM broker_fee_match_corrections`
+        const [postingCut] = yield* sql<{ posted_at: Date }>`SELECT max(at) AS posted_at FROM (
+          SELECT posted_at AS at FROM broker_fee_match_corrections
+          UNION ALL SELECT acknowledged_at FROM broker_fee_posting_acknowledgements) postings`
         const reportAt = new Date(
-          Math.max(Date.parse(sellAt), correctionCut?.posted_at?.getTime() ?? 0) + (hasRegulatory ? 2000 : 0),
+          Math.max(Date.parse(sellAt), postingCut?.posted_at?.getTime() ?? 0) + 2000,
         ).toISOString()
-        if (hasRegulatory) {
+        {
           const settledAccount = {
             ...cashAccount,
-            cashMicros: '1000920000',
-            equityMicros: '1000920000',
+            cashMicros: hasRegulatory ? '1000920000' : cashAccount.cashMicros,
+            equityMicros: hasRegulatory ? '1000920000' : cashAccount.equityMicros,
             observedAt: reportAt,
           }
           const settledReceipt = yield* events.ingest({
@@ -1493,15 +1493,48 @@ describePostgres('PostgreSQL execution persistence', () => {
     const prebaseline = fees.map((item) => ({ ...item, value: { ...item.value, date: '2026-08-27' } }))
     expect(await runtime.runPromise(post(prebaseline).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
     expect(journalControl.postCount).toBe(0)
+    const retryStarted = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        return (yield* sql<{ at: Date }>`SELECT clock_timestamp() AS at`)[0]?.at
+      }),
+    )
+    if (retryStarted === undefined) throw new Error('Missing database retry clock')
     journalControl.failPosts = true
     const failed = await runtime.runPromise(post(fees).pipe(Effect.flip))
     expect(failed).toMatchObject({ failure: 'ledger' })
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT count(*)::integer AS count FROM broker_fee_posting_acknowledgements`).toEqual([
+          { count: 0 },
+        ])
+      }),
+    )
     journalControl.failPosts = false
     const recovered = await runtime.runPromise(post(fees))
     const replay = await runtime.runPromise(post(fees))
     expect(replay).toEqual(recovered)
     expect(recovered.fees.reduce((sum, fee) => sum + BigInt(fee.netAmountMicros), 0n)).toBe(-230000n)
     expect(journalControl.postCount).toBe(4)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        expect(
+          yield* sql`SELECT count(*)::integer AS count,bool_and(a.acknowledged_at>=${retryStarted}::timestamptz
+        AND f.posted_at>=${retryStarted}::timestamptz) AS actual_retry_clock
+        FROM broker_fee_posting_acknowledgements a JOIN broker_fee_accounting f
+          ON a.account_id=f.account_id AND a.source_id=f.activity_id WHERE a.source_kind='ACTIVITY'`,
+        ).toEqual([{ count: 3, actual_retry_clock: true }])
+        yield* sql`UPDATE broker_fee_posting_acknowledgements SET acknowledged_at=clock_timestamp()`.pipe(Effect.flip)
+        yield* sql`DELETE FROM broker_fee_posting_acknowledgements`.pipe(Effect.flip)
+        yield* sql`TRUNCATE broker_fee_posting_acknowledgements`.pipe(Effect.flip)
+        yield* sql`INSERT INTO broker_fee_posting_acknowledgements(account_id,source_kind,source_id,ledger_plan_hash,acknowledged_at)
+        SELECT account_id,'ACTIVITY',activity_id,ledger_plan_hash,first_observed_at FROM broker_fee_accounting LIMIT 1`.pipe(
+          Effect.flip,
+        )
+      }),
+    )
     const changed = fees.map((item, index) =>
       index === 0 ? { ...item, value: { ...item.value, netAmountMicros: '-220000' } } : item,
     )
@@ -1527,7 +1560,9 @@ describePostgres('PostgreSQL execution persistence', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const reports = []
-        for (const cut of [occurredAt, observedAt]) {
+        const [acknowledgedCut] = yield* sql<{ at: Date }>`SELECT clock_timestamp() AS at`
+        if (acknowledgedCut === undefined) throw new Error('Missing posting cut')
+        for (const cut of [occurredAt, acknowledgedCut.at.toISOString()]) {
           yield* sql`INSERT INTO reconciliations (
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
             content_hash, status, discrepancies, reconciled_at
