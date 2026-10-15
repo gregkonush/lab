@@ -1478,6 +1478,12 @@ The generators produce valid archive rows, source envelopes, risk entries, and p
 mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
 row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
 authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
+Critical-path campaigns also exercise the shared equity/BTC/ETH/SOL planner's precision, liquidity and capital
+bounds; exact submission cutoffs; crash recovery before and after entry-lease expiry; durable decision retries;
+and observed crypto coin/cash fee bounds with stable ledger identities across repeated broker observations.
+Sparse history generators vary real completed-bar coverage and late historical arrivals, require the latest
+candidate and benchmark minute, reject future arrivals, and reproduce immutable snapshot evidence and common
+momentum references. First-minute exchange queries clamp history to the actual session open.
 All data is synthetic; no broker, database, or live account is contacted.
 
 Run a longer, reproducible 1,000-case-per-property campaign with a new seed:

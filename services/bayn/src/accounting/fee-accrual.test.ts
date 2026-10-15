@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from '../testing/property-test-support'
 import { prepareFeeAccrual } from './fee-accrual'
 const coin = {
   schemaVersion: 'bayn.broker-fee-accrual.v1',
@@ -32,6 +34,106 @@ const cash = {
   cashReportingQuantumMicros: '10000',
   sourceTrades: [{ transactionId: 'd'.repeat(64), quantityAtoms: '32967375', priceAtoms: '2410100000000' }],
 }
+
+test('property: native crypto coin fees conserve observed inventory and replay the same ledger identity', () => {
+  checkProperty(
+    'crypto-coin-fee-conservation',
+    fc.property(
+      fc.constantFrom('BTC/USD', 'ETH/USD', 'SOL/USD'),
+      fc.bigInt({ min: 400n, max: 10_000_000_000n }),
+      fc.bigInt({ min: 1_000_000_000_000n, max: 100_000_000_000_000_000n }),
+      (symbol, quantity, price) => {
+        const feeQuantity = quantity / 400n
+        const cost = (quantity * price) / 1_000_000_000_000n
+        const expense = (feeQuantity * price) / 1_000_000_000_000n
+        const input = {
+          ...coin,
+          symbol,
+          projectedQuantityAtoms: quantity.toString(),
+          observedQuantityAtoms: (quantity - feeQuantity).toString(),
+          projectedCostMicros: cost.toString(),
+          observedCostMicros: (cost - expense).toString(),
+          sourceTrades: [
+            { transactionId: 'c'.repeat(64), quantityAtoms: quantity.toString(), priceAtoms: price.toString() },
+          ],
+        }
+        const result = Result.getOrThrow(prepareFeeAccrual(input, 7001))
+        expect(
+          BigInt(result.coinQuantityAtoms ?? '0') +
+            BigInt(result.data.kind === 'COIN' ? result.data.observedQuantityAtoms : '0'),
+        ).toBe(quantity)
+        expect(result.expenseMicros).toBe(expense.toString())
+        expect(result.plan.transfers.map((transfer) => transfer.amount)).toEqual([expense])
+        const replay = Result.getOrThrow(
+          prepareFeeAccrual(
+            { ...input, positionSnapshotId: 'e'.repeat(64), observedAt: '2026-10-15T02:02:00.000Z' },
+            7001,
+          ),
+        )
+        expect(replay.accrualId).toBe(result.accrualId)
+        expect(replay.plan).toEqual(result.plan)
+        expect(
+          Result.isFailure(
+            prepareFeeAccrual({ ...input, sourceTrades: [input.sourceTrades[0], input.sourceTrades[0]] }, 7001),
+          ),
+        ).toBe(true)
+        const excessiveFee = (quantity + 399n) / 400n + 1n
+        expect(
+          Result.isFailure(
+            prepareFeeAccrual({ ...input, observedQuantityAtoms: (quantity - excessiveFee).toString() }, 7001),
+          ),
+        ).toBe(true)
+      },
+    ),
+  )
+})
+
+test('property: crypto cash fee retries retain one ledger debit and reject unsupported cash discrepancies', () => {
+  checkProperty(
+    'crypto-cash-fee-boundaries',
+    fc.property(
+      fc.bigInt({ min: 1n, max: 1_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000n }),
+      fc.constantFrom('1' as const, '10000' as const),
+      fc.constantFrom('1' as const, '10000' as const),
+      (lots, dollars, quantum, openingQuantum) => {
+        const quantity = lots * 4_000_000_000n
+        const expense = lots * dollars * 10_000n
+        const observedCash = 100_000_000_000_000n
+        const input = {
+          ...cash,
+          openingCashReportingQuantumMicros: openingQuantum,
+          cashReportingQuantumMicros: quantum,
+          projectedCashMicros: (observedCash + expense).toString(),
+          observedCashMicros: observedCash.toString(),
+          sourceTrades: [
+            {
+              transactionId: 'd'.repeat(64),
+              quantityAtoms: quantity.toString(),
+              priceAtoms: (dollars * 1_000_000_000n).toString(),
+            },
+          ],
+        }
+        const result = Result.getOrThrow(prepareFeeAccrual(input, 7001))
+        expect(result.cashDebitMicros).toBe(expense.toString())
+        expect(result.plan.transfers.map((transfer) => transfer.amount)).toEqual([expense])
+        const replay = Result.getOrThrow(prepareFeeAccrual({ ...input, accountEventId: 'e'.repeat(64) }, 7001))
+        expect(replay.accrualId).toBe(result.accrualId)
+        expect(replay.plan).toEqual(result.plan)
+        const beyondBound = observedCash - BigInt(quantum) - BigInt(openingQuantum) - 1n
+        expect(
+          Result.isFailure(prepareFeeAccrual({ ...input, observedCashMicros: beyondBound.toString() }, 7001)),
+        ).toBe(true)
+        expect(Result.isFailure(prepareFeeAccrual({ ...input, observedCashMicros: '-1' }, 7001))).toBe(true)
+        expect(
+          Result.isFailure(
+            prepareFeeAccrual({ ...input, sourceTrades: [input.sourceTrades[0], input.sourceTrades[0]] }, 7001),
+          ),
+        ).toBe(true)
+      },
+    ),
+  )
+})
 test('the captured ETH net position proves the coin debit without estimating a fee', () => {
   const result = Result.getOrThrow(prepareFeeAccrual(coin, 7001))
   expect(result.coinQuantityAtoms).toBe('82625')
