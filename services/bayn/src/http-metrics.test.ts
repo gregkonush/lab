@@ -28,7 +28,7 @@ test('the existing pull endpoint includes native histograms, source identity and
       Effect.provideService(Metric.MetricRegistry, new Map()),
     ),
   )
-  expect(metrics).toContain('bayn_operation_metrics_expected 1')
+  expect(metrics).toContain(`bayn_operation_metrics_expected{source_revision="${provenance.sourceRevision}"} 1`)
   expect(metrics).toContain('bayn_build_info{')
   expect(metrics).toMatch(/bayn_operation_duration_seconds_count\{[^\n]*stage="bayn.postgres.commit"[^\n]*\} 1/)
   expect(metrics).toMatch(/bayn_telemetry_heartbeat_timestamp_seconds\{[^\n]*service="bayn"/)

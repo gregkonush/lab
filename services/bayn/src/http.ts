@@ -1291,7 +1291,7 @@ const renderPrometheusMetricsDataFirst = (
     ),
     '# HELP bayn_operation_metrics_expected This service revision requires native operation metrics in production.',
     '# TYPE bayn_operation_metrics_expected gauge',
-    'bayn_operation_metrics_expected 1',
+    `bayn_operation_metrics_expected{source_revision="${prometheusLabel(provenance.sourceRevision)}"} 1`,
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,

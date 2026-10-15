@@ -21,11 +21,11 @@ tests:
     values: 1+0x80
   - series: cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"}
     values: 1+0x80
-  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"}
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn",source_revision="current"}
     values: 0+15x80
-  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"}
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller",source_revision="current"}
     values: 0+15x80
-  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
     values: 1+0x80
   alert_rule_test:
   - eval_time: 10m
@@ -69,11 +69,11 @@ tests:
     values: 1+0x80
   - series: cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"}
     values: 1+0x80
-  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"}
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn",source_revision="current"}
     values: 0+15x80
-  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"}
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller",source_revision="current"}
     values: 0+15x80
-  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
     values: 1+0x80
   alert_rule_test:
   - eval_time: 3m
@@ -140,7 +140,7 @@ tests:
 - name: native metrics absence remains visible through the separate API pull indicator
   interval: 15s
   input_series:
-  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
     values: 1+0x80
   alert_rule_test:
   - eval_time: 3m
@@ -152,10 +152,11 @@ tests:
         service: bayn
         notify: email
         severity: warning
+        source_revision: current
       exp_annotations:
         summary: Bayn native operation metrics are unavailable
-        description: The current API revision expects metrics, but one service has no recent export heartbeat. Check metrics
-          export failure logs, Mimir and the exact gateway egress allowance.
+        description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
+          workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
         runbook_url: docs/runbooks/bayn-cache-observability.md
     - exp_labels:
         team: trading
@@ -163,10 +164,11 @@ tests:
         service: bayn-execution-controller
         notify: email
         severity: warning
+        source_revision: current
       exp_annotations:
         summary: Bayn native operation metrics are unavailable
-        description: The current API revision expects metrics, but one service has no recent export heartbeat. Check metrics
-          export failure logs, Mimir and the exact gateway egress allowance.
+        description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
+          workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
         runbook_url: docs/runbooks/bayn-cache-observability.md
 - name: missing index catalog evidence is unknown and alerts
   interval: 15s
@@ -273,4 +275,29 @@ tests:
         summary: Bayn generation settlement query is slow
         description: The named statement p95 exceeds 500ms with at least twenty samples. Inspect its trace, PostgreSQL waits
           and generation-index scan history; catalog counters alone do not prove query plan choice.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: fresh retained old workers cannot hide missing current worker telemetry
+  interval: 15s
+  input_series:
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn",source_revision="current"}
+    values: 0+15x80
+  - series: bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller",source_revision="old-retained"}
+    values: 0+15x80
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BaynOperationMetricsUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        notify: email
+        severity: warning
+        service: bayn-execution-controller
+        source_revision: current
+      exp_annotations:
+        summary: Bayn native operation metrics are unavailable
+        description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
+          workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
         runbook_url: docs/runbooks/bayn-cache-observability.md

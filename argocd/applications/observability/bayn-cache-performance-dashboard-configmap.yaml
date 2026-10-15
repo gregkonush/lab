@@ -975,7 +975,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "time() - max by(service) (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\"})",
+              "expr": "time() - max by(service) (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"})",
               "legendFormat": "{{service}}",
               "range": true
             }

@@ -3936,9 +3936,11 @@ data:
               least twenty samples. Compare SET, replica acknowledgement and queue time.
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynOperationMetricsUnavailable
-          expr: ((time() - max by(service) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service=~"bayn|bayn-execution-controller"})
-            > 90) or absent(bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"}) or absent(bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"}))
-            and on() (max(bayn_operation_metrics_expected{job="bayn",namespace="bayn"}) == 1)
+          expr: label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"} ==
+            1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn"})
+            >= time() - 90), "service", "bayn", "source_revision", ".*") or label_replace((max by(source_revision) (bayn_operation_metrics_expected{job="bayn",namespace="bayn"}
+            == 1)) unless on(source_revision) (max by(source_revision) (bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="bayn-execution-controller"})
+            >= time() - 90), "service", "bayn-execution-controller", "source_revision", ".*")
           for: 2m
           labels:
             team: trading
@@ -3947,8 +3949,9 @@ data:
             severity: warning
           annotations:
             summary: Bayn native operation metrics are unavailable
-            description: The current API revision expects metrics, but one service has no recent export heartbeat. Check
-              metrics export failure logs, Mimir and the exact gateway egress allowance.
+            description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older
+              retained workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress
+              allowance.
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynGenerationIndexUnavailable
           expr: (min(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or sum(absent(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}))
