@@ -44,9 +44,21 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
-import { makeReconciliation, verifyBrokerStateVersion } from './reconciliation'
-import { accountBrokerFees } from './broker-fees'
+import { verifyBrokerStateVersion } from './reconciliation'
+import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
+import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
+import { makeCycleStore } from '../cycle/store/postgres'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
+import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
+import { continuousMarketHours, continuousExecutionPolicy, tradingWindow } from '../market-hours'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+import {
+  cashAccrualReportingOffsetMicros,
+  prepareObservedCoinFees,
+  prepareObservedCashFees,
+  readFeeAccruals,
+} from './fee-accruals'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -463,7 +475,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           occurredAt: openingAt,
         })
         yield* accounting.account(fill)
-        yield* fence
+        const material = yield* fence
           .transaction(
             Effect.gen(function* () {
               const originalAccount = accountEvent()
@@ -480,7 +492,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                 accountEventId: accountReceipt.eventId,
                 positionSnapshotId: snapshot.snapshotId,
               })
-              const reconciled = yield* reconciliation.reconcile({
+              return {
                 account: account.account,
                 positions: positions.map((event) => event.position),
                 positionsObservedAt: observedAt,
@@ -488,13 +500,17 @@ describePostgres('PostgreSQL execution persistence', () => {
                 ordersObservedAt: observedAt,
                 fills: [fill.fill],
                 fees: [],
+                cashReportingQuantumMicros: '1' as const,
+                positionSnapshotId: snapshot.snapshotId,
+                accountEventId: accountReceipt.eventId,
                 valuation,
                 reconciledAt: '2026-08-28T14:32:00.000Z',
-              })
-              expect(reconciled.reconciliation.status).toBe(ReconciliationStatus.Exact)
+              }
             }),
           )
           .pipe(Effect.provideService(Tracer.Tracer, tracer))
+        const reconciled = yield* reconciliation.reconcile(material).pipe(Effect.provideService(Tracer.Tracer, tracer))
+        expect(reconciled.reconciliation.status).toBe(ReconciliationStatus.Exact)
       }),
     )
     expect(spanEvents.filter((name) => name === 'db.transaction.savepoint')).toHaveLength(0)
@@ -665,7 +681,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const account = flatAccountEvent()
         const accountReceipt = yield* events.ingest(account)
         const positionsReceipt = yield* events.ingestPositions(positionSnapshot(hash('opening-empty-positions'), []))
-        const valuation = yield* valuations.value({
+        yield* valuations.value({
           accountEventId: accountReceipt.eventId,
           positionSnapshotId: positionsReceipt.snapshotId,
         })
@@ -710,18 +726,9 @@ describePostgres('PostgreSQL execution persistence', () => {
               value: { accountId, activityId: 'opening-fee', date: '2026-08-28', netAmountMicros: '0' },
               evidence: { requestId: 'opening-fee-request', status: 200, contentHash: hash('opening-fee'), observedAt },
             }
-            const exact = yield* makeReconciliation(monitored, journal(journalControl), config, fence).reconcile({
-              account: account.account,
-              positions: [],
-              positionsObservedAt: observedAt,
-              orders: [],
-              ordersObservedAt: observedAt,
-              fills: [],
-              fees: [fee],
-              valuation,
-              reconciledAt: '2026-08-28T14:32:00.000Z',
-            })
-            expect(exact.reconciliation.status).toBe(ReconciliationStatus.Exact)
+            yield* prepareFeeActivities(monitored, accountId, [fee], config.tigerBeetle)
+            const opening = yield* readOpeningCash(monitored, accountId)
+            expect(opening).toEqual({ cash_micros: '1000000000', observed_at: observedAt })
             expect(lookups).toHaveLength(2)
             for (const lookup of lookups) {
               const [query, parameters] = lookup.compile()
@@ -745,9 +752,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             }
             const prebaseline = { ...fee, value: { ...fee.value, date: '2026-08-27' } }
             expect(
-              yield* accountBrokerFees(sql, journal(journalControl), accountId, [prebaseline], config.tigerBeetle).pipe(
-                Effect.flip,
-              ),
+              yield* prepareFeeActivities(sql, accountId, [prebaseline], config.tigerBeetle).pipe(Effect.flip),
             ).toMatchObject({ failure: 'invariant', message: expect.stringContaining('predates') })
           }),
         )
@@ -779,9 +784,9 @@ describePostgres('PostgreSQL execution persistence', () => {
     const post = (items: typeof fees) =>
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        return yield* sql.withTransaction(
-          accountBrokerFees(sql, journal(journalControl), accountId, items, config.tigerBeetle),
-        )
+        const fence = yield* WriterFence
+        yield* fence.transaction(prepareFeeActivities(sql, accountId, items, config.tigerBeetle))
+        return yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
       })
     journalControl.failPosts = true
     expect(await runtime.runPromise(post(fees).pipe(Effect.flip))).toMatchObject({ failure: 'ledger' })
@@ -835,6 +840,283 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
+  test('observed crypto settlement commits before posting, survives failure and matches delayed receipts once', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const events = yield* BrokerEventStore
+        const accounting = yield* FillAccountingStore
+        const valuations = yield* ValuationStore
+        const authority = yield* AuthorityGenerationStore
+        if (authority.readOrInitializeObserveAuthority === undefined) throw new Error('Missing authority initializer')
+        const generationHash = hash('settlement-generation')
+        yield* authority.readOrInitializeObserveAuthority({ generationHash, maximum: Authority.Observe })
+        const cycles = yield* makeCycleStore()
+        const start = '2026-08-28T14:30:00.000Z'
+        const window = Result.getOrThrow(
+          tradingWindow(continuousMarketHours, start, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
+        )
+        if (window === null) throw new Error('Missing continuous window')
+        const policy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(defaultJevProtocolDocument.executionModel))
+        if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
+          throw new Error('Unexpected execution policy')
+        const draft = Result.getOrThrow(
+          makeIntradayCycleDraft(
+            {
+              cycleBindingId: hash('settlement-cycle'),
+              strategyName: 'jev',
+              strategyProtocolHash: hash('settlement-protocol'),
+              accountId,
+              executionPolicy: policy,
+            },
+            continuousMarketHours,
+            window,
+          ),
+        )
+        const acquired = yield* cycles.acquire(draft, start)
+        yield* cycles.activate(acquired.cycle.identity.cycleId, start)
+        const cycleId = acquired.cycle.identity.cycleId
+        const opening = flatAccountEvent()
+        const openingReceipt = yield* events.ingest({
+          ...opening,
+          sourceEventId: 'settlement-opening',
+          observedAt: start,
+          occurredAt: start,
+          account: { ...opening.account, observedAt: start },
+        })
+        const makeFill = (id: string, side: OrderSide, qty: string, price: string, at: string) => {
+          const base = fillEvent(id, side, qty, price)
+          const fill = { ...base.fill, intentId: hash(id), symbol: 'ETH/USD', feeMicros: '0', occurredAt: at }
+          return {
+            ...base,
+            fill,
+            contentHash: canonicalHashV1(fill),
+            occurredAt: at,
+            observedAt: at,
+            sourceTimestamp: Result.getOrThrow(sourceTimestamp(at)),
+          }
+        }
+        const retain = (fill: FillEventInput) =>
+          Effect.gen(function* () {
+            const intentId = hash(fill.fill.fillId)
+            yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+          VALUES(${intentId},'bayn.paper-intent.v3',${accountId},${fill.fill.clientOrderId},'ETH/USD',${fill.fill.side},'LIMIT','IOC',${fill.fill.quantityAtoms},'100000000','PLANNED',${fill.occurredAt},${fill.occurredAt},${cycleId},'jev',${hash(fill.fill.fillId + 'decision')},${hash('settlement-policy')},${generationHash})`
+            yield* accounting.account(fill)
+            return {
+              ...order(),
+              schemaVersion: 'bayn.order.v3' as const,
+              brokerOrderId: fill.fill.brokerOrderId,
+              clientOrderId: fill.fill.clientOrderId,
+              symbol: 'ETH/USD',
+              side: fill.fill.side,
+              quantityAtoms: fill.fill.quantityAtoms,
+              filledQuantityAtoms: fill.fill.quantityAtoms,
+              status: OrderStatus.Filled,
+              observedAt: fill.observedAt,
+            }
+          })
+        const buy = makeFill('observed-eth-buy', OrderSide.Buy, '33050000', '2425310000', occurredAt)
+        const buyOrder = yield* retain(buy)
+        const position = {
+          schemaVersion: 'bayn.position.v2' as const,
+          accountId,
+          symbol: 'ETH/USD',
+          quantityAtoms: '32967375',
+          costBasisMicros: '79956104',
+          averageEntryPriceMicros: '2425310000',
+          marketPriceMicros: '2425310000',
+          unrealizedPnlMicros: '0',
+          marketValueMicros: '79956104',
+          observedAt,
+        }
+        const positionInput = {
+          _tag: 'Position' as const,
+          broker: Broker.Alpaca,
+          accountId,
+          sourceEventId: `position:${hash('settlement-net-eth')}:${observedAt}:ETH/USD`,
+          contentHash: canonicalHashV1({ sourceHash: hash('settlement-net-eth'), position }),
+          occurredAt: observedAt,
+          observedAt,
+          position,
+        }
+        const snapshotReceipt = yield* events.ingestPositions(
+          positionSnapshot(hash('settlement-net-eth'), [positionInput]),
+        )
+        const acct = { ...opening.account, cashMicros: '919840000', equityMicros: '999800104', observedAt }
+        const acctReceipt = yield* events.ingest({
+          ...opening,
+          sourceEventId: 'settlement-bought-account',
+          contentHash: canonicalHashV1(acct),
+          occurredAt: observedAt,
+          observedAt,
+          account: acct,
+        })
+        const valuation = yield* valuations.value({
+          accountEventId: acctReceipt.eventId,
+          positionSnapshotId: snapshotReceipt.snapshotId,
+        })
+        const snapshot = {
+          account: acct,
+          positions: [position],
+          positionsObservedAt: observedAt,
+          orders: [buyOrder],
+          ordersObservedAt: observedAt,
+          fills: [buy.fill],
+          fees: [],
+          cashReportingQuantumMicros: '10000' as const,
+          positionSnapshotId: snapshotReceipt.snapshotId,
+          accountEventId: acctReceipt.eventId,
+          valuation,
+          reconciledAt: observedAt,
+        }
+        yield* retainAccountCashReporting(sql, {
+          ...snapshot,
+          account: { ...opening.account, observedAt: start },
+          accountEventId: openingReceipt.eventId,
+          cashReportingQuantumMicros: '1',
+        })
+        yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
+        journalControl.failPosts = true
+        expect(
+          yield* fence
+            .transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+            .pipe(Effect.flip),
+        ).toMatchObject({ failure: 'ledger' })
+        const prepared = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
+        expect(prepared.map((row) => [row.coinQuantityAtoms, row.expenseMicros, row.posted])).toEqual([
+          ['82625', '200392', false],
+        ])
+        journalControl.failPosts = false
+        yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
+        yield* retainAccountCashReporting(sql, snapshot)
+        expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(1)
+        const sellAt = '2026-08-28T14:31:01.000Z'
+        const sell = makeFill('observed-eth-sell', OrderSide.Sell, '32967375', '2500000000', sellAt)
+        const sellOrder = yield* retain(sell)
+        const cashAccount = { ...acct, cashMicros: '1002060000', equityMicros: '1002060000', observedAt: sellAt }
+        const cashReceipt = yield* events.ingest({
+          ...opening,
+          sourceEventId: 'settlement-sold-account',
+          contentHash: canonicalHashV1(cashAccount),
+          occurredAt: sellAt,
+          observedAt: sellAt,
+          account: cashAccount,
+        })
+        const cashSnapshot = {
+          ...snapshot,
+          account: cashAccount,
+          accountEventId: cashReceipt.eventId,
+          positions: [],
+          orders: [buyOrder, sellOrder],
+          reconciledAt: sellAt,
+        }
+        yield* retainAccountCashReporting(sql, cashSnapshot)
+        expect(
+          yield* fence
+            .transaction(
+              Effect.gen(function* () {
+                const unknownOpening = { ...acct, observedAt: '2026-08-28T14:31:00.500Z' }
+                yield* events.ingest({
+                  ...opening,
+                  sourceEventId: 'settlement-opening-without-reporting',
+                  contentHash: canonicalHashV1(unknownOpening),
+                  occurredAt: unknownOpening.observedAt,
+                  observedAt: unknownOpening.observedAt,
+                  account: unknownOpening,
+                })
+                yield* prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle)
+              }),
+            )
+            .pipe(Effect.flip),
+        ).toMatchObject({ failure: 'invariant' })
+        yield* fence.transaction(prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle))
+        yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        expect(
+          (yield* readFeeAccruals(sql, accountId, config.tigerBeetle))
+            .map((row) => [row.data.kind, row.expenseMicros, row.posted])
+            .sort(),
+        ).toEqual([
+          ['CASH', '200000', true],
+          ['COIN', '200392', true],
+        ])
+        expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe(
+          '-1942',
+        )
+        const cashAccrual = (yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).find(
+          (row) => row.data.kind === 'CASH',
+        )
+        expect(cashAccrual?.data).toMatchObject({
+          schemaVersion: 'bayn.broker-fee-accrual.v2',
+          openingAccountEventId: acctReceipt.eventId,
+          openingCashReportingQuantumMicros: '10000',
+        })
+        yield* fence
+          .transaction(sql`INSERT INTO broker_fee_accruals(
+            accrual_id,account_id,kind,symbol,cycle_id,fee_date,position_snapshot_id,account_event_id,observed_at,
+            coin_quantity_atoms,cash_debit_micros,expense_micros,data,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger)
+            SELECT ${hash('forged-opening-precision')},account_id,kind,symbol,cycle_id,fee_date,position_snapshot_id,account_event_id,observed_at,
+              coin_quantity_atoms,cash_debit_micros,expense_micros,jsonb_set(data,'{openingCashReportingQuantumMicros}','"1"'::jsonb),content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger
+            FROM broker_fee_accruals WHERE kind='CASH'`)
+          .pipe(Effect.flip)
+        expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(2)
+        const fees = [
+          {
+            value: {
+              accountId,
+              activityId: 'settled-coin-fee',
+              date: '2026-08-28',
+              netAmountMicros: '0',
+              coinDebit: { symbol: 'ETH/USD', quantityAtoms: '82625', priceAtoms: '2425310000000' },
+            },
+            evidence: { requestId: 'settled-fees', status: 200, contentHash: hash('settled-fees'), observedAt: sellAt },
+          },
+          {
+            value: { accountId, activityId: 'settled-cash-fee', date: '2026-08-28', netAmountMicros: '-206046' },
+            evidence: { requestId: 'settled-fees', status: 200, contentHash: hash('settled-fees'), observedAt: sellAt },
+          },
+        ]
+        const post = Effect.gen(function* () {
+          yield* fence.transaction(prepareFeeActivities(sql, accountId, fees, config.tigerBeetle))
+          return yield* fence.transaction(
+            postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle),
+          )
+        })
+        const result = yield* post
+        const posts = journalControl.postCount
+        expect(yield* post).toEqual(result)
+        expect(journalControl.postCount).toBe(posts)
+        expect(result.cashDeltaMicros).toBe('-6046')
+        expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe('0')
+        expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual([6046n])
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at) VALUES(${hash('settlement-report-cut')},'bayn.paper-reconciliation.v1',${accountId},${hash('settlement-report-state')},${hash('settlement-report-state')},${hash('settlement-report-content')},'EXACT','[]'::jsonb,${sellAt})`
+        yield* fence.transaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE autonomous_cycles ON COMMIT DROP AS SELECT * FROM public.autonomous_cycles`
+            yield* sql`UPDATE autonomous_cycles SET state='COMPLETED',terminal_at=${sellAt},execution_close_at=${sellAt}`
+            const report = yield* readForwardPerformancePostgres(sql, accountId, undefined, fence)
+            expect(report.cashReportingPrecisionKnown).toBe(true)
+            expect(report.cashYieldEvidence).toMatchObject({
+              schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
+              cashYieldMicros: '0',
+              openingCashReportingQuantumMicros: '1',
+              closingCashReportingQuantumMicros: '10000',
+            })
+            expect(report.cashYieldEvidence?.accountedCashDeltaMicros).toBe('2055896')
+          }),
+        )
+        yield* accounting.verifyCompleted([buy, sell])
+        expect(
+          yield* sql`SELECT sum(quantity_atoms)::text AS quantity,sum(cost_basis_micros)::text AS cost FROM broker_inventory_debits WHERE posted`,
+        ).toEqual([{ quantity: '82625', cost: '200392' }])
+        expect(
+          yield* sql`SELECT (sum(quantity_delta_atoms)-(SELECT sum(quantity_atoms) FROM broker_inventory_debits WHERE posted))::text AS quantity,(sum(cost_basis_delta_micros)-(SELECT sum(cost_basis_micros) FROM broker_inventory_debits WHERE posted))::text AS cost FROM accounting_transactions`,
+        ).toEqual([{ quantity: '0', cost: '0' }])
+      }),
+    )
+  })
+
   test('recovers delayed broker fee posting and rejects changed or missing activity identities', async () => {
     await runtime.runPromise(Effect.flatMap(BrokerEventStore, (events) => events.ingest(flatAccountEvent())))
     const fees = ['-210000', '-10000', '-10000'].map((netAmountMicros, index) => ({
@@ -844,9 +1126,9 @@ describePostgres('PostgreSQL execution persistence', () => {
     const post = (items: typeof fees) =>
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        return yield* sql.withTransaction(
-          accountBrokerFees(sql, journal(journalControl), accountId, items, config.tigerBeetle),
-        )
+        const fence = yield* WriterFence
+        yield* fence.transaction(prepareFeeActivities(sql, accountId, items, config.tigerBeetle))
+        return yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
       })
     const prebaseline = fees.map((item) => ({ ...item, value: { ...item.value, date: '2026-08-27' } }))
     expect(await runtime.runPromise(post(prebaseline).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
@@ -932,6 +1214,9 @@ describePostgres('PostgreSQL execution persistence', () => {
           ordersObservedAt: observedAt,
           fills: [],
           fees: [],
+          cashReportingQuantumMicros: '1' as const,
+          positionSnapshotId: hash('fixture-position-snapshot'),
+          accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const
@@ -1021,6 +1306,9 @@ describePostgres('PostgreSQL execution persistence', () => {
           ordersObservedAt: observedAt,
           fills: [],
           fees: [],
+          cashReportingQuantumMicros: '1' as const,
+          positionSnapshotId: hash('fixture-position-snapshot'),
+          accountEventId: accountReceipt.eventId,
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const

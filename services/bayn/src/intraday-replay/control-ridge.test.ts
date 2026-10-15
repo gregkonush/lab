@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { expect, test } from 'bun:test'
@@ -39,7 +40,13 @@ import { validateBacktestSourceReceipt, type BacktestSourceManifest } from './so
 
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const firstDecisionMs = sixBarOpenMs + 30 * 60_000 + 30_000
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const fullCalendar = [
   { date: '2026-09-01', open: '09:30', close: '10:10' },
   { date: '2026-09-04', open: '09:30', close: '10:10' },

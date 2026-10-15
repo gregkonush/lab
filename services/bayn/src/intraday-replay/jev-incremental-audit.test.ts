@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { jevRequestForSnapshot } from '../jev/native.test-support'
 import { equityMarketProfile } from '../jev/markets'
 import { exchangeSessions } from '../market-hours'
@@ -160,7 +161,13 @@ const fixture = nativeJevFixture()
 const observedAt = Date.parse(fixture.observation.payload.observedAt)
 const baseQuote = fixture.snapshot.latestQuotes['AAPL']
 if (baseQuote === undefined) throw new Error('Missing lifecycle quote')
-const assumptions = { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 0,
+  availableLiquidityPpm: 1000000,
+  feeMultiplierPpm: 1000000,
+}
 const modelDelayMs = 5000
 
 const quoteAt = (symbol: string, atMs: number) => {

@@ -21,6 +21,7 @@ export type ForwardPerformanceReasonCode =
   | 'MISSING_LEDGER_ACCOUNT'
   | 'NON_EXACT_RECONCILIATION'
   | 'OPERATING_COST_EVIDENCE_GAP'
+  | 'BROKER_FEE_SETTLEMENT_PENDING'
   | 'OPEN_POSITION'
   | 'STARTING_CAPITAL_GAP'
   | 'UNCLOSED_WINDOW'
@@ -238,13 +239,13 @@ export interface ForwardPerformanceIntradayMarketVolumeRequest {
   readonly windowOpenedAt: string
   readonly windowClosedAt: string
   readonly evidenceCutoffAt: string
-  readonly sourceFeed: 'iex'
+  readonly sourceFeed: IntradaySnapshotManifest['feed']
   readonly decisionManifest: IntradaySnapshotManifest | StreamingSnapshotManifest
 }
 
 export interface ForwardPerformanceIntradayMarketVolumeEvidence extends ForwardPerformanceIntradayMarketVolumeRequest {
-  readonly schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v1'
-  readonly volumeScope: 'IEX_RECORDED_SESSION_VOLUME'
+  readonly schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v2'
+  readonly volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME'
   readonly terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE'
   readonly quantityAtoms: string
   readonly closePriceMicros: string
@@ -274,7 +275,7 @@ export interface ForwardPerformanceLedgerTotals {
 }
 
 export interface ForwardPerformanceCashYieldEvidence {
-  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1'
+  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2'
   readonly reconciliationId: string
   readonly reconciliationContentHash: string
   readonly reconciledAt: string
@@ -284,11 +285,13 @@ export interface ForwardPerformanceCashYieldEvidence {
   readonly openingAccountEventId: string
   readonly openingObservedAt: string
   readonly openingCashMicros: string
+  readonly openingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly preWindowAccountedCashDeltaMicros: string
   readonly preWindowCashResidualMicros: string
   readonly closingAccountEventId: string
   readonly closingObservedAt: string
   readonly closingCashMicros: string
+  readonly closingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly accountedCashDeltaMicros: string
   readonly cashYieldMicros: string
 }
@@ -337,6 +340,17 @@ export interface ForwardPerformanceEvidenceInput {
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly accountTransactions?: readonly AccountingTransaction[]
+  /** Verified cumulative account fee evidence, independent of the selected financial scope. */
+  readonly accountFeeAccruals?: readonly (typeof import('../db/fee-accruals').StoredAccrual.Type)[]
+  readonly accountBrokerFees?: readonly import('../accounting/broker-fees').StoredBrokerFee[]
+  /** Cumulative account inventory, independently projected by PostgreSQL and read from the ledger. */
+  readonly accountPositionCounts?: { readonly postgres: number; readonly ledger: number }
+  readonly brokerFeeAccruals?: readonly {
+    readonly accrualId: string
+    readonly accountId: string
+    readonly expenseMicros: string
+    readonly settled: boolean
+  }[]
   readonly brokerFees?: readonly (import('../broker/alpaca').FeeActivity & { readonly inventoryCostMicros?: string })[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
   readonly unverifiedDecisionHashes?: readonly string[]
@@ -445,8 +459,8 @@ export interface ForwardPerformanceReceiptMaterial {
       readonly marketVolumeQuantityAtoms: string
       /** Present for native intraday evidence; legacy daily receipts predate this source binding. */
       readonly intradaySource?: {
-        readonly feed: 'iex'
-        readonly volumeScope: 'IEX_RECORDED_SESSION_VOLUME'
+        readonly feed: IntradaySnapshotManifest['feed']
+        readonly volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME'
         readonly evidenceHash: string
       }
       readonly participationRate: {

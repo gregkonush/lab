@@ -16,6 +16,7 @@ import type { WriterFenceError } from '../execution/writer-fence'
 import type { CanonicalHashFailure } from '../hash'
 import type { ReconciledBrokerState, ReconciliationRiskContext } from '../reconciliation'
 import { Pipeable } from '../pipeable'
+import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 
 export const maximumRows = 10_000
 export const ordersPageSize = 500
@@ -29,6 +30,7 @@ export type OrderEventInput = Extract<BrokerEventInput, { readonly _tag: 'Order'
 
 export interface NormalizedBrokerSnapshot {
   readonly account: AccountEventInput
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: PositionSnapshotInput
   readonly orderEvents: readonly OrderEventInput[]
   readonly fillEvents: readonly FillEventInput[]

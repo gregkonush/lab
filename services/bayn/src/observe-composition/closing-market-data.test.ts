@@ -1,10 +1,18 @@
+import { MarketSchedule } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type BrokerReadShape } from '../broker/alpaca'
 import { CycleState, decodeAutonomousCycle } from '../cycle'
-import { Authority, IntentState, KillState, OrderType, TerminalOutcome } from '../execution/contracts'
+import {
+  Authority,
+  IntentState,
+  KillState,
+  OrderType,
+  ReconciliationStatus,
+  TerminalOutcome,
+} from '../execution/contracts'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import { MutationStore, type MutationStoreShape } from '../execution/mutations'
 import {
@@ -48,6 +56,7 @@ import {
 import {
   buildMutationShadowCycleDecision,
   ExecutionCloseAwaitingMarketData,
+  ExecutionCloseAwaitingReconciliation,
   executionCloseMarketDataDiagnostics,
   prepareClosingExecutionCycleDecision,
 } from './decision-builder'
@@ -245,6 +254,125 @@ const fixture = async () => {
 }
 
 describe('closing market-data fallback boundaries', () => {
+  test.each(['cash-discrepancy', 'inexact-accounting'] as const)(
+    'an inexact reconciliation waits before binding a close and recovers with exact evidence (%s)',
+    async (scenario) => {
+      const request = await fixture()
+      const closeWindow = Result.getOrThrow(
+        resolveExecutionCycleCloseWindow({
+          marketSchedule: MarketSchedule.Sessions,
+          observedAt: '2026-08-19T19:00:00.000Z',
+          executionCloseAt: request.closeExpiresAt,
+          sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
+          sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
+        }),
+      )
+      let closure: ExecutionCycleClosure | undefined
+      let archiveReads = 0
+      const unused = () => Effect.die('reconciliation wait must not read or mutate intents')
+      const store: ExecutionCycleClosureStoreShape = {
+        read: unused,
+        readLatestReplan: unused,
+        bind: (value) =>
+          Effect.sync(() => {
+            closure = value
+            return value
+          }),
+        bindReplan: unused,
+        containsIntent: unused,
+      }
+      const input = {
+        ...request.input,
+        executionCycleClosureStore: store,
+        intradayMarketData: {
+          ...freshMarket,
+          loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
+            Effect.sync(() => {
+              archiveReads += 1
+            }).pipe(Effect.andThen(freshMarket.loadSnapshot(query))),
+        },
+      }
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
+          const at = yield* currentUtcInstant
+          const base = factsAt(at, true)
+          const reconciliation = {
+            ...base.brokerState.reconciliation,
+            status: scenario === 'cash-discrepancy' ? ReconciliationStatus.Discrepancy : ReconciliationStatus.Exact,
+          }
+          const facts = {
+            ...base,
+            brokerState: { ...base.brokerState, reconciliation },
+            report: {
+              ...base.report,
+              reconciliation,
+              metrics: { ...base.report.metrics, accountingExact: false, discrepancyCount: 1 },
+            },
+          }
+          const failure = yield* Effect.flip(
+            prepareClosingExecutionCycleDecision({
+              ...request,
+              input,
+              reconcile: Effect.succeed(facts),
+              initialReconciliation: facts,
+            }),
+          )
+          expect(failure).toBeInstanceOf(ExecutionCloseAwaitingReconciliation)
+          const close = (reconciled: ReconciliationPassResult) =>
+            ensureExecutionCycleClosure({
+              ...request,
+              input,
+              closeWindow,
+              reconcile: Effect.succeed(reconciled),
+              refreshReconciliation: unused(),
+              existing: undefined,
+            })
+          expect(yield* close(facts)).toEqual({
+            _tag: 'Wait',
+            observedAt: at,
+            waitReason: 'CLOSE_RECONCILIATION_PENDING',
+          })
+          expect(archiveReads).toBe(0)
+          expect(closure).toBeUndefined()
+          expect(
+            executionEvidenceContinuationDelayMs(
+              {
+                outcome: 'RECOVERED',
+                action: 'WAITING',
+                observedAt: at,
+                cycle: request.cycle,
+                waitReason: 'CLOSE_RECONCILIATION_PENDING',
+              },
+              30_000,
+              at,
+            ),
+          ).toBeUndefined()
+          expect((yield* close(base))._tag).toBe('Close')
+          expect(closure).toBeDefined()
+          expect(archiveReads).toBeGreaterThan(0)
+        }).pipe(
+          Effect.provideService(IntentStore, { read: unused, commit: unused, commitClosing: unused }),
+          Effect.provideService(MutationStore, {
+            authorizeSubmit: unused,
+            beginSubmit: unused,
+            submitAccepted: unused,
+            submitRejected: unused,
+            submitDenied: unused,
+            submitUnknown: unused,
+            beginCancel: unused,
+            cancelAccepted: unused,
+            cancelUnknown: unused,
+            recoveryFound: unused,
+            recoveryNotFound: unused,
+            recoveryUnknown: unused,
+            latest: unused,
+          }),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+    },
+  )
   test.each([
     'filled',
     'filled reuses preflight',
@@ -265,6 +393,8 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        marketSchedule: MarketSchedule.Sessions,
+        observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
         sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
         sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
@@ -416,10 +546,11 @@ describe('closing market-data fallback boundaries', () => {
                     report: { ...fresh.report, metrics: { ...fresh.report.metrics, accountingExact: false } },
                   }
                 : fresh
+        if (fresh.riskContext.authority === null) throw new Error('fixture authority missing')
         const terminalReconciliation = yield* reconciliationForPreparation(
           preflight,
           refreshReconciliation,
-          Effect.succeed(fresh.riskContext.authority ?? undefined),
+          Effect.succeed(fresh.riskContext.authority),
           30_000,
         )
         const recoverClose = ensureExecutionCycleClosure({
@@ -514,6 +645,8 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        marketSchedule: MarketSchedule.Sessions,
+        observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
         sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
         sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
@@ -683,7 +816,12 @@ describe('closing market-data fallback boundaries', () => {
         const residualReconciliation = yield* reconciliationForPreparation(
           yield* reconcile,
           refreshResidual,
-          Effect.suspend(() => reconcile.pipe(Effect.map((facts) => facts.riskContext.authority ?? undefined))),
+          reconcile.pipe(
+            Effect.map((facts) => {
+              if (facts.riskContext.authority === null) throw new Error('fixture authority missing')
+              return facts.riskContext.authority
+            }),
+          ),
           30_000,
         )
         const recoverResidual = ensureExecutionCycleClosure({

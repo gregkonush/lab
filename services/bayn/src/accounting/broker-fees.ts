@@ -22,6 +22,7 @@ export const FeeReadEvidenceSchema = Schema.Struct({
 })
 export const StoredFeeSchema = Schema.Struct({
   data: BrokerFeeSchema,
+  matched_cash_micros: UnsignedMicrosSchema,
   coin_cost_basis_micros: Schema.NullOr(UnsignedMicrosSchema),
   read_evidence: FeeReadEvidenceSchema,
   content_hash: Sha256Schema,
@@ -42,7 +43,7 @@ export const verifyBrokerFeeRecord = (
     const coin = record.data.coinDebit
     if (
       (coin === undefined) !== (record.coin_cost_basis_micros === null) ||
-      (coin !== undefined && record.data.netAmountMicros !== '0')
+      (coin !== undefined && (record.data.netAmountMicros !== '0' || record.matched_cash_micros !== '0'))
     )
       return yield* Result.fail(
         new BrokerFeeEvidenceError({ message: 'broker fee asset and inventory cost do not agree' }),
@@ -52,7 +53,7 @@ export const verifyBrokerFeeRecord = (
         ? brokerFeeLedgerPlan(
             record.data.accountId,
             record.data.activityId,
-            record.data.netAmountMicros,
+            (BigInt(record.data.netAmountMicros) + BigInt(record.matched_cash_micros)).toString(),
             identity.ledger,
           )
         : coinFeeLedgerPlan(

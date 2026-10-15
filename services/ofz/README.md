@@ -42,9 +42,11 @@ The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `o
 control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
 The control DDL and its non-null checksum commit in one transaction. Interrupted initialization leaves neither visible;
 an existing missing, null or different checksum is rejected and never filled from the current binary.
-`ofz migrate-runtime` initializes `tengri_control` as `tengri_migrator`, with the packaged Tengri migration and its
-SHA-256 checksum committed in one transaction. It serializes concurrent attempts and rejects a different owner,
-database or existing checksum. The BFF and controller only verify the result; they cannot initialize their own schema.
+`ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
+SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
+transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
+checksum. The BFF, controller and supervisor require both migrations through `0002_replay_buckets.sql`; they cannot
+initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
 
@@ -103,8 +105,10 @@ commands. Human roster and audit reads also require the exact BFF identity. Priv
 verified MFA without requiring a fresh control step-up or renewing idle activity. An approved emergency grant is projected
 into the durable workspace roster with its expiry; offboarding deletes that native relationship and quarantines any
 workspace exposed to emergency root access. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
-activity advances the session's idle deadline without exceeding its absolute expiry; observations, denied requests and
-stream rechecks do not. Logout binds its operation ID and original receipt to the opaque session credential and origin,
+activity advances the session's idle deadline at thirty-second resolution without exceeding its absolute expiry.
+Concurrent activity validates the current SQL session without rewriting a freshly extended deadline. The idle limit
+can therefore expire up to thirty seconds before thirty minutes from the final control request. Observations, denied
+requests and stream rechecks do not renew it. Logout binds its operation ID and original receipt to the opaque session credential and origin,
 so a lost response can be retried without producing another effect or revoking another session.
 
 The BFF supplies a fresh 256-bit credential when establishing a session and reuses the exact request for uncertain

@@ -27,6 +27,7 @@ import {
   type IntradayCycleEntryAttemptOrdinal,
 } from '../model'
 import { cycleDraftMatches, cycleDraftOf } from '../transitions'
+import { unusedEntryExpiresAt } from '../entry-admission'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
@@ -140,7 +141,7 @@ export interface IntradayCycleCandidate {
 
 export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,
-  observation: MarketHours,
+  observation: Pick<MarketHours, 'schemaVersion' | 'source'>,
   executionSession: MarketCalendarSession,
   entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinal = 1,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
@@ -199,7 +200,7 @@ export const nextIntradayEntryAttemptOrdinal = (
 }
 
 /**
- * An authority rollover or expired continuous entry lease can leave an unused cycle without a decision. Reconstruct its
+ * An authority rollover or expired entry lease can leave an unused cycle without a decision. Reconstruct its
  * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
  * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
  * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
@@ -226,8 +227,16 @@ export const canRearmUnusedCycle = (
     observedAt >= cycle.window.submissionCutoffAt
   const preSubmissionRollover =
     cycle.terminalReason === CycleTerminalReason.ProvenanceMismatch && cycle.terminalAt < cycle.window.submissionOpenAt
-  if (!expiredContinuousLease && !preSubmissionRollover) return false
-  const originalSession = expiredContinuousLease
+  const unusedEntryExpired =
+    cycle.terminalReason === CycleTerminalReason.UnusedEntryExpired &&
+    Date.parse(cycle.terminalAt) >= unusedEntryExpiresAt(cycle) &&
+    Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)
+  if (!expiredContinuousLease && !unusedEntryExpired && !preSubmissionRollover) return false
+  const useOriginalWindow =
+    expiredContinuousLease ||
+    unusedEntryExpired ||
+    cycle.window.executionCalendarSchemaVersion !== observation.schemaVersion
+  const originalSession = useOriginalWindow
     ? {
         date: cycle.identity.executionSessionDate,
         openAt: cycle.window.executionOpenAt,
@@ -236,7 +245,9 @@ export const canRearmUnusedCycle = (
     : executionSession
   const originalDraft = makeIntradayCycleDraft(
     candidate,
-    expiredContinuousLease ? continuousMarketHours : observation,
+    useOriginalWindow
+      ? { schemaVersion: cycle.window.executionCalendarSchemaVersion, source: cycle.window.executionCalendarSource }
+      : observation,
     originalSession,
     intradayCycleEntryAttemptOrdinal(cycle.identity),
   )

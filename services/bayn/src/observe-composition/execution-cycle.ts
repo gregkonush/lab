@@ -10,6 +10,8 @@ import {
   type CycleRunResult,
 } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
+import { MarketSchedule } from '../market-hours'
+import { hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
   makeExecutionCycleClosure,
@@ -83,7 +85,11 @@ import {
   type ObserveDecisionInput,
   type ReconciliationPassError,
 } from './decision-builder'
-import { resolveExecutionCycleCloseWindow, type ExecutionCycleCloseWindow } from './execution-window'
+import {
+  boundExecutionCycleCloseWindow,
+  resolveExecutionCycleCloseWindow,
+  type ExecutionCycleCloseWindow,
+} from './execution-window'
 
 type RecoveredExecutionContext = {
   readonly preparation: ObserveStartupPreparation
@@ -641,19 +647,34 @@ export const ensureExecutionCycleClosure = <R>({
     )
     return { _tag: 'Close', document: stored.document, reconciliation: prepared.reconciliation } as const
   }).pipe(
-    Effect.catchTag('ExecutionCloseAwaitingMarketData', (failure) =>
-      Effect.logInfo('Execution close awaits market data').pipe(
-        Effect.annotateLogs({
-          cycleId: cycle.identity.cycleId,
-          ...executionCloseMarketDataDiagnostics(failure),
-        }),
-        Effect.as<ExecutionCycleClosureResult>({
-          _tag: 'Wait',
-          observedAt: failure.observedAt,
-          waitReason: failure.quotePending === true ? 'CLOSE_QUOTE_PENDING' : 'CLOSE_MARKET_DATA_UNAVAILABLE',
-        }),
-      ),
-    ),
+    Effect.catchTags({
+      ExecutionCloseAwaitingReconciliation: (failure) =>
+        Effect.logInfo('Execution close awaits exact reconciliation').pipe(
+          Effect.annotateLogs({
+            cycleId: cycle.identity.cycleId,
+            reconciliationId: failure.reconciliationId,
+            reconciliationStatus: failure.status,
+            observedAt: failure.observedAt,
+          }),
+          Effect.as<ExecutionCycleClosureResult>({
+            _tag: 'Wait',
+            observedAt: failure.observedAt,
+            waitReason: 'CLOSE_RECONCILIATION_PENDING',
+          }),
+        ),
+      ExecutionCloseAwaitingMarketData: (failure) =>
+        Effect.logInfo('Execution close awaits market data').pipe(
+          Effect.annotateLogs({
+            cycleId: cycle.identity.cycleId,
+            ...executionCloseMarketDataDiagnostics(failure),
+          }),
+          Effect.as<ExecutionCycleClosureResult>({
+            _tag: 'Wait',
+            observedAt: failure.observedAt,
+            waitReason: failure.quotePending === true ? 'CLOSE_QUOTE_PENDING' : 'CLOSE_MARKET_DATA_UNAVAILABLE',
+          }),
+        ),
+    }),
   )
 
 export const mutationDecisionInput = (
@@ -767,6 +788,11 @@ const executeBoundExecutionCycle = (
     }
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
+        marketSchedule:
+          cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+            ? MarketSchedule.Continuous
+            : MarketSchedule.Sessions,
+        observedAt,
         executionCloseAt: cycle.window.executionCloseAt,
         ...sessionCloseLeads,
       }),
@@ -854,13 +880,15 @@ const executeBoundExecutionCycle = (
         closeDocument = closure.document
         closeReconciliation = closure.reconciliation
       }
+      const boundCloseWindow =
+        closeDocument === undefined ? closeWindow : boundExecutionCycleCloseWindow(closeWindow, closeDocument)
       closeOnly = closeDocument !== undefined
       phaseInput = closeOnly
         ? {
             ...input,
             mutationPhase: 'CLOSE',
-            executionCycleCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
-            executionCycleCloseExpiresAt: closeWindow.expiresAt,
+            executionCycleCloseSubmitCutoffAt: boundCloseWindow.submitCutoffAt,
+            executionCycleCloseExpiresAt: boundCloseWindow.expiresAt,
           }
         : entryPhaseInput
       step = yield* prepareNextMutationIntent({
@@ -873,7 +901,7 @@ const executeBoundExecutionCycle = (
         allowSubmit: executionMutationSubmissionAllowed({
           capability: capability._tag,
           phase: closeOnly ? 'CLOSE' : 'ENTRY',
-          submissionCutoffAt: closeOnly ? closeWindow.submitCutoffAt : entrySubmissionCutoffAt,
+          submissionCutoffAt: closeOnly ? boundCloseWindow.submitCutoffAt : entrySubmissionCutoffAt,
           observedAt,
         }),
       })
@@ -939,12 +967,13 @@ const executeBoundExecutionCycle = (
             exitTarget: management.target,
           })
           if (closure._tag !== 'Close') return closure
+          const boundCloseWindow = boundExecutionCycleCloseWindow(closeWindow, closure.document)
           closeOnly = true
           phaseInput = {
             ...input,
             mutationPhase: 'CLOSE',
-            executionCycleCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
-            executionCycleCloseExpiresAt: closeWindow.expiresAt,
+            executionCycleCloseSubmitCutoffAt: boundCloseWindow.submitCutoffAt,
+            executionCycleCloseExpiresAt: boundCloseWindow.expiresAt,
           }
           step = yield* prepareNextMutationIntent({
             input: phaseInput,
@@ -956,7 +985,7 @@ const executeBoundExecutionCycle = (
             allowSubmit: executionMutationSubmissionAllowed({
               capability: capability._tag,
               phase: 'CLOSE',
-              submissionCutoffAt: closeWindow.submitCutoffAt,
+              submissionCutoffAt: boundCloseWindow.submitCutoffAt,
               observedAt: yield* currentUtcInstant,
             }),
           })
@@ -1064,7 +1093,8 @@ export const decideUnboundExecutionCycleTerminalization = (input: {
   readonly capability: ExecutionCapability['_tag']
   readonly observedAt: string
   readonly cycle: AutonomousCycle
-}): CycleTerminalReason.Authority | undefined => {
+}): CycleTerminalReason.Authority | CycleTerminalReason.UnusedEntryExpired | undefined => {
+  if (hasExpiredUnusedEntryAdmission(input.cycle, input.observedAt)) return CycleTerminalReason.UnusedEntryExpired
   const deadline =
     input.cycle.bindings.snapshotId === undefined
       ? input.cycle.window.submissionCutoffAt
@@ -1074,7 +1104,7 @@ export const decideUnboundExecutionCycleTerminalization = (input: {
 
 const terminalizeUnboundMutationCycle = (
   cycle: AutonomousCycle,
-  reason: CycleTerminalReason.Authority,
+  reason: CycleTerminalReason.Authority | CycleTerminalReason.UnusedEntryExpired,
   observedAt: string,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, CycleStore> =>
   CycleStore.pipe(

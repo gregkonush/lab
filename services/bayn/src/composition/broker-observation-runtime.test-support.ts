@@ -1,6 +1,8 @@
+import { ValkeyCache } from '../valkey-cache'
+import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Effect, Layer, Logger, References, Tracer } from 'effect'
+import { Clock, Effect, Exit, Layer, Logger, References, Tracer } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import type { ApplicationPlanFor } from '../app'
@@ -8,8 +10,12 @@ import * as actualHttp from '../broker/alpaca/http'
 import * as actualSession from '../broker/alpaca/session'
 import * as actualPostgres from '../db/postgres-client'
 import * as actualRestateTelemetry from '../restate/restate-telemetry'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
 
+const mode = process.argv[2] ?? 'timeout'
 let attempts = 0
+let settlements = 0
 const spans: Tracer.NativeSpan[] = []
 const tracer = Tracer.make({
   span(options) {
@@ -44,7 +50,10 @@ const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
         },
       ]),
     )
-  if (query.includes('WITH failed AS')) return Effect.fail(new Error('injected completed persistence failure'))
+  if (query.includes('WITH failed AS')) {
+    settlements += 1
+    return mode === 'timeout' ? Effect.fail(new Error('injected completed persistence failure')) : Effect.succeed([])
+  }
   return Effect.succeed([])
 }
 
@@ -93,6 +102,23 @@ await mock.module('../broker/alpaca/session', () => ({
         }
         const http = yield* HttpClient.HttpClient
         yield* http.get('https://example.invalid/fake')
+        if (mode === 'invalid-response')
+          return yield* new actualSession.BrokerSessionAcquisitionError({
+            stage: actualSession.BrokerSessionAcquisitionStage.ReadSurface,
+            provider: BrokerProvider.Alpaca,
+            environment: BrokerEnvironment.Sandbox,
+            baseUrl: 'https://paper-api.alpaca.markets',
+            expectedAccountId: 'test-account',
+            cause: new BrokerReadError({
+              operation: 'positions',
+              kind: BrokerReadErrorKind.InvalidResponse,
+              retryable: false,
+              status: 200,
+              message: 'synthetic private response detail',
+            }),
+          })
+        if (mode === 'defect') return yield* Effect.die(new Error('synthetic capture defect'))
+        if (mode === 'interruption') return yield* Effect.interrupt
         yield* Effect.promise(() => releaseAcquisition.promise)
         yield* http.get('https://example.invalid/fake')
         return { read: {} } as unknown as typeof actualSession.BrokerSession.Service
@@ -106,29 +132,33 @@ const result = await Effect.runPromise(
     Effect.gen(function* () {
       const { runtime } = yield* acquireBrokerObservationRuntime({
         config: {
-          operationTimeoutMs: 25,
+          operationTimeoutMs: mode === 'timeout' ? 25 : 5000,
           alpaca: { expectedAccountId: 'test-account' },
           build: { sourceRevision: 'b'.repeat(40) },
         },
       } as unknown as ApplicationPlanFor<'AutonomousService'>)
       const signal = new AbortController().signal
-      const poll = yield* Effect.promise(() =>
-        runtime.poll(signal, {
-          captureId: 'test-capture',
-        }),
+      const poll = yield* Effect.exit(
+        Effect.promise(() =>
+          runtime.poll(signal, {
+            captureId: 'test-capture',
+          }),
+        ),
       )
       const attemptsAtReturn = attempts
       releaseAcquisition.resolve()
       yield* Effect.promise(() => acquisitionFinished.promise)
       return {
-        poll: poll.poll,
+        poll: Exit.isSuccess(poll) ? poll.value.poll : undefined,
+        failed: Exit.isFailure(poll),
+        settlements,
         attemptsAtReturn,
         attemptsAfterReturn: attempts,
         persistenceTelemetry,
         brokerTelemetry,
       }
     }),
-  ).pipe(Effect.provide(telemetry)),
+  ).pipe(Effect.provideService(ValkeyCache, valkeyFixture().cache), Effect.provide(telemetry)),
 )
 process.stdout.write(
   `BROKER_POLL_RESULT=${JSON.stringify({

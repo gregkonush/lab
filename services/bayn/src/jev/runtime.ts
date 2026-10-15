@@ -348,8 +348,10 @@ export const evaluateJevPositionManagement = (input: {
       maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, input.protocol.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt
       maximumHoldEvidence = { ...evidence, trigger: { reason: JevExitReason.MaximumHold } }
-      if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt))
+      if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt)) {
+        if (Date.parse(observedAt) >= jevBrokerEvidenceFreshUntilMs(portfolio.brokerState)) return undefined
         return yield* Effect.fromResult(decideJevExit({ ...evidence, trigger: { reason: JevExitReason.MaximumHold } }))
+      }
       const managementBudgetMs = Math.max(
         0,
         Math.min(
