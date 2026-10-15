@@ -85,6 +85,9 @@ Freight, Stage history and promotions. Retain every platform and attestation
 reachable from those roots. Recent untagged manifests also retain their layers.
 The plan records file identities, upload timestamps, manifest bytes and candidate
 sizes. Cached manifests are checked against their content digest before reuse.
+Recent revision links whose manifest payload is already gone do not retain an
+untagged image. Missing content referenced by retained tags, protected images or
+retained image indexes still fails preparation before collection.
 
 ## Quarantine within four minutes
 

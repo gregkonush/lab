@@ -40,7 +40,8 @@ import {
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
 import { Pipeable } from '../../pipeable'
 import { quantityFromDecimal } from '../../quantity'
-import { decodeInstrument } from '../../instruments'
+import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
+import { cashReportingQuantum } from './cash-reporting'
 
 const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
@@ -233,6 +234,7 @@ const normalizeAccountResultDataFirst = (
       status: raw.status,
       currency: raw.currency,
       cashMicros,
+      cashReportingQuantumMicros: cashReportingQuantum(raw.cash),
       equityMicros,
       lastEquityMicros,
       cryptoStatus: raw.crypto_status ?? null,
@@ -288,6 +290,16 @@ const normalizePositionResultDataFirst = (
     )
   }
   const assetClass = raw.asset_class
+  const symbol = raw.symbol
+  if ((instrumentMarket(symbol) === MarketKind.Crypto) !== (assetClass === AssetClass.Crypto)) {
+    return Result.fail(
+      contractFailure({
+        reason: 'ASSET_BINDING',
+        message: 'position symbol and asset class must agree',
+        facts: { field: 'position.symbol', actual: raw.symbol },
+      }),
+    )
+  }
   return Result.gen(function* () {
     const rawQuantity = BigInt(yield* quantityResult(raw.qty, 'position quantity', { signed: true }))
     const magnitude = rawQuantity < 0n ? -rawQuantity : rawQuantity
@@ -300,7 +312,7 @@ const normalizePositionResultDataFirst = (
     return {
       accountId,
       assetId: raw.asset_id,
-      symbol: raw.symbol,
+      symbol,
       exchange: raw.exchange,
       assetClass,
       side: raw.side,
@@ -677,8 +689,7 @@ export const normalizeFeeActivitiesResult = (
           return yield* Result.fail(
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),
           )
-        const aliases: Readonly<Record<string, string>> = { BTCUSD: 'BTC/USD', ETHUSD: 'ETH/USD', SOLUSD: 'SOL/USD' }
-        const symbol = aliases[activity.symbol] ?? activity.symbol
+        const symbol = activity.symbol
         if (!['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(symbol))
           return yield* Result.fail(
             contractFailure({ reason: 'ASSET_BINDING', message: 'coin fee has an unsupported instrument' }),

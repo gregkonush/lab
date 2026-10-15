@@ -205,7 +205,10 @@ const comparisonInput = (status: AccountStatus = AccountStatus.Active): Paramete
     transactions: [prepared.transaction],
     receipts: [receipt],
     ledgerExact: true,
+    brokerFeeAccruals: [],
+    brokerFeeCashDeltaMicros: '0',
     snapshot: {
+      cashReportingQuantumMicros: '1',
       account: { ...account, status },
       positions: [position],
       positionsObservedAt: observedAt,
@@ -266,7 +269,7 @@ describe('PostgreSQL reconciliation algebra', () => {
       netAmountMicros,
     }))
     const missing = successOf(compareOpeningCash({ ...input, snapshot }))
-    const exact = successOf(compareOpeningCash({ ...input, snapshot, fees }))
+    const exact = successOf(compareOpeningCash({ ...input, snapshot, fees, brokerFeeCashDeltaMicros: '-230000' }))
     expect(missing.comparison.discrepancies.some((item) => item.kind === 'CASH')).toBe(true)
     expect(exact.comparison.discrepancies).toEqual([])
     expect(exact.accountingHash).not.toBe(missing.accountingHash)
@@ -426,17 +429,20 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(details.cause).toBe(failure.cause)
   })
 
-  test('compares opening cash and produces the unchanged exact accounting identity', () => {
+  test('compares opening cash and binds the current fee accrual accounting identity', () => {
     const result = makeComparison()
 
     expect(result.accountingHash).toBe(
       canonicalHashV1({
-        schemaVersion: 'bayn.paper-accounting-state.v1',
+        schemaVersion: 'bayn.accounting-state.v2',
+        cashReportingQuantumMicros: '1',
         accountId,
         openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
         transactions: [prepared.transaction],
         receipts: [receipt],
         ledgerExact: true,
+        brokerFeeAccruals: [],
+        brokerFeeCashDeltaMicros: '0',
       }),
     )
     expect(result.comparison.discrepancies).toEqual([])
@@ -505,7 +511,10 @@ describe('PostgreSQL reconciliation algebra', () => {
         transactions: [prepared.transaction],
         receipts: [receipt],
         ledgerExact: true,
+        brokerFeeAccruals: [],
+        brokerFeeCashDeltaMicros: '0',
         snapshot: {
+          cashReportingQuantumMicros: '1',
           account,
           positions: [position],
           positionsObservedAt: observedAt,
@@ -542,7 +551,10 @@ describe('PostgreSQL reconciliation algebra', () => {
         transactions: [],
         receipts: [],
         ledgerExact: true,
+        brokerFeeAccruals: [],
+        brokerFeeCashDeltaMicros: '0',
         snapshot: {
+          cashReportingQuantumMicros: '1',
           account,
           positions: [],
           positionsObservedAt: observedAt,

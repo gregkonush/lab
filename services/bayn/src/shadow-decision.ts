@@ -1,4 +1,5 @@
 import { canonicalHashV1Result } from './hash'
+import { instrumentMarket, MarketKind } from './instruments'
 
 import { makeBoundExecutionCalendar } from './cycle/construction'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
@@ -420,7 +421,11 @@ const validateBindings = (
       plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
       plannerInput.executionTerms.executionPurpose === 'forced-close' &&
       plannerInput.executionTerms.orderType === OrderType.Market &&
-      plannerInput.executionTerms.timeInForce === TimeInForce.Day &&
+      executionMarketData.symbols.every(
+        (symbol) =>
+          plannerInput.executionTerms.timeInForce ===
+          (instrumentMarket(symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day),
+      ) &&
       plannerInput.executionTerms.priceReference === 'reconciled-broker-position-mark'
     if (!intradayClose || !bindingMatchesReconciliation || !narrowCloseTerms) {
       return Result.fail(
