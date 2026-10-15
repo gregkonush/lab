@@ -105,6 +105,10 @@ of installing another leader. Cancellation retains an in-progress journal writer
 fsync cannot overwrite the fencing record. This does not provide the independent host execution deadline required for
 the authorization cutover.
 
+Guest openings share the lifecycle barrier so independent admissions can proceed concurrently. Sleep, stop, status
+publication and leader-fence installation take it exclusively. The existing opening byte limits and two-buffer
+admission capacity remain in force.
+
 Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
 and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
 or finalizer removal for an owned slot. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
