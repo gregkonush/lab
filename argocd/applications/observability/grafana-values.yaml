@@ -106,7 +106,6 @@ dashboardsConfigMaps:
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
   bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
-  bayn-model-performance-dashboard: bayn-model-performance-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
@@ -158,21 +157,15 @@ dashboardProviders:
         type: file
         disableDeletion: false
         editable: true
+        updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cycle-operations-dashboard
-      - name: bayn-model-performance-dashboard
-        orgId: 1
-        folder: ''
-        type: file
-        disableDeletion: false
-        editable: true
-        options:
-          path: /var/lib/grafana/dashboards/bayn-model-performance-dashboard
       - name: bayn-cache-performance-dashboard
         orgId: 1
         folder: Trading
         type: file
         disableDeletion: false
         editable: true
+        updateIntervalSeconds: 30
         options:
           path: /var/lib/grafana/dashboards/bayn-cache-performance-dashboard

@@ -542,7 +542,7 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   if (mandateIdentity !== undefined) expect(request).toBeString()
   const previousBinding = {
     planHash: 'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
-    sourceRevision: '808bfa84609959712042174b6fd176fc56f8edb2',
+    sourceRevision: '7ed1ae9cd0179a244241c2e4e727de9afd3d0d99',
   }
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
   expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
@@ -570,7 +570,17 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
+  expect(activationPolicy.spec.egress[0]).toEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'glitchtip' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'glitchtip', 'app.kubernetes.io/component': 'web' } },
+      },
+    ],
+    ports: [{ port: 8000, protocol: 'TCP' }],
+  })
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
+    { port: 8000, protocol: 'TCP' },
     { port: 53, protocol: 'UDP' },
     { port: 53, protocol: 'TCP' },
     { port: 8080, protocol: 'TCP' },

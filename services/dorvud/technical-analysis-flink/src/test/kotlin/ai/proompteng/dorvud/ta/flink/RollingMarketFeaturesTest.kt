@@ -52,7 +52,7 @@ class RollingMarketFeaturesTest {
     assertEquals(30, feature.material.inputs.size)
     assertEquals(start.toEpochMilli(), feature.material.windowStartMs)
     assertEquals(computed - 2000, feature.material.windowEndMs)
-    val fixture = java.io.File("../../bayn/src/market-data/features/fixtures/rolling-price-v1.json")
+    val fixture = java.io.File("../../bayn/src/market-data/features/fixtures/observed-price-window-v1.json")
     if (System.getProperty("writeMarketFeatureFixture") == "true") {
       fixture.parentFile.mkdirs()
       fixture.writeText(
@@ -142,11 +142,19 @@ class RollingMarketFeaturesTest {
     assertEquals(ordered, reversed)
   }
 
-  @Test fun `gap stays unavailable and late bar completes the same window`() {
+  @Test fun `observed history emits across a gap and a late bar corrects the same window`() {
     val incomplete = complete((0..29).filter { it != 12 })
-    assertNull(incomplete.feature)
+    assertEquals(29, assertNotNull(incomplete.feature).material.inputs.size)
     val recovered = advanceRollingFeature(incomplete.state, bar(12), computed, "test-revision")
     assertEquals(complete().feature, recovered.feature)
+  }
+
+  @Test fun `first completed minute emits without a thirty minute warmup`() {
+    val feature =
+      assertNotNull(advanceRollingFeature(RollingFeatureState(), bar(0), start.plusSeconds(62).toEpochMilli(), "test-revision").feature)
+    assertEquals(1, feature.material.inputs.size)
+    assertEquals(start.toEpochMilli(), feature.material.windowStartMs)
+    assertEquals(start.plusSeconds(60).toEpochMilli(), feature.material.windowEndMs)
   }
 
   @Test fun `duplicates do not emit and corrections replace rather than accumulate`() {
@@ -211,7 +219,7 @@ class RollingMarketFeaturesTest {
     val original = complete()
     val tomorrow = bar(0).copy(eventTime = start.plusSeconds(86400), ingestionTime = start.plusSeconds(86461), sourceOffset = 200)
     val reset = advanceRollingFeature(original.state, tomorrow, computed + 86400_000, "test-revision")
-    assertNull(reset.feature)
+    assertEquals(1, assertNotNull(reset.feature).material.inputs.size)
     assertEquals(1, reset.state.bars.size)
     assertEquals(reset.state, advanceRollingFeature(reset.state, bar(29), computed + 86400_000, "test-revision").state)
   }

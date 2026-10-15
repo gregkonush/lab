@@ -8,7 +8,7 @@ import {
 import { DateTime, Option, Result } from 'effect'
 
 import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
-import { intradayDecisionDelaySeconds, intradayLookbackMinutes } from '../../strategy/intraday-market'
+import { intradayDecisionDelaySeconds } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -119,9 +119,7 @@ export const selectIntradayExecutionSession = (
     const openAtMillis = Date.parse(session.openAt)
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow =
-      openAtMillis +
-        Math.max(executionPolicy.warmupAfterOpenMs, intradayLookbackMinutes * 60_000) +
-        intradayDecisionDelaySeconds * 1_000 <
+      openAtMillis + Math.max(executionPolicy.warmupAfterOpenMs, 60_000) + intradayDecisionDelaySeconds * 1_000 <
       cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
     return selected === undefined || session.date < selected.date ? session : selected
