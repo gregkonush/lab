@@ -1423,7 +1423,12 @@ describePostgres('PostgreSQL execution persistence', () => {
             { count: 0 },
           ])
         }
-        const reportAt = hasRegulatory ? new Date(Date.parse(sellAt) + 2000).toISOString() : sellAt
+        const [correctionCut] = yield* sql<{
+          posted_at: Date | null
+        }>`SELECT max(posted_at) AS posted_at FROM broker_fee_match_corrections`
+        const reportAt = new Date(
+          Math.max(Date.parse(sellAt), correctionCut?.posted_at?.getTime() ?? 0) + (hasRegulatory ? 2000 : 0),
+        ).toISOString()
         if (hasRegulatory) {
           const settledAccount = {
             ...cashAccount,
@@ -1453,7 +1458,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             const report = yield* readForwardPerformancePostgres(sql, accountId, undefined, fence)
             expect(report.cashReportingPrecisionKnown).toBe(true)
             expect(report.cashYieldEvidence).toMatchObject({
-              schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
+              schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
               cashYieldMicros: '0',
               openingCashReportingQuantumMicros: '1',
               closingCashReportingQuantumMicros: '10000',
