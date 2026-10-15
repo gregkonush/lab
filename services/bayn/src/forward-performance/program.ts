@@ -53,7 +53,11 @@ import { loadIntradayArchivePages } from '../market-data/intraday/program'
 import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
 import { verifyIntradayArchiveWatermarks } from '../market-data/intraday/verification'
-import { verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
+import {
+  feeMatchCorrectionCashDebitMicros,
+  verifyBrokerFeeRecord,
+  type BrokerFeeEvidenceError,
+} from '../accounting/broker-fees'
 
 export type ForwardPerformanceProgramCause =
   | InferenceCostError
@@ -725,7 +729,7 @@ const readForwardPerformanceInput = (
             BigInt(record.data.netAmountMicros) +
             BigInt(record.matched_cash_micros) -
             record.cash_match_corrections.reduce(
-              (sum, correction) => sum + BigInt(correction.data.accrualCashMicros),
+              (sum, correction) => sum + BigInt(feeMatchCorrectionCashDebitMicros(correction.data)),
               0n,
             )
           ).toString(),
