@@ -1,3 +1,31 @@
+# Exception tracking
+
+Bayn's main API, native Restate execution controller and activation job, and
+independent research worker send **errors only** to dedicated GlitchTip projects
+(`proompteng/bayn`, `proompteng/bayn-execution`, and `proompteng/bayn-research`).
+`argocd/applications/bayn/glitchtip-dsns.yaml` contains public Sentry ingestion
+identifiers (not credentials) using the cluster-local GlitchTip web service.
+Sentry JavaScript requires the 32-character hexadecimal key **without UUID
+hyphens**, even though GlitchTip displays it as a UUID in its database.
+
+- Official `@sentry/node` captures uncaught exceptions and terminal Effect
+  causes; successful/expected Effect operations do not emit issues and normal
+  shutdown interruption is ignored.
+- Scrubbing removes request, user, breadcrumbs, contexts, runtime variables,
+  source snippets and exception messages. Stack frames retain grouping fidelity.
+- No Sentry tracing, profiles or request-body collection. Continue to use
+  Effect/OTel to Grafana Tempo for spans, Loki for logs, Mimir for metrics.
+- Network policies permit only TCP 8000 to GlitchTip's in-cluster web pods;
+  there is no requirement for Tailscale or external public egress from Bayn.
+- The release is the reviewed source SHA, with service role and an optional
+  active OpenTelemetry trace ID as tags.
+
+Verify the deployed immutable image first, then execute the dedicated
+`dist/glitchtip-smoke-command.js` once per service role with its configured
+`BAYN_GLITCHTIP_DSN`. The smoke must finish without SDK DSN warnings and its
+synthetic exception must appear in the corresponding GlitchTip project. This
+command is **not** run automatically from the trading service at startup.
+
 # Bayn GitOps rollout notes
 
 ## Isolated Alpha-R1 research
