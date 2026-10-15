@@ -56,7 +56,7 @@ export const ReconciliationRow = Schema.Struct({
 })
 
 export const StartingCapitalRow = Schema.Struct({ starting_capital_micros: Schema.String })
-export const CashYieldEvidenceRow = Schema.Struct({
+export const CashYieldSnapshotRow = Schema.Struct({
   reconciliation_id: Sha256,
   reconciliation_content_hash: Sha256,
   reconciled_at: Schema.Date,
@@ -68,13 +68,11 @@ export const CashYieldEvidenceRow = Schema.Struct({
   opening_cash_micros: Schema.String,
   opening_cash_reporting_quantum_micros: Schema.NullOr(CashReportingQuantumSchema),
   pre_window_accounted_cash_delta_micros: Schema.String,
-  pre_window_cash_residual_micros: Schema.String,
   closing_account_event_id: Sha256,
   closing_observed_at: Schema.Date,
   closing_cash_micros: Schema.String,
   closing_cash_reporting_quantum_micros: Schema.NullOr(CashReportingQuantumSchema),
   accounted_cash_delta_micros: Schema.String,
-  cash_yield_micros: Schema.String,
 })
 export const CountRow = Schema.Struct({ count: Schema.Int })
 export const DurableExecutionRow = Schema.Struct({
@@ -175,8 +173,8 @@ export const decodeStartingCapital = Schema.decodeUnknownEffect(
   Schema.Array(StartingCapitalRow).check(Schema.isMaxLength(1)),
   strictParseOptions,
 )
-export const decodeCashYieldEvidence = Schema.decodeUnknownEffect(
-  Schema.Array(CashYieldEvidenceRow).check(Schema.isMaxLength(1)),
+export const decodeCashYieldSnapshots = Schema.decodeUnknownEffect(
+  Schema.Array(CashYieldSnapshotRow).check(Schema.isMaxLength(1)),
   strictParseOptions,
 )
 export const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(TransactionRow), strictParseOptions)
