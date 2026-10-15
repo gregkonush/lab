@@ -1,9 +1,9 @@
 import { Result, Schema } from 'effect'
 
-import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
+import { InstrumentSymbolSchema, instrumentMarket, MarketKind, type Instrument } from '../instruments'
 import { OrderSide } from '../execution/contracts'
 import { notionalMicros } from '../execution-model'
-import { quantityScale } from '../quantity'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 
@@ -16,12 +16,36 @@ const BPS = 10_000n
 const PPM = 1_000_000n
 const U128_MAX = (1n << 128n) - 1n
 const isPositiveMicros = Schema.is(PositiveMicrosSchema)
-type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
+export const ReplayInstrumentsSchema = Schema.Record(
+  InstrumentSymbolSchema,
+  Schema.Struct({
+    minimumQuantityAtoms: PositiveMicrosSchema,
+    quantityIncrementAtoms: PositiveMicrosSchema,
+    priceIncrementAtoms: PositiveMicrosSchema,
+  }),
+)
+
+export const replayInstrument = (
+  symbol: string,
+  instruments: typeof ReplayInstrumentsSchema.Type,
+): Result.Result<Instrument, IntradayReplayIocCoreFailure> => {
+  const terms = instruments[symbol]
+  if (terms === undefined) return Result.fail(invalid('instrument', symbol, 'invalid-execution-model'))
+  return Result.succeed({
+    symbol,
+    market: instrumentMarket(symbol),
+    minimumQuantityAtoms: BigInt(terms.minimumQuantityAtoms),
+    quantityIncrementAtoms: BigInt(terms.quantityIncrementAtoms),
+    priceIncrementAtoms: BigInt(terms.priceIncrementAtoms),
+  })
+}
+
+type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-instrument-rounding'
 
 export interface IntradayReplayIocCoreOrder {
   readonly side: OrderSide
   readonly quantityAtoms: bigint
-  readonly limitPriceMicros: bigint
+  readonly limitPriceMicros: bigint | null
 }
 
 /** Executable quote values selected from one event-time market snapshot. */
@@ -31,6 +55,7 @@ export interface IntradayReplayIocCoreQuote {
 }
 
 export interface IntradayReplayIocCoreInput {
+  readonly instrument: Instrument
   readonly order: IntradayReplayIocCoreOrder
   readonly quote: IntradayReplayIocCoreQuote
   readonly executionModel: IntradayMomentumProtocol['executionModel']
@@ -51,7 +76,7 @@ export type IntradayReplayIocCoreOutcome =
       readonly adversePriceMicros: bigint
       readonly requestedQuantityAtoms: bigint
       readonly filledQuantityAtoms: bigint
-      readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-whole-share-rounding'
+      readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-instrument-rounding'
       readonly unfilledRemainder: 'canceled'
     }
 
@@ -80,18 +105,23 @@ const modelQuantityIncrement = (value: string): bigint | undefined => {
   return parsed <= U128_MAX ? parsed : undefined
 }
 
-const simulateExecution = (
-  input: Omit<IntradayReplayIocCoreInput, 'order'> & {
-    readonly order: Omit<IntradayReplayIocCoreOrder, 'limitPriceMicros'> & { readonly limitPriceMicros: bigint | null }
-  },
+export const simulateIntradayReplayExecution = (
+  input: IntradayReplayIocCoreInput,
 ): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> => {
-  const { order, quote, assumptions, executionModel: model } = input
+  const { order, quote, assumptions, executionModel: model, instrument } = input
+  const quantityIncrement =
+    order.limitPriceMicros === null && instrument.market === MarketKind.Equity ? 1n : instrument.quantityIncrementAtoms
   if (
     (order.side !== OrderSide.Buy && order.side !== OrderSide.Sell) ||
     order.quantityAtoms <= 0n ||
+    quantityIncrement <= 0n ||
+    order.quantityAtoms % quantityIncrement !== 0n ||
     (order.limitPriceMicros === null
       ? order.side !== OrderSide.Sell
-      : order.quantityAtoms % quantityScale !== 0n || order.limitPriceMicros <= 0n)
+      : quantityIncrement <= 0n ||
+        order.quantityAtoms % quantityIncrement !== 0n ||
+        order.limitPriceMicros <= 0n ||
+        (order.side === OrderSide.Buy && order.quantityAtoms < instrument.minimumQuantityAtoms))
   ) {
     return Result.fail(invalid('order', order, 'invalid-order'))
   }
@@ -109,7 +139,6 @@ const simulateExecution = (
     return Result.fail(invalid('assumptions', assumptions, 'invalid-assumptions'))
   }
   const modelIncrement = modelQuantityIncrement(model.precision.quantityIncrementAtoms)
-  const quantityIncrement = order.limitPriceMicros === null ? 1n : quantityScale
   if (
     model.schemaVersion !== 'bayn.execution-model.v5' ||
     model.venue !== 'alpaca-cash-spot' ||
@@ -124,12 +153,24 @@ const simulateExecution = (
     return Result.fail(invalid('executionModel', model, 'invalid-execution-model'))
   }
 
+  if (
+    instrument.priceIncrementAtoms <= 0n ||
+    (instrument.priceIncrementAtoms >= 1000n && instrument.priceIncrementAtoms % 1000n !== 0n)
+  )
+    return Result.fail(
+      invalid('instrument.priceIncrementAtoms', instrument.priceIncrementAtoms, 'invalid-execution-model'),
+    )
+  const priceIncrement = instrument.priceIncrementAtoms < 1000n ? 1n : instrument.priceIncrementAtoms / 1000n
   const slippage = BigInt(assumptions.slippageBps)
   const adverseNumerator = quote.priceMicros * (order.side === OrderSide.Buy ? BPS + slippage : BPS - slippage)
+  const quotedAdversePrice =
+    order.side === OrderSide.Buy
+      ? quantizeInstrumentPriceMicros(instrument.symbol, (adverseNumerator + BPS - 1n) / BPS, 'UP')
+      : quantizeInstrumentPriceMicros(instrument.symbol, adverseNumerator / BPS, 'DOWN')
   const adversePrice =
     order.side === OrderSide.Buy
-      ? quantizeAlpacaLimitPriceMicros((adverseNumerator + BPS - 1n) / BPS, 'UP')
-      : quantizeAlpacaLimitPriceMicros(adverseNumerator / BPS, 'DOWN')
+      ? ((quotedAdversePrice + priceIncrement - 1n) / priceIncrement) * priceIncrement
+      : (quotedAdversePrice / priceIncrement) * priceIncrement
   const cancel = (
     reason: CoreCancelReason,
   ): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> =>
@@ -156,7 +197,7 @@ const simulateExecution = (
       invalid('quote.displayedQuantityAtoms', quote.displayedQuantityAtoms, 'insufficient-market-close-liquidity'),
     )
   if (requestedOrAvailable === 0n) {
-    return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-whole-share-rounding')
+    return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-instrument-rounding')
   }
   return notionalMicros(requestedOrAvailable, adversePrice).pipe(
     Result.mapError(() =>
@@ -174,16 +215,3 @@ const simulateExecution = (
     ),
   )
 }
-
-export const simulateIntradayReplayIocCore = (input: IntradayReplayIocCoreInput) => simulateExecution(input)
-
-/** A close-only market sell needs sufficient observed liquidity; a DAY remainder is never invented as an IOC cancel. */
-export const simulateIntradayReplayMarketCloseCore = (
-  input: Omit<IntradayReplayIocCoreInput, 'order'> & {
-    readonly quantityAtoms: bigint
-  },
-) =>
-  simulateExecution({
-    ...input,
-    order: { side: OrderSide.Sell, quantityAtoms: input.quantityAtoms, limitPriceMicros: null },
-  })

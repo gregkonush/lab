@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import type { ExecutionModel } from '../execution-model-contract'
 import { saleCostBasisMicros } from '../strategy/execution-model/cash'
-import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
+import { calculateSessionFees, receivedCryptoFee, type FeeInput } from '../strategy/execution-model/fees'
 import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { type ExecutionModelFailure } from '../strategy/execution-model/model'
 import { UtcInstantSchema } from '../schemas'
@@ -114,6 +114,7 @@ const cumulativeFees = (fills: readonly EconomicReplayFill[], model: ExecutionMo
       const date = sessionDate.format(Date.parse(fill.observedAt))
       const inputs = sessions.get(date) ?? []
       inputs.push({
+        symbol: fill.symbol,
         side: fill.side,
         quantityAtoms: BigInt(fill.quantityAtoms),
         notionalMicros: BigInt(fill.notionalMicros),
@@ -193,8 +194,15 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   const existing = existingIndex < 0 ? undefined : ledger.positions[existingIndex]
   let nextPositions: readonly ReplayPosition[]
   if (side === 'buy') {
-    const quantity = (existing === undefined ? 0n : BigInt(existing.quantityAtoms)) + filledQuantity.success
-    const costBasis = (existing === undefined ? 0n : BigInt(existing.costBasisMicros)) + fillNotional.success
+    const receivedFee = receivedCryptoFee(
+      { symbol: fill.symbol, side, quantityAtoms: filledQuantity.success, notionalMicros: fillNotional.success },
+      feeMultiplier.success,
+    )
+    const netQuantity = filledQuantity.success - receivedFee.quantityAtoms
+    if (netQuantity <= 0n) return invalid('fill.quantityAtoms', fill.quantityAtoms, 'inconsistent-fees')
+    const quantity = (existing === undefined ? 0n : BigInt(existing.quantityAtoms)) + netQuantity
+    const costBasis =
+      (existing === undefined ? 0n : BigInt(existing.costBasisMicros)) + fillNotional.success - receivedFee.valueMicros
     const nextPosition: ReplayPosition = {
       symbol: fill.symbol,
       quantityAtoms: quantity.toString(),
@@ -249,12 +257,17 @@ export const applyReplayFill = <Fill extends EconomicReplayFill>(
   if (Result.isFailure(cash)) return Result.fail(cash.failure)
   if (Result.isFailure(openingCash)) return Result.fail(openingCash.failure)
   const cashBeforeFees = cash.success + (side === 'buy' ? -fillNotional.success : fillNotional.success)
-  const nextCash = cashBeforeFees - feeDelta
+  const receivedFee = receivedCryptoFee(
+    { symbol: fill.symbol, side, quantityAtoms: filledQuantity.success, notionalMicros: fillNotional.success },
+    feeMultiplier.success,
+  )
+  const cashFeeDelta = feeDelta - (receivedFee.valueMicros - receivedFee.cashMicros)
+  const nextCash = cashBeforeFees - cashFeeDelta
   if (nextCash < 0n) {
     return Result.fail({
       _tag: 'IntradayReplayLedgerInsufficientCash',
       cashMicros: cash.success.toString(),
-      requiredCashMicros: (fillNotional.success + feeDelta).toString(),
+      requiredCashMicros: (fillNotional.success + cashFeeDelta).toString(),
     })
   }
   return Result.succeed(makeLedger(openingCash.success, nextCash, nextFees.success, nextPositions, nextFills))

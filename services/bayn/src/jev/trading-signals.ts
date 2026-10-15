@@ -59,7 +59,7 @@ export const jevStalePricingSymbols = (snapshot: VerifiedStrategyMarketSnapshot)
     )
   })
 
-const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
+export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
   Result.gen(function* () {
     const manifest = snapshot.manifest
     if (
@@ -163,9 +163,14 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, pro
   Result.gen(function* () {
     const signals = []
     for (const symbol of snapshot.manifest.candidateSymbols ?? []) {
-      if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) continue
-      const candidate = yield* signalFor(snapshot, symbol)
-      const benchmark = yield* signalFor(snapshot, jevBenchmarkSymbol(symbol))
+      if (
+        snapshot.manifest.candidateExclusions?.some(
+          (entry) => entry.symbol === symbol || entry.symbol === jevBenchmarkSymbol(symbol),
+        ) === true
+      )
+        continue
+      const candidate = yield* jevSignalFor(snapshot, symbol)
+      const benchmark = yield* jevSignalFor(snapshot, jevBenchmarkSymbol(symbol))
       const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
       const quote = snapshot.latestQuotes[symbol]
       if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
@@ -262,8 +267,8 @@ const requestFromSnapshot = (
 ) =>
   Result.gen(function* () {
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
-    const candidate = yield* signalFor(snapshot, symbol)
-    const benchmark = yield* signalFor(snapshot, benchmarkSymbol)
+    const candidate = yield* jevSignalFor(snapshot, symbol)
+    const benchmark = yield* jevSignalFor(snapshot, benchmarkSymbol)
     const { metrics } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
     const continuous = isContinuousMarket(snapshot.manifest.calendar)
     const session = continuous
@@ -406,6 +411,18 @@ const batchFromObservation = (
       const excluded = manifest.candidateExclusions?.find((candidate) => candidate.symbol === symbol)
       if (excluded !== undefined) {
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
+        continue
+      }
+      const benchmarkExclusion = manifest.candidateExclusions?.find(
+        (candidate) => candidate.symbol === jevBenchmarkSymbol(symbol),
+      )
+      if (benchmarkExclusion !== undefined) {
+        candidates.push({
+          symbol,
+          status: JevCandidatePlanStatus.Excluded,
+          reason: benchmarkExclusion.reason,
+          message: `Required benchmark ${benchmarkExclusion.symbol}: ${benchmarkExclusion.message}`,
+        })
         continue
       }
       const prepareRequest = () => requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
