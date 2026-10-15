@@ -432,7 +432,8 @@ controller binding before the status service rolls out.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
-existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
+runtime idempotency key binds that generation, the activation Job UID, source revision, account controller key and
+target plan. The predecessor comes from durable controller state and is not part of the request or retry identity.
 
 For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
 together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
