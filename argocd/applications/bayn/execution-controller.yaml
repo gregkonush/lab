@@ -157,8 +157,6 @@ spec:
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
-            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
             - name: PORT
               value: "9080"
             - name: NODE_ENV
@@ -198,6 +196,8 @@ spec:
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
               value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"6147e517664a294c04cb20dfe03f09c99d30db3f14d3ef4c525ab0ead81abfcf","authoredActivation":{"sourceRevision":"930a4f0d5da423c397aad0c1d2d222d66da9abe2","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5ad8979af365c86e639877e5c3f7f63245d576e85e4c1ffab387f5c93b386acd"},"activation":{"sourceRevision":"930a4f0d5da423c397aad0c1d2d222d66da9abe2","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5ad8979af365c86e639877e5c3f7f63245d576e85e4c1ffab387f5c93b386acd"}}'
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
           startupProbe:
             tcpSocket:
               port: restate
