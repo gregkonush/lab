@@ -34,17 +34,21 @@
              instance.register_eventfd(eventfd)?;
 --- a/src/vmm/src/io_uring/operation/mod.rs
 +++ b/src/vmm/src/io_uring/operation/mod.rs
-@@ -93,9 +93,9 @@
-             fd,
-             opcode: OpCode::Write,
-             addr: Some(addr),
-             len: Some(len),
--            flags: 0,
-+            flags: 1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT,
-             offset: Some(offset),
-             user_data,
-         }
+@@ -122,8 +122,14 @@
+     pub(crate) fn set_linked(&mut self) {
+         self.flags |= 1 << io_uring_sqe_flags_bit::IOSQE_IO_LINK_BIT;
      }
+
++    /// Start this operation on an asynchronous worker.
++    pub(crate) fn force_async(mut self) -> Self {
++        self.flags |= 1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT;
++        self
++    }
++
+     /// Transform the operation into an `Sqe`.
+     /// Note: remember remove user_data from slab or it will leak.
+     pub(crate) fn into_sqe(self, slab: &mut slab::Slab<T>) -> Sqe {
+         // SAFETY:
 --- a/src/vmm/src/io_uring/restriction.rs
 +++ b/src/vmm/src/io_uring/restriction.rs
 @@ -21,8 +21,10 @@
@@ -86,3 +90,22 @@
                  Restriction::AllowOpCode(OpCode::Read),
                  Restriction::AllowOpCode(OpCode::Write),
                  Restriction::AllowOpCode(OpCode::Fsync),
+@@ -173,15 +174,11 @@
+
+         let wrapped_user_data = WrappedRequest::new(req);
+
+         self.ring
+-            .push(Operation::write(
+-                0,
+-                buf as usize,
+-                count,
+-                offset,
+-                wrapped_user_data,
+-            ))
++            .push(
++                Operation::write(0, buf as usize, count, offset, wrapped_user_data).force_async(),
++            )
+             .map_err(|(io_uring_error, data)| RequestError {
+                 req: data.req,
+                 error: AsyncIoError::IoUring(io_uring_error),
+             })
