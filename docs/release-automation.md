@@ -103,6 +103,8 @@ and activation lineage, so a newer unpublished main commit cannot hold a complet
 public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
 request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
+Bayn resolves environment positions by name and converts each `findIndex` result to a string in `yaml-parse`.
+Kargo v1.11.4 returns a Go `int` for a bare index, which its promotion-state deep copy rejects before persistence.
 
 ## Application enrollment
 
