@@ -347,7 +347,12 @@ export interface ForwardPerformanceEvidenceInput {
   readonly accountFeeAccruals?: readonly (typeof import('../db/fee-accruals').StoredAccrual.Type)[]
   readonly accountBrokerFees?: readonly import('../accounting/broker-fees').StoredBrokerFee[]
   /** Cumulative account inventory, independently projected by PostgreSQL and read from the ledger. */
-  readonly accountPositionCounts?: { readonly postgres: number; readonly ledger: number }
+  readonly accountPositionCounts?: {
+    readonly postgres: number
+    readonly ledger: number
+    readonly reconciledAt: string
+    readonly exact: boolean
+  }
   readonly brokerFeeAccruals?: readonly {
     readonly accrualId: string
     readonly accountId: string

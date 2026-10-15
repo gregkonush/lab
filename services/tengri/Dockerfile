@@ -66,14 +66,12 @@ RUN curl -fsSL --retry 3 -o /tmp/firecracker-source.tgz \
     rm /tmp/firecracker-source.tgz
 COPY firecracker-memory-direct-io.patch /tmp/firecracker-memory-direct-io.patch
 COPY firecracker-async-workers.patch /tmp/firecracker-async-workers.patch
-COPY firecracker-snapshot-read.patch /tmp/firecracker-snapshot-read.patch
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-registry \
     --mount=type=cache,target=/firecracker/target,id=tengri-firecracker-target-${TARGETARCH} \
     set -eu; \
     test "$(dpkg --print-architecture)" = "$TARGETARCH"; \
     patch --fuzz=0 -p1 < /tmp/firecracker-memory-direct-io.patch; \
     patch --fuzz=0 -p1 < /tmp/firecracker-async-workers.patch; \
-    patch --fuzz=0 -p1 < /tmp/firecracker-snapshot-read.patch; \
     case "$TARGETARCH" in \
       amd64) fc_target=x86_64-unknown-linux-musl ;; \
       arm64) fc_target=aarch64-unknown-linux-musl ;; \

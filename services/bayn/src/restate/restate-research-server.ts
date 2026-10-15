@@ -15,6 +15,7 @@ import { Clock, Config, Effect, Layer, Metric, Schema } from 'effect'
 import { HttpClient } from 'effect/http'
 
 import { embeddedBuildMetadata } from '../build'
+import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 import { PostgresClientLive } from '../db/postgres-client'
 import { GitSourceRevisionSchema } from '../schemas'
 import { validateResearchApprovalKey } from '../research-inference/approval'
@@ -191,10 +192,12 @@ export const researchServerProgram = Effect.gen(function* () {
   )
 }).pipe(Effect.scoped)
 
-if (import.meta.main)
+if (import.meta.main) {
+  initializeErrorTracking('bayn-research')
   NodeRuntime.runMain(
-    Layer.effectDiscard(researchServerProgram).pipe(
+    Layer.effectDiscard(researchServerProgram.pipe(reportTerminalFailure('bayn-research'))).pipe(
       Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-research')),
       Layer.launch,
     ),
   )
+}

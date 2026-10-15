@@ -1110,7 +1110,7 @@ The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains t
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
 change the immutable per-generation receipt schema.
-Position episode evidence uses `bayn.position-episode-evidence.v2`. It replays gross fills together with posted,
+Position episode evidence uses `bayn.position-episode-evidence.v3`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
 provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
 Episode validation compares an independent cumulative PostgreSQL quantity-and-cost projection with ledger inventory;
@@ -1594,6 +1594,16 @@ its UTC cut and compares the complete before/after history before persisting or 
 Cash-yield evidence v3 binds the baseline, opening and closing reporting residuals to posted accruals and settlements
 visible at each cut. Reporting uses the native residual calculation and applies only the change between cuts. It
 does not post a transfer or treat a reporting-precision difference as income. Earlier evidence versions are rejected.
+Migration 107 records an immutable database-clock acknowledgement only after the native journal verifies each fee
+or accrual plan. A failed post leaves no acknowledgement; a retry or retained-plan verification acknowledges the
+actual successful check without backdating it to the provider observation. Historical cuts without an acknowledgement
+by that cut withhold cash-yield evidence and financial qualification. Existing ledger records and provider clocks
+remain immutable; an earlier posting time is never inferred from a later successful verification.
+Current account reconciliation bounds cumulative ledger receipts and net inventory independently of the selected
+generation's performance cut. Position episode evidence v3 binds that current account cut and includes coin-fee
+inventory debits. A fully accrued crypto cash receipt adds no incremental generation expense; its original and
+correction plans remain in the complete account ledger, while the source-bound accrual supplies the generation cost.
+Unallocated incremental fees and missing historical posting acknowledgements still prevent financial qualification.
 The forward-performance command requires an explicit authority generation. The unbounded account-history command
 has been removed; cumulative accounting and ledger verification still accompany every scoped report.
 

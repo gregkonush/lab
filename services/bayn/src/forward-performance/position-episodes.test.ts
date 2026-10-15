@@ -86,7 +86,12 @@ const evidence = (
   unresolvedMutationCount: 0,
   unclosedCycleCount: 0,
   openPositionCount: 0,
-  accountPositionCounts: { postgres: overrides.openPositionCount ?? 0, ledger: overrides.openPositionCount ?? 0 },
+  accountPositionCounts: {
+    postgres: overrides.openPositionCount ?? 0,
+    ledger: overrides.openPositionCount ?? 0,
+    reconciledAt: overrides.reconciliation?.reconciledAt ?? '2026-09-18T21:00:00.000Z',
+    exact: overrides.reconciliation?.performanceExact ?? true,
+  },
   ...overrides,
 })
 
@@ -237,11 +242,12 @@ describe('position episodes', () => {
   test('requires a cumulative inventory boundary and retains disagreement with either independent count', () => {
     const { fills, accrual } = coinRoundTrip()
     const input = evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })
-    const { accountPositionCounts: _counts, ...missing } = input
+    const { accountPositionCounts: counts, ...missing } = input
+    if (counts === undefined) throw new Error('Missing account cut fixture')
     for (const value of [
       missing,
-      { ...input, accountPositionCounts: { postgres: 1, ledger: 0 } },
-      { ...input, accountPositionCounts: { postgres: 0, ledger: 1 } },
+      { ...input, accountPositionCounts: { ...counts, postgres: 1, ledger: 0 } },
+      { ...input, accountPositionCounts: { ...counts, postgres: 0, ledger: 1 } },
     ])
       expect(success(measurePositionEpisodes(value))).toMatchObject({
         status: 'UNDETERMINED',
@@ -378,6 +384,30 @@ describe('position episodes', () => {
     expect(changed.receipt).toEqual(report.receipt)
     expect(changed.positionEpisodes.evidenceHash).not.toBe(report.positionEpisodes.evidenceHash)
     expect(changed.reportHash).not.toBe(report.reportHash)
+  })
+
+  test('binds cumulative inventory to the current account cut independently of the generation cut', () => {
+    const history = roundTrip()
+    const first = history[0]
+    if (first === undefined) throw new Error('Missing historical entry')
+    const input = evidence(history, [first])
+    if (input.reconciliation === undefined || input.accountPositionCounts === undefined)
+      throw new Error('Missing account cut')
+    const historical = { ...input, reconciliation: { ...input.reconciliation, reconciledAt: first.occurredAt } }
+    expect(success(measurePositionEpisodes(historical))).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 0,
+      openCount: 0,
+      crossScopeCount: 1,
+    })
+    expect(
+      success(
+        measurePositionEpisodes({
+          ...historical,
+          accountPositionCounts: { ...input.accountPositionCounts, reconciledAt: first.occurredAt },
+        }),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: 'INVALID_HISTORY' })
   })
 
   test('counts a scaled-in position with partial exits as one episode', () => {
