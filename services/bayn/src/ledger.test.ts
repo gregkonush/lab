@@ -115,6 +115,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -170,6 +176,12 @@ const makeLedgerClient = () => {
             (filter.user_data_64 === 0n || transfer.user_data_64 === filter.user_data_64),
         )
         .slice(0, filter.limit),
+    getAccountTransfers: async () => {
+      throw new Error('unexpected account transfer history read')
+    },
+    getAccountBalances: async () => {
+      throw new Error('unexpected account balance history read')
+    },
     destroy: () => undefined,
   }
   return { accounts, transfers, client }
@@ -997,6 +1009,12 @@ describe('TigerBeetle simulation journal', () => {
       createTransfers: async () => {
         writes += 1
         return []
+      },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
       },
       destroy: () => undefined,
     })
