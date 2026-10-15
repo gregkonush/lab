@@ -114,8 +114,9 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
           yield* sql`DELETE FROM jev_evaluation_requests WHERE request_id = ${'e'.repeat(64)}`
           return yield* forwardPerformanceSnapshot(sql).withTransaction(
             Effect.gen(function* () {
-              const before =
-                yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`
+              const before = yield* sql<{ count: number; snapshot_at: string }>`SELECT count(*)::integer AS count,
+                  to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS snapshot_at
+                  FROM jev_evaluation_requests WHERE request_id = ${request.requestId}`
               yield* Effect.promise(() =>
                 writer.runPromise(
                   Effect.gen(function* () {
@@ -132,6 +133,7 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
       )
       expect(result.before[0]?.['count']).toBe(1)
       expect(result.costs.evidence.requests.map((row) => row.requestId)).toEqual([request.requestId])
+      expect(result.costs.evidence.asOf).toBe(result.before[0]?.['snapshot_at'])
       const after = await writer.runPromise(
         Effect.flatMap(
           PgClient.PgClient,

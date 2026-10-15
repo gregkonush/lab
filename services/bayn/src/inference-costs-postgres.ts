@@ -38,7 +38,7 @@ export const readInferenceExpenseSnapshot = (
         Effect.gen(function* () {
           // One statement also shares a snapshot inside a READ COMMITTED writer transaction.
           const cuts = yield* sql<Record<string, unknown>>`
-            SELECT to_char(statement_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
+            SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS as_of,
               COALESCE((SELECT jsonb_agg(item) FROM (
                 SELECT request.request_id AS "requestId", request.cycle_id AS "cycleId",
                   request.authority_generation_hash AS "authorityGenerationHash",

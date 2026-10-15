@@ -278,7 +278,7 @@ describe('inference expense TigerBeetle posting and reconciliation', () => {
       readInferenceExpenseLedger(ledger.client, snapshot([quote]), Effect.succeed(rows([quote]))),
     )
     expect(result.knownEstimatedCostPicoUsd).toBe('42000')
-    expect(result.exactQuotedLedger).toBe(true)
+    expect(result.exactLedgerPrefix).toBe(true)
     expect(result.invoiceReconciled).toBe(false)
   })
 

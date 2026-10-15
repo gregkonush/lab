@@ -298,7 +298,7 @@ export const readInferenceExpenseLedger = <E, R>(
       ledger: inferenceExpenseLedger,
       unit: 'USD_PICO' as const,
       invoiceReconciled: false as const,
-      exactQuotedLedger: true as const,
+      exactLedgerPrefix: true as const,
       quotedRequestCount: selected.length,
       pricedRequestCount: selected.filter((quote) => quote.line.estimatedCostPicoUsd !== null).length,
       gapRequestCount: selected.filter((quote) => quote.line.estimatedCostPicoUsd === null).length,

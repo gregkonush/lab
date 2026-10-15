@@ -61,7 +61,7 @@ describeTigerBeetle('native inference expense TigerBeetle records', () => {
     expect(result.empty.transferCount).toBe(0)
     expect(result.empty.verifiedSessionTransferCount).toBe(0)
     expect(result.empty.ledgerTimestampMax).toBe('1')
-    expect(result.captured.exactQuotedLedger).toBe(true)
+    expect(result.captured.exactLedgerPrefix).toBe(true)
     expect(result.captured.transferCount).toBe(1)
     expect(result.captured.verifiedSessionTransferCount).toBe(2)
     expect(result.captured.knownEstimatedCostPicoUsd).toBe('42000')

@@ -855,7 +855,7 @@ while the report runs; unknown transfers and mismatched balances still fail. Onl
 contribute to the report subtotal. Trading and expense posting continue throughout the read.
 
 The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` identifies the PostgreSQL capture;
-`ledgerTimestampMax` and `verifiedSessionTransferCount` identify the verified native prefix. `transferCount` and
+`ledgerTimestampMax`, `verifiedSessionTransferCount` and `exactLedgerPrefix` identify the verified native prefix. `transferCount` and
 `knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
 timestamps belong to different systems and are never compared to infer ordering. Pending quotes remain explicitly
 unverified, and verification does not establish invoice reconciliation.
