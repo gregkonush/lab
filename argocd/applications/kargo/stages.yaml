@@ -1952,6 +1952,12 @@ spec:
             outputs:
               - name: lineage
                 fromExpression: fromJSON(find(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE').value)
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
         - uses: kustomize-set-image
           config:
             path: ./out/argocd/applications/bayn
@@ -1963,33 +1969,57 @@ spec:
           config:
             path: ./out/argocd/applications/bayn/deployment.yaml
             updates:
-              - key: spec.template.spec.containers.0.env.0.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.bayn.sourceIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-              - key: spec.template.spec.containers.0.env.6.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.bayn.digestIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
-              - key: spec.template.spec.containers.0.env.37.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.bayn.lineageIndex) + '.value' }}
                 value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash: outputs.bayn.lineage.requestHash, authoredActivation: outputs.bayn.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-parse
+          as: baynController
+          config:
+            path: ./src/argocd/applications/bayn/execution-controller.yaml
+            outputs:
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
             updates:
-              - key: spec.template.spec.containers.0.env.0.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.sourceIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-              - key: spec.template.spec.containers.0.env.3.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.digestIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
               - key: spec.template.spec.containers.0.image
                 value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
-              - key: spec.template.spec.containers.0.env.45.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynController.lineageIndex) + '.value' }}
                 value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash: outputs.bayn.lineage.requestHash, authoredActivation: outputs.bayn.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
+        - uses: yaml-parse
+          as: baynActivation
+          config:
+            path: ./src/argocd/applications/bayn/execution-activation.yaml
+            outputs:
+              - name: sourceIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
+              - name: digestIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
+              - name: lineageIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
+              - name: generationIndex
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION'))
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-activation.yaml
             updates:
-              - key: spec.template.spec.containers.0.env.1.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.sourceIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
-              - key: spec.template.spec.containers.0.env.4.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.digestIndex) + '.value' }}
                 value: ${{ imageFrom(vars.imageRepo).Digest }}
-              - key: spec.template.spec.containers.0.env.0.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.generationIndex) + '.value' }}
                 value: ${{ trimPrefix(imageFrom(vars.imageRepo).Digest, 'sha256:') }}
               - key: spec.template.spec.containers.0.image
                 value: ${{ vars.imageRepo }}@${{ imageFrom(vars.imageRepo).Digest }}
@@ -1999,7 +2029,7 @@ spec:
                 value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
               - key: spec.template.metadata.labels.app\.kubernetes\.io/version
                 value: sha-${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}
-              - key: spec.template.spec.containers.0.env.37.value
+              - key: ${{ 'spec.template.spec.containers.0.env.' + string(outputs.baynActivation.lineageIndex) + '.value' }}
                 value: "${{ asJSON({schemaVersion: outputs.bayn.lineage.schemaVersion, requestHash: outputs.bayn.lineage.requestHash, authoredActivation: outputs.bayn.lineage.authoredActivation, activation: {sourceRevision: imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'], imageRepository: vars.imageRepo, imageDigest: imageFrom(vars.imageRepo).Digest } }) }}"
         - uses: git-commit
           as: commit
