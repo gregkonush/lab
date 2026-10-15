@@ -61,6 +61,7 @@ const decimalToMicrosResultDataFirst = (
   value: string,
   signed: boolean,
   name: string,
+  precision: 'exact' | 'valuation' = 'exact',
 ): Result.Result<string, BrokerReadContractFailure> => {
   if (!decimalPattern.test(value)) {
     return Result.fail(
@@ -76,7 +77,7 @@ const decimalToMicrosResultDataFirst = (
   const separator = absolute.indexOf('.')
   const whole = separator === -1 ? absolute : absolute.slice(0, separator)
   const fraction = separator === -1 ? '' : absolute.slice(separator + 1)
-  if (fraction.length > 6 && /[1-9]/.test(fraction.slice(6))) {
+  if (precision === 'exact' && fraction.length > 6 && /[1-9]/.test(fraction.slice(6))) {
     return Result.fail(
       contractFailure({
         reason: 'DECIMAL_PRECISION',
@@ -88,7 +89,8 @@ const decimalToMicrosResultDataFirst = (
       }),
     )
   }
-  const micros = BigInt(whole) * 1_000_000n + BigInt((fraction.slice(0, 6) + '000000').slice(0, 6))
+  const rounding = precision === 'valuation' && fraction.charAt(6) >= '5' ? 1n : 0n
+  const micros = BigInt(whole) * 1_000_000n + BigInt((fraction.slice(0, 6) + '000000').slice(0, 6)) + rounding
   const result = negative ? -micros : micros
   if (!signed && result < 0n) {
     return Result.fail(
@@ -114,7 +116,9 @@ const decimalToMicrosResultDataFirst = (
   return Result.succeed(result.toString())
 }
 
-export const decimalToMicrosResult = Pipeable.dual(3, decimalToMicrosResultDataFirst)
+export const decimalToMicrosResult = Pipeable.dual(3, (value: string, signed: boolean, name: string) =>
+  decimalToMicrosResultDataFirst(value, signed, name),
+)
 
 const quantityResult = (
   value: string,
@@ -227,7 +231,12 @@ const normalizeAccountResultDataFirst = (
   return Result.gen(function* () {
     const cashMicros = yield* decimalToMicrosResult(raw.cash, true, 'account cash')
     const equityMicros = yield* decimalToMicrosResult(raw.equity, true, 'account equity')
-    const lastEquityMicros = yield* decimalToMicrosResult(raw.last_equity, true, 'account last equity')
+    const lastEquityMicros = yield* decimalToMicrosResultDataFirst(
+      raw.last_equity,
+      true,
+      'account last equity',
+      'valuation',
+    )
     const buyingPowerMicros = yield* decimalToMicrosResult(raw.buying_power, true, 'account buying power')
     return {
       id: raw.id,

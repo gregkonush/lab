@@ -576,6 +576,10 @@ outcomes and aggregate fills still must agree. Equity marks from separate accoun
 visible as valuation differences, while cash, inventory, cost basis, fees, and ledger reconciliation remain exact.
 Flat accounts require exact equity agreement. Matching receipt timestamps do not make separate broker responses atomic.
 
+The broker's historical `last_equity` valuation is normalized once to the nearest USD micro, with half-micro ties
+away from zero. Its original response content hash is retained. Cash, current equity, buying power and ledger amounts
+keep their exact numeric validation; historical valuation precision cannot make the whole account snapshot unavailable.
+
 ## Runtime architecture
 
 Each new native controller pass retains `jevObservationReferences` in its existing pass result and PostgreSQL

@@ -287,6 +287,51 @@ describe('Alpaca paper reads', () => {
     })
   })
 
+  test.each([
+    ['104000.123456789012', '104000123457'],
+    ['104000.123456499999', '104000123456'],
+    ['-104000.1234565', '-104000123457'],
+    ['-0.000000499999', '0'],
+    ['-0.0000005', '-1'],
+    ['170141183460469231731687303715884.1057274', '170141183460469231731687303715884105727'],
+  ])(
+    'normalizes historical equity %s as a valuation while preserving original response evidence',
+    async (reported, expected) => {
+      const raw = { ...accountResponse, last_equity: reported }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const result = await Effect.runPromise(
+        withClient(client, (read) => read.account).pipe(Effect.provide(TestClock.layer())),
+      )
+      expect(result.value.lastEquityMicros).toBe(expected)
+      expect(result.value.cashMicros).toBe('-23140200000')
+      expect(result.value.equityMicros).toBe('103820560000')
+      expect(result.evidence.contentHash).toBe(canonicalHashV1(raw))
+    },
+  )
+
+  test('rejects historical equity that overflows after valuation rounding', async () => {
+    const raw = { ...accountResponse, last_equity: '170141183460469231731687303715884.1057275' }
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+    const result = await Effect.runPromise(withClient(client, (read) => read.account).pipe(Effect.result))
+    expect(result).toMatchObject({
+      _tag: 'Failure',
+      failure: { kind: BrokerReadErrorKind.InvalidResponse, cause: { reason: 'DECIMAL_RANGE' } },
+    })
+  })
+
+  test.each(['cash', 'equity', 'buying_power', 'non_marginable_buying_power'])(
+    'keeps %s exact when historical equity uses valuation rounding',
+    async (field) => {
+      const raw = { ...accountResponse, [field]: '1.0000001' }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.account).pipe(Effect.result))
+      expect(result).toMatchObject({
+        _tag: 'Failure',
+        failure: { kind: BrokerReadErrorKind.InvalidResponse, cause: { reason: 'DECIMAL_PRECISION' } },
+      })
+    },
+  )
+
   test('reads and hashes the current fractional-trading account configuration with GET only', async () => {
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
     let releaseBody: (() => void) | undefined
