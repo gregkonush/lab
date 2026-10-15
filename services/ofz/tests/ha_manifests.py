@@ -509,6 +509,16 @@ def validate(targets):
     )
     database = resource(targets, "keycloak", "Cluster", "keycloak-db")["spec"]
     require(database["instances"] == 3, "keycloak: three database instances required")
+    capacity_mib = int(database["storage"]["size"].removesuffix("Gi")) * 1024
+    retained_wal_mib = int(
+        database["postgresql"]["parameters"]
+        .get("max_slot_wal_keep_size", "-1")
+        .removesuffix("MB")
+    )
+    require(
+        0 < retained_wal_mib <= capacity_mib // 4,
+        "keycloak: replica WAL retention must be bounded to a quarter of database storage",
+    )
     require(
         database["affinity"]["podAntiAffinityType"] == "required",
         "keycloak: database host spread required",
@@ -826,6 +836,12 @@ def main():
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "postgresql"
         ]["synchronous"].update(dataDurability="preferred"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "storage"
+        ].update(size="5Gi"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "postgresql"
+        ]["parameters"].pop("max_slot_wal_keep_size"),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "affinity"
         ].update(tolerations=[]),
