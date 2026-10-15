@@ -340,6 +340,11 @@ export interface ForwardPerformanceEvidenceInput {
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly accountTransactions?: readonly AccountingTransaction[]
+  /** Verified cumulative account fee evidence, independent of the selected financial scope. */
+  readonly accountFeeAccruals?: readonly (typeof import('../db/fee-accruals').StoredAccrual.Type)[]
+  readonly accountBrokerFees?: readonly import('../accounting/broker-fees').StoredBrokerFee[]
+  /** Cumulative account inventory, independently projected by PostgreSQL and read from the ledger. */
+  readonly accountPositionCounts?: { readonly postgres: number; readonly ledger: number }
   readonly brokerFeeAccruals?: readonly {
     readonly accrualId: string
     readonly accountId: string

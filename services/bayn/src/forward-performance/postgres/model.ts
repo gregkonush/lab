@@ -246,6 +246,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly unclosedCycleCount: number
   readonly unresolvedMutationCount: number
   readonly openPositionCount: number
+  readonly accountOpenPositionCount?: number
   readonly unaccountedFillCount: number
   readonly postReconciliationActivityCount: number
 }
