@@ -142,7 +142,7 @@ const simulate = (
   )
 
 test('a control manages its own partial entry, retries its model exit, and charges measured inference once', async () => {
-  const { report, requests, calls } = await simulate({ partial: true, sessionDurationMs: 60 * 60_000 + 30_000 })
+  const { report, requests, calls } = await simulate({ partial: true, sessionDurationMs: 61 * 60_000 })
   expect(report.completion).toBe('COMPLETE')
   expect(report.completedEpisodes).toBeGreaterThan(5)
   const modelEpisodes = report.episodes.filter((episode) => episode.reason === ControlExit.Model)
