@@ -172,7 +172,9 @@ tests:
         runbook_url: docs/runbooks/bayn-cache-observability.md
 - name: missing index catalog evidence is unknown and alerts
   interval: 15s
-  input_series: []
+  input_series:
+  - series: bayn_operation_metrics_expected{job="bayn",namespace="bayn",source_revision="current"}
+    values: 1+0x80
   alert_rule_test:
   - eval_time: 3m
     alertname: BaynGenerationIndexUnavailable
@@ -301,3 +303,10 @@ tests:
         description: An API-advertised source revision has no recent native metrics heartbeat for this service. Older retained
           workers cannot satisfy its revision. Check export failure logs, Mimir and the exact gateway egress allowance.
         runbook_url: docs/runbooks/bayn-cache-observability.md
+- name: index telemetry absence stays quiet until the API adopts the observability contract
+  interval: 15s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: BaynGenerationIndexUnavailable
+    exp_alerts: []

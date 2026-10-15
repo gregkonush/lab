@@ -3954,9 +3954,10 @@ data:
               allowance.
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynGenerationIndexUnavailable
-          expr: (min(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or sum(absent(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}))
+          expr: ((min(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or sum(absent(cnpg_bayn_generation_index_valid{namespace="bayn",cluster="bayn-db",role="primary"}))
             > 0) or (min(cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"}) != 1 or
-            sum(absent(cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"})) > 0)
+            sum(absent(cnpg_bayn_generation_index_ready{namespace="bayn",cluster="bayn-db",role="primary"})) > 0)) and
+            on() (max(bayn_operation_metrics_expected{job="bayn",namespace="bayn"}) == 1)
           for: 2m
           labels:
             team: trading

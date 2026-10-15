@@ -38,16 +38,17 @@ data:
         "list": [
           {
             "name": "source_revision",
-            "label": "Running source",
+            "label": "API source",
             "type": "query",
             "datasource": {
               "type": "prometheus",
               "uid": "prom"
             },
             "query": {
-              "query": "label_values(bayn_build_info{job=\"bayn\",namespace=\"bayn\"}, source_revision)",
+              "query": "query_result(max by(source_revision) (bayn_operation_metrics_expected{job=\"bayn\",namespace=\"bayn\"}))",
               "refId": "StandardVariableQuery"
             },
+            "regex": "/source_revision=\"([^\"]+)\"/",
             "refresh": 2,
             "includeAll": false,
             "multi": false

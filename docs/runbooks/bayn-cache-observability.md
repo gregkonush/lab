@@ -55,7 +55,9 @@ The `bayn-cache-performance.rules` Mimir group contains eight rules. They use th
 | `BaynGenerationIndexUnavailable`  | Missing, invalid or unready index observation for two minutes. Inspect migration 104 and CNPG query collection.                                                                            |
 | `BaynGenerationSettlementSlow`    | Statement p95 above 500ms for ten minutes, with at least twenty samples. Inspect waits, the statement trace and a bounded read-only plan.                                                  |
 
-The API pull metric `bayn_operation_metrics_expected` gates native export absence alerts during the initial rollout.
+The API pull metric `bayn_operation_metrics_expected` gates native export and index telemetry absence alerts during
+the initial rollout, so the main-tracked observability app does not page before Kargo installs the application catalog
+queries and metric producers.
 This source-bound indicator remains available when the separate OTLP metrics path fails. Heartbeats must match
 each API-advertised source revision; retained older workers cannot satisfy it. Within a revision, the newest exporter
 per service is observed; existing replica alerts cover missing workers/APIs. No notification test is sent by acceptance.
@@ -83,7 +85,7 @@ histograms, cache hits, payload sizes, index validity/activity, evaluated rules,
 traces. A quiet server can have old log timestamps; the verifier searches forty-eight hours. Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
-Validate the twelve missing-data/threshold behavior cases with the existing native PromQL test harness.
+Validate the thirteen missing-data/threshold behavior cases with the existing native PromQL test harness.
 Use `promtool` 3.5.0 on `PATH`, or set `PROMTOOL` to its executable; CI already provisions the pinned checker.
 
 ```sh
