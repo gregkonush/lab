@@ -2,6 +2,8 @@ mod admission;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
+#[cfg(test)]
+mod probe_output;
 pub mod runner;
 pub mod supervisor;
 mod vmm;
@@ -17,7 +19,7 @@ use tokio::{
 };
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.3";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.5";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 

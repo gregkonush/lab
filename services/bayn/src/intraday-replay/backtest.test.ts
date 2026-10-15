@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { ReconciliationStatus } from '../execution/contracts'
 import { expect, test } from 'bun:test'
@@ -52,7 +53,13 @@ const fixture = () => {
     assetObservationAt: '2026-09-04T13:29:00.000Z',
     assetObservationPolicy: 'retained-as-of-session',
     build,
-    assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+    assumptions: {
+      instruments: replayTestInstruments,
+      latencyMs: 100,
+      slippageBps: 0,
+      availableLiquidityPpm: 1000000,
+      feeMultiplierPpm: 1000000,
+    },
     cadence: {
       pollIntervalMs: 30000,
       reconciliationIntervalMs: 30000,

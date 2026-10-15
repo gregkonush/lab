@@ -1,3 +1,4 @@
+import { receivedCryptoFee } from '../strategy/execution-model/fees'
 import { Result, Schema } from 'effect'
 import {
   AccountStatus,
@@ -102,14 +103,23 @@ export const makeControlManagementBatch = (input: {
       return yield* invalid('Unfilled or unresolved entry cannot create management context')
     const { portfolio: control, outcome } = executed
     const fill = outcome.fill
+    const receivedFee = receivedCryptoFee(
+      {
+        symbol: fill.symbol,
+        side: fill.side,
+        quantityAtoms: BigInt(fill.quantityAtoms),
+        notionalMicros: BigInt(fill.notionalMicros),
+      },
+      BigInt(order.assumptions.feeMultiplierPpm),
+    )
     const position = control.ledger.positions[0]
     const at = input.snapshot.manifest.observedAt
     const atMs = Date.parse(at)
     if (
       position === undefined ||
       control.ledger.positions.length !== 1 ||
-      position.quantityAtoms !== fill.quantityAtoms ||
-      position.costBasisMicros !== fill.notionalMicros ||
+      BigInt(position.quantityAtoms) !== BigInt(fill.quantityAtoms) - receivedFee.quantityAtoms ||
+      BigInt(position.costBasisMicros) !== BigInt(fill.notionalMicros) - receivedFee.valueMicros ||
       fill.observedAt > at ||
       fill.observedAt.slice(0, 10) !== input.snapshot.manifest.sessionDate ||
       atMs >= Date.parse(fill.observedAt) + protocol.maximumHoldingMinutes * 60_000
@@ -210,6 +220,10 @@ export const makeControlManagementBatch = (input: {
       purpose: JevPurpose.Manage,
       entryDecisionHash,
       entryIntentIds: [intentId],
+      entryInventoryDebit: {
+        quantityAtoms: receivedFee.quantityAtoms.toString(),
+        costBasisMicros: receivedFee.valueMicros.toString(),
+      },
       entryFills: [
         {
           schemaVersion: 'bayn.fill.v2',

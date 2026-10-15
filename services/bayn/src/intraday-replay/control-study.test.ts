@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 
 import { exchangeSessions } from '../market-hours'
@@ -34,7 +35,13 @@ import {
 const fixture = nativeJevFixture()
 const openMs = Date.parse(exchangeSessions(fixture.snapshot.manifest.calendar)[0]?.openAt ?? '')
 const closeMs = openMs + 90 * 60_000
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const simulate = (
   options: {
     missingSnapshot?: boolean

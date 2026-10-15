@@ -211,7 +211,7 @@ export const marketVolumeRequestsFromRows = (
       manifest.schemaVersion === 'bayn.streaming-market-snapshot.v1'
         ? {
             ...base,
-            sourceFeed: 'iex',
+            sourceFeed: manifest.feed,
             decisionSnapshotAsOfSession: manifest.sessionDate,
             decisionManifest: manifest,
           }

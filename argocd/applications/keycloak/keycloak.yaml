@@ -155,6 +155,9 @@ spec:
             - name: database-ca
               mountPath: /var/run/keycloak/database-ca
               readOnly: true
+            - name: login-theme
+              mountPath: /opt/keycloak/themes/tengri/login
+              readOnly: true
       automountServiceAccountToken: false
       enableServiceLinks: false
       terminationGracePeriodSeconds: 30
@@ -177,3 +180,14 @@ spec:
           secret:
             secretName: keycloak-db-ca
             defaultMode: 288
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: login-theme
+          configMap:
+            name: keycloak-tengri-login-theme
+            items:
+              - key: theme.properties
+                path: theme.properties
+              - key: webauthnRegister.js
+                path: resources/js/webauthnRegister.js

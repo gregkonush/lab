@@ -9,7 +9,9 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import { DateTime, Effect, Redacted, Result } from 'effect'
 
-import { prepareAccounting } from '../accounting/domain'
+import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { prepareFeeMatchCorrection, type StoredBrokerFee } from '../accounting/broker-fees'
+import { hashLedgerPlanResult } from '../ledger-plan'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { ForwardPerformanceConfig } from './config'
 import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
@@ -29,6 +31,7 @@ import {
   type ForwardPerformanceReaders,
 } from './program'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
+import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
 const identityResult = makeBrokerIdentity({
   schemaVersion: 'bayn.broker-identity.v2',
@@ -102,8 +105,9 @@ interface SqlObservation {
 }
 
 interface SqlFixture {
+  readonly cashReportingQuantumMicros?: '1' | '10000' | null
   readonly extraReconciliationDiscrepancy?: boolean
-  readonly preWindowCashResidualMicros?: string
+  readonly cryptoCashMatch?: string
   readonly brokerFeeTimes?: {
     readonly firstObservedAt: string
     readonly postedAt: string | null
@@ -114,7 +118,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
-    if (statement.includes('SELECT fee.data, fee.coin_cost_basis_micros')) {
+    if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
         times === undefined
@@ -126,7 +130,10 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   activityId: 'synthetic-delayed-fee',
                   date: '2026-07-20',
                   netAmountMicros: '-100',
+                  ...(fixture.cryptoCashMatch === undefined ? {} : { cryptoCashFee: true }),
                 },
+                cash_match_corrections: [],
+                matched_cash_micros: fixture.cryptoCashMatch ?? '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
                   requestId: 'synthetic-fee-read',
@@ -140,9 +147,10 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 tigerbeetle_ledger: 7001,
                 posted: times.postedAt !== null,
                 first_observed_at: new Date(times.firstObservedAt),
+                last_correction_posted_at: null,
                 posted_at: times.postedAt === null ? null : new Date(times.postedAt),
                 includes_generation: true,
-                includes_other_generation: false,
+                includes_other_generation: fixture.cryptoCashMatch !== undefined,
               },
             ],
       )
@@ -183,7 +191,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
         },
       ])
     }
-    if (statement.includes('AS cash_yield_micros')) {
+    if (statement.includes('AS pre_window_accounted_cash_delta_micros')) {
       return Effect.succeed([
         {
           reconciliation_id: hash('a'),
@@ -194,14 +202,16 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
           baseline_cash_micros: '1000',
           opening_account_event_id: hash('c'),
           opening_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T13:00:00.000Z')),
+          opening_cash_reporting_quantum_micros:
+            fixture.cashReportingQuantumMicros === undefined ? '1' : fixture.cashReportingQuantumMicros,
           opening_cash_micros: '1000',
           pre_window_accounted_cash_delta_micros: '0',
-          pre_window_cash_residual_micros: fixture.preWindowCashResidualMicros ?? '0',
           closing_account_event_id: hash('d'),
           closing_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T21:00:00.000Z')),
+          closing_cash_reporting_quantum_micros:
+            fixture.cashReportingQuantumMicros === undefined ? '1' : fixture.cashReportingQuantumMicros,
           closing_cash_micros: '1200',
           accounted_cash_delta_micros: '0',
-          cash_yield_micros: '200',
         },
       ])
     }
@@ -408,6 +418,28 @@ const marketReaderConfig = {
 
 describe('forward performance read program', () => {
   test.each([
+    ['100', 0],
+    ['99', 1],
+  ] as const)(
+    'attributes only incremental crypto cash expense across generations (matched=%s)',
+    async (matched, ambiguous) => {
+      const sql = makeReadOnlySql(
+        { statements: [] },
+        {
+          cryptoCashMatch: matched,
+          brokerFeeTimes: { firstObservedAt: '2026-07-20T21:00:00.000Z', postedAt: '2026-07-20T21:00:00.000Z' },
+        },
+      )
+      const data = await Effect.runPromise(
+        readForwardPerformancePostgres(sql, identityResult.success.accountId, hash('9')),
+      )
+      expect(data.brokerFeeRecords).toHaveLength(1)
+      expect(data.ambiguousBrokerFeeCount).toBe(ambiguous)
+      expect(data.generationBrokerFeeIds).toEqual([])
+    },
+  )
+
+  test.each([
     ['at-cut', '2026-07-20T21:01:00.000Z', '2026-07-20T21:01:00.000Z', 0],
     ['observed-after-cut', '2026-07-20T21:01:00.001Z', '2026-07-20T21:01:00.001Z', 1],
     ['posted-after-cut', '2026-07-20T21:00:00.000Z', '2026-07-20T21:01:00.001Z', 1],
@@ -424,6 +456,13 @@ describe('forward performance read program', () => {
     expect(evidence.brokerFeeRecords?.[0]?.posted).toBe(postedAt !== null)
     expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('first_observed_at')
     expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('posted_at')
+  })
+
+  test('historical snapshots without reporting precision cannot become cash-yield evidence', async () => {
+    const sql = makeReadOnlySql({ statements: [] }, { cashReportingQuantumMicros: null })
+    const evidence = await Effect.runPromise(readForwardPerformancePostgres(sql, identityResult.success.accountId))
+    expect(evidence.cashReportingPrecisionKnown).toBe(false)
+    expect(evidence.cashYieldEvidence).toBeUndefined()
   })
 
   test('constructs exact immutable Signal volume evidence without rounding fractional microshares', () => {
@@ -735,7 +774,9 @@ describe('forward performance read program', () => {
         ),
       ),
     ).toBe(true)
-    const cashYieldStatement = observation.statements.find((statement) => statement.includes('AS cash_yield_micros'))
+    const cashYieldStatement = observation.statements.find((statement) =>
+      statement.includes('AS pre_window_accounted_cash_delta_micros'),
+    )
     expect(cashYieldStatement).toContain(
       'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
     )
@@ -767,24 +808,150 @@ describe('forward performance read program', () => {
       cashYieldAdjustedExact: false,
     })
     expect(observedCashYieldEvidence).toEqual({
-      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
       reconciliationId: hash('a'),
       reconciliationContentHash: hash('b'),
       reconciledAt: '2026-07-20T21:01:00.000Z',
       baselineAccountEventId: hash('1'),
       baselineObservedAt: '2026-07-19T13:00:00.000Z',
       baselineCashMicros: '1000',
+      baselineCashReportingOffsetMicros: '0',
       openingAccountEventId: hash('c'),
       openingObservedAt: '2026-07-20T13:00:00.000Z',
       openingCashMicros: '1000',
+      openingCashReportingOffsetMicros: '0',
+      openingCashReportingQuantumMicros: '1',
       preWindowAccountedCashDeltaMicros: '0',
       preWindowCashResidualMicros: '0',
       closingAccountEventId: hash('d'),
       closingObservedAt: '2026-07-20T21:00:00.000Z',
       closingCashMicros: '1200',
+      closingCashReportingOffsetMicros: '0',
+      closingCashReportingQuantumMicros: '1',
       accountedCashDeltaMicros: '0',
       cashYieldMicros: '200',
     })
+  })
+
+  test.each([false, true])('cumulative fee evidence with cash correction=%s', async (includeCashCorrection) => {
+    const sql = makeReadOnlySql({ statements: [] })
+    const accountId = identityResult.success.accountId
+    const { fills, accrual, accounting } = coinRoundTrip(0, accountId)
+    const fee = coinActivity('82625', accountId)
+    const feeRecords: StoredBrokerFee[] = [fee]
+    const generationBrokerFeeIds: string[] = []
+    if (includeCashCorrection) {
+      const data = {
+        accountId,
+        activityId: 'cash-overrelease',
+        date: fee.data.date,
+        cryptoCashFee: true as const,
+        netAmountMicros: '-200000',
+      }
+      const contentHash = canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...data })
+      const originalPlan = brokerFeeLedgerPlan(accountId, data.activityId, '10000', 7001)
+      const correction = success(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: 'bayn.fee-match-correction.v2',
+            accountId,
+            activityId: data.activityId,
+            accrualId: hash('e'),
+            feeContentHash: contentHash,
+            activityCashMicros: '200000',
+            accrualCashMicros: '210000',
+            readEvidence: fee.read_evidence,
+          },
+          7001,
+        ),
+      )
+      feeRecords.push({
+        ...fee,
+        data,
+        content_hash: contentHash,
+        matched_cash_micros: '210000',
+        coin_cost_basis_micros: null,
+        ledger_plan_hash: success(hashLedgerPlanResult(originalPlan)),
+        cash_match_corrections: [
+          {
+            correction_id: correction.correctionId,
+            data: correction.data,
+            content_hash: correction.contentHash,
+            ledger_plan_hash: success(hashLedgerPlanResult(correction.plan)),
+            tigerbeetle_cluster_id: '2001',
+            tigerbeetle_ledger: 7001,
+            posted: true,
+          },
+        ],
+      })
+      generationBrokerFeeIds.push(data.activityId)
+    }
+    const receipts = accounting.map((prepared) => ({
+      ...success(planAccountingReceipt(prepared, '2001', 7001)),
+      recordedAt: '2026-09-18T16:00:00.000Z',
+    }))
+    const readers: ForwardPerformanceReaders = {
+      inferenceExpenses: () => Effect.succeed([]),
+      marketVolume: () => Effect.succeed([]),
+      postgres: () =>
+        Effect.succeed({
+          cycles: [],
+          durableExecutionBindings: [],
+          reconciliation: {
+            reconciliationId: hash('1'),
+            contentHash: hash('2'),
+            status: 'EXACT',
+            performanceExact: true,
+            cashYieldAdjustedExact: false,
+            reconciledAt: '2026-09-18T21:00:00.000Z',
+          },
+          startingCapitalMicros: '100000000',
+          cashReportingPrecisionKnown: true,
+          transactions: fills.slice(1),
+          ledgerTransactions: fills,
+          receipts: receipts.slice(1),
+          ledgerReceipts: receipts,
+          transactionEvidence: fills.slice(1).map((transaction) => ({ ...transaction, cycleId: hash('f') })),
+          brokerFeeAccrualRecords: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+          brokerFeeRecords: feeRecords,
+          generationBrokerFeeIds,
+          executionEvidence: [],
+          marketVolumeRequests: [],
+          unclosedCycleCount: 0,
+          unresolvedMutationCount: 0,
+          openPositionCount: 0,
+          accountReconciliation: { reconciledAt: '2026-09-18T21:00:00.000Z', performanceExact: true },
+          unaccountedFillCount: 0,
+          postReconciliationActivityCount: 0,
+        }),
+      ledger: () =>
+        Effect.succeed({
+          totals: {
+            realizedGainMicros: '0',
+            realizedLossMicros: '0',
+            brokerExecutionFeesMicros: '0',
+            otherChargedCostsMicros: null,
+            cashYieldMicros: '0',
+          },
+          ledgerExact: true,
+          missingLedgerAccountCount: 0,
+          openPositionCount: 0,
+          cashYieldEvidenceRequired: false,
+        }),
+    }
+    const report = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    )
+    expect(report.positionEpisodes).toMatchObject({
+      schemaVersion: 'bayn.position-episode-evidence.v3',
+      status: 'MEASURED',
+      completedCount: 0,
+      crossScopeCount: 1,
+      openCount: 0,
+    })
+    expect(report.receipt.totals.brokerExecutionFeesMicros).toBe('0')
+    expect(report.receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
   test('keeps performance and expense reads on one cut when new work commits between them', async () => {
@@ -1019,6 +1186,8 @@ describe('forward performance read program', () => {
       inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
+          cashReportingPrecisionKnown: true,
+          brokerFeeAccrualRecords: [],
           cycles: [
             {
               cycleId,
@@ -1054,21 +1223,26 @@ describe('forward performance read program', () => {
           },
           startingCapitalMicros: '1000',
           cashYieldEvidence: {
-            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
             reconciliationId: hash('7'),
             reconciliationContentHash: hash('8'),
             reconciledAt: '2026-07-20T21:01:00.000Z',
             baselineAccountEventId: hash('b'),
             baselineObservedAt: '2026-07-19T13:00:00.000Z',
             baselineCashMicros: '1000',
+            baselineCashReportingOffsetMicros: '0',
             openingAccountEventId: hash('9'),
             openingObservedAt: '2026-07-20T13:00:00.000Z',
             openingCashMicros: '1000',
+            openingCashReportingOffsetMicros: '0',
+            openingCashReportingQuantumMicros: '1',
             preWindowAccountedCashDeltaMicros: '0',
             preWindowCashResidualMicros: '0',
             closingAccountEventId: hash('a'),
             closingObservedAt: '2026-07-20T21:00:00.000Z',
             closingCashMicros: '2100',
+            closingCashReportingOffsetMicros: '0',
+            closingCashReportingQuantumMicros: '1',
             accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
             cashYieldMicros: '200',
           },
@@ -1118,21 +1292,26 @@ describe('forward performance read program', () => {
       },
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
         expect(cashYieldEvidence).toEqual({
-          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
           reconciliationId: hash('7'),
           reconciliationContentHash: hash('8'),
           reconciledAt: '2026-07-20T21:01:00.000Z',
           baselineAccountEventId: hash('b'),
           baselineObservedAt: '2026-07-19T13:00:00.000Z',
           baselineCashMicros: '1000',
+          baselineCashReportingOffsetMicros: '0',
           openingAccountEventId: hash('9'),
           openingObservedAt: '2026-07-20T13:00:00.000Z',
           openingCashMicros: '1000',
+          openingCashReportingOffsetMicros: '0',
+          openingCashReportingQuantumMicros: '1',
           preWindowAccountedCashDeltaMicros: '0',
           preWindowCashResidualMicros: '0',
           closingAccountEventId: hash('a'),
           closingObservedAt: '2026-07-20T21:00:00.000Z',
           closingCashMicros: '2100',
+          closingCashReportingOffsetMicros: '0',
+          closingCashReportingQuantumMicros: '1',
           accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
           cashYieldMicros: '200',
         })
@@ -1203,25 +1382,26 @@ test.each([makeIntradayPerformanceFixture, makeStreamingPerformanceFixture, make
     const { request, archive, bars } = makeFixture()
     let volumeReads = 0
     let watermarkReads = 0
-    const statement = (strings: TemplateStringsArray) => {
-      const text = strings.join('?')
-      if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
-      if (text.includes('GROUP BY source_topic, source_partition')) {
-        watermarkReads += 1
-        return Effect.succeed(
-          archive.archiveWatermarks.map((item) => ({
-            source_topic: item.sourceTopic,
-            source_partition: String(item.sourcePartition),
-            inclusive_last_offset: item.inclusiveLastOffset,
-          })),
-        )
-      }
-      if (text.includes('FROM signal.intraday_bars_1m_v2')) {
-        volumeReads += 1
-        return Effect.succeed(bars)
-      }
-      return Effect.die(new Error('Unexpected market-data query'))
-    }
+    const statement = (strings: TemplateStringsArray): Effect.Effect<readonly Record<string, unknown>[]> =>
+      Effect.suspend<readonly Record<string, unknown>[], never, never>(() => {
+        const text = strings.join('?')
+        if (text.trim() === '' || text.includes('LIMIT 0')) return Effect.succeed([])
+        if (text.includes('GROUP BY source_topic, source_partition')) {
+          watermarkReads += 1
+          return Effect.succeed(
+            archive.archiveWatermarks.map((item) => ({
+              source_topic: item.sourceTopic,
+              source_partition: String(item.sourcePartition),
+              inclusive_last_offset: item.inclusiveLastOffset,
+            })),
+          )
+        }
+        if (text.includes('toString(volume) AS volume')) {
+          volumeReads += 1
+          return Effect.succeed(bars)
+        }
+        return Effect.die(new Error('Unexpected market-data query'))
+      })
     const client = Object.assign(statement, {
       param: (_type: string, value: unknown) => ({ value }),
     }) as unknown as ClickhouseClient.ClickhouseClient

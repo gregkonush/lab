@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { OrderSide, OrderStatus } from '../execution/contracts'
@@ -39,7 +40,13 @@ const input = (): Parameters<typeof makeControlManagementBatch>[0] => ({
     side: OrderSide.Buy,
     quantityAtoms: 10000000000n,
     protocol: fixture.protocol,
-    assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
+    assumptions: {
+      instruments: replayTestInstruments,
+      latencyMs: 100,
+      slippageBps: 0,
+      availableLiquidityPpm: 1_000_000,
+      feeMultiplierPpm: 1_000_000,
+    },
     decisionAtMs: observedAtMs - 180_100,
     arrivalAtMs: observedAtMs - 180_000,
     decisionQuote: quote(observedAtMs - 180_100),

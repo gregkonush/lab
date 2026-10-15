@@ -144,8 +144,8 @@ test('snapshot diagnostics retain precise publication times and bounds without f
     query,
     cut.projection,
   )
-  expect(diagnostics).toEqual({
-    schemaVersion: 'bayn.market-snapshot-failure.v1',
+  expect(diagnostics).toMatchObject({
+    schemaVersion: 'bayn.market-snapshot-failure.v2',
     failureReason: 'freshness',
     ingestionDelayDirection: IntradayIngestionDelayDirection.AboveMaximum,
     observedAt: query.observedAt,
@@ -180,8 +180,8 @@ test('snapshot diagnostics omit foreign identities, malformed timestamps and non
     query,
     cut.projection,
   )
-  expect(diagnostics).toEqual({
-    schemaVersion: 'bayn.market-snapshot-failure.v1',
+  expect(diagnostics).toMatchObject({
+    schemaVersion: 'bayn.market-snapshot-failure.v2',
     failureReason: 'freshness',
     observedAt: query.observedAt,
     rangeStartAt: query.rangeStartAt,

@@ -1,8 +1,10 @@
+import { FeeActivitySchema } from '../fee-activity'
 import { Context, Effect, Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
 import { canonicalHashV1 } from '../../hash'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
+import { CashReportingQuantumSchema } from './cash-reporting'
 import {
   AccountStatus,
   AssetClass,
@@ -46,6 +48,7 @@ const account = Schema.Struct({
   status: Schema.Enum(AccountStatus),
   currency: Schema.Literal('USD'),
   cashMicros: micros,
+  cashReportingQuantumMicros: CashReportingQuantumSchema,
   equityMicros: micros,
   lastEquityMicros: micros,
   cryptoStatus: Schema.NullOr(Schema.String),
@@ -119,13 +122,6 @@ const fill = Schema.Struct({
   type: Schema.Enum(TradeActivityType),
   orderStatus: Schema.optionalKey(Schema.Enum(OrderStatus)),
 })
-const fee = Schema.Struct({
-  coinDebit: Schema.optionalKey(Schema.Struct({ symbol: Schema.String, quantityAtoms: micros, priceAtoms: micros })),
-  accountId: Schema.String,
-  activityId: Schema.String,
-  date: Schema.String,
-  netAmountMicros: micros,
-})
 const configuration = Schema.Struct({
   schemaVersion: Schema.Literal(accountConfigurationObservationSchemaVersion),
   source: Schema.Literal(accountConfigurationObservationSource),
@@ -153,7 +149,7 @@ export const ObservedBrokerSnapshotSchema = Schema.Struct({
     history: Schema.Struct({
       orders: Schema.Struct({ rows: Schema.Array(observed(order)), observedAt: UtcInstantSchema }),
       fills: Schema.Array(observed(fill)),
-      fees: Schema.Array(observed(fee)),
+      fees: Schema.Array(observed(FeeActivitySchema)),
     }),
   }),
   configuration: observed(configuration),

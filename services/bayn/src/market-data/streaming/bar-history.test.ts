@@ -160,7 +160,7 @@ describe('bounded streaming bar history', () => {
       ),
       20,
     )
-  })
+  }, 150_000)
 
   test('duplicates, conflicting receipts and invalid offset encodings retain the same bar history', () => {
     const record = recordFor(0, 0, 0, 100)

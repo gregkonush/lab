@@ -108,21 +108,26 @@ const cashYieldEvidence = (
   accountedCashDelta = 0n,
   openingCash = 1_000_000_000n,
 ): ForwardPerformanceCashYieldEvidence => ({
-  schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+  schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
   reconciliationId: hash('c'),
   reconciliationContentHash: hash('d'),
   reconciledAt: '2026-07-21T21:01:00.000Z',
   baselineAccountEventId: hash('a'),
   baselineObservedAt: '2026-07-19T13:00:00.000Z',
   baselineCashMicros: openingCash.toString(),
+  baselineCashReportingOffsetMicros: '0',
   openingAccountEventId: hash('e'),
   openingObservedAt: '2026-07-20T13:00:00.000Z',
   openingCashMicros: openingCash.toString(),
+  openingCashReportingOffsetMicros: '0',
+  openingCashReportingQuantumMicros: '1',
   preWindowAccountedCashDeltaMicros: '0',
   preWindowCashResidualMicros: '0',
   closingAccountEventId: hash('f'),
   closingObservedAt: '2026-07-21T21:00:00.000Z',
   closingCashMicros: (openingCash + accountedCashDelta + amount).toString(),
+  closingCashReportingOffsetMicros: '0',
+  closingCashReportingQuantumMicros: '1',
   accountedCashDeltaMicros: accountedCashDelta.toString(),
   cashYieldMicros: amount.toString(),
 })
@@ -321,6 +326,84 @@ describe('forward performance TigerBeetle read', () => {
       cashYieldEvidenceRequired: true,
     })
     expect(evidence.cashYieldEvidence).toBeUndefined()
+  })
+
+  test.each(['206046', '198637'])('USD fee %s cannot turn cent reporting into economic yield', async (fee) => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const snapshot = {
+      ...cashYieldEvidence(0n),
+      openingCashMicros: '1000000000',
+      baselineCashMicros: '1000000000',
+      closingCashMicros: '1002060000',
+      accountedCashDeltaMicros: (2261942n - BigInt(fee)).toString(),
+      closingCashReportingQuantumMicros: '10000' as const,
+    }
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          accountingPlans,
+          snapshot,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+        ),
+      ),
+    )
+    expect(evidence.ledgerExact).toBe(true)
+    expect(evidence.cashYieldEvidenceRequired).toBe(false)
+    expect(evidence.totals.cashYieldMicros).toBe('0')
+  })
+
+  test('carries witnessed opening and closing rounding residuals without creating yield or ledger money', async () => {
+    const accountingPlans = plans()
+    const accountPlan = success(assembleAccountPlan(accountId, accountingPlans))
+    const snapshot: ForwardPerformanceCashYieldEvidence = {
+      ...cashYieldEvidence(0n),
+      baselineAccountEventId: hash('e'),
+      baselineObservedAt: '2026-07-20T13:00:00.000Z',
+      baselineCashMicros: '99875170000',
+      baselineCashReportingOffsetMicros: '3024',
+      openingCashMicros: '99875170000',
+      openingCashReportingOffsetMicros: '3024',
+      openingCashReportingQuantumMicros: '10000',
+      closingCashMicros: '99873850000',
+      closingCashReportingOffsetMicros: '-3104',
+      closingCashReportingQuantumMicros: '10000',
+      accountedCashDeltaMicros: '-1313872',
+    }
+    const read = (input: ForwardPerformanceCashYieldEvidence) =>
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          accountingPlans,
+          input,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+        ),
+      )
+    const evidence = await Effect.runPromise(read(snapshot))
+    expect(evidence.ledgerExact).toBe(true)
+    expect(evidence.cashYieldEvidenceRequired).toBe(false)
+    expect(evidence.totals.cashYieldMicros).toBe('0')
+    const legacy = { ...snapshot, schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2' }
+    const legacyFailure = await Effect.runPromise(
+      read(legacy as unknown as ForwardPerformanceCashYieldEvidence).pipe(Effect.flip),
+    )
+    expect(legacyFailure).toMatchObject({ cause: { operation: 'verify-account', reason: 'invalid-transaction' } })
+    for (const input of [
+      {
+        ...snapshot,
+        baselineCashReportingOffsetMicros: '0',
+        openingCashReportingOffsetMicros: '0',
+        closingCashReportingOffsetMicros: '0',
+      },
+      { ...snapshot, closingCashReportingOffsetMicros: '10000' },
+      { ...snapshot, baselineCashReportingOffsetMicros: '1' },
+    ]) {
+      const failure = await Effect.runPromise(read(input).pipe(Effect.flip))
+      expect(failure).toMatchObject({ cause: { operation: 'verify-account', reason: 'invalid-transaction' } })
+    }
   })
 
   test('keeps malformed durable cash-yield evidence fail closed', async () => {

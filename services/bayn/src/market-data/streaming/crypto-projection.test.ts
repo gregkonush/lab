@@ -5,7 +5,24 @@ import { Result } from 'effect'
 
 import { cryptoMarketFixture } from '../../testing/crypto-market-fixture'
 import { reproduceStreamingSnapshot } from './replay'
-import { latestQuotes } from '../intraday/verification'
+import { latestQuotes, persistIntradayRecordRows } from '../intraday/verification'
+import { constructStreamingSnapshot } from './snapshot'
+
+for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
+  test(`${symbol} reproduces its native snapshot while the shared consumer also carries equity technical features`, () => {
+    const { cut, query } = cryptoMarketFixture(symbol)
+    const shared = {
+      ...cut,
+      projection: { ...cut.projection, technicalTopic: 'torghut.technical-features.v1' },
+    }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(shared, query))
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    const reproduced = Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))
+    expect(reproduced.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
+    expect(snapshot.manifest.streaming.technical).toBeUndefined()
+    expect(snapshot.manifest.streaming.features).toHaveLength(2)
+  })
+}
 
 test('native candidate and benchmark features reproduce a Sunday snapshot crossing midnight through the shared projection', () => {
   const { snapshot, rows, fixtures, cut } = cryptoMarketFixture()

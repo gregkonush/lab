@@ -23,6 +23,7 @@ import { defaultJevProtocolDocument } from './protocol'
 
 const scenario = (
   options: {
+    readonly symbol?: string
     readonly consumed?: boolean
     readonly pending?: boolean
     readonly protective?: boolean
@@ -47,6 +48,23 @@ const scenario = (
   const original = fixture.portfolio
   if (original.purpose !== JevPurpose.Manage) throw new Error('Expected held-position fixture')
   let brokerState = original.brokerState
+  if (options.symbol !== undefined) {
+    const positions = brokerState.positions.map((position) => ({
+      ...position,
+      symbol: options.symbol ?? position.symbol,
+      quantityAtoms: '4987500000',
+    }))
+    const material = {
+      ...brokerState,
+      positions,
+      orders: brokerState.orders.map((order) => ({ ...order, symbol: options.symbol ?? order.symbol })),
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(material))
+    brokerState = {
+      ...material,
+      reconciliation: { ...material.reconciliation, expectedHash: stateHash, observedHash: stateHash },
+    }
+  }
   if (options.brokerEvidenceAgeMs !== undefined) {
     const at = utcInstantFromEpochMillis(
       Date.parse(fixture.observation.payload.observedAt) - options.brokerEvidenceAgeMs,
@@ -75,10 +93,15 @@ const scenario = (
   const portfolio = {
     ...original,
     brokerState,
+    entryInventoryDebit:
+      options.symbol === undefined
+        ? original.entryInventoryDebit
+        : { quantityAtoms: '12500000', costBasisMicros: '1250000' },
     entryFills: options.maximumHold
       ? original.entryFills.map((fill) => ({ ...fill, occurredAt: '2026-09-04T14:15:32.000Z' }))
       : original.entryFills.map((fill, index) => ({
           ...fill,
+          symbol: options.symbol ?? fill.symbol,
           occurredAt: (index === 0 ? options.firstFillAt : options.laterFillAt) ?? fill.occurredAt,
         })),
   }
@@ -567,4 +590,30 @@ describe('Jev management observation admission', () => {
     expect(failure).toMatchObject({ message: expect.stringContaining('differs from its admitted window') })
     expect(check.calls).toEqual({ pricing: 1, signal: 1, pending: 1, finish: 0, window: 1 })
   })
+})
+
+for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+  test(`${symbol} recovers an overdue position from the prior UTC day before any model or market-data dependency`, async () => {
+    const check = scenario({
+      symbol,
+      firstFillAt: '2026-09-03T23:50:00.000Z',
+      pending: true,
+      pricingUnavailable: true,
+      storeFailure: true,
+    })
+    const result = await check.run()
+    expect(result).toMatchObject({
+      _tag: 'Exit',
+      target: { reason: JevExitReason.MaximumHold, symbols: [symbol], targetWeights: { [symbol]: 0 } },
+    })
+    expect(check.calls).toEqual({ pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 })
+  })
+}
+test('an overdue position with expired broker evidence waits for reconciliation before authorizing a sell', async () => {
+  const check = scenario({ maximumHold: true, brokerEvidenceAgeMs: 60_000, pending: true, pricingUnavailable: true })
+  expect(await check.run()).toMatchObject({
+    _tag: 'Wait',
+    details: { waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION' },
+  })
+  expect(check.calls).toEqual({ pricing: 0, signal: 0, pending: 0, finish: 0, window: 0 })
 })

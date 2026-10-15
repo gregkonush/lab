@@ -78,6 +78,7 @@ const fixture = (
                     : equityMicros
                 return {
                   cryptoStatus: null,
+                  cashReportingQuantumMicros: '1' as const,
                   nonMarginableBuyingPowerMicros: null,
 
                   id: accountId,

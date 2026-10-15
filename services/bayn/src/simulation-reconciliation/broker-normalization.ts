@@ -156,6 +156,7 @@ const normalizeSnapshotDataFirst = (
     const positions = yield* normalizePositions(snapshot.account.value.id, snapshot.positions)
     return {
       account,
+      cashReportingQuantumMicros: snapshot.account.value.cashReportingQuantumMicros,
       positions,
       orderEvents: Chunk.toReadonlyArray(orders.events),
       fillEvents,
