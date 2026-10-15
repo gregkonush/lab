@@ -69,3 +69,46 @@ describe('persisted broker timestamp evidence', () => {
     expect(Result.isFailure(decodeObservedBrokerSnapshot({ ...source, startedAt: '2026-09-30T20:00:00Z' }))).toBe(true)
   })
 })
+
+test('persisted broker observations retain USD crypto fee identity without admitting a mixed-asset debit', () => {
+  const source = fixture('2026-09-29T17:15:20.123Z')
+  const fee = {
+    accountId: 'test-account',
+    activityId: 'crypto-usd-fee',
+    date: '2026-09-30' as const,
+    netAmountMicros: '-200000',
+    cryptoCashFee: true as const,
+  }
+  const value = {
+    ...source,
+    snapshot: {
+      ...source.snapshot,
+      history: {
+        ...source.snapshot.history,
+        fees: [{ value: fee, evidence: source.snapshot.account.evidence }],
+      },
+    },
+  }
+  const decoded = Result.getOrThrow(decodeObservedBrokerSnapshot(JSON.parse(JSON.stringify(value))))
+  expect(decoded.snapshot.history.fees[0]?.value).toEqual(fee)
+  expect(observedBrokerSnapshotHash(decoded)).toBe(observedBrokerSnapshotHash(value))
+  expect(
+    Result.isFailure(
+      decodeObservedBrokerSnapshot({
+        ...value,
+        snapshot: {
+          ...value.snapshot,
+          history: {
+            ...value.snapshot.history,
+            fees: [
+              {
+                value: { ...fee, coinDebit: { symbol: 'ETH/USD', quantityAtoms: '1', priceAtoms: '100000000000' } },
+                evidence: source.snapshot.account.evidence,
+              },
+            ],
+          },
+        },
+      }),
+    ),
+  ).toBe(true)
+})

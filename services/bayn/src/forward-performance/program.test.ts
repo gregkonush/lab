@@ -116,7 +116,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
-    if (statement.includes('FROM broker_fee_accounting AS fee WHERE fee.account_id')) {
+    if (statement.includes('FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
         times === undefined
@@ -129,6 +129,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   date: '2026-07-20',
                   netAmountMicros: '-100',
                 },
+                cash_match_corrections: [],
                 matched_cash_micros: '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
@@ -143,6 +144,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 tigerbeetle_ledger: 7001,
                 posted: times.postedAt !== null,
                 first_observed_at: new Date(times.firstObservedAt),
+                last_correction_posted_at: null,
                 posted_at: times.postedAt === null ? null : new Date(times.postedAt),
                 includes_generation: true,
                 includes_other_generation: false,

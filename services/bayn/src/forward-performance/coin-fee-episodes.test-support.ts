@@ -21,6 +21,7 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
           {
             schemaVersion: 'bayn.fill.v2',
             accountId,
+            intentId: canonicalHashV1({ syntheticCoinIntent: index, accountId, cycleId }),
             fillId: `synthetic-coin-fill-${index}`,
             brokerOrderId: `synthetic-coin-order-${index}`,
             clientOrderId: `synthetic-coin-client-${index}`,
@@ -66,6 +67,7 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
   const accrual = {
     accrual_id: prepared.accrualId,
     data: prepared.data,
+    settlement_date: prepared.data.date,
     content_hash: prepared.contentHash,
     coin_quantity_atoms: prepared.coinQuantityAtoms,
     cash_debit_micros: prepared.cashDebitMicros,
@@ -90,6 +92,7 @@ export const coinActivity = (quantityAtoms = '82625', accountId = 'episode-accou
   }
   return {
     data,
+    cash_match_corrections: [],
     matched_cash_micros: '0',
     coin_cost_basis_micros: '0',
     read_evidence: {

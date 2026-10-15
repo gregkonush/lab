@@ -699,6 +699,13 @@ export const normalizeFeeActivitiesResult = (
         const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'fee net amount')
         const common = { accountId, activityId: activity.id, date: activity.date, netAmountMicros }
         if (activity.activity_type === 'FEE') return common
+        if (activity.qty === undefined) {
+          if (BigInt(netAmountMicros) >= 0n)
+            return yield* Result.fail(
+              contractFailure({ reason: 'DECIMAL_SIGN', message: 'USD crypto fee must debit cash' }),
+            )
+          return { ...common, cryptoCashFee: true as const }
+        }
         if (netAmountMicros !== '0')
           return yield* Result.fail(
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),

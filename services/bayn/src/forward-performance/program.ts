@@ -624,11 +624,15 @@ const readForwardPerformanceInput = (
 
     const accountingVerification = verifyAccountingReceipts(postgres.transactions, postgres.receipts, config)
     const feeRecords = postgres.brokerFeeRecords ?? []
-    const feePlans = yield* Effect.forEach(feeRecords, (record) =>
+    const feeLedgerEvidence = yield* Effect.forEach(feeRecords, (record) =>
       Effect.fromResult(verifyBrokerFeeRecord(record, identity.accountId, config.tigerBeetle)).pipe(
         Effect.mapError((cause) => programError('ledger-read', cause.message, cause)),
       ),
     )
+    const feePlans = feeLedgerEvidence.map((verified) => [
+      verified.originalPlan,
+      ...verified.corrections.map(({ plan }) => plan),
+    ])
     const accruals = yield* Effect.forEach(postgres.brokerFeeAccrualRecords, (record) =>
       Effect.fromResult(verifyFeeAccrualRecord(record, identity.accountId, config.tigerBeetle)).pipe(
         Effect.mapError((cause) => programError('ledger-read', 'Fee accrual evidence is invalid', cause)),
@@ -641,20 +645,22 @@ const readForwardPerformanceInput = (
     const generationFeeIds = new Set(postgres.generationBrokerFeeIds ?? [])
     const generationPlans = [
       ...(Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []),
-      ...feePlans.filter((_, index) => generationFeeIds.has(feeRecords[index]?.data.activityId ?? '')),
+      ...feePlans.filter((_, index) => generationFeeIds.has(feeRecords[index]?.data.activityId ?? '')).flat(),
       ...generationAccruals.map((accrual) => accrual.plan),
     ]
     const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
     const accountPlans = [
       ...(Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []),
-      ...feePlans,
+      ...feePlans.flat(),
       ...accruals.map((accrual) => accrual.plan),
     ]
     const accountingReceiptsExact =
       Result.isSuccess(accountingVerification) &&
       postgres.unaccountedFillCount === 0 &&
       (postgres.ambiguousBrokerFeeCount ?? 0) === 0 &&
-      feeRecords.every((record) => record.posted) &&
+      feeRecords.every(
+        (record) => record.posted && record.cash_match_corrections.every((correction) => correction.posted),
+      ) &&
       accruals.every((accrual) => accrual.posted) &&
       accountingVerification.success.exactReceipts.size === postgres.transactions.length &&
       [...accountingVerification.success.exactReceipts.values()].every(Boolean)
@@ -715,7 +721,14 @@ const readForwardPerformanceInput = (
         .filter((record) => generationFeeIds.has(record.data.activityId))
         .map((record) => ({
           ...record.data,
-          netAmountMicros: (BigInt(record.data.netAmountMicros) + BigInt(record.matched_cash_micros)).toString(),
+          netAmountMicros: (
+            BigInt(record.data.netAmountMicros) +
+            BigInt(record.matched_cash_micros) -
+            record.cash_match_corrections.reduce(
+              (sum, correction) => sum + BigInt(correction.data.accrualCashMicros),
+              0n,
+            )
+          ).toString(),
           ...(record.coin_cost_basis_micros === null ? {} : { inventoryCostMicros: record.coin_cost_basis_micros }),
         })),
       executionEvidence,
