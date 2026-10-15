@@ -18,14 +18,30 @@ export const readCashReportingOffsets = (
         ('opening',${cuts.opening}::timestamptz),
         ('closing',${cuts.closing}::timestamptz))
       SELECT cuts.name,a.accrual_id,
+        NOT EXISTS(SELECT 1 FROM broker_fee_accruals pending
+          LEFT JOIN broker_fee_posting_acknowledgements ack ON ack.account_id=pending.account_id
+            AND ack.source_kind='ACCRUAL' AND ack.source_id=pending.accrual_id
+          WHERE pending.account_id=${accountId} AND pending.kind='CASH' AND pending.observed_at<=cuts.as_of
+            AND (ack.acknowledged_at IS NULL OR ack.acknowledged_at>cuts.as_of))
+        AND NOT EXISTS(SELECT 1 FROM broker_fee_accounting pending
+          LEFT JOIN broker_fee_posting_acknowledgements ack ON ack.account_id=pending.account_id
+            AND ack.source_kind='ACTIVITY' AND ack.source_id=pending.activity_id
+          WHERE pending.account_id=${accountId} AND pending.first_observed_at<=cuts.as_of
+            AND (ack.acknowledged_at IS NULL OR ack.acknowledged_at>cuts.as_of)) AS posting_time_known,
         (COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m
           JOIN broker_fee_accounting f USING(account_id,activity_id)
-          WHERE m.accrual_id=a.accrual_id AND f.posted_at<=cuts.as_of AND f.first_observed_at<=cuts.as_of),0)
+          JOIN broker_fee_posting_acknowledgements ack ON ack.account_id=f.account_id
+            AND ack.source_kind='ACTIVITY' AND ack.source_id=f.activity_id
+          WHERE m.accrual_id=a.accrual_id AND ack.acknowledged_at<=cuts.as_of AND f.first_observed_at<=cuts.as_of),0)
         -COALESCE((SELECT sum(c.cash_debit_micros) FROM broker_fee_match_corrections c
+          JOIN broker_fee_posting_acknowledgements ack ON ack.account_id=c.account_id
+            AND ack.source_kind='ACTIVITY' AND ack.source_id=c.activity_id AND ack.acknowledged_at<=cuts.as_of
           WHERE c.accrual_id=a.accrual_id AND c.posted_at<=cuts.as_of
             AND (c.data->'readEvidence'->>'observedAt')::timestamptz<=cuts.as_of),0))::text AS matched_cash_micros
-      FROM cuts JOIN broker_fee_accruals a ON a.account_id=${accountId} AND a.kind='CASH'
-        AND a.observed_at<=cuts.as_of AND a.posted_at<=cuts.as_of
+      FROM cuts LEFT JOIN broker_fee_accruals a ON a.account_id=${accountId} AND a.kind='CASH'
+        AND a.observed_at<=cuts.as_of AND EXISTS(SELECT 1 FROM broker_fee_posting_acknowledgements ack
+          WHERE ack.account_id=a.account_id AND ack.source_kind='ACCRUAL' AND ack.source_id=a.accrual_id
+            AND ack.acknowledged_at<=cuts.as_of)
       ORDER BY cuts.name,a.accrual_id COLLATE "C"
     `.pipe(
       Effect.flatMap(
@@ -33,7 +49,8 @@ export const readCashReportingOffsets = (
           Schema.Array(
             Schema.Struct({
               name: Schema.Literals(['baseline', 'opening', 'closing']),
-              accrual_id: Sha256Schema,
+              accrual_id: Schema.NullOr(Sha256Schema),
+              posting_time_known: Schema.Boolean,
               matched_cash_micros: UnsignedMicrosSchema,
             }),
           ),
@@ -47,15 +64,18 @@ export const readCashReportingOffsets = (
       opening: [],
       closing: [],
     }
+    const known = { baseline: true, opening: true, closing: true }
     for (const row of rows) {
+      known[row.name] &&= row.posting_time_known
+      if (row.accrual_id === null) continue
       const record = byId.get(row.accrual_id)
       if (record === undefined || record.data.kind !== 'CASH' || !record.posted)
         return yield* postgresError(new Error('Cash reporting cut lacks its retained posted accrual'))
       evidence[row.name].push({ ...record, matched_cash_micros: row.matched_cash_micros })
     }
     return {
-      baseline: cashAccrualReportingOffsetMicros(evidence.baseline),
-      opening: cashAccrualReportingOffsetMicros(evidence.opening),
-      closing: cashAccrualReportingOffsetMicros(evidence.closing),
+      baseline: known.baseline ? cashAccrualReportingOffsetMicros(evidence.baseline) : undefined,
+      opening: known.opening ? cashAccrualReportingOffsetMicros(evidence.opening) : undefined,
+      closing: known.closing ? cashAccrualReportingOffsetMicros(evidence.closing) : undefined,
     }
   }).pipe(Effect.mapError(postgresError))

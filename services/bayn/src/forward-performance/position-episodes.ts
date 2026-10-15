@@ -16,7 +16,7 @@ export enum PositionEpisodeReason {
   AmbiguousFeeOrder = 'AMBIGUOUS_FEE_ORDER',
 }
 
-const schemaVersion = 'bayn.position-episode-evidence.v2'
+const schemaVersion = 'bayn.position-episode-evidence.v3'
 
 export const PositionEpisodeEvidenceSchema = Schema.Union([
   Schema.Struct({
@@ -106,7 +106,11 @@ export const measurePositionEpisodes = (
       ),
     })
     const reconciliation = input.reconciliation
+    const accountCut = input.accountPositionCounts?.reconciledAt
     if (
+      accountCut === undefined ||
+      !Number.isFinite(Date.parse(accountCut)) ||
+      input.accountPositionCounts?.exact !== true ||
       !input.accountingReceiptsExact ||
       !input.ledgerExact ||
       input.missingLedgerAccountCount !== 0 ||
@@ -124,7 +128,7 @@ export const measurePositionEpisodes = (
         transaction.accountId !== input.account.accountId ||
         historyById.has(transaction.transactionId) ||
         brokerEvents.has(transaction.brokerEventId) ||
-        transaction.occurredAt > reconciliation.reconciledAt ||
+        transaction.occurredAt > accountCut ||
         !/^[1-9][0-9]*$/.test(transaction.quantityAtoms) ||
         !/^-?[1-9][0-9]*$/.test(transaction.quantityDeltaAtoms) ||
         BigInt(transaction.quantityDeltaAtoms) !==
@@ -177,7 +181,7 @@ export const measurePositionEpisodes = (
         data.accountId !== input.account.accountId ||
         !accrual.posted ||
         accrualIds.has(accrual.accrual_id) ||
-        data.observedAt > reconciliation.reconciledAt ||
+        data.observedAt > accountCut ||
         accrual.coin_quantity_atoms === null ||
         !/^[1-9][0-9]*$/.test(accrual.coin_quantity_atoms) ||
         !/^(?:0|[1-9][0-9]*)$/.test(accrual.matched_coin_quantity_atoms) ||
@@ -219,7 +223,7 @@ export const measurePositionEpisodes = (
         fee.data.accountId !== input.account.accountId ||
         !fee.posted ||
         activityIds.has(fee.data.activityId) ||
-        fee.read_evidence.observedAt > reconciliation.reconciledAt ||
+        fee.read_evidence.observedAt > accountCut ||
         !/^[1-9][0-9]*$/.test(coin.quantityAtoms)
       )
         return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
@@ -280,9 +284,9 @@ export const measurePositionEpisodes = (
     }
     const positionCounts = input.accountPositionCounts
     if (
-      positionCounts === undefined
-        ? hasCrypto || positions.size !== input.openPositionCount
-        : positions.size !== positionCounts.postgres || positions.size !== positionCounts.ledger
+      positionCounts === undefined ||
+      positions.size !== positionCounts.postgres ||
+      positions.size !== positionCounts.ledger
     )
       return unavailable(PositionEpisodeReason.ReconciliationGap, evidenceHash)
     let openCount = 0

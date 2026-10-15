@@ -869,6 +869,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     setAgent: (nextAgent: typeof readyAgent | null) => {
       agent = nextAgent
     },
+    setAuthenticated: (value: boolean) => {
+      authenticated = value
+    },
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
@@ -3671,6 +3674,55 @@ test('refreshes a failed agent without requesting unsupported recovery or deleti
   expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
   await expect(failed.getByRole('button', { name: 'Delete Failed Agent' })).toBeVisible()
 })
+
+test('backs off failed snapshot polls after the cached idle deadline', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
+  const mock = await mockTengri(page, { agent: { ...readyAgent, idleDeadline: '2026-08-26T12:33:00.000Z' } })
+  await page.goto('/')
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const initialRequests = mock.getSnapshotRequestCount()
+  mock.failNextSnapshots(2)
+
+  await page.clock.fastForward(1_100)
+  await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + 1)
+  await expect(page.getByText('Connection interrupted. Using the last confirmed agent state.')).toBeVisible()
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const before = await page.evaluate(() => Date.now())
+    await page.clock.runFor(5_000)
+    expect(await page.evaluate(() => Date.now())).toBeGreaterThanOrEqual(before + 5_000)
+    expect(mock.getSnapshotRequestCount()).toBe(initialRequests + attempt)
+    if (attempt === 2) mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+    await page.clock.fastForward(26_000)
+    await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + attempt + 1)
+  }
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+for (const recoveredState of ['sleeping', 'signed out'] as const) {
+  test(`recovers a desktop after repeated identical snapshot failures to ${recoveredState}`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
+    const mock = await mockTengri(page)
+    await page.goto('/')
+    await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+    const initialRequests = mock.getSnapshotRequestCount()
+    mock.failNextSnapshots(2)
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      await page.clock.fastForward(31_000)
+      await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + attempt)
+      await expect(page.getByText('Connection interrupted. Using the last confirmed agent state.')).toBeVisible()
+    }
+
+    if (recoveredState === 'sleeping') mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+    else mock.setAuthenticated(false)
+    await page.clock.fastForward(31_000)
+    await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + 3)
+    await expect(
+      page.getByRole('dialog', { name: recoveredState === 'sleeping' ? 'Tengri is sleeping' : 'Sign in to Tengri' }),
+    ).toBeVisible()
+    expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  })
+}
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })
