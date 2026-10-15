@@ -570,7 +570,17 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
+  expect(activationPolicy.spec.egress[0]).toEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'glitchtip' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'glitchtip', 'app.kubernetes.io/component': 'web' } },
+      },
+    ],
+    ports: [{ port: 8000, protocol: 'TCP' }],
+  })
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
+    { port: 8000, protocol: 'TCP' },
     { port: 53, protocol: 'UDP' },
     { port: 53, protocol: 'TCP' },
     { port: 8080, protocol: 'TCP' },

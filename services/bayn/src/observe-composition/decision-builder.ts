@@ -914,7 +914,7 @@ const compileObserveStrategyDecision = <R>(
       decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
     )
     const query = yield* Effect.fromResult(
-      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt),
+      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
     const { snapshot, evidence } = yield* evaluateJevObservationFromSnapshot(
       {

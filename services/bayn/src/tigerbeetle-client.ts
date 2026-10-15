@@ -15,6 +15,8 @@ import { Data, Effect, Option, Result, Scope, ScopedRef, Semaphore } from 'effec
 import type { RuntimeConfig } from './config'
 import { OperationalError, operationalError } from './errors'
 import type {
+  LedgerAccountBalance,
+  LedgerAccountFilter,
   LedgerAccountRecord,
   LedgerCreateResult,
   LedgerQueryFilter,
@@ -280,6 +282,8 @@ type TigerBeetleNodeClient = Pick<
   | 'lookupTransfers'
   | 'queryAccounts'
   | 'queryTransfers'
+  | 'getAccountTransfers'
+  | 'getAccountBalances'
   | 'destroy'
 >
 
@@ -290,6 +294,8 @@ export interface TigerBeetleClient {
   readonly lookupTransfers: (ids: readonly bigint[]) => Promise<readonly LedgerTransferRecord[]>
   readonly queryAccounts: (filter: LedgerQueryFilter) => Promise<readonly LedgerAccountRecord[]>
   readonly queryTransfers: (filter: LedgerQueryFilter) => Promise<readonly LedgerTransferRecord[]>
+  readonly getAccountTransfers: (filter: LedgerAccountFilter) => Promise<readonly LedgerTransferRecord[]>
+  readonly getAccountBalances: (filter: LedgerAccountFilter) => Promise<readonly LedgerAccountBalance[]>
   readonly destroy: () => void
 }
 
@@ -322,6 +328,8 @@ const adaptTigerBeetleClient = (client: TigerBeetleNodeClient): TigerBeetleClien
   lookupTransfers: (ids) => client.lookupTransfers([...ids]),
   queryAccounts: (filter) => client.queryAccounts(filter),
   queryTransfers: (filter) => client.queryTransfers(filter),
+  getAccountTransfers: (filter) => client.getAccountTransfers(filter),
+  getAccountBalances: (filter) => client.getAccountBalances(filter),
   destroy: () => client.destroy(),
 })
 
