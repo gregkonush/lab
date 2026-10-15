@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { generationScope, ledgerReplayBoundary, openingSnapshotBoundary } from './scope'
+import { generationScope, openingSnapshotBoundary } from './scope'
 
 export const transactionQuery = (
   sql: PgClient.PgClient,
@@ -69,16 +69,8 @@ export const transactionQuery = (
 export const ledgerTransactionQuery = (
   sql: PgClient.PgClient,
   accountId: string,
-  authorityGenerationHash: string | undefined,
+  accountReconciledAt: Date | undefined,
 ) => sql<Record<string, unknown>>`
-  WITH latest_reconciliation AS (
-    SELECT reconciliation.reconciled_at
-    FROM reconciliations AS reconciliation
-    WHERE reconciliation.account_id = ${accountId}
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-    LIMIT 1
-  )
   SELECT
     transaction.schema_version,
     transaction.transaction_id,
@@ -101,10 +93,9 @@ export const ledgerTransactionQuery = (
     transaction.occurred_at,
     intent.cycle_id
   FROM accounting_transactions AS transaction
-  CROSS JOIN latest_reconciliation
   LEFT JOIN intents AS intent ON intent.intent_id = transaction.intent_id
   WHERE transaction.account_id = ${accountId}
-    AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
+    AND transaction.occurred_at <= ${accountReconciledAt ?? null}::timestamptz
   ORDER BY transaction.occurred_at, transaction.transaction_id COLLATE "C"
 `
 
@@ -175,16 +166,8 @@ export const receiptQuery = (
 export const ledgerReceiptQuery = (
   sql: PgClient.PgClient,
   accountId: string,
-  authorityGenerationHash: string | undefined,
+  accountReconciledAt: Date | undefined,
 ) => sql<Record<string, unknown>>`
-  WITH latest_reconciliation AS (
-    SELECT reconciliation.reconciled_at
-    FROM reconciliations AS reconciliation
-    WHERE reconciliation.account_id = ${accountId}
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-    ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-    LIMIT 1
-  )
   SELECT
     receipt.schema_version,
     receipt.receipt_id,
@@ -204,8 +187,7 @@ export const ledgerReceiptQuery = (
     receipt.recorded_at
   FROM accounting_receipts AS receipt
   JOIN accounting_transactions AS transaction USING (broker_event_id)
-  CROSS JOIN latest_reconciliation
   WHERE transaction.account_id = ${accountId}
-    AND transaction.occurred_at <= ${ledgerReplayBoundary(sql)}
+    AND transaction.occurred_at <= ${accountReconciledAt ?? null}::timestamptz
   ORDER BY receipt.broker_event_id COLLATE "C"
 `

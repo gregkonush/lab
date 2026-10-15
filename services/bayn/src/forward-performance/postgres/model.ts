@@ -211,7 +211,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly startingCapitalMicros?: string
   readonly cashYieldEvidence?: ForwardPerformanceCashYieldEvidence
   readonly transactions: readonly AccountingTransaction[]
-  /** All account transactions through the selected reconciliation, for stable-account ledger replay. */
+  /** All account transactions through current account reconciliation, independently of generation selection. */
   readonly ledgerTransactions: readonly AccountingTransaction[]
   readonly cashReportingPrecisionKnown: boolean
   readonly brokerFeeAccrualRecords: readonly (typeof import('../../db/fee-accruals').StoredAccrual.Type)[]
@@ -244,7 +244,7 @@ export interface ForwardPerformancePostgresEvidence {
   readonly unclosedCycleCount: number
   readonly unresolvedMutationCount: number
   readonly openPositionCount: number
-  readonly accountOpenPositionCount?: number
+  readonly accountReconciliation?: { readonly reconciledAt: string; readonly performanceExact: boolean }
   readonly unaccountedFillCount: number
   readonly postReconciliationActivityCount: number
 }
