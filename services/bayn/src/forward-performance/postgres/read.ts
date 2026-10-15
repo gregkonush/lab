@@ -776,6 +776,37 @@ export const readForwardPerformancePostgresDataFirst = (
             AND (transaction.transaction_id IS NULL OR receipt.receipt_id IS NULL)
         `.pipe(Effect.flatMap(decodeCount))
 
+        const [accountOpenPositions] = yield* sql<Record<string, unknown>>`
+          WITH latest_reconciliation AS (
+            SELECT reconciliation.reconciled_at
+            FROM reconciliations AS reconciliation
+            WHERE reconciliation.account_id = ${accountId}
+              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
+            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
+            LIMIT 1
+          ), inventory_deltas AS (
+            SELECT transaction.symbol, transaction.quantity_delta_atoms, transaction.cost_basis_delta_micros
+            FROM accounting_transactions AS transaction
+            CROSS JOIN latest_reconciliation
+            WHERE transaction.account_id = ${accountId}
+              AND transaction.occurred_at <= latest_reconciliation.reconciled_at
+            UNION ALL
+            SELECT fee.symbol, -fee.quantity_atoms, -fee.cost_basis_micros
+            FROM broker_inventory_debits AS fee
+            CROSS JOIN latest_reconciliation
+            WHERE fee.account_id = ${accountId}
+              AND fee.posted
+              AND fee.effective_at <= latest_reconciliation.reconciled_at
+          )
+          SELECT count(*)::integer AS count
+          FROM (
+            SELECT symbol
+            FROM inventory_deltas
+            GROUP BY symbol
+            HAVING sum(quantity_delta_atoms) <> 0 OR sum(cost_basis_delta_micros) <> 0
+          ) AS account_open_position
+        `.pipe(Effect.flatMap(decodeCount))
+
         const cycles = cycleRows.map(
           (row): ForwardPerformanceCycleEvidence => ({
             cycleId: row.cycle_id,
@@ -934,6 +965,7 @@ export const readForwardPerformancePostgresDataFirst = (
           unclosedCycleCount,
           unresolvedMutationCount: unresolvedMutations.count,
           openPositionCount: openPositions.count,
+          accountOpenPositionCount: accountOpenPositions.count,
           unaccountedFillCount: unaccountedFills.count,
           // Preserve delayed fees in their economic generation, but do not treat evidence observed or
           // posted after the reconciliation as part of a closed cut. All account fees feed ledger verification.

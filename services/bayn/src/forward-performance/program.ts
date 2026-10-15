@@ -689,6 +689,13 @@ const readForwardPerformanceInput = (
         ? {}
         : { startingCapitalMicros: postgres.startingCapitalMicros }),
       transactions: postgres.transactionEvidence,
+      accountFeeAccruals: postgres.brokerFeeAccrualRecords,
+      ...(postgres.brokerFeeRecords === undefined ? {} : { accountBrokerFees: feeRecords }),
+      ...(postgres.accountOpenPositionCount === undefined
+        ? {}
+        : {
+            accountPositionCounts: { postgres: postgres.accountOpenPositionCount, ledger: ledger.openPositionCount },
+          }),
       ...(Result.isSuccess(ledgerVerification) &&
       ledgerVerification.success.exactReceipts.size === postgres.ledgerTransactions.length &&
       [...ledgerVerification.success.exactReceipts.values()].every(Boolean)
