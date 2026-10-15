@@ -18,7 +18,7 @@ import { InferenceCostError } from './inference-costs'
 import { makeTigerBeetleRequestClient, type TigerBeetleRequestClient } from './tigerbeetle-client'
 
 export const runInferenceExpensePass = Effect.fn('bayn.inference-expense.pass')(function* (
-  store: ReturnType<typeof makeInferenceExpenseStore>,
+  store: Pick<ReturnType<typeof makeInferenceExpenseStore>, 'newSources' | 'freeze' | 'pending' | 'acknowledge'>,
   client: TigerBeetleRequestClient,
   rateCard: Parameters<typeof makeInferenceExpenseQuote>[1] = inferenceExpenseRateCard,
 ) {
