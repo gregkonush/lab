@@ -14,6 +14,7 @@ import {
 import { makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
+import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 import { measurePositionEpisodes, PositionEpisodeReason } from './position-episodes'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
@@ -85,12 +86,330 @@ const evidence = (
   unresolvedMutationCount: 0,
   unclosedCycleCount: 0,
   openPositionCount: 0,
+  accountPositionCounts: {
+    postgres: overrides.openPositionCount ?? 0,
+    ledger: overrides.openPositionCount ?? 0,
+    reconciledAt: overrides.reconciliation?.reconciledAt ?? '2026-09-18T21:00:00.000Z',
+    exact: overrides.reconciliation?.performanceExact ?? true,
+  },
   ...overrides,
 })
 
 const roundTrip = () => [transaction(1, OrderSide.Buy, 2), transaction(2, OrderSide.Sell, 2)]
 
 describe('position episodes', () => {
+  test('closes gross fractional buys and net sells using the observed coin debit', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const input = evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })
+    expect(success(measurePositionEpisodes(input))).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 1,
+      openCount: 0,
+      crossScopeCount: 0,
+    })
+    const report = success(makeForwardPerformanceReport(input, []))
+    expect(report.receipt.counts.completedExecutionCount).toBe(2)
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  })
+
+  test('counts fractional re-entry, an open net holding and inherited inventory', () => {
+    const first = coinRoundTrip()
+    const second = coinRoundTrip(3)
+    const history = [...first.fills, ...second.fills]
+    const input = evidence(history, history, {
+      accountFeeAccruals: [first.accrual, second.accrual],
+      accountBrokerFees: [],
+    })
+    const result = success(measurePositionEpisodes(input))
+    expect(result).toMatchObject({ status: 'MEASURED', completedCount: 2, openCount: 0, crossScopeCount: 0 })
+    expect(
+      success(
+        measurePositionEpisodes({
+          ...input,
+          accountTransactions: history.toReversed(),
+          transactions: input.transactions.toReversed(),
+          accountFeeAccruals: [second.accrual, first.accrual],
+        }),
+      ),
+    ).toEqual(result)
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(first.fills.slice(0, 1), first.fills.slice(0, 1), {
+            accountFeeAccruals: [first.accrual],
+            accountBrokerFees: [],
+            openPositionCount: 1,
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'MEASURED', completedCount: 0, openCount: 1 })
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(first.fills, first.fills.slice(1), {
+            accountFeeAccruals: [first.accrual],
+            accountBrokerFees: [],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'MEASURED', completedCount: 0, crossScopeCount: 1 })
+  })
+
+  test.each(['0', '40000', '82625'])(
+    'counts an accrued debit once with %s atoms receipted and preserves financial uncertainty',
+    (matched) => {
+      const { fills, accrual } = coinRoundTrip()
+      const fee = coinActivity(matched === '0' ? '82625' : matched)
+      const settled = matched === '82625'
+      const input = evidence(fills, fills, {
+        startingCapitalMicros: '100000000',
+        accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: matched }],
+        accountBrokerFees: matched === '0' ? [] : [fee],
+        brokerFeeAccruals: [
+          {
+            accrualId: accrual.accrual_id,
+            accountId: accrual.data.accountId,
+            expenseMicros: accrual.expense_micros,
+            settled,
+          },
+        ],
+        brokerFees: matched === '0' ? [] : [{ ...fee.data, inventoryCostMicros: '0' }],
+        ledgerTotals: {
+          realizedGainMicros: '0',
+          realizedLossMicros: '0',
+          brokerExecutionFeesMicros: '8262',
+          otherChargedCostsMicros: '0',
+          cashYieldMicros: '0',
+        },
+      })
+      const report = success(makeForwardPerformanceReport(input, []))
+      expect(report.positionEpisodes).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0 })
+      expect(report.receipt.totals.grossRealizedPnlMicros).toBe('0')
+      expect(report.receipt.totals.brokerExecutionFeesMicros).toBe('8262')
+      expect(report.receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-8262')
+      expect(report.receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
+      expect(report.receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
+      expect(report.receipt.profitability).toBe('UNDETERMINED')
+    },
+  )
+
+  test('keeps missing fee history, an absent debit and unplaced fee receipts undetermined', () => {
+    const { fills, accrual } = coinRoundTrip()
+    for (const overrides of [{}, { accountFeeAccruals: [accrual] }, { accountBrokerFees: [] }])
+      expect(success(measurePositionEpisodes(evidence(fills, fills, overrides)))).toMatchObject({
+        status: 'UNDETERMINED',
+        reason: PositionEpisodeReason.FeeHistoryUnavailable,
+      })
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [],
+            accountBrokerFees: [],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.ReconciliationGap })
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [],
+            accountBrokerFees: [coinActivity()],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.AmbiguousFeeOrder })
+  })
+
+  test('keeps pooled partial fee receipts separate from individual episode boundaries', () => {
+    const first = coinRoundTrip()
+    const second = coinRoundTrip(3)
+    const fills = [...first.fills, ...second.fills]
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...first.accrual, matched_coin_quantity_atoms: '82625' }, second.accrual],
+            accountBrokerFees: [coinActivity()],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'MEASURED', completedCount: 2, openCount: 0 })
+  })
+
+  test('requires a cumulative inventory boundary and retains disagreement with either independent count', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const input = evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })
+    const { accountPositionCounts: counts, ...missing } = input
+    if (counts === undefined) throw new Error('Missing account cut fixture')
+    for (const value of [
+      missing,
+      { ...input, accountPositionCounts: { ...counts, postgres: 1, ledger: 0 } },
+      { ...input, accountPositionCounts: { ...counts, postgres: 0, ledger: 1 } },
+    ])
+      expect(success(measurePositionEpisodes(value))).toMatchObject({
+        status: 'UNDETERMINED',
+        reason: PositionEpisodeReason.ReconciliationGap,
+      })
+  })
+
+  test('rejects a coin debit bound to a previous gross-flat episode', () => {
+    const first = coinRoundTrip()
+    const second = coinRoundTrip(3)
+    const firstFill = first.fills[0]
+    const secondSell = second.fills[1]
+    assert(firstFill !== undefined && secondSell !== undefined)
+    const fills = [
+      firstFill,
+      {
+        ...secondSell,
+        transactionId: 'a'.repeat(64),
+        brokerEventId: 'b'.repeat(64),
+        quantityAtoms: firstFill.quantityAtoms,
+        quantityDeltaAtoms: `-${firstFill.quantityAtoms}`,
+        occurredAt: '2026-09-18T15:30:03.000Z',
+      },
+      ...second.fills,
+    ]
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [
+              { ...first.accrual, data: { ...first.accrual.data, observedAt: '2026-09-18T15:30:05.000Z' } },
+            ],
+            accountBrokerFees: [],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+  })
+
+  test('rejects duplicate, foreign, future, unposted and unbound coin accruals', () => {
+    const { fills, accrual } = coinRoundTrip()
+    assert(accrual.data.kind === 'COIN')
+    const data = accrual.data
+    const source = data.sourceTrades[0]
+    assert(source !== undefined)
+    const histories = [
+      [accrual, accrual],
+      [{ ...accrual, posted: false }],
+      [{ ...accrual, coin_quantity_atoms: '82624' }],
+      [{ ...accrual, matched_coin_quantity_atoms: '82626' }],
+      [{ ...accrual, data: { ...data, accountId: 'another-account' } }],
+      [{ ...accrual, data: { ...data, observedAt: '2026-09-19T00:00:00.000Z' } }],
+      [{ ...accrual, data: { ...data, observedAt: '2026-09-18T15:30:00.000Z' } }],
+      [{ ...accrual, data: { ...data, projectedQuantityAtoms: '33050001', observedQuantityAtoms: '32967376' } }],
+      [{ ...accrual, data: { ...data, sourceTrades: [] } }],
+      [{ ...accrual, data: { ...data, sourceTrades: [{ ...source, transactionId: 'a'.repeat(64) }] } }],
+      [{ ...accrual, data: { ...data, sourceTrades: [{ ...source, quantityAtoms: '1' }] } }],
+      [{ ...accrual, data: { ...data, sourceTrades: [{ ...source, priceAtoms: '1' }] } }],
+      [{ ...accrual, data: { ...data, sourceTrades: [source, source] } }],
+    ]
+    for (const accountFeeAccruals of histories)
+      expect(
+        success(
+          measurePositionEpisodes(
+            evidence(fills, fills, {
+              accountFeeAccruals,
+              accountBrokerFees: [],
+            }),
+          ),
+        ),
+      ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+  })
+
+  test('does not order a same-instant fee against a fill', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const simultaneous = { ...accrual, data: { ...accrual.data, observedAt: '2026-09-18T15:30:03.000Z' } }
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [simultaneous],
+            accountBrokerFees: [],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.AmbiguousFeeOrder })
+  })
+
+  test('rejects duplicate receipts, unavailable matches and unmatched excess without double counting', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    for (const accountBrokerFees of [
+      [],
+      [fee, fee],
+      [{ ...fee, posted: false }],
+      [{ ...fee, data: { ...fee.data, accountId: 'another-account' } }],
+      [{ ...fee, read_evidence: { ...fee.read_evidence, observedAt: '2026-09-19T00:00:00.000Z' } }],
+    ])
+      expect(
+        success(
+          measurePositionEpisodes(
+            evidence(fills, fills, {
+              accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+              accountBrokerFees,
+            }),
+          ),
+        ),
+      ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '40000' }],
+            accountBrokerFees: [fee],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.AmbiguousFeeOrder })
+  })
+
+  test('hashes complete fee provenance independently of selected-scope financial evidence', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const input = evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })
+    const report = success(makeForwardPerformanceReport(input, []))
+    const changed = success(
+      makeForwardPerformanceReport(
+        {
+          ...input,
+          accountFeeAccruals: [{ ...accrual, content_hash: 'b'.repeat(64) }],
+        },
+        [],
+      ),
+    )
+    expect(changed.receipt).toEqual(report.receipt)
+    expect(changed.positionEpisodes.evidenceHash).not.toBe(report.positionEpisodes.evidenceHash)
+    expect(changed.reportHash).not.toBe(report.reportHash)
+  })
+
+  test('binds cumulative inventory to the current account cut independently of the generation cut', () => {
+    const history = roundTrip()
+    const first = history[0]
+    if (first === undefined) throw new Error('Missing historical entry')
+    const input = evidence(history, [first])
+    if (input.reconciliation === undefined || input.accountPositionCounts === undefined)
+      throw new Error('Missing account cut')
+    const historical = { ...input, reconciliation: { ...input.reconciliation, reconciledAt: first.occurredAt } }
+    expect(success(measurePositionEpisodes(historical))).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 0,
+      openCount: 0,
+      crossScopeCount: 1,
+    })
+    expect(
+      success(
+        measurePositionEpisodes({
+          ...historical,
+          accountPositionCounts: { ...input.accountPositionCounts, reconciledAt: first.occurredAt },
+        }),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: 'INVALID_HISTORY' })
+  })
+
   test('counts a scaled-in position with partial exits as one episode', () => {
     const history = [
       transaction(1, OrderSide.Buy, 2),

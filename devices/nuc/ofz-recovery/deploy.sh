@@ -22,6 +22,23 @@ for command in docker sudo tailscale jq flock python3; do command -v "$command" 
 sudo install -d -m 0700 -o 1000 -g 1000 "$OFZ_RECOVERY_DATA_ROOT" "$OFZ_RECOVERY_DATA_ROOT/data" "$OFZ_RECOVERY_DATA_ROOT/secrets" "$OFZ_RECOVERY_DATA_ROOT/evidence"
 exec 9>"$OFZ_RECOVERY_DATA_ROOT/deploy.lock"
 flock --nonblock 9
+if [[ -f "$OFZ_RECOVERY_DATA_ROOT/data/filer.sqlite3" && ! -f "$OFZ_RECOVERY_DATA_ROOT/secrets/manifest.json" ]]; then
+  printf 'Restore the existing recovery credential manifest before deployment\n' >&2; exit 1;
+fi
+encryption_identity="$OFZ_RECOVERY_DATA_ROOT/evidence/encryption-key.sha256"
+database_identity="$OFZ_RECOVERY_DATA_ROOT/evidence/database-writers.sha256"
+if [[ -f "$encryption_identity" ]]; then
+  [[ -f "$OFZ_RECOVERY_DATA_ROOT/secrets/sse_kek" && -f "$OFZ_RECOVERY_DATA_ROOT/secrets/sse_kek.sha256" ]] || {
+    printf 'Restore the original recovery encryption key and fingerprint\n' >&2; exit 1;
+  }
+  cmp "$encryption_identity" "$OFZ_RECOVERY_DATA_ROOT/secrets/sse_kek.sha256"
+fi
+if [[ -f "$database_identity" ]]; then
+  [[ -f "$OFZ_RECOVERY_DATA_ROOT/secrets/database-writers.json" && -f "$OFZ_RECOVERY_DATA_ROOT/secrets/database-writers.sha256" ]] || {
+    printf 'Restore the original database backup credential manifest and fingerprint\n' >&2; exit 1;
+  }
+  cmp "$database_identity" "$OFZ_RECOVERY_DATA_ROOT/secrets/database-writers.sha256"
+fi
 docker pull "$OFZ_RECOVERY_TOOLS_IMAGE"
 [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$OFZ_RECOVERY_TOOLS_IMAGE")" == "$OFZ_RECOVERY_SOURCE_SHA" ]] || {
   printf 'Tool image source revision does not match the reviewed source archive\n' >&2; exit 1;
@@ -36,6 +53,32 @@ initialize() {
     "$OFZ_RECOVERY_TOOLS_IMAGE" /src/devices/nuc/ofz-recovery/initialize.py "$1" /run/ofz-secrets
 }
 initialize prepare
+python3 - "$OFZ_RECOVERY_DATA_ROOT/secrets/sse_kek.sha256" "$encryption_identity" \
+  "$OFZ_RECOVERY_DATA_ROOT/secrets/database-writers.sha256" "$database_identity" <<'PY'
+import os
+import sys
+import tempfile
+from pathlib import Path
+for source, target in zip(map(Path, sys.argv[1::2]), map(Path, sys.argv[2::2])):
+    value = source.read_bytes()
+    if target.exists():
+        assert target.read_bytes() == value, "recovery credential identity changed"
+    else:
+        descriptor, temporary = tempfile.mkstemp(prefix=".identity-", dir=target.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as out:
+                out.write(value)
+                out.flush()
+                os.fsync(out.fileno())
+            os.link(temporary, target)
+        finally:
+            os.unlink(temporary)
+        descriptor = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+PY
 docker compose -f "$component_dir/compose.yaml" config --quiet
 docker compose -f "$component_dir/compose.yaml" pull archive
 docker compose -f "$component_dir/compose.yaml" up --detach --force-recreate archive

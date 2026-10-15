@@ -336,8 +336,11 @@ describe('immutable intraday market snapshot', () => {
     ).toBe('coverage')
   })
 
-  test('rejects candidate policies without exactly one required benchmark or on execution pricing', () => {
-    for (const candidateSymbols of [[], ['AMD', 'NVDA'], ['AMD', 'AMD'], ['UNKNOWN']]) {
+  test('accepts an all-candidate universe but rejects malformed candidate sets and execution pricing', () => {
+    expect(
+      Result.isSuccess(verifyIntradaySnapshotRequest({ ...request, symbols, candidateSymbols: ['AMD', 'NVDA'] })),
+    ).toBeTrue()
+    for (const candidateSymbols of [[], ['AMD', 'AMD'], ['UNKNOWN']]) {
       expect(error(verifyIntradaySnapshotRequest({ ...request, symbols, candidateSymbols })).reason).toBe('request')
     }
     expect(

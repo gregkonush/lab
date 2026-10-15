@@ -77,6 +77,81 @@ async fn runtime_shared_state_replay_guard_tolerates_clock_lead_without_expiry_g
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_independent_nonces_do_not_share_a_transaction_lock() {
+    let (database, _, _) = fixture().await;
+    let mut held = database.connection().await.unwrap();
+    let tx = held.transaction().await.unwrap();
+    let first = vec![0_u8; 32];
+    let second = vec![1_u8; 32];
+    assert!(
+        tx.query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
+            &[&first]
+        )
+        .await
+        .unwrap()
+        .get::<_, bool>(0)
+    );
+    let deadline = (crate::ofz::now_ms().unwrap() + 5000) as i64;
+    let accepted = tokio::time::timeout(
+        Duration::from_millis(500),
+        database.consume_nonce(&second, deadline),
+    )
+    .await;
+    tx.rollback().await.unwrap();
+    assert!(
+        matches!(accepted, Ok(Ok(()))),
+        "an unrelated request must not wait for another nonce's commit: {accepted:?}"
+    );
+    assert_eq!(
+        database
+            .consume_nonce(&second, deadline)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unauthenticated
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_nonce_buckets_bound_capacity_without_blocking_other_buckets() {
+    let (database, _, _) = fixture().await;
+    let mut client = database.connection().await.unwrap();
+    let tx = client.transaction().await.unwrap();
+    let bucket = vec![255_u8; 32];
+    let accepted = tx.query(
+        "SELECT tengri.consume_nonce(set_byte($1,31,n),tengri.now_ms()+5000) FROM generate_series(0,127) n", &[&bucket]
+    ).await.unwrap();
+    assert_eq!(accepted.len(), 128);
+    assert!(accepted.iter().all(|row| row.get::<_, bool>(0)));
+    let other = vec![0_u8; 32];
+    assert!(
+        tx.query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
+            &[&other]
+        )
+        .await
+        .unwrap()
+        .get::<_, bool>(0)
+    );
+    let full = vec![255_u8; 32];
+    let error = tx
+        .query_one(
+            "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
+            &[&full],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        crate::control::sql_error(error).code(),
+        Code::ResourceExhausted
+    );
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_backend_reconnection_does_not_forget_an_accepted_nonce() {
     let (database, _, _) = fixture().await;
     let other = Database::shared_fixture().await;

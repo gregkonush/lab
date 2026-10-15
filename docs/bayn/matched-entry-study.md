@@ -4,8 +4,8 @@
 over immediately executable positive benchmark-relative momentum on the same observed opportunities? It runs entirely offline and
 never calls a provider, places orders, changes safeguards or promotes a strategy.
 
-The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive sessions,
-at least twenty different selections, a USD 10,000 whole-share budget per opportunity, five-second management polls,
+The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive exchange sessions or continuous UTC observation days,
+at least twenty different selections, a USD 10,000 budget quantized by frozen broker instrument increments per opportunity, five-second management polls,
 a 50 bp protective stop, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts
 at witnessed deterministic completion; delayed momentum and Jev start at witnessed decision commitment. One IOC entry is followed by
 persistent reducing exit retries; actual partial fills and consumed quote liquidity remain in the ledger.
@@ -26,6 +26,17 @@ Decode registrations with `MatchedRegistrationSchema`:
 - `registeredAt`, `dataRole` (`DEVELOPMENT` or `PROSPECTIVE`), and five ordered unique `sessionDates`.
 - `latencyMs` and canonical `executionAssumptionsHash` for the complete `study.assumptions` object.
 - `latencyEvidenceHash` and `capacityEvidenceHash`; unknown witnesses are `null`.
+
+`study.assumptions.instruments` is required and pins `minimumQuantityAtoms`, `quantityIncrementAtoms`, and
+`priceIncrementAtoms` for every traded symbol. The study does not substitute equity precision for crypto.
+The definition freezes the first-tier taker rate at 25 bp per leg. Buy fees debit received coins; sell fees debit USD.
+Coin fees round up to an atom and cash fees to a cent as explicit conservative research assumptions, not a claim about
+provider receipt rounding. Multipliers stress both legs. Net sell quantity comes from the fee-adjusted ledger.
+Missing inference, operating, or original timing evidence still makes the comparison incomplete.
+
+Continuous studies include weekends and keep elapsed holding deadlines across midnight. UTC days group observations;
+they do not impose a midnight liquidation. Each arm has the same 15-minute hold and three-minute recovery budget.
+Equity studies retain their exchange close and five-minute flattening window.
 
 Freeze the code, threshold/prompt/protocol, universe, arrival model, costs and execution assumptions before the first
 prospective market open. Independently record the registration byte SHA-256 and code revision in a review receipt.
@@ -57,6 +68,20 @@ Quote size units, source timing and executable capacity need separate evidence; 
 | `costs`     | Per entry `batchId`, `inference` and `sharedOperating`. Each is `null` or `{ costMicros, evidenceHash, unresolvedCount }`.                                                                                                                                                                                       |
 | `witnesses` | `[{ sha256, path }]` for each referenced witness; the command verifies its bytes.                                                                                                                                                                                                                                |
 
+An inventory's `evidenceHash` pins the raw bytes of `inventory.json` from the existing
+[native session export](study-evidence-export.md). The command decodes `bayn.jev-study-inventory.v1`, verifies its
+embedded export receipt, and binds account, session and inline entry IDs. Every supplied entry and management batch
+must match its batch, cycle, observation, purpose and nullable result hash. Duplicate or malformed inventories fail;
+omitted batches, changed results and cuts taken before the registered session close make all headline means
+unavailable. Reports retain the complete witnessed cycles and batches, including no-batch and pending cycles.
+Every retained cycle must bind the registered protocol, including blocked and no-batch cycles. A foreign protocol
+keeps that cycle visible and makes the study incomplete even when all supplied batch protocols match.
+Pending or active cycles also make the study incomplete, even after session close: later recovery can still append
+their batches or results. Preserve that cut and take a new export after the cycles become terminal.
+Independent review must still establish that the witness is the complete native export; a self-consistent JSON hash
+does not prove that provenance. Missing historical witnesses remain `null` and incomplete. Do not manufacture them
+from a selected subset, reuse another session's witness or relabel an old report.
+
 Use the native inference-cost report with request/receipt/resolution coverage and effective-dated tariffs.
 Allocate every entry call, including abstentions, failures and unselected symbols. Missing/unpriced calls remain
 unknown: an unpriced known subtotal of zero is not zero expense. Carry missing coverage in `unresolvedCount`.
@@ -82,7 +107,7 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v3` and `bayn.matched-entry-study.v3`. Input is v2;
+Definition and report are `bayn.matched-entry-definition.v5` and `bayn.matched-entry-study.v5`. Input is v2;
 registration remains v1 with the new definition hash. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 

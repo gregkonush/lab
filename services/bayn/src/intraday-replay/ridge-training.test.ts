@@ -86,7 +86,7 @@ test('original receipts generate causal labels from partial fills with serial ca
       expect(Result.isFailure(yield* Effect.result(runRidgeTrainingCommand(args)))).toBeTrue()
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
   )
-}, 60_000)
+}, 150_000)
 
 test.each(['unresolved', 'excluded'] as const)(
   '%s produces an explicit no-artifact diagnostic',

@@ -94,6 +94,10 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE accounting_transactions DROP CONSTRAINT accounting_transactions_schema_version_check`
   yield* sql`UPDATE accounting_transactions SET schema_version = 'bayn.accounting-transaction.v2'`
   yield* sql`ALTER TABLE accounting_transactions ADD CONSTRAINT accounting_transactions_schema_version_check CHECK (schema_version = 'bayn.accounting-transaction.v2')`
+  // The legacy representation check also binds the schema version. Replace it before
+  // converting retained orders, while keeping the quantity/notional invariant enforced.
+  yield* sql`ALTER TABLE orders DROP CONSTRAINT orders_request_representation_check, ADD CONSTRAINT orders_request_representation_check CHECK (
+    (quantity_atoms IS NOT NULL AND notional_micros IS NULL) OR (quantity_atoms IS NULL AND notional_micros IS NOT NULL AND order_type = 'MARKET'))`
   yield* sql`ALTER TABLE orders DROP CONSTRAINT orders_schema_version_check`
   yield* sql`UPDATE orders SET schema_version = 'bayn.order.v3'`
   yield* sql`ALTER TABLE orders ADD CONSTRAINT orders_schema_version_check CHECK (schema_version = 'bayn.order.v3')`
@@ -231,8 +235,6 @@ export default Effect.gen(function* () {
       yield* sql`UPDATE mutation_events SET request_body = ${JSON.stringify(requestBody)}::jsonb WHERE intent_id = ${row.intent_id} AND event_type = 'SUBMIT_STARTED'`
     }
   }
-  yield* sql`ALTER TABLE orders DROP CONSTRAINT orders_request_representation_check, ADD CONSTRAINT orders_request_representation_check CHECK (
-    (quantity_atoms IS NOT NULL AND notional_micros IS NULL) OR (quantity_atoms IS NULL AND notional_micros IS NOT NULL AND order_type = 'MARKET'))`
   yield* sql`CREATE FUNCTION initialize_broker_event_projection_hash() RETURNS trigger LANGUAGE plpgsql AS $hash$ BEGIN
     NEW.normalized_content_hash := NEW.content_hash; RETURN NEW;
   END $hash$`

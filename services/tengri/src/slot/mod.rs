@@ -2,6 +2,8 @@ mod admission;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
+#[cfg(test)]
+mod probe_output;
 pub mod runner;
 pub mod supervisor;
 mod vmm;
@@ -17,7 +19,7 @@ use tokio::{
 };
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.3";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.5";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
@@ -410,9 +412,13 @@ impl Slot {
             "real KVM runner resumed: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let reply = vmm::guest_command(&self.config.vsock(), &serde_json::json!({
-            "action": "resume", "claim": claim, "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt().context("host clock overflow")?
-        })).await?;
+        let reply = vmm::guest_command(
+            &self.config.vsock(),
+            &serde_json::json!({
+                "action": "resume", "claim": claim
+            }),
+        )
+        .await?;
         ensure!(
             reply.get("claim") == Some(&serde_json::to_value(claim)?),
             "restored guest claim does not match its slot"
@@ -478,8 +484,7 @@ impl Slot {
                             && vmm::guest_command(
                                 &self.config.vsock(),
                                 &serde_json::json!({
-                                    "action": "resume", "claim": claim,
-                                    "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt()
+                                    "action": "resume", "claim": claim
                                 }),
                             )
                             .await

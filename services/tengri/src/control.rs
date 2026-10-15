@@ -13,7 +13,10 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tonic::Status;
 use uuid::Uuid;
 
-const SCHEMA: &[u8] = include_bytes!("../migrations/0001_control.sql");
+const MIGRATIONS: &[(i32, &[u8])] = &[
+    (1, include_bytes!("../migrations/0001_control.sql")),
+    (2, include_bytes!("../migrations/0002_replay_buckets.sql")),
+];
 
 #[derive(Clone)]
 pub struct Database {
@@ -146,12 +149,20 @@ impl Database {
     pub async fn verify_schema(&self) -> Result<(), Status> {
         let client = self.connection().await?;
         let rows = client
-            .query("SELECT version,checksum FROM tengri.schema_version", &[])
+            .query(
+                "SELECT version,checksum FROM tengri.schema_version ORDER BY version",
+                &[],
+            )
             .await
             .map_err(sql_error)?;
-        if rows.len() != 1
-            || rows[0].get::<_, i32>(0) != 1
-            || rows[0].get::<_, Vec<u8>>(1) != Sha256::digest(SCHEMA).as_slice()
+        if rows.len() != MIGRATIONS.len()
+            || rows
+                .iter()
+                .zip(MIGRATIONS)
+                .any(|(row, (version, migration))| {
+                    row.get::<_, i32>(0) != *version
+                        || row.get::<_, Vec<u8>>(1) != Sha256::digest(migration).as_slice()
+                })
         {
             return Err(Status::failed_precondition(
                 "shared runtime schema mismatch",

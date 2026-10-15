@@ -1,3 +1,7 @@
+import { FeeActivitySchema } from '../broker/fee-activity'
+import { replayFeeActivity } from './broker-fees'
+import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
+import { instrumentMarket, MarketKind, InstrumentSymbolSchema } from '../instruments'
 import { Data, Result, Schema } from 'effect'
 import {
   AssetClass,
@@ -23,7 +27,6 @@ import {
   Sha256Schema,
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
-  SymbolSchema,
   UnsignedMicrosSchema,
   UtcInstantSchema,
   strictParseOptions,
@@ -43,8 +46,8 @@ const OrderFields = {
   canceledAt: Schema.optionalKey(UtcInstantSchema),
   failedAt: Schema.optionalKey(UtcInstantSchema),
   assetId: StrictNonEmptyStringSchema,
-  symbol: SymbolSchema,
-  assetClass: Schema.Literal(AssetClass.UsEquity),
+  symbol: InstrumentSymbolSchema,
+  assetClass: Schema.Literals([AssetClass.UsEquity, AssetClass.Crypto]),
   quantityAtoms: PositiveMicrosSchema,
   filledQuantityAtoms: UnsignedMicrosSchema,
   filledAveragePriceMicros: Schema.optionalKey(PositiveMicrosSchema),
@@ -65,11 +68,11 @@ const OrderSchema = Schema.Union([
     ...OrderFields,
     side: Schema.Literal(OrderSide.Sell),
     orderType: Schema.Literal(OrderType.Market),
-    timeInForce: Schema.Literal(TimeInForce.Day),
+    timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.GoodUntilCanceled]),
   }),
 ])
 const EconomicFillSchema = Schema.Struct({
-  symbol: SymbolSchema,
+  symbol: InstrumentSymbolSchema,
   side: Schema.Enum(OrderSide),
   observedAt: UtcInstantSchema,
   quantityAtoms: PositiveMicrosSchema,
@@ -85,7 +88,7 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v1'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v3'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -99,7 +102,7 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
       executionFeesMicros: UnsignedMicrosSchema,
       positions: Schema.Array(
         Schema.Struct({
-          symbol: SymbolSchema,
+          symbol: InstrumentSymbolSchema,
           quantityAtoms: PositiveMicrosSchema,
           costBasisMicros: PositiveMicrosSchema,
         }),
@@ -124,21 +127,14 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
         priceAtoms: PositiveMicrosSchema,
         quantityAtoms: PositiveMicrosSchema,
         side: Schema.Enum(OrderSide),
-        symbol: SymbolSchema,
+        symbol: InstrumentSymbolSchema,
         transactionTime: UtcInstantSchema,
         brokerOrderId: StrictNonEmptyStringSchema,
         type: Schema.Enum(TradeActivityType),
         orderStatus: Schema.Enum(OrderStatus),
       }),
     ),
-    fees: Schema.Array(
-      Schema.Struct({
-        accountId: StrictNonEmptyStringSchema,
-        activityId: StrictNonEmptyStringSchema,
-        date: IsoDateSchema,
-        netAmountMicros: SignedMicrosSchema,
-      }),
-    ),
+    fees: Schema.Array(FeeActivitySchema),
     sessionCloses: Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema, equityMicros: UnsignedMicrosSchema })),
   }),
   checkpointHash: Sha256Schema,
@@ -156,6 +152,7 @@ export const replayBrokerConfigurationHash = (config: ReplayBrokerConfig) =>
     openingCashMicros: config.openingCashMicros,
     protocol: config.protocol,
     assumptions: config.assumptions,
+    cryptoFeeSchedule: cryptoTakerFeeSchedule,
     fractionalTrading: config.fractionalTrading,
     assets: config.assets,
     calendar: config.calendar,
@@ -188,6 +185,10 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         order.observedAt > decoded.observedAt ||
         order.createdAt > order.observedAt ||
         config.assets.find((asset) => asset.symbol === order.symbol)?.assetId !== order.assetId ||
+        order.assetClass !== config.assets.find((asset) => asset.symbol === order.symbol)?.assetClass ||
+        (order.orderType === OrderType.Market &&
+          order.timeInForce !==
+            (instrumentMarket(order.symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day)) ||
         BigInt(order.filledQuantityAtoms) > BigInt(order.quantityAtoms)
       )
         return yield* fail('Broker checkpoint order identity, time or quantity is invalid')
@@ -201,7 +202,10 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         ? orderRequestBody({
             ...common,
             orderType: DomainOrderType.Market,
-            timeInForce: DomainTimeInForce.Day,
+            timeInForce:
+              instrumentMarket(order.symbol) === MarketKind.Crypto
+                ? DomainTimeInForce.GoodUntilCanceled
+                : DomainTimeInForce.Day,
             notionalLimitMicros: '1',
           })
         : limitIocOrderRequestBody({
@@ -257,14 +261,14 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         config.protocol.executionModel,
         config.assumptions.feeMultiplierPpm,
       )
-      const fee = BigInt(next.executionFeesMicros) - BigInt(ledger.executionFeesMicros)
-      if (fee !== 0n)
-        expectedFees.push({
-          accountId: state.accountId,
-          activityId: `fee::${fill.brokerOrderId}`,
-          date: yield* Schema.decodeUnknownResult(IsoDateSchema)(fill.observedAt.slice(0, 10)),
-          netAmountMicros: (-fee).toString(),
-        })
+      const fee = replayFeeActivity(
+        state.accountId,
+        fill,
+        ledger.executionFeesMicros,
+        next.executionFeesMicros,
+        config.assumptions.feeMultiplierPpm,
+      )
+      if (fee !== null) expectedFees.push({ ...fee, date: yield* Schema.decodeUnknownResult(IsoDateSchema)(fee.date) })
       expectedFills.push({
         accountId: state.accountId,
         activityId: `fill::${fill.brokerOrderId}`,
@@ -318,7 +322,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v1' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v3' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

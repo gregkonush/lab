@@ -2,6 +2,7 @@ import { NodeRuntime } from '@effect/platform-node'
 import { Config, Data, Effect, Layer, Option, Redacted, Result, Schema } from 'effect'
 
 import { loadApplicationPlan } from '../application-plan'
+import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 import { embeddedBuildMetadata } from '../build'
 import { executionControllerConfig } from '../composition/native-execution-runtime'
 import {
@@ -294,10 +295,14 @@ export const runFiniteLayer = <A, E, R>(layer: Layer.Layer<A, E, R>): Effect.Eff
   Effect.scoped(Layer.build(layer)).pipe(Effect.asVoid)
 
 if (import.meta.main) {
+  initializeErrorTracking('bayn-execution-activate')
   NodeRuntime.runMain(
     runFiniteLayer(
       Layer.effectDiscard(
-        restateExecutionActivationProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-activate' })),
+        restateExecutionActivationProgram.pipe(
+          reportTerminalFailure('bayn-execution-activate'),
+          Effect.annotateLogs({ service: 'bayn-execution-activate' }),
+        ),
       ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-activate'))),
     ),
   )

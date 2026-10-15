@@ -1,4 +1,6 @@
-import { equityMarketProfile } from '../jev/markets'
+import { replayFeeActivity } from './broker-fees'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { jevMarketForSymbol } from '../jev/markets'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema, SynchronizedRef } from 'effect'
 
@@ -52,11 +54,7 @@ import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import type { ExecutionModelV5Schema } from '../execution-model-contract'
 import type { ReplayQuoteProtocol } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
-import {
-  simulateIntradayReplayMarketCloseCore,
-  simulateIntradayReplayIocCore,
-  type IntradayReplayIocCoreOutcome,
-} from './execution-core'
+import { simulateIntradayReplayExecution, type IntradayReplayIocCoreOutcome } from './execution-core'
 import {
   makeReplayOrderExecution,
   replayQuoteRejection,
@@ -253,19 +251,28 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           evidence: { requestId: `replay-${contentHash}`, status: 200, contentHash, observedAt },
         })),
       )
-    const asset = (symbol: string) => config.assets.find((entry) => entry.symbol === symbol)
+    const asset = (symbol: string) =>
+      config.assets.find(
+        (entry): entry is AssetObservation & { readonly assetClass: AssetClass.UsEquity | AssetClass.Crypto } =>
+          entry.symbol === symbol &&
+          entry.assetClass ===
+            (instrumentMarket(symbol) === MarketKind.Crypto ? AssetClass.Crypto : AssetClass.UsEquity),
+      )
     const quoteUsable = (
       quote: ObservedMarketValue<IntradayQuote> | undefined,
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
-      replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...equityMarketProfile }) === null
+      replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...jevMarketForSymbol(symbol) }) === null
     const valuationQuoteUsable = (
       quote: ObservedMarketValue<IntradayQuote> | undefined,
       symbol: string,
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> => {
-      const rejection = replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...equityMarketProfile })
+      const rejection = replayQuoteRejection(quote, symbol, nowMs, {
+        ...config.protocol,
+        ...jevMarketForSymbol(symbol),
+      })
       return rejection === null || rejection === ReplayQuoteRejection.Stale
     }
     const executeQuote = (
@@ -281,7 +288,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         ).pipe(Result.mapError((cause) => new ReplayBrokerFailure({ message: 'invalid displayed quantity', cause })))
         const budgetMicros = (displayedQuantityAtoms * BigInt(config.assumptions.availableLiquidityPpm)) / MICROS
         const remainingMicros = budgetMicros > consumedLiquidityMicros ? budgetMicros - consumedLiquidityMicros : 0n
+        const metadata = asset(quote.symbol)
+        if (metadata === undefined)
+          return yield* Result.fail(new ReplayBrokerFailure({ message: 'Missing frozen instrument metadata' }))
         const input = {
+          instrument: {
+            symbol: quote.symbol,
+            market: instrumentMarket(quote.symbol),
+            minimumQuantityAtoms: BigInt(metadata.minimumQuantityAtoms),
+            quantityIncrementAtoms: BigInt(metadata.quantityIncrementAtoms),
+            priceIncrementAtoms: BigInt(metadata.priceIncrementAtoms),
+          },
           quote: {
             priceMicros: yield* numberToMicros(side === OrderSide.Buy ? quote.askPrice : quote.bidPrice, 'quote.price'),
             displayedQuantityAtoms: remainingMicros,
@@ -289,16 +306,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           executionModel: config.protocol.executionModel,
           assumptions: { ...config.assumptions, availableLiquidityPpm: 1_000_000 },
         }
-        return yield* limit === undefined
-          ? simulateIntradayReplayMarketCloseCore({ ...input, quantityAtoms: BigInt(quantity) })
-          : simulateIntradayReplayIocCore({
-              ...input,
-              order: {
-                side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
-                quantityAtoms: BigInt(quantity),
-                limitPriceMicros: BigInt(limit),
-              },
-            })
+        return yield* simulateIntradayReplayExecution({
+          ...input,
+          order: {
+            side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
+            quantityAtoms: BigInt(quantity),
+            limitPriceMicros: limit === undefined ? null : BigInt(limit),
+          },
+        })
       })
     const closingEquity = (current: ReplayBrokerState, closeAt: string) =>
       Effect.gen(function* () {
@@ -406,7 +421,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             assetId: metadata.assetId,
             symbol: position.symbol,
             exchange: metadata.exchange,
-            assetClass: AssetClass.UsEquity,
+            assetClass: metadata.assetClass,
             side: PositionSide.Long,
             quantityAtoms: position.quantityAtoms,
             costBasisMicros: position.costBasisMicros,
@@ -488,6 +503,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         return yield* evidence(
           {
             cryptoStatus: null,
+            cashReportingQuantumMicros: '1' as const,
             nonMarginableBuyingPowerMicros: null,
 
             id: accountId,
@@ -597,12 +613,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         Effect.gen(function* () {
           const current = yield* readState
           const values = current.fees
-            .filter(
-              (fee) =>
-                (query?.date === undefined || fee.date === query.date) &&
-                (query?.after === undefined || fee.date >= query.after.slice(0, 10)) &&
-                (query?.until === undefined || fee.date <= query.until.slice(0, 10)),
-            )
+            .filter((fee) => query?.date === undefined || fee.date === query.date)
             .toSorted(
               (a, b) =>
                 (query?.direction === 'asc' ? 1 : -1) *
@@ -638,7 +649,10 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           const marketClose =
             closeOnly &&
             request.type === OrderType.Market &&
-            request.time_in_force === TimeInForce.Day &&
+            request.time_in_force ===
+              (instrumentMarket(intent.symbol) === MarketKind.Crypto
+                ? TimeInForce.GoodUntilCanceled
+                : TimeInForce.Day) &&
             request.side === OrderSide.Sell
           if (
             !marketClose &&
@@ -646,7 +660,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           )
             return yield* mutationFailure(
               MutationOperation.Submit,
-              'Replay requires LIMIT/IOC or close-only MARKET/DAY sell',
+              'Replay requires LIMIT/IOC or a close-only market sell with the instrument time in force',
             )
           const observedAt = yield* config.submissionTime ?? now
           const metadata = asset(intent.symbol)
@@ -668,7 +682,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             submittedAt: observedAt,
             assetId: metadata.assetId,
             symbol: intent.symbol,
-            assetClass: AssetClass.UsEquity,
+            assetClass: metadata.assetClass,
             quantityAtoms: intent.quantityAtoms,
             filledQuantityAtoms: '0',
             orderClass: OrderClass.Simple,
@@ -700,7 +714,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               const sessionDate = newYorkDate.format(submittedAtMs)
               const calendar = yield* read.marketCalendar({ start: sessionDate, end: sessionDate })
               const session = calendar.value.sessions.find((value) => value.date === sessionDate)
-              const closeMs = session === undefined ? submittedAtMs : Date.parse(session.closeAt)
+              const continuous = instrumentMarket(intent.symbol) === MarketKind.Crypto
+              const closeMs = continuous
+                ? Number.POSITIVE_INFINITY
+                : session === undefined
+                  ? submittedAtMs
+                  : Date.parse(session.closeAt)
               // A regular-session IOC still in transit expires at the close. It cannot fill after the session.
               const expectedArrivalMs = Math.max(
                 submittedAtMs,
@@ -717,12 +736,13 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               const arrivedAtMs = yield* Clock.currentTimeMillis
               const arrivedAt = yield* now
               const sessionOpen =
-                session !== undefined && submittedAtMs >= Date.parse(session.openAt) && arrivedAtMs < closeMs
+                continuous ||
+                (session !== undefined && submittedAtMs >= Date.parse(session.openAt) && arrivedAtMs < closeMs)
               const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs) : undefined
               const unavailableReason = sessionOpen
                 ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
                     ...config.protocol,
-                    ...equityMarketProfile,
+                    ...jevMarketForSymbol(intent.symbol),
                   })
                 : 'outside-regular-session'
               const arrival = {
@@ -852,14 +872,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     ] as const
                   }
                   nextLedger = applied.success
-                  const fee = BigInt(nextLedger.executionFeesMicros) - BigInt(current.ledger.executionFeesMicros)
-                  if (fee !== 0n)
-                    fees.push({
-                      accountId,
-                      activityId: `fee::${brokerOrderId}`,
-                      date: arrivedAt.slice(0, 10),
-                      netAmountMicros: (-fee).toString(),
-                    })
+                  const economicFill = nextLedger.fills.at(-1)
+                  if (economicFill === undefined)
+                    return [Result.fail(new ReplayBrokerFailure({ message: 'Applied fill is missing' })), current]
+                  const fee = replayFeeActivity(
+                    accountId,
+                    economicFill,
+                    current.ledger.executionFeesMicros,
+                    nextLedger.executionFeesMicros,
+                    config.assumptions.feeMultiplierPpm,
+                  )
+                  if (fee !== null) fees.push(fee)
                   const complete = outcome.unfilledRemainder === 'none'
                   order = {
                     ...record.order,

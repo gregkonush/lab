@@ -91,7 +91,7 @@ export const ReplayOrderExecutionSchema = Schema.Struct({
           'outside-regular-session',
           'adverse-price-exceeds-limit',
           'no-displayed-liquidity',
-          'zero-after-whole-share-rounding',
+          'zero-after-instrument-rounding',
         ]),
       ]),
       adversePriceMicros: Schema.NullOr(UnsignedMicrosSchema),

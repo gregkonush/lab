@@ -40,6 +40,7 @@ export type CycleCompletionState = CycleState.Completed | CycleState.NoTrade
 export enum CycleTerminalReason {
   MissedPublication = 'BLOCKED_MISSED_PUBLICATION_DEADLINE',
   MissedSubmission = 'BLOCKED_MISSED_SUBMISSION_DEADLINE',
+  UnusedEntryExpired = 'BLOCKED_UNUSED_ENTRY_EXPIRED',
   DataUnavailable = 'BLOCKED_DATA_UNAVAILABLE',
   DataStale = 'BLOCKED_DATA_STALE',
   DataInvalid = 'BLOCKED_DATA_INVALID',
