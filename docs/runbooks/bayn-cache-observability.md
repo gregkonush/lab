@@ -5,6 +5,19 @@ to inspect the running source revision. The existing
 [trading dashboard](https://grafana.ide-newton.ts.net/d/bayn-cycle-operations) retains readiness, authority,
 reconciliation freshness and economic evidence. Neither dashboard grants trading authority.
 
+Start with critical-path outcomes, duration and completed-cycle activity. These queries select the top-level
+execution cycle and broker refresh, so nested operations do not inflate the workload or failure counts.
+The broker snapshot card reports age divided by the configured reconciliation freshness limit; 100% exhausts
+that limit. It requires a healthy API scrape from the selected source. Expand dependency diagnostics to compare
+SET, replica acknowledgement, database commit and broker capture/publication. Cache hits are required
+materialization reads, so a 100% hit rate alone does not establish a performance improvement.
+
+Trading Operations keeps current condition and safety in the overview. Account/P&L, session/planner details
+and export logs live in collapsed rows. The funnel describes the current or latest terminal cycle, rather than
+throughput. Cycle latency separates local order observation, broker fill and fill ingestion clocks.
+The unused research-model dashboard is removed from file provisioning;
+its independent metrics, logs and alerts remain available through the model runbook and Explore.
+
 ## Preview dashboard changes
 
 Extract the importable JSON from the GitOps ConfigMap:
@@ -106,8 +119,9 @@ hours. An empty window remains unobserved because healthy servers can be quiet; 
 Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
-Validate the fifteen alert cases and seventeen dashboard query cases with the native PromQL test harness.
-The dashboard cases cover replica observations, missing telemetry, clock skew, database waits and operation outcomes.
+Validate the fifteen alert cases and twenty-six dashboard query cases with the native PromQL test harness.
+The dashboard cases cover replica observations, missing telemetry, clock skew, database waits, snapshot freshness
+and top-level operation outcomes without child-operation duplication.
 Use `promtool` 3.5.0 on `PATH`, or set `PROMTOOL` to its executable; CI already provisions the pinned checker.
 
 ```sh

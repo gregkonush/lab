@@ -78,10 +78,10 @@ independent worker, cost accounting, comparisons and live acceptance required to
 ## Observability and cost
 
 The existing central Alloy scrapes `/metrics` and `/admission/metrics` every fifteen seconds, forwards bounded metric
-families to Mimir and retains provisioning/serving logs in Loki. The Grafana dashboard UID is
-`bayn-model-performance`. It includes p50/p95/p99 queue time, TTFT, prefill/decode and end-to-end latency, token
-throughput and volume, admitted/running/waiting requests, KV occupancy, preemptions, failures, expiry, restarts,
-CPU and host memory. `NO DATA` remains visible when a series is unavailable.
+families to Mimir and retains provisioning/serving logs in Loki. Use Grafana Explore with `job="bayn-model"`
+for vLLM latency, token throughput and capacity, and `job="bayn-model-admission"` for admission outcomes.
+The standalone model dashboard is removed; this independent research service is outside Bayn's execution path.
+Missing series and no-traffic quantiles remain unobserved.
 
 Admission logs contain a generated request ID, immutable model identity, request-body hash, a validated W3C trace ID
 when supplied, HTTP status, outcome and duration.
