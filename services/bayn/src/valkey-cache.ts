@@ -86,10 +86,7 @@ export const makeValkeyCache = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => destroy)
   const invoke = <A>(operation: CacheOperation, run: (signal: AbortSignal) => Promise<A>) =>
     Effect.tryPromise({
-      try: async (signal) => {
-        if (!client.isOpen) await client.connect()
-        return run(signal)
-      },
+      try: run,
       catch: (cause) =>
         new ValkeyCacheError({
           operation,
@@ -105,7 +102,10 @@ export const makeValkeyCache = Effect.gen(function* () {
   ) =>
     commands
       .withPermit(
-        run.pipe(
+        invoke(operation, async () => {
+          if (!client.isOpen) await client.connect()
+        }).pipe(
+          Effect.andThen(run),
           Effect.onInterrupt(() => destroy),
           Effect.tapError(() => destroy),
         ),

@@ -243,6 +243,57 @@ describe('required native Effect Valkey binding', () => {
       await fixture.stop()
     }
   })
+  test('a connection lost after SET cannot acknowledge the publication on a new connection', async () => {
+    let open = true
+    let connections = 0
+    let writes = 0
+    let waits = 0
+    const closed = new SocketClosedUnexpectedlyError()
+    const client = {
+      get isOpen() {
+        return open
+      },
+      connect: async () => {
+        connections++
+        open = true
+      },
+      destroy: () => {
+        open = false
+      },
+      withAbortSignal: () => ({
+        set: async () => {
+          writes++
+          open = false
+          return 'OK'
+        },
+        wait: async () => {
+          waits++
+          if (!open) throw closed
+          return 1
+        },
+      }),
+    } as unknown as NodeRedis.NodeRedis['Service']['client']
+    const result = await operation((cache) => cache.put({ key: 'bayn:test', value: 'value', ttlMs: 1000 })).pipe(
+      Effect.provide(
+        Layer.effect(ValkeyCache, makeValkeyCache).pipe(
+          Layer.provide(Layer.succeed(NodeRedis.NodeRedis, { client, use: () => Effect.die('unused') })),
+        ),
+      ),
+      Effect.result,
+      Effect.runPromise,
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(ValkeyCacheError)
+      if (result.failure instanceof ValkeyCacheError) {
+        expect(result.failure.category).toBe(ValkeyFailureCategory.Transport)
+        expect(result.failure.cause).toBe(closed)
+      }
+    }
+    expect(writes).toBe(1)
+    expect(waits).toBe(1)
+    expect(connections).toBe(0)
+  })
   test('a missing replica acknowledgement fails at the command deadline with a separate typed cause', async () => {
     const fixture = await transportFixture('unreplicated')
     try {
