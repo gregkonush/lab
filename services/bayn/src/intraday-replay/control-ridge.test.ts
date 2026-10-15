@@ -504,7 +504,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v3',
+              inputDefinition: 'bayn.jev-trading-signal-state.v4',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',

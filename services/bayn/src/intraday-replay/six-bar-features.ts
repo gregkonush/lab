@@ -42,7 +42,7 @@ export const sixBarResearchDefinition = {
   maximumQuoteAgeMs: 10_000,
   maximumSpreadBps: 5,
   producerClockSkewAllowanceMs: 0,
-  barPublicationPolicy: BarPublicationPolicy.TimelyEquivalentRevision,
+  barPublicationPolicy: BarPublicationPolicy.ObservedHistory,
   candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   quotePolicy: 'Both symbols require positive displayed sizes and spread at most five basis points.',
   benchmarkTradePolicy: 'Post-window trade with observation age between zero and ten seconds.',
@@ -285,14 +285,7 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
           input.symbol,
         )
     }
-    const availability = candidateAvailability(
-      request,
-      publications,
-      quotes,
-      trades,
-      0,
-      BarPublicationPolicy.TimelyEquivalentRevision,
-    )
+    const availability = candidateAvailability(request, publications, quotes, trades, 0)
     if (Result.isFailure(availability)) {
       const cause = availability.failure
       if (

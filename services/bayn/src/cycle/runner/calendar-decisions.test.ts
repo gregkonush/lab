@@ -46,8 +46,8 @@ const observation: MarketCalendarObservation = {
 
 describe('intraday calendar decisions', () => {
   test.each([
-    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_000, eligible: false },
-    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_001, eligible: true },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_001, eligible: true },
     { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_000, eligible: false },
     { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_001, eligible: true },
   ])('requires a nonempty completed-feature window: %j', ({ warmupMinutes, durationMs, eligible }) => {
