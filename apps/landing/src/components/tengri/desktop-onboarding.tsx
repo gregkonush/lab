@@ -113,8 +113,19 @@ export default function DesktopOnboarding() {
     if (pendingDeletionAgentId) return
     const refreshDelay = desktopRefreshDelay(gate, Date.now())
     if (refreshDelay === null) return
-    const timer = window.setTimeout(() => void refresh(), refreshDelay)
-    return () => window.clearTimeout(timer)
+    let cancelled = false
+    let timer: number
+    const poll = async () => {
+      await refresh()
+      if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), desktopRefreshDelay(gate, Date.now()) ?? refreshDelay)
+      }
+    }
+    timer = window.setTimeout(() => void poll(), refreshDelay)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
   }, [gate, pendingDeletionAgentId, refresh])
 
   if (gate.kind === 'ready' && snapshot?.user) {
