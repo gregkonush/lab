@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: bayn
 resources:
+- glitchtip-dsns.yaml
 - serviceaccount.yaml
 - clickhouse-secret.yaml
 - alpaca-sealedsecret.yaml
@@ -37,4 +38,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:df4fc81e10719d1242e287a5e08fcf27cb758225a2fa76657d8e23bb023f7d4e
+  digest: sha256:10963d7bd31f8affda699dbc408fa0dad5e6947d5712acfad95af751e414ce44
