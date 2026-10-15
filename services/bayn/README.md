@@ -12,7 +12,9 @@ and at most one open position. Crypto uses cash buying power, quantity-based LIM
 MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
-Bound decisions, orders and positions retain recovery priority.
+Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
+three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
+entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
 An unused native admission retains its expiry classification at the equity cutoff, including when decision construction
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
 evidence and cooldown guards before acquiring a successor.
@@ -27,8 +29,18 @@ requires flat, settled inventory and complete accounting, archives the original 
 ledger identities. It clamps the old PAPER authority to OBSERVE. Activate a newly sealed PAPER mandate against the
 published image after the cutover, as described in the [deployment procedure](../../argocd/applications/bayn/README.md).
 Retained history is audit evidence; retired protocols and order encodings cannot create or submit current orders.
-Crypto fee activities retain exact coin debits separately from USD cash fees. Same-day missing fee activities are
-incomplete cost evidence, never evidence of zero fees.
+Crypto settlement records gross fills unchanged and accrues only debits observed in fresh broker positions or cash.
+Accruals require the active native cycle, accounted fills, the complete observed order quantity and the corresponding
+retained broker snapshot. Fee bounds reject unrelated balance changes. USD cash comparisons use the precision
+reported by the provider, while the ledger retains six-decimal micros.
+Migration 102 adds immutable settlement accruals, receipt matches and account reporting precision. Cash-yield evidence
+uses that retained quantum; historical snapshots without it cannot qualify economic results. Residual sells use their
+latest trading date, so directly settled sells from an earlier date cannot block a later close. Preparation commits before ledger posting;
+recovery posts the same deterministic plans before accounting later fills. Delayed coin and USD fee activities match
+those accruals and post only the remaining adjustment. Activity allocation does not establish individual trade origin:
+qualification waits until every accrual for the account, asset and trading date is covered. A partial pooled receipt
+cannot finalize another cycle or authority generation. Missing receipts remain incomplete cost evidence, never
+zero fees or final economic qualification.
 
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.

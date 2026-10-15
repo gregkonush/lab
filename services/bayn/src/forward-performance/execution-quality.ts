@@ -111,6 +111,13 @@ const sourceEvidenceHash = (
     ...((input.brokerFees?.length ?? 0) === 0
       ? {}
       : { brokerFees: [...(input.brokerFees ?? [])].sort((a, b) => compareStrings(a.activityId, b.activityId)) }),
+    ...((input.brokerFeeAccruals?.length ?? 0) === 0
+      ? {}
+      : {
+          brokerFeeAccruals: [...(input.brokerFeeAccruals ?? [])].sort((a, b) =>
+            compareStrings(a.accrualId, b.accrualId),
+          ),
+        }),
     executions: executionEvidence.map((evidence) => ({
       ...evidence,
       fills: [...evidence.fills].sort((left, right) => compareStrings(fillSortKey(left), fillSortKey(right))),
@@ -609,11 +616,32 @@ const measureExecutionQuality = (
     }
     seenFees.add(fee.activityId)
     const net = BigInt(fee.netAmountMicros)
-    const next = inSignedRange(net) ? checkedAdd(observedFillFees, -net) : undefined
+    const inventoryCost =
+      fee.inventoryCostMicros === undefined
+        ? fee.coinDebit === undefined
+          ? 0n
+          : undefined
+        : parseUnsigned(fee.inventoryCostMicros, false)
+    const next =
+      inSignedRange(net) && inventoryCost !== undefined ? checkedAdd(observedFillFees, -net + inventoryCost) : undefined
     if (next === undefined) reasons.add('INVALID_EXECUTION_MICROS')
     else observedFillFees = next
   }
 
+  const seenAccruals = new Set<string>()
+  for (const accrual of input.brokerFeeAccruals ?? []) {
+    const expense = parseUnsigned(accrual.expenseMicros, false)
+    const next = expense === undefined ? undefined : checkedAdd(observedFillFees, expense)
+    if (
+      next === undefined ||
+      accrual.accountId !== input.account.accountId ||
+      seenAccruals.has(accrual.accrualId) ||
+      !accrual.settled
+    )
+      reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
+    if (next !== undefined) observedFillFees = next
+    seenAccruals.add(accrual.accrualId)
+  }
   if (seenFillEvents.size !== transactions.length) reasons.add('ACCOUNTING_FILL_BINDING_GAP')
   if (brokerFees === undefined || observedFillFees !== brokerFees) reasons.add('EXPLICIT_COST_EVIDENCE_GAP')
 

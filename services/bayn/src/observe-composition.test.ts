@@ -989,6 +989,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   })
   const brokerAccount: BrokerAccount = {
     cryptoStatus: null,
+    cashReportingQuantumMicros: '1' as const,
     nonMarginableBuyingPowerMicros: null,
 
     id: accountId,
@@ -1043,6 +1044,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
         asOf: reconciledAt,
       }),
     hasAccountBaseline: () => Effect.succeed(true),
+    recoverFees: () => Effect.void,
     bindings: () => Effect.succeed([]),
     reconcile: () => Effect.succeed(persisted),
     ensureAuthorityGeneration: () => Effect.succeed(authority),
@@ -5145,6 +5147,7 @@ describe('OBSERVE runtime composition', () => {
       verifyCompleted: () => unused,
       value: () => unused,
       hasAccountBaseline: () => unused,
+      recoverFees: () => Effect.void,
       bindings: () => unused,
       reconcile: () => unused,
       ensureAuthorityGeneration: () => Effect.succeed(authority),
@@ -5286,6 +5289,7 @@ describe('OBSERVE runtime composition', () => {
     })
     const brokerAccount: BrokerAccount = {
       cryptoStatus: null,
+      cashReportingQuantumMicros: '1' as const,
       nonMarginableBuyingPowerMicros: null,
 
       id: accountId,
@@ -5384,6 +5388,7 @@ describe('OBSERVE runtime composition', () => {
                 asOf: reconciledAt,
               }),
             hasAccountBaseline: () => Effect.succeed(true),
+            recoverFees: () => Effect.void,
             bindings: () => Effect.succeed([]),
             reconcile: () =>
               Deferred.succeed(persistenceStarted, undefined).pipe(

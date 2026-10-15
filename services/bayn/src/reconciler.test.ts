@@ -61,6 +61,7 @@ const evidence = (identity: string): ReadEvidence => ({
 
 const account: BrokerAccount = {
   cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
   id: accountId,
@@ -223,6 +224,7 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
       return valuation
     }),
   hasAccountBaseline: () => Effect.succeed(hasAccountBaseline),
+  recoverFees: () => Effect.void,
   bindings: () => Effect.succeed([{ intentId: hash('intent'), clientOrderId: order(0).clientOrderId }]),
   reconcile: (snapshot) =>
     Effect.sync(() => {
@@ -1038,9 +1040,17 @@ describe('execution reconciliation loop', () => {
       account: (input) => insideTransaction(baseStore.account(input)),
       verifyCompleted: (inputs) => insideTransaction(baseStore.verifyCompleted(inputs)),
       value: (input) => insideTransaction(baseStore.value(input)),
-      hasAccountBaseline: (id) => insideTransaction(baseStore.hasAccountBaseline(id)),
-      bindings: (id) => insideTransaction(baseStore.bindings(id)),
-      reconcile: () => insideTransaction(Effect.fail(persistenceFailure)),
+      hasAccountBaseline: (id) =>
+        Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),
+      recoverFees: () =>
+        writerFence.transaction(insideTransaction(Effect.void)).pipe(Effect.mapError(() => persistenceFailure)),
+      bindings: (id) =>
+        Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.bindings(id))),
+      reconcile: () =>
+        writerFence.transaction(insideTransaction(Effect.void)).pipe(
+          Effect.andThen(writerFence.transaction(insideTransaction(Effect.fail(persistenceFailure)))),
+          Effect.mapError(() => persistenceFailure),
+        ),
       restrictAuthority: (reason, updatedAt) => insideTransaction(baseStore.restrictAuthority(reason, updatedAt)),
     }
 
@@ -1051,7 +1061,7 @@ describe('execution reconciliation loop', () => {
       const failures = exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
       expect(failures).toEqual([persistenceFailure])
     }
-    expect(transactionEvents).toEqual(['begin', 'end', 'begin', 'end'])
+    expect(transactionEvents).toEqual(Array.from({ length: 5 }, () => ['begin', 'end']).flat())
     expect(transactionDepth).toBe(0)
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
