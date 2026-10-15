@@ -3,7 +3,7 @@ import { Effect, Result, Schema } from 'effect'
 import { FeeAccrualSchema, prepareFeeAccrual } from '../accounting/fee-accrual'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { JournalService } from '../ledger'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { IsoDateSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { CashReportingQuantumSchema, reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { ReconciliationStoreError, type BrokerSnapshot } from './reconciliation'
 import { OrderSide } from '../execution/contracts'
@@ -12,6 +12,7 @@ const integer = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/))
 export const StoredAccrual = Schema.Struct({
   accrual_id: Sha256Schema,
   data: FeeAccrualSchema,
+  settlement_date: IsoDateSchema,
   content_hash: Sha256Schema,
   coin_quantity_atoms: Schema.NullOr(integer),
   cash_debit_micros: Schema.NullOr(integer),
@@ -56,7 +57,7 @@ export const feeAccrualCohortSettled = (
         candidate.data.accountId === record.data.accountId &&
         candidate.data.kind === record.data.kind &&
         candidate.data.symbol === record.data.symbol &&
-        candidate.data.date === record.data.date,
+        candidate.settlement_date === record.settlement_date,
     )
     .every(
       (candidate) =>
@@ -86,11 +87,11 @@ export const readStoredFeeAccruals = (sql: PgClient.PgClient, accountId: string)
         strictParseOptions,
       )(
         yield* sql`
-    SELECT a.accrual_id,a.data,a.content_hash,a.coin_quantity_atoms::text,a.cash_debit_micros::text,a.expense_micros::text,
+    SELECT a.accrual_id,a.data,cohort.settlement_date,a.content_hash,a.coin_quantity_atoms::text,a.cash_debit_micros::text,a.expense_micros::text,
       COALESCE((SELECT sum(m.coin_quantity_atoms) FROM broker_fee_accrual_matches m WHERE m.accrual_id=a.accrual_id),0)::text AS matched_coin_quantity_atoms,
-      COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.accrual_id=a.accrual_id),0)::text AS matched_cash_micros,
+      (COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.accrual_id=a.accrual_id),0)-COALESCE((SELECT sum(c.cash_debit_micros) FROM broker_fee_match_corrections c WHERE c.accrual_id=a.accrual_id),0))::text AS matched_cash_micros,
       a.ledger_plan_hash,a.tigerbeetle_cluster_id::text,a.tigerbeetle_ledger::integer,a.posted_at IS NOT NULL AS posted
-    FROM broker_fee_accruals a WHERE a.account_id=${accountId} ORDER BY a.observed_at,a.accrual_id COLLATE "C"
+    FROM broker_fee_accruals a JOIN broker_fee_accrual_cohorts cohort USING(accrual_id) WHERE a.account_id=${accountId} ORDER BY a.observed_at,a.accrual_id COLLATE "C"
   `,
       ),
     )
@@ -166,7 +167,7 @@ const sourcesFor = (sql: PgClient.PgClient, snapshot: BrokerSnapshot, side: Orde
     SELECT t.transaction_id AS "transactionId",i.cycle_id AS "cycleId",f.broker_order_id AS "brokerOrderId",
       t.quantity_atoms::text AS "quantityAtoms",t.price_atoms::text AS "priceAtoms",
       (SELECT sum(t2.quantity_atoms)::text FROM accounting_transactions t2 JOIN fills f2 ON f2.event_id=t2.broker_event_id
-        WHERE t2.account_id=t.account_id AND f2.broker_order_id=f.broker_order_id) AS "orderAccountedQuantityAtoms",to_char(t.occurred_at AT TIME ZONE 'America/New_York','YYYY-MM-DD') AS date
+        WHERE t2.account_id=t.account_id AND f2.broker_order_id=f.broker_order_id) AS "orderAccountedQuantityAtoms",to_char(t.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS date
     FROM accounting_transactions t JOIN fills f ON f.event_id=t.broker_event_id JOIN intents i ON i.intent_id=t.intent_id JOIN autonomous_cycles c ON c.cycle_id=i.cycle_id
     WHERE t.account_id=${snapshot.account.accountId} AND i.account_id=t.account_id AND c.account_id=t.account_id
       AND t.symbol=i.symbol AND t.symbol IN('BTC/USD','ETH/USD','SOL/USD') AND (${symbol}::text IS NULL OR t.symbol=${symbol})

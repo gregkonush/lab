@@ -369,23 +369,30 @@ export const readForwardPerformancePostgresDataFirst = (
           Effect.flatMap(decodeTransactions),
         )
         const brokerFeeRows = yield* sql<Record<string, unknown>>`
-          SELECT fee.data, COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=fee.account_id AND m.activity_id=fee.activity_id),0)::text AS matched_cash_micros, fee.coin_cost_basis_micros::text AS coin_cost_basis_micros, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
+          SELECT fee.data,fee.cash_match_corrections, COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=fee.account_id AND m.activity_id=fee.activity_id),0)::text AS matched_cash_micros, fee.coin_cost_basis_micros::text AS coin_cost_basis_micros, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
             fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
             fee.tigerbeetle_ledger::integer AS tigerbeetle_ledger, fee.posted_at IS NOT NULL AS posted,
             fee.first_observed_at, fee.posted_at,
+            (SELECT max(c.posted_at) FROM broker_fee_match_corrections c WHERE c.account_id=fee.account_id AND c.activity_id=fee.activity_id) AS last_correction_posted_at,
             (${authorityGenerationHash === undefined} OR EXISTS (
               SELECT 1 FROM accounting_transactions AS transaction
               WHERE transaction.account_id = fee.account_id
-                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = fee.fee_date
+                AND (transaction.occurred_at AT TIME ZONE (CASE WHEN fee.data ? 'coinDebit' OR fee.data->>'cryptoCashFee'='true' THEN 'UTC' ELSE 'America/New_York' END))::date = fee.fee_date
+                AND CASE WHEN fee.data ? 'coinDebit' THEN transaction.side='BUY' AND transaction.symbol=fee.data->'coinDebit'->>'symbol'
+                  WHEN fee.data->>'cryptoCashFee'='true' THEN transaction.side='SELL' AND transaction.symbol IN('BTC/USD','ETH/USD','SOL/USD')
+                  ELSE transaction.symbol NOT IN('BTC/USD','ETH/USD','SOL/USD') END
                 AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
             )) AS includes_generation,
             EXISTS (
               SELECT 1 FROM accounting_transactions AS transaction
               WHERE transaction.account_id = fee.account_id
-                AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = fee.fee_date
+                AND (transaction.occurred_at AT TIME ZONE (CASE WHEN fee.data ? 'coinDebit' OR fee.data->>'cryptoCashFee'='true' THEN 'UTC' ELSE 'America/New_York' END))::date = fee.fee_date
+                AND CASE WHEN fee.data ? 'coinDebit' THEN transaction.side='BUY' AND transaction.symbol=fee.data->'coinDebit'->>'symbol'
+                  WHEN fee.data->>'cryptoCashFee'='true' THEN transaction.side='SELL' AND transaction.symbol IN('BTC/USD','ETH/USD','SOL/USD')
+                  ELSE transaction.symbol NOT IN('BTC/USD','ETH/USD','SOL/USD') END
                 AND NOT (${generationScope(sql, accountId, authorityGenerationHash, 'transaction')})
             ) AS includes_other_generation
-          FROM broker_fee_accounting AS fee WHERE fee.account_id = ${accountId}
+          FROM broker_fee_accounting_evidence AS fee WHERE fee.account_id = ${accountId}
           ORDER BY fee.activity_id COLLATE "C"
         `.pipe(
           Effect.flatMap(
@@ -394,6 +401,7 @@ export const readForwardPerformancePostgresDataFirst = (
                 Schema.Struct({
                   ...StoredFeeSchema.fields,
                   first_observed_at: Schema.Date,
+                  last_correction_posted_at: Schema.NullOr(Schema.Date),
                   posted_at: Schema.NullOr(Schema.Date),
                   includes_generation: Schema.Boolean,
                   includes_other_generation: Schema.Boolean,
@@ -926,6 +934,7 @@ export const readForwardPerformancePostgresDataFirst = (
               includes_generation: _owned,
               includes_other_generation: _other,
               first_observed_at: _observed,
+              last_correction_posted_at: _correctionPosted,
               posted_at: _posted,
               ...record
             }) => record,
@@ -975,7 +984,14 @@ export const readForwardPerformancePostgresDataFirst = (
               (row) =>
                 reconciliationRow !== undefined &&
                 (row.first_observed_at > reconciliationRow.reconciled_at ||
-                  (row.posted_at !== null && row.posted_at > reconciliationRow.reconciled_at)),
+                  (row.posted_at !== null && row.posted_at > reconciliationRow.reconciled_at) ||
+                  (row.last_correction_posted_at !== null &&
+                    row.last_correction_posted_at > reconciliationRow.reconciled_at) ||
+                  row.cash_match_corrections.some(
+                    (correction) =>
+                      !correction.posted ||
+                      correction.data.readEvidence.observedAt > reconciliationRow.reconciled_at.toISOString(),
+                  )),
             ).length,
         }
       }),
