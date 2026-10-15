@@ -114,12 +114,12 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   manager, Bayn's bounded service and financial-model metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
   including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
-- `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
-  reason and phase, session timing, economic evidence, accounting coverage, safety freshness, and replica-reduced
-  lifecycle history. Running accounting is distinct from immutable terminal profit, cost, and return evidence; missing
-  terminal evidence is never displayed as zero profit.
-- `bayn-cache-performance-dashboard`: native cache/replica acknowledgement and PostgreSQL stage latency, hit/miss
-  outcomes, bounded server/replica metrics, payload sizes, and generation-index catalog observations. The API uses
+- `bayn-cycle-operations-dashboard`: nine overview panels for the current condition, blocker, planner outcome, runtime, authority,
+  ledger, accounting coverage and execution funnel. Expand execution, account/P&L and export diagnostics as needed.
+  Running accounting is distinct from terminal qualification; missing terminal evidence never becomes zero profit.
+- `bayn-cache-performance-dashboard`: critical-path activity, outcomes and p95 duration, plus broker snapshot age
+  relative to its configured limit. Expand cache replication, dependency failures and PostgreSQL diagnostics after
+  identifying the affected path. The API uses
   its existing scrape and workers use native Effect OTLP metrics. See the
   [cache observability runbook](../../../docs/runbooks/bayn-cache-observability.md) for collection, alerts and acceptance.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
@@ -206,8 +206,8 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
 
 The private `bayn-model` application replaces Rune with a locked Alpha-R1 checkpoint. The central Alloy scrapes
 vLLM metrics and admission metrics every fifteen seconds and retains both provisioning and serving logs with
-namespace, pod, container and service identity. `bayn-model-performance` shows readiness, queue time, TTFT,
-prefill/decode latency, throughput, token volume, KV occupancy and bounded-admission failures. Request logs contain
+namespace, pod, container and service identity. Research capacity and latency metrics remain available in Explore;
+the independent research model has no dedicated Bayn execution dashboard. Request logs contain
 generated request IDs, validated trace IDs and durations; request/response bodies are disabled in vLLM.
 The same log pipeline retains the independent `research` container. Its Effect metrics reach Mimir through the
 gateway's pod port 8080; the research egress policy must allow that destination port even though the Service exposes
