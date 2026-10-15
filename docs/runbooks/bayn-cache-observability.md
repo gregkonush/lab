@@ -1,9 +1,27 @@
 # Bayn cache and database observability
 
-Use [Bayn Cache and Database Performance](https://grafana.ide-newton.ts.net/d/bayn-cache-performance)
+Use [Bayn performance](https://grafana.ide-newton.ts.net/d/bayn-cache-performance)
 to inspect the running source revision. The existing
 [trading dashboard](https://grafana.ide-newton.ts.net/d/bayn-cycle-operations) retains readiness, authority,
 reconciliation freshness and economic evidence. Neither dashboard grants trading authority.
+
+## Preview dashboard changes
+
+Extract the importable JSON from the GitOps ConfigMap:
+
+```sh
+yq -r '.data["bayn-cache-performance.json"]' argocd/applications/observability/bayn-cache-performance-dashboard-configmap.yaml > /tmp/bayn-performance.json
+```
+
+In Grafana, open **Dashboards**, then **New**, then **Import**. Upload `/tmp/bayn-performance.json`.
+Choose a preview name and change the UID to `bayn-performance-preview` before importing into the same instance.
+The canonical dashboard remains owned by its file provider. The preview uses the existing `prom`, `loki` and `tempo`
+datasource UIDs.
+
+Inspect the rendered overview and expand the broker/cache, PostgreSQL and log sections. The source picker displays
+eight characters but queries the full deployed revision. The broker-trace link carries that revision and time range.
+Check missing-data states as well as populated charts. Parent and child latency estimates overlap.
+Keep the reviewed JSON in the ConfigMap and deliver it through the observability application's normal GitOps path.
 
 ## Collection
 
