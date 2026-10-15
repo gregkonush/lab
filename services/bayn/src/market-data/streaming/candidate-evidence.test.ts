@@ -108,13 +108,19 @@ describe('candidate executable quote and window trade evidence', () => {
         },
         query,
       )
-      expect(exclusion(snapshot)?.message).toBe(`rolling window lacks 1 of 30 required minute bars: ${missingAt}`)
-      expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
+      if (missingAt === '2026-09-04T14:29:00.000Z') {
+        expect(exclusion(snapshot)?.reason).toBe('not-ready')
+        expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
+      } else {
+        expect(exclusion(snapshot)).toBeUndefined()
+        expect(Result.isSuccess(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
+        expect(snapshot.bars.filter((bar) => bar.symbol === 'AAPL')).toHaveLength(29)
+      }
       expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
     },
   )
 
-  test('preserves delayed-bar rejection when the range-completion bar is also missing', () => {
+  test('rejects missing range completion while retaining late historical evidence', () => {
     const { snapshot } = streamingFixtureFromRaw(
       {
         ...fixture.archive,
@@ -128,7 +134,7 @@ describe('candidate executable quote and window trade evidence', () => {
       },
       query,
     )
-    expect(exclusion(snapshot)?.reason).toBe('freshness')
+    expect(exclusion(snapshot)?.reason).toBe('not-ready')
     expect(Result.isFailure(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
     expect(replay(snapshot).manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
   })

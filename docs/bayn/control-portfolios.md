@@ -46,12 +46,12 @@ automatically.
 
 ## Fixed policies
 
-| Policy                       | Entry selection                                                                                      | Size                                   | Exit                                                        |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
-| `RETAINED_BREAKOUT_CLOSE`    | Retained six-symbol breakout thresholds                                                              | 10% of bounded allocation              | Close window                                                |
-| `REPEATED_BREAKOUT`          | Retained breakout thresholds across Jev's candidate universe                                         | Explicit research weight, at most 20%  | 15-minute maximum hold, 50 bp protective stop, close window |
-| `REPEATED_JEV_ENTRY`         | Native observation, model batch, entry probability gate and decision against this portfolio          | Native allocation, matched to momentum | Same mechanical exits                                       |
-| `REPEATED_RELATIVE_MOMENTUM` | Exact positive 30-minute and benchmark-relative return, with the native spread and liquidity filters | Same research weight                   | Same mechanical management                                  |
+| Policy                       | Entry selection                                                                                                            | Size                                   | Exit                                                        |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+| `RETAINED_BREAKOUT_CLOSE`    | Retained six-symbol breakout thresholds                                                                                    | 10% of bounded allocation              | Close window                                                |
+| `REPEATED_BREAKOUT`          | Retained breakout thresholds across Jev's candidate universe                                                               | Explicit research weight, at most 20%  | 15-minute maximum hold, 50 bp protective stop, close window |
+| `REPEATED_JEV_ENTRY`         | Native observation, model batch, entry probability gate and decision against this portfolio                                | Native allocation, matched to momentum | Same mechanical exits                                       |
+| `REPEATED_RELATIVE_MOMENTUM` | Positive return from the earliest common observed candidate and benchmark minute, with native spread and liquidity filters | Same research weight                   | Same mechanical management                                  |
 
 The table describes the mechanical lifecycles. In `JEV` mode, native model exits are also available to the two
 repeated controls. Existing exit triggers, protective stops, maximum holding time and the close window take
@@ -60,7 +60,11 @@ cost basis, fees, entry time and current market evidence. Candidate strategy dec
 management decisions. Entry and management track completed windows independently; partial exit retries preserve
 the original model trigger and require no new inference.
 
-The source-controlled Jev protocol supplies the universe, rolling window, freshness rules, close window, and
+Every policy starts polling after the first completed session minute and the native two-second delay. The protocol's
+30-minute lookback bounds the available context; it does not require 30 bars or delay admission by 30 minutes.
+Preflight and training artifact schedules use the same first eligible poll.
+
+The source-controlled Jev protocol supplies the universe, history limit, freshness rules, close window, and
 mechanical holding limits. Breakout policies call the retained decision core, including its breakout-strength and
 range-position tie-breaks. Relative momentum ranks by exact benchmark-relative return, then symbol. Candidate-local
 source exclusions are retained. A successful observation consumes that signal window, so a canceled entry waits

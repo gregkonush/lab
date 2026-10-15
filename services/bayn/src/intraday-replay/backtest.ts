@@ -104,7 +104,7 @@ export const BacktestInputSchema = Schema.Struct({
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
     model: Schema.Literal(jevModel),
-    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v3'),
+    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v4'),
     costs: ReplayJevCostModelSchema,
   }),
   allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,

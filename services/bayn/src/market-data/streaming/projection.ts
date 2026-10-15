@@ -1,9 +1,13 @@
 import { MarketKind } from '../../instruments'
-import { decodeCryptoMarketFeature, isCryptoMarketFeature } from '../features/crypto-contract'
+import {
+  cryptoFeatureDefinitionMaterial,
+  decodeCryptoMarketFeature,
+  isCryptoMarketFeature,
+} from '../features/crypto-contract'
 import { nativeFeatureMatchesBars, rollingWindowStartMs, type NativeMarketFeature } from '../features/native-feature'
 import { sameBarMarketValues } from '../intraday/bar-publication'
 import { createHash } from 'node:crypto'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import type { RawMarketEvent } from './raw-events'
 import type { TechnicalMarketFeature } from '../features/technical-contract'
 import { incorporateTechnicalRecord, type TechnicalInputRejection } from './technical-projection'
@@ -13,6 +17,7 @@ import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/mode
 import {
   decodeRollingMarketFeature,
   MarketFeatureFailure,
+  MarketFeatureDefinition,
   marketFeatureClockSkewAllowanceMs,
 } from '../features/contract'
 import {
@@ -22,6 +27,10 @@ import {
   type KafkaMarketRecord,
   type StreamingUniverse,
 } from './raw-events'
+
+const decodeFeatureIdentity = Schema.decodeUnknownResult(
+  Schema.Struct({ material: Schema.Struct({ definitionId: Schema.NonEmptyString }) }),
+)
 
 export interface ObservedMarketValue<A> {
   readonly value: A
@@ -189,17 +198,21 @@ const incorporateDecodedRecord = (
     offsets: new Map(previous.offsets).set(key, record.offset),
   }
   if (record.topic === universe.topics.features) {
-    const parsed = Result.try({
+    const document = Result.try({
       try: (): unknown => JSON.parse(record.value),
       catch: () => new MarketFeatureFailure({ reason: 'schema', message: 'feature is not JSON' }),
-    }).pipe(
-      Result.flatMap(
-        (value): Result.Result<NativeMarketFeature, MarketFeatureFailure> =>
-          marketSourceKind(universe) === MarketKind.Crypto
-            ? decodeCryptoMarketFeature(value)
-            : decodeRollingMarketFeature(value),
-      ),
-    )
+    })
+    if (Result.isFailure(document)) return reject(state, record, availableAtMs, document.failure.reason)
+    const identity = decodeFeatureIdentity(document.success)
+    if (Result.isFailure(identity)) return reject(state, record, availableAtMs, 'schema')
+    const crypto = marketSourceKind(universe) === MarketKind.Crypto
+    const requiredDefinition = crypto ? cryptoFeatureDefinitionMaterial[0] : MarketFeatureDefinition.ObservedPriceWindow
+    // Shared retained topics may contain other feature definitions. They provide no
+    // input or authority for this strategy; the selected definition is decoded strictly.
+    if (identity.success.material.definitionId !== requiredDefinition) return state
+    const parsed: Result.Result<NativeMarketFeature, MarketFeatureFailure> = crypto
+      ? decodeCryptoMarketFeature(document.success)
+      : decodeRollingMarketFeature(document.success)
     if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
     const feature = parsed.success
     const material = feature.material

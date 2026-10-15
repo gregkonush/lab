@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from './testing/property-test-support'
 
 import { canonicalHashV1 } from './hash'
 import {
@@ -265,6 +267,89 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
+
+test('property: the shared equity and crypto planner obeys quantity precision, liquidity and available capital', () => {
+  checkProperty(
+    'target-planner-capital-and-precision',
+    fc.property(
+      fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'),
+      fc.bigInt({ min: 1_000_000n, max: 100_000_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000_000n }),
+      (symbol, priceUnits, desiredLots, capacityLots) => {
+        const increment = symbol === 'AAPL' ? 1_000_000_000n : 1n
+        const price = priceUnits * 100n
+        const capital = (desiredLots * increment * price + 999_999_999n) / 1_000_000_000n
+        const capacity = capacityLots * increment
+        const baseInput = fixture({
+          quoteBound: true,
+          positions: [],
+          targetWeights: { [symbol]: 1 },
+          equityMicros: capital.toString(),
+          allocationCapitalMicros: capital.toString(),
+          buyingPowerMicros: capital.toString(),
+          priceMicros: { [symbol]: price.toString() },
+          maximumBuyQuantityAtoms: { [symbol]: capacity.toString() },
+          maximumSellQuantityAtoms: { [symbol]: '0' },
+        })
+        const input = {
+          ...baseInput,
+          precision: {
+            ...baseInput.precision,
+            quantityIncrementAtoms: increment.toString(),
+            minimumBuyNotionalMicros: '1',
+          },
+        }
+        const saved = JSON.stringify(input)
+        const planned = planSuccess(input)
+        expect(planned.status).toBe(TargetPlanStatus.Planned)
+        expect(planned.intentTargets).toHaveLength(1)
+        const quantity = BigInt(planned.intentTargets[0]?.quantityAtoms ?? '0')
+        const notional = (quantity * price + 999_999_999n) / 1_000_000_000n
+        expect(quantity).toBeGreaterThan(0n)
+        expect(quantity % increment).toBe(0n)
+        expect(quantity).toBeLessThanOrEqual(capacity)
+        expect(notional).toBeLessThanOrEqual(capital)
+        expect(planned.requiredReferenceBuyNotionalMicros).toBe(notional.toString())
+        expect(BigInt(planned.residualBuyingPowerMicros) + notional).toBe(capital)
+        expect(planSuccess(input)).toEqual(planned)
+        expect(JSON.stringify(input)).toBe(saved)
+        const tampered = { ...planned, requiredReferenceBuyNotionalMicros: (notional + 1n).toString() }
+        expect(Result.isFailure(decodeTargetPlanResult(tampered))).toBe(true)
+      },
+    ),
+  )
+})
+
+test('property: exhausted buying power and the exact cutoff cannot emit a buy intent', () => {
+  checkProperty(
+    'target-planner-submit-boundaries',
+    fc.property(fc.integer({ min: 1, max: 1_000_000 }), fc.integer({ min: 0, max: 60_000 }), (price, lateMs) => {
+      const options = {
+        quoteBound: true,
+        positions: [],
+        targetWeights: { AAPL: 1 },
+        priceMicros: { AAPL: String(BigInt(price) * 1_000_000n) },
+        equityMicros: '10000000000000',
+        allocationCapitalMicros: '10000000000000',
+      }
+      const noCash = planSuccess(fixture({ ...options, buyingPowerMicros: '0' }))
+      expect(noCash.status).toBe(TargetPlanStatus.Blocked)
+      expect(noCash.reason).toBe(TargetPlanReason.InsufficientBuyingPower)
+      expect(noCash.intentTargets).toEqual([])
+      const late = planSuccess(
+        fixture({
+          ...options,
+          maximumInputAgeMs: 600_000,
+          observedAt: new Date(Date.parse(submissionCutoffAt) + lateMs).toISOString(),
+        }),
+      )
+      expect(late.status).toBe(TargetPlanStatus.Blocked)
+      expect(late.reason).toBe(TargetPlanReason.SubmissionCutoffReached)
+      expect(late.intentTargets).toEqual([])
+    }),
+  )
+})
 
 describe('causal target planner', () => {
   test('permits an empty quote-bound no-trade plan only for a flat account without unresolved orders', () => {

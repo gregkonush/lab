@@ -614,9 +614,7 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
         ? Date.parse(session.submissionOpenAt)
         : Math.max(
             Date.parse(session.submissionOpenAt),
-            Date.parse(session.executionOpenAt) +
-              defaultJevProtocolDocument.lookbackMinutes * 60_000 +
-              defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
+            Date.parse(session.executionOpenAt) + 60_000 + defaultJevProtocolDocument.decisionDelaySeconds * 1_000,
           )
   const deadlineMs =
     session === null

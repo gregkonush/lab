@@ -15,6 +15,7 @@ import { JevObservationSchema } from './observation-contract'
 import { JevObservationCheck, JevObservationField } from './observation-diagnostics'
 import { jevPortfolioCandidates, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
+import { jevHistoryStartMs } from './observation-query'
 
 const invalidObservation = (
   observationCheck: JevObservationCheck,
@@ -85,7 +86,8 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         return yield* Result.fail(invalidObservation(JevObservationCheck.Topics))
       if (
         Date.parse(manifest.rangeEndAt) !== end ||
-        Date.parse(manifest.rangeStartAt) !== end - protocol.lookbackMinutes * 60_000
+        Date.parse(manifest.rangeStartAt) !==
+          jevHistoryStartMs(manifest.calendar, manifest.sessionDate, end, protocol.lookbackMinutes)
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Window))
       if (observed - end - protocol.decisionDelaySeconds * 1000 > protocol.maximumDecisionLagMs)
