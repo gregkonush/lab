@@ -53,7 +53,7 @@ test('reads a complete native session with exact microshares and an explicit IEX
     barCount: 390,
     sourceFeed: 'iex',
     finalizedAt: '2026-09-11T20:00:02.000Z',
-    volumeScope: 'IEX_RECORDED_SESSION_VOLUME',
+    volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME',
   })
   if (evidence === undefined) throw new Error('expected complete native evidence')
   expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)

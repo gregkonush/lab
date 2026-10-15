@@ -1,8 +1,9 @@
-import { equityMarketProfile } from '../jev/markets'
-import { isContinuousMarket } from '../market-hours'
+import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
+import { jevMarketForFeed } from '../jev/markets'
+import { isContinuousMarket, observationSession, continuousExecutionPolicy, type MarketHours } from '../market-hours'
 import { exchangeSessions } from '../market-hours'
 import { Effect, FileSystem, Result, Schema } from 'effect'
-import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca/model'
+import type { MarketCalendarSession } from '../broker/alpaca/model'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { EntryTimingReceiptSchema } from './entry-timing'
@@ -46,7 +47,8 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v4',
+  schemaVersion: 'bayn.matched-entry-definition.v5',
+  cryptoFees: cryptoTakerFeeSchedule,
   inventory:
     'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results.',
   sourceComparison: 'bayn.matched-model-input-material.v2',
@@ -56,7 +58,7 @@ export const matchedEntryDefinition = {
   pollIntervalMs: 5000,
   rules: ['JEV_FILTERED', 'DELAYED_MOMENTUM', 'IMMEDIATE_MOMENTUM'],
   lifecycle:
-    'One IOC entry; same whole-share budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute close window and persistent reducing IOC retries. No model management.',
+    'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
   comparison:
     'Immediate momentum starts at witnessed deterministic completion. Delayed momentum and Jev start at witnessed decision commitment. Selection is Jev minus delayed momentum; delay is delayed minus immediate; total is Jev minus immediate. Per-opportunity net micro-USD divided by the fixed budget. Include abstentions and unfilled entries as zero execution P&L; unknown model answers and unresolved lifecycles are missing, never zero.',
   costs:
@@ -130,10 +132,7 @@ export const MatchedStudyInputSchema = Schema.Struct({
 })
 export type MatchedRegistration = typeof MatchedRegistrationSchema.Type
 
-export const matchedCalendarSessions = (
-  registration: MatchedRegistration,
-  calendars: readonly MarketCalendarObservation[],
-) =>
+export const matchedCalendarSessions = (registration: MatchedRegistration, calendars: readonly MarketHours[]) =>
   Result.gen(function* () {
     const dates = registration.sessionDates
     const first = dates[0]
@@ -148,8 +147,32 @@ export const matchedCalendarSessions = (
       return yield* Result.fail(
         new SignalStudyFailure({ message: 'Registered sessions must be five unique ordered dates' }),
       )
+    if (calendars.some(isContinuousMarket)) {
+      if (!calendars.every(isContinuousMarket))
+        return yield* Result.fail(new SignalStudyFailure({ message: 'A frozen study must use one market schedule' }))
+      const hours = calendars[0]
+      if (hours === undefined) return yield* Result.fail(new SignalStudyFailure({ message: 'Missing market hours' }))
+      if (dates.some((date, index) => Date.parse(date) !== Date.parse(first) + index * 86_400_000))
+        return yield* Result.fail(
+          new SignalStudyFailure({
+            message: 'Continuous study requires five consecutive UTC observation days including weekends',
+          }),
+        )
+      if (
+        registration.dataRole === MatchedDataRole.Prospective &&
+        Date.parse(registration.registeredAt) >= Date.parse(first)
+      )
+        return yield* Result.fail(
+          new SignalStudyFailure({ message: 'Prospective registration must precede the first observation day' }),
+        )
+      return dates.flatMap((date) => {
+        const session = observationSession(hours, date)
+        return session === undefined ? [] : [session]
+      })
+    }
+    const exchangeCalendars = calendars.filter((calendar) => !isContinuousMarket(calendar))
     const sessions = new Map<string, MarketCalendarSession>()
-    for (const calendar of calendars) {
+    for (const calendar of exchangeCalendars) {
       for (const session of calendar.sessions) {
         if (session.date < first || session.date > last) continue
         const existing = sessions.get(session.date)
@@ -159,7 +182,7 @@ export const matchedCalendarSessions = (
       }
     }
     const scheduled = [...sessions.values()].sort((a, b) => a.date.localeCompare(b.date))
-    for (const calendar of calendars) {
+    for (const calendar of exchangeCalendars) {
       const present = new Set(calendar.sessions.map((session) => session.date))
       if (
         scheduled.some(
@@ -175,7 +198,7 @@ export const matchedCalendarSessions = (
     }
     // Continuous query coverage proves that intervening dates are closed, rather than unobserved.
     let coveredUntilMs = Date.parse(first)
-    for (const range of calendars
+    for (const range of exchangeCalendars
       .map((calendar) => calendar.requestedRange)
       .sort((a, b) => a.start.localeCompare(b.start))) {
       if (Date.parse(range.start) > coveredUntilMs) break
@@ -461,12 +484,7 @@ export const runMatchedEntryStudy = (
     const scheduled = yield* Effect.fromResult(
       matchedCalendarSessions(
         registration,
-        batches
-          .map((batch) => batch.snapshot.manifest.calendar)
-          .filter(
-            (calendar): calendar is import('../broker/alpaca/model').MarketCalendarObservation =>
-              !isContinuousMarket(calendar),
-          ),
+        batches.map((batch) => batch.snapshot.manifest.calendar),
       ),
     )
     const inventories = new Set<string>()
@@ -649,7 +667,7 @@ export const runMatchedEntryStudy = (
           const reproduced = yield* Effect.fromResult(
             constructSimulatedSnapshot(yield* source.cursor, source.source, {
               ...manifest,
-              universe: equityMarketProfile.universe,
+              universe: jevMarketForFeed(manifest.feed).universe,
             }),
           )
           const expected = yield* Effect.fromResult(canonicalHashV1Result(matchedObservationMaterial(batch.snapshot)))
@@ -697,8 +715,15 @@ export const runMatchedEntryStudy = (
           assumptions: input.study.assumptions,
           entryBudgetMicros: matchedEntryDefinition.budgetMicros,
           decidedAtMs: Date.parse(at),
-          cutoffMs: Date.parse(session.closeAt) - 5 * 60_000,
-          closeMs: Date.parse(session.closeAt),
+          cutoffMs: isContinuousMarket(manifest.calendar)
+            ? Number.POSITIVE_INFINITY
+            : Date.parse(session.closeAt) - 5 * 60_000,
+          closeMs: isContinuousMarket(manifest.calendar)
+            ? Date.parse(at) +
+              registration.latencyMs +
+              batch.observation.protocol.maximumHoldingMinutes * 60_000 +
+              continuousExecutionPolicy.closeRecoveryMs
+            : Date.parse(session.closeAt),
         }
         const event = (kind: MatchedEvent, atMs: number) =>
           add(
@@ -774,7 +799,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v4',
+      schemaVersion: 'bayn.matched-entry-study.v5',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,
