@@ -1191,9 +1191,10 @@ describePostgres('PostgreSQL execution persistence', () => {
           )
           yield* journal(journalControl).post(regulatoryPlan)
           yield* sql`UPDATE broker_fee_accounting SET posted_at=${sellAt} WHERE activity_id=${regulatory.activityId}`
-          yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }).pipe(
-            Effect.provide(NodeServices.layer),
-          )
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 108))),
+            table: 'schema_migrations',
+          }).pipe(Effect.provide(NodeServices.layer))
         }
         expect(
           (yield* readFeeAccruals(sql, accountId, config.tigerBeetle))
@@ -1260,9 +1261,10 @@ describePostgres('PostgreSQL execution persistence', () => {
             )
             yield* journal(journalControl).post(originalPlan)
             yield* sql`UPDATE broker_fee_accounting SET posted_at=${sellAt} WHERE activity_id=${partial.value.activityId}`
-            yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }).pipe(
-              Effect.provide(NodeServices.layer),
-            )
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 108))),
+              table: 'schema_migrations',
+            }).pipe(Effect.provide(NodeServices.layer))
           } else {
             expect(
               yield* fence

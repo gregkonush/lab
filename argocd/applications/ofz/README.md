@@ -34,8 +34,8 @@ CNPG generates `ofz-db-app`. The SpiceDB operator reads its `uri` key directly. 
 verify PostgreSQL's TLS certificate with `ofz-db-ca`. `track_commit_timestamp=on` enables the SpiceDB Watch API.
 
 The WAL buffer is 16 MiB, matching one WAL segment. Forced archive switches pad the segment, so a smaller buffer can
-cause repeated buffer evictions and small writes while authorization commits wait. `open_datasync` uses synchronous
-WAL writes; same-volume `pg_test_fsync` measurements favored it over `fdatasync`. WAL I/O timing is enabled for live
+cause repeated buffer evictions and small writes while authorization commits wait. `fdatasync` lets the primary and
+standbys batch WAL writes before their durable flush. WAL I/O timing is enabled for live
 readback through `pg_stat_io`. PostgreSQL still requires `fsync`, full-page writes and one synchronous standby.
 Changing `wal_buffers` requires a CNPG rolling restart and switchover; verify all three instances, replication and
 actual authenticated app requests after reconciliation. Reverting these parameters through Git follows the same

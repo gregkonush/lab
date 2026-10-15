@@ -11,12 +11,12 @@ adapter blocks observations. ClickHouse remains the historical archive and does 
 
 The initial retained-data probe consumed 905,542 records across all 22 partitions in 223 seconds on the slower worker, with no rejections and exact feature matches for all strategy symbols and SPY. The five-minute budget bounds catch-up; normal calendar, exact-window, and quote-freshness checks still run after it.
 
-A replacement consumer captures partition bounds and rebuilds the required 30-minute window before serving entry inputs.
-This is a retained-history catch-up, not a new 30-minute wait after each process starts. Jev's first eligible window
-ends 30 minutes after that exchange session opens, with the existing two-second decision delay; its separate
-warmup is zero. Later worker replacements can use already-published regular-session history as soon as catch-up and
-the existing snapshot checks succeed. Original ingestion/computation times and actual replacement-consumer receipt
-times remain distinct. Premarket bars, prior-day bars, and backdated REST recovery cannot substitute for this window.
+A replacement consumer captures partition bounds and rebuilds actual retained history before serving entry inputs.
+The current strategy uses at most 30 minutes of context and requires the latest completed minute, a matching native
+feature and fresh quotes. It has no 30-bar or contiguous-history admission gate. Equities can first evaluate one
+minute and two seconds after the broker open; crypto uses its current completed history continuously. Missing older
+minutes remain visible gaps. Historical backfills keep their real ingestion and replacement-consumer receipt times.
+Premarket, prior-session, non-final, future and fabricated bars cannot substitute for current session evidence.
 Liquidation snapshots require the quote topic's complete partition cut and a fresh verified quote for each held
 symbol, independently of bar/feature history catch-up. They preserve the full captured partition evidence and replay
 through the same verification path. Non-quote rejections do not block liquidation; quote rejections, missing or stale
@@ -384,19 +384,16 @@ authority. The full-session command still requires a fresh database; it does not
 
 ## Bar publication timing
 
-New live and simulated cuts bind `barPublicationPolicy: timely-equivalent-revision.v1`. Original minute bars allow
-60 seconds to finalize plus 10 seconds for publication; `updatedBars` allow the provider's following half-minute
-correction, or 90 seconds plus 10 seconds. Both include the existing five-second clock allowance. This follows
-[Alpaca's updated-bar timing](https://docs.alpaca.markets/us/docs/real-time-stock-pricing-data). These limits are
-independent of `maximumQuoteAgeMs`; executable quote freshness is unchanged.
+Live and simulated cuts bind `barPublicationPolicy: observed-completed-history.v1`. Only the latest completed
+minute retains the publication deadline: 60 seconds to finalize plus 10 seconds for publication, or 90 seconds plus
+10 seconds for an `updatedBars` correction, with the existing five-second clock allowance. Historical finalized
+minutes can arrive through recovery before the decision. Their actual arrival times remain part of the immutable cut.
+Executable quote and trade freshness is unchanged.
 
-The latest bar revision still has to match the exact rolling feature's coordinates and content hash. If consecutive
-revisions have identical market values and identity, the projection retains the first publication as a timing witness,
-including after normal revision-history eviction. The snapshot binds its row, receipt, availability and source cut.
-A changed price, volume, VWAP or trade count starts a new publication history and must meet its own timing limit.
-Reconstruction verifies both deliveries and rejects altered, future or out-of-cut witnesses. The additional retained
-witness is bounded to one per bar revision. Cuts without the policy marker retain the legacy quote-linked timing
-rule and omit publication witnesses; archived snapshot contracts are unchanged.
+Every selected bar revision must match the native feature's exact coordinates and content hash. Equivalent revisions
+retain their original publication witness; changed market values start a new history. Reconstruction verifies both
+actual deliveries and rejects altered, premature, future or out-of-cut evidence. Retired policy markers are rejected;
+there is no alternate legacy timing path.
 
 ## Replay close and coverage acceptance
 

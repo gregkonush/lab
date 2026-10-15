@@ -65,7 +65,7 @@ at-least-once JDBC sink. Kafka retains seven days; ClickHouse retains thirty day
 Roll out the Kafka topic first. The Torghut schema hook creates the table, and the existing `signal_publisher` user
 receives `INSERT` on that table. Reviewed image publication and Kargo promotion then deliver the archive and producer.
 The production credentials remain in the existing secret references. To prove ingestion, compare native Kafka
-records with ClickHouse rows by source coordinates and check both pairs, all channels, exact payloads, and timestamp
+records with ClickHouse rows by source coordinates and check BTC/USD, ETH/USD, and SOL/USD, all channels, exact payloads, and timestamp
 precision. Readiness and a completed checkpoint alone do not prove this path.
 
 The shared synthetic fixture is `fixtures/alpaca-crypto-v1.json`. `ForwarderCryptoTest` drives real local equity and
@@ -88,14 +88,20 @@ feature definition does not derive indicators from those channels.
 beginning on its first deployment. Its own source, keyed state, and sink IDs preserve the currently deployed equity
 graph's checkpoint identities. The branch adds no Flink deployment or brokerage account.
 
-`dorvud.crypto-continuous-1m.v1` runs across UTC midnight, weekends, and holidays. Recursive indicators keep their
+`dorvud.crypto-continuous-1m.v2` runs across UTC midnight, weekends, and holidays. Messages use
+`dorvud.crypto-market-feature.v2`. Their direct `priceWindow` contains exact decimal price and fractional volume
+values from actual observed bars in the latest 30-minute context. The first real completed bar is sufficient;
+missing historical minutes do not delay this price feature or create a 30-bar admission requirement.
+
+Recursive indicators keep their
 original seed as the bounded bar buffer advances. The last 61 canonical bars remain correctable; older corrections
 are rejected and counted, while their raw records remain retained. A missing minute resets recursive warmup and makes
-affected rolling windows unavailable. No missing bars are invented. Newer native updated bars replace their minute
+affected optional technical values `WARMING` or `GAP` according to their own lookback. The observed `priceWindow`
+remains available through historical gaps. No missing bars are invented. Newer native updated bars replace their minute
 by ingestion nanoseconds and then Kafka partition/offset, recomputing the current feature. Checkpoints retain the
 recursive seed, canonical bars, hash chain, and last emitted semantic ID.
 
-Feature messages contain readiness for each value, exact decimal rolling OHLC and fractional volume, technical
+Feature messages contain readiness for each optional technical value, exact decimal observed price/volume values, technical
 scalars in integer-string micros or ppm, actual computation time, producer revision, and raw source references.
 Each reference binds nanosecond event/ingestion time, Kafka coordinates, and a native JSON content hash. A history
 hash chain binds earlier canonical inputs that contribute to the recursive seed. The feature ID hashes canonical
@@ -105,10 +111,11 @@ The archive consumes the derived topic with `ARCHIVE_CRYPTO_FEATURES_TOPIC`, val
 availability, and hashes, and writes the original message to `signal.crypto_market_features_v1`. The existing
 `signal_publisher` identity receives only `INSERT` on the new table. Derived Kafka messages retain seven days and
 ClickHouse retains thirty days. Readers deduplicate at-least-once retries by derived topic, partition, and offset,
-using `FINAL` for the replicated replacing table.
+using `FINAL` for the replicated replacing table. The topic and table keep their existing names; their native
+feature payload must satisfy v2. Retired v1 feature payloads are not emitted or decoded.
 
 Roll out the feature topic, then the schema/grant, then the Kargo-promoted TA and archive images. Acceptance requires
-actual derived Kafka messages for both pairs, raw-input joins and feature recomputation, exact ClickHouse payloads
+actual derived Kafka messages for BTC/USD, ETH/USD, and SOL/USD, raw-input joins and feature recomputation, exact ClickHouse payloads
 on both replicas, and completed checkpoints after savepoint restore. A ready Pod or raw archive row does not prove
 the derived path.
 
