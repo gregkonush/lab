@@ -550,6 +550,8 @@ describe('position episodes', () => {
       gapRequestCount: 0,
       completeMeteredCoverage: true,
       exactSessionLedger: true,
+      ledgerTimestampMax: '1791050000000000000',
+      verifiedSessionTransferCount: 1,
       invoiceReconciled: false,
     }
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), [expense]))

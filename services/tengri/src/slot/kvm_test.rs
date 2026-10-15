@@ -631,8 +631,9 @@ impl TerminalProbe {
         .await
         .with_context(|| {
             format!(
-                "probe marker {:?} timed out",
-                String::from_utf8_lossy(marker)
+                "probe marker {:?} timed out; terminal output tail: {:?}",
+                String::from_utf8_lossy(marker),
+                self.output.diagnostic_tail()
             )
         })?
     }
@@ -799,9 +800,14 @@ async fn uring_workers() -> anyhow::Result<usize> {
 
 async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
     let mut terminal = TerminalProbe::open(rpc, "fixture-disk-error").await?;
+    // Start the privileged probe before faulting the guest home.
+    terminal
+        .input(b"exec sudo -n /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -c 'printf \"\\036TENGRI_ROOT_READY\\037\"; exec /bin/bash --noprofile --norc -i'\n")
+        .await?;
+    terminal.marker(b"\x1eTENGRI_ROOT_READY\x1f").await?;
     // Quiesce home writers so an outstanding write cannot extend the truncated fixture disk.
     terminal
-        .input(b"cd / && sudo -n fsfreeze -f /workspace && printf '\\036TENGRI_DISK_READY\\037'\n")
+        .input(b"cd / && test \"$EUID\" -eq 0 && fsfreeze -f /home/nanoagent && printf '\\036TENGRI_DISK_READY\\037'\n")
         .await?;
     terminal.marker(b"\x1eTENGRI_DISK_READY\x1f").await?;
     // Fault only the disposable fixture disk, after continuity and browser acceptance.
@@ -811,7 +817,7 @@ async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
         .await?
         .set_len(0)
         .await?;
-    terminal.input(b"LC_ALL=C sudo -n /usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
+    terminal.input(b"/usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && /usr/bin/grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else /usr/bin/cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
     terminal.marker(b"\x1eTENGRI_DISK_ERROR_OK\x1f").await?;
     terminal.ping().await?;
     Ok(())

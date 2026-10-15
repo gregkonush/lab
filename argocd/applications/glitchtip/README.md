@@ -21,6 +21,9 @@ The official Helm chart is pinned to 9.0.1 and the app to 6.2.6.
   metrics, logs, and distributed traces.
 - The upstream migration Job has Helm hook annotations replaced with an Argo CD
   sync hook; CNPG, secret material, migrations, web, and ingress run in order.
+  The upstream chart **does not copy `extraEnvVars` to the migration Job**.
+  Keep `migrationJob.extraEnvVars.VALKEY_URL` empty as well as the web value,
+  or Django omits the `db` task-queue and `sessions` migration apps.
 
 ## Delivery and verification
 
@@ -30,7 +33,10 @@ The official Helm chart is pinned to 9.0.1 and the app to 6.2.6.
 3. Check `kubectl -n glitchtip get cluster,pods,job,ingress,externalsecret`
    and that both ExternalSecrets report `Ready=True` (never print Secret data).
 4. Confirm `glitchtip-migrate` succeeds and `glitchtip-web` has two healthy pods.
-   Test `/_health/` over the tailnet and verify the registration/login page.
+   Also run `python manage.py showmigrations db sessions` inside a web pod and
+   verify **all** migrations are applied. A successful migration Job alone is
+   insufficient: it can omit backend-specific migrations if its environment
+   differs from the web pods. Test `/_health/` and the registration/login page.
 5. Send a one-time SMTP test to the **existing** operations recipient using
    Django `send_mail`, then confirm provider delivery without printing emails
    or credentials. Rotate nothing and send to no new destination.
