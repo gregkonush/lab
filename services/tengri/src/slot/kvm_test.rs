@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -629,7 +629,12 @@ impl TerminalProbe {
             }
         })
         .await
-        .context("probe marker timed out")?
+        .with_context(|| {
+            format!(
+                "probe marker {:?} timed out",
+                String::from_utf8_lossy(marker)
+            )
+        })?
     }
 
     async fn message(&mut self) -> anyhow::Result<Option<proto::TerminalOutput>> {
@@ -684,7 +689,7 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     terminal.input(b"\x1b:qall!\r").await?;
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
     let cpu_before = fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?;
-    let io_before = fs::read_to_string("/sys/fs/cgroup/io.pressure").await?;
+    let io_before = optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await;
     terminal.input(b"timeout 8s sh -c 'while :; do dd if=/dev/zero of=/workspace/.tengri-kvm-io bs=1M count=16 conv=fdatasync status=none || exit 1; done' >/tmp/tengri-kvm-io.log 2>&1 & TENGRI_IO=$!; printf '\\036TENGRI_IO_READY\\037'; wait \"$TENGRI_IO\"; TENGRI_IO_RESULT=$?; rm -f /workspace/.tengri-kvm-io; printf '\\036TENGRI_IO_END_%s\\037' \"$TENGRI_IO_RESULT\"\n").await?;
     terminal.marker(b"\x1eTENGRI_IO_READY\x1f").await?;
     let mut heartbeats = Vec::with_capacity(50);
@@ -703,7 +708,7 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
         "heartbeatSamples":50,"heartbeatP95Ms":p95_ms,"heartbeatMaxMs":heartbeats[49],
         "heartbeatMs":heartbeats,"peakUringWorkers":peak_workers,"workerCgroupVerified":true,"pidsMax":pids_limit.trim().parse::<u64>()?,
         "cpuBefore":cpu_before,"cpuAfter":fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?,
-        "ioBefore":io_before,"ioAfter":fs::read_to_string("/sys/fs/cgroup/io.pressure").await?,
+        "ioBefore":io_before,"ioAfter":optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await,
         "storageActivity":"eight seconds of repeated 16 MiB guest writes with fdatasync on the fixture home disk"
     });
     eprintln!("real KVM responsiveness: {responsiveness}");
@@ -734,6 +739,23 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
         })
         .await?;
     Ok(responsiveness)
+}
+
+async fn optional_counter(path: &Path) -> serde_json::Value {
+    match fs::read_to_string(path).await {
+        Ok(value) => json!({ "value": value }),
+        Err(error) => json!({
+            "unavailable": { "kind": format!("{:?}", error.kind()), "message": error.to_string() }
+        }),
+    }
+}
+
+#[tokio::test]
+async fn missing_optional_counter_reports_its_absence_without_failing() {
+    let path = std::env::temp_dir().join(format!("tengri-missing-psi-{}", uuid::Uuid::new_v4()));
+    let diagnostic = optional_counter(&path).await;
+    assert_eq!(diagnostic["unavailable"]["kind"], "NotFound");
+    assert!(diagnostic["unavailable"]["message"].is_string());
 }
 
 async fn uring_workers() -> anyhow::Result<usize> {
