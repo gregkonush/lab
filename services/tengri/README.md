@@ -151,8 +151,10 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 
 ## Transport and workload identity
 
-Controller renewal timeouts retry only within the last confirmed lease deadline. Ownership loss or a returned error
-closes authority immediately; late renewal replies cannot revive expired authority.
+Controller renewal keeps one in-flight attempt after its two-second warning threshold. Authority still ends at the
+last confirmed lease deadline while that attempt finishes. A successful reply extends authority from the attempt's
+start, so a slow response cannot overstate the database lease. Ownership loss or a returned error closes authority
+immediately; late renewal replies cannot revive expired authority.
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
 SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
