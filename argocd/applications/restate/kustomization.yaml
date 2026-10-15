@@ -4,7 +4,7 @@ namespace: restate
 images:
 - name: restate-runtime
   newName: registry.ide-newton.ts.net/lab/restate
-  digest: sha256:d66f66ae8e2bbfe23070de118745f3ae08b67272ffb11f66c93f0c404b142385
+  digest: sha256:6ee43e6b4ad369158baed70b1028ddbc2945ab3d8fe78df8f3abf3e14f3076c8
 resources:
 - serviceaccount.yaml
 - request-identity-sealedsecret.yaml
