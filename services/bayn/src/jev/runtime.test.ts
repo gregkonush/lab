@@ -42,6 +42,8 @@ const scenario = (
     readonly brokerEvidenceAgeMs?: number
     readonly interruptionDelayMs?: number
     readonly expiredObservation?: boolean
+    readonly entryCutoffAt?: string
+    readonly modelExit?: boolean
   } = {},
 ) => {
   const fixture = nativeJevFixture(JevPurpose.Manage, options.observedAt ?? '2026-09-04T14:30:32.000Z')
@@ -107,6 +109,10 @@ const scenario = (
   }
   const cycle: AutonomousCycle = {
     ...fixture.draft,
+    window: {
+      ...fixture.draft.window,
+      submissionCutoffAt: options.entryCutoffAt ?? fixture.draft.window.submissionCutoffAt,
+    },
     state: CycleState.Active,
     bindings: {},
     stateVersion: 1,
@@ -223,7 +229,9 @@ const scenario = (
                     }),
                   ),
                 )
-              const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () => 'hold')
+              const result = nativeJevBatchResult(plan, fixture.observation.payload.observedAt, () =>
+                options.modelExit ? 'exit' : 'hold',
+              )
               if (options.inferenceDelayMs !== undefined) yield* TestClock.adjust(options.inferenceDelayMs)
               return { plan, result }
             })
@@ -271,6 +279,21 @@ const scenario = (
 }
 
 describe('Jev management observation admission', () => {
+  test('continues model management after the entry deadline while the position hold remains valid', async () => {
+    const check = scenario({ consumed: false, completedHold: true, entryCutoffAt: '2026-09-04T14:30:00.000Z' })
+    expect(await check.run()).toMatchObject({ _tag: 'Wait', details: { waitReason: 'JEV_POSITION_HELD' } })
+    expect(check.calls.signal).toBe(1)
+  })
+  test('commits a model exit after the entry deadline within the same execution session', async () => {
+    const check = scenario({
+      consumed: false,
+      completedHold: true,
+      modelExit: true,
+      entryCutoffAt: '2026-09-04T14:30:00.000Z',
+    })
+    expect(await check.run()).toMatchObject({ _tag: 'Exit', target: { reason: JevExitReason.Model } })
+    expect(check.calls.signal).toBe(1)
+  })
   test.each([
     ['consumed signal', {}, 'SIGNAL_WINDOW_OBSERVED'],
     ['pending inference', { pending: true }, 'DECISION_PENDING'],

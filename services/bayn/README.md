@@ -315,6 +315,11 @@ for interpreting and persisting broker history.
 
 ## Active strategy
 
+Entry and position-management observations share the native Jev reader and declare their purpose. New entries
+must meet the cycle's submission deadline. Management of an already filled position remains valid after that
+deadline and within the execution session; it retains the original fill-based holding deadline, freshness checks,
+and the controller's forced-close window. This includes continuous crypto cycles whose entry lease lasts one minute.
+
 Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
 indicators, quotes, benchmark relationships and actual position context. Bayn computes quantities, cost basis,
 holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
