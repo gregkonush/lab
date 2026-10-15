@@ -86,6 +86,7 @@ const evidence = (
   unresolvedMutationCount: 0,
   unclosedCycleCount: 0,
   openPositionCount: 0,
+  accountPositionCounts: { postgres: overrides.openPositionCount ?? 0, ledger: overrides.openPositionCount ?? 0 },
   ...overrides,
 })
 
@@ -231,6 +232,21 @@ describe('position episodes', () => {
         ),
       ),
     ).toMatchObject({ status: 'MEASURED', completedCount: 2, openCount: 0 })
+  })
+
+  test('requires a cumulative inventory boundary and retains disagreement with either independent count', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const input = evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })
+    const { accountPositionCounts: _counts, ...missing } = input
+    for (const value of [
+      missing,
+      { ...input, accountPositionCounts: { postgres: 1, ledger: 0 } },
+      { ...input, accountPositionCounts: { postgres: 0, ledger: 1 } },
+    ])
+      expect(success(measurePositionEpisodes(value))).toMatchObject({
+        status: 'UNDETERMINED',
+        reason: PositionEpisodeReason.ReconciliationGap,
+      })
   })
 
   test('rejects a coin debit bound to a previous gross-flat episode', () => {

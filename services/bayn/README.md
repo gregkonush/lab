@@ -1094,6 +1094,8 @@ change the immutable per-generation receipt schema.
 Position episode evidence uses `bayn.position-episode-evidence.v2`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
 provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
+Episode validation compares an independent cumulative PostgreSQL quantity-and-cost projection with ledger inventory;
+the existing generation-scoped financial position count retains its current meaning. Either disagreement blocks measurement.
 Missing coin-fee history, unmatched activities with only a trading date, ambiguous ordering, or inconsistent quantities
 leave episode counts `UNDETERMINED`. Fee receipt allocation does not establish an individual trade's origin.
 Measured episode counts do not remove financial settlement uncertainty or qualify profitability.

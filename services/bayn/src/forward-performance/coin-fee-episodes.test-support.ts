@@ -8,7 +8,7 @@ import { canonicalHashV1 } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 
 // Synthetic fractional fills and observed debit; these are not account or profitability evidence.
-export const coinRoundTrip = (offset = 0, accountId = 'episode-account') => {
+export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId = 'f'.repeat(64)) => {
   const accounting = [
     { index: 1, side: OrderSide.Buy, quantityAtoms: '33050000' },
     { index: 3, side: OrderSide.Sell, quantityAtoms: '32967375' },
@@ -49,7 +49,7 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account') => {
         accountId: buy.accountId,
         symbol: buy.symbol,
         date: '2026-09-18',
-        cycleId: 'f'.repeat(64),
+        cycleId,
         positionSnapshotId: 'a'.repeat(64),
         observedAt: `2026-09-18T15:30:${String(2 + offset).padStart(2, '0')}.000Z`,
         projectedQuantityAtoms: buy.quantityAtoms,

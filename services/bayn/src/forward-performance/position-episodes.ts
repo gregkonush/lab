@@ -87,6 +87,7 @@ export const measurePositionEpisodes = (
       missingLedgerAccountCount: input.missingLedgerAccountCount,
       unresolvedMutationCount: input.unresolvedMutationCount,
       openPositionCount: input.openPositionCount,
+      accountPositionCounts: input.accountPositionCounts ?? null,
       history: ordered,
       accountFeeAccruals:
         input.accountFeeAccruals === undefined
@@ -277,7 +278,12 @@ export const measurePositionEpisodes = (
           whollyInScope,
         })
     }
-    if (positions.size !== input.openPositionCount)
+    const positionCounts = input.accountPositionCounts
+    if (
+      positionCounts === undefined
+        ? hasCrypto || positions.size !== input.openPositionCount
+        : positions.size !== positionCounts.postgres || positions.size !== positionCounts.ledger
+    )
       return unavailable(PositionEpisodeReason.ReconciliationGap, evidenceHash)
     let openCount = 0
     for (const position of positions.values()) {
