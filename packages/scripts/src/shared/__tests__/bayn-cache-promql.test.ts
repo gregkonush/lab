@@ -47,7 +47,7 @@ type DashboardPanel = MetricPanel | { readonly type: 'row'; readonly panels: rea
 const metricPanels = (panels: readonly DashboardPanel[]): readonly MetricPanel[] =>
   panels.flatMap((panel) => (panel.type === 'row' ? metricPanels(panel.panels) : [panel]))
 
-test('Bayn dashboard requires both replica observations and retains buffer-pin waits', () => {
+test('Bayn dashboard evaluates replica health, telemetry freshness, waits and operation outcomes with native PromQL', () => {
   const manifest = YAML.parse(
     readFileSync(
       new URL(
@@ -65,7 +65,12 @@ test('Bayn dashboard requires both replica observations and retains buffer-pin w
     .flatMap((panel) => panel.targets)
     .find((target) => target.legendFormat === 'Replica link')?.expr
   const waits = panels.find((panel) => panel.title === 'Database I/O and lock waits')?.targets[0]?.expr
-  if (replica === undefined || waits === undefined) throw new Error('Required Bayn dashboard query is missing')
+  const failures = panels.find((panel) => panel.title === 'Operation failures per second')?.targets[0]?.expr
+  const setLatency = panels
+    .flatMap((panel) => panel.targets)
+    .find((target) => target.legendFormat === 'SET command')?.expr
+  if (replica === undefined || waits === undefined || failures === undefined || setLatency === undefined)
+    throw new Error('Required Bayn dashboard query is missing')
   const cacheSeries = (metric: string, pod: string, value: number) => ({
     series: `${metric}{job="bayn-valkey",namespace="bayn",pod="${pod}"}`,
     values: `${value}+0x10`,
@@ -119,6 +124,104 @@ test('Bayn dashboard requires both replica observations and retains buffer-pin w
           { labels: bufferPin, value: 2 },
           { labels: walSync, value: 1 },
         ],
+      },
+    ],
+  })
+  const source = 'a'.repeat(40)
+  const bindSource = (query: string) =>
+    query.replaceAll('$source_revision', source).replaceAll('$__rate_interval', '2m')
+  for (const [service, legend] of [
+    ['bayn', 'API data'],
+    ['bayn-execution-controller', 'Worker data'],
+  ]) {
+    const heartbeat = panels.flatMap((panel) => panel.targets).find((target) => target.legendFormat === legend)?.expr
+    if (heartbeat === undefined) throw new Error(`Missing ${legend} query`)
+    for (const observation of [
+      { name: 'five seconds ahead remains within clock tolerance', offsets: [0, 5], expected: 2 },
+      { name: 'future-dated heartbeat is rejected', offsets: [0, 6], expected: 1 },
+      { name: 'stale heartbeat is rejected', offsets: [0, -90], expected: 1 },
+      { name: 'missing telemetry remains unknown', offsets: [], expected: null },
+    ]) {
+      tests.push({
+        name: `${service}: ${observation.name}`,
+        interval: '1m',
+        input_series: [
+          ...observation.offsets.map((offset, index) => ({
+            series: `bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="${service}",source_revision="${source}",pod="pod-${index}"}`,
+            values: `${600 + offset}+0x10`,
+          })),
+          {
+            series: `bayn_telemetry_heartbeat_timestamp_seconds{namespace="bayn",service="${service}",source_revision="${'b'.repeat(40)}",pod="old-source"}`,
+            values: '600+0x10',
+          },
+        ],
+        promql_expr_test: [
+          {
+            expr: bindSource(heartbeat),
+            eval_time: '10m',
+            exp_samples: observation.expected === null ? [] : [{ labels: '{}', value: observation.expected }],
+          },
+        ],
+      })
+    }
+  }
+  tests.push({
+    name: 'failed and interrupted dependencies remain visible without successful or old-source operations',
+    interval: '1m',
+    input_series: [
+      {
+        series: `bayn_operation_duration_seconds_count{namespace="bayn",service="bayn",source_revision="${source}",dependency="postgres",outcome="failed"}`,
+        values: '0+1x10',
+      },
+      {
+        series: `bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",source_revision="${source}",dependency="restate",outcome="interrupted"}`,
+        values: '0+2x10',
+      },
+      {
+        series: `bayn_operation_duration_seconds_count{namespace="bayn",service="bayn",source_revision="${source}",dependency="postgres",outcome="succeeded"}`,
+        values: '0+100x10',
+      },
+      {
+        series: `bayn_operation_duration_seconds_count{namespace="bayn",service="bayn",source_revision="${'b'.repeat(40)}",dependency="valkey",outcome="failed"}`,
+        values: '0+50x10',
+      },
+    ],
+    promql_expr_test: [
+      {
+        expr: bindSource(failures),
+        eval_time: '10m',
+        exp_samples: [
+          { labels: '{dependency="postgres",outcome="failed"}', value: 1 / 60 },
+          { labels: '{dependency="restate",outcome="interrupted"}', value: 2 / 60 },
+        ],
+      },
+    ],
+  })
+  tests.push({
+    name: 'SET latency is measured independently of the enclosing write and failed commands',
+    interval: '1m',
+    input_series: [
+      ...[
+        { le: '0.5', increment: 9 },
+        { le: '+Inf', increment: 10 },
+      ].map(({ le, increment }) => ({
+        series: `bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn",source_revision="${source}",stage="bayn.valkey.set",outcome="succeeded",le="${le}"}`,
+        values: `0+${increment}x10`,
+      })),
+      {
+        series: `bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn",source_revision="${source}",stage="bayn.valkey.write",outcome="succeeded",le="+Inf"}`,
+        values: '0+100x10',
+      },
+      {
+        series: `bayn_operation_duration_seconds_bucket{namespace="bayn",service="bayn",source_revision="${source}",stage="bayn.valkey.set",outcome="failed",le="+Inf"}`,
+        values: '0+100x10',
+      },
+    ],
+    promql_expr_test: [
+      {
+        expr: bindSource(setLatency),
+        eval_time: '10m',
+        exp_samples: [{ labels: '{stage="bayn.valkey.set"}', value: 0.5 }],
       },
     ],
   })

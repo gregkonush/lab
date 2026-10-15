@@ -252,7 +252,7 @@ data:
             "w": 8,
             "h": 3
           },
-          "description": "API processes with a heartbeat newer than 90 seconds. Expected 2. A partial rollout remains visible.",
+          "description": "API processes with a heartbeat newer than 90 seconds. Expected 2. A partial rollout remains visible. Heartbeats more than five seconds ahead of the collector clock are rejected.",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -303,7 +303,7 @@ data:
                 "type": "prometheus",
                 "uid": "prom"
               },
-              "expr": "count((time() - bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"}) < 90)",
+              "expr": "count((bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"} > time() - 90) and (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"} <= time() + 5))",
               "legendFormat": "API data",
               "range": false,
               "instant": true,
@@ -344,7 +344,7 @@ data:
             "w": 8,
             "h": 3
           },
-          "description": "Execution workers with a heartbeat newer than 90 seconds. Expected 2.",
+          "description": "Execution workers with a heartbeat newer than 90 seconds. Expected 2. Heartbeats more than five seconds ahead of the collector clock are rejected.",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -395,7 +395,7 @@ data:
                 "type": "prometheus",
                 "uid": "prom"
               },
-              "expr": "count((time() - bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"}) < 90)",
+              "expr": "count((bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} > time() - 90) and (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"} <= time() + 5))",
               "legendFormat": "Worker data",
               "range": false,
               "instant": true,
@@ -1279,7 +1279,7 @@ data:
             "w": 12,
             "h": 7
           },
-          "description": "Read includes queueing and reconnect. Write includes SET and the full replica acknowledgement loop. Replica acknowledgement is a child of write. Percentiles are histogram estimates and need enough traffic.",
+          "description": "Read includes queueing and reconnect. Write includes SET and the full replica acknowledgement loop. SET and replica acknowledgement are separate child measurements. Do not add nested durations. Percentiles are histogram estimates and need enough traffic.",
           "fieldConfig": {
             "defaults": {
               "unit": "s",
@@ -1344,6 +1344,19 @@ data:
               },
               "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "Replica acknowledgement",
+              "range": true,
+              "instant": false,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "D",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "expr": "histogram_quantile(0.95, sum by(le,stage) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "SET command",
               "range": true,
               "instant": false,
               "interval": "30s",
@@ -1837,6 +1850,78 @@ data:
                 },
                 "overrides": []
               },
+              "options": {
+                "legend": {
+                  "showLegend": true,
+                  "displayMode": "list",
+                  "placement": "bottom",
+                  "calcs": []
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "id": 130,
+              "title": "Operation failures per second",
+              "type": "timeseries",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
+              "gridPos": {
+                "x": 0,
+                "y": 47,
+                "w": 24,
+                "h": 8
+              },
+              "description": "Failed and interrupted named operations, grouped by dependency. Parent and child failures can describe the same request. Counters begin with their first event. Check freshness above when the chart has no samples.",
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ops",
+                  "noValue": "Unknown",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 4,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "axisLabel": "",
+                    "axisPlacement": "auto",
+                    "axisBorderShow": false,
+                    "scaleDistribution": {
+                      "type": "linear"
+                    },
+                    "hideFrom": {
+                      "legend": false,
+                      "tooltip": false,
+                      "viz": false
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "prom"
+                  },
+                  "expr": "sum by(dependency,outcome) (rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",outcome=~\"failed|interrupted\"}[$__rate_interval]))",
+                  "legendFormat": "{{dependency}} · {{outcome}}",
+                  "range": true,
+                  "instant": false,
+                  "interval": "30s",
+                  "editorMode": "code"
+                }
+              ],
               "options": {
                 "legend": {
                   "showLegend": true,

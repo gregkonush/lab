@@ -106,7 +106,8 @@ hours. An empty window remains unobserved because healthy servers can be quiet; 
 Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
-Validate the fifteen missing-data/threshold behavior cases with the existing native PromQL test harness.
+Validate the fifteen alert cases and seventeen dashboard query cases with the native PromQL test harness.
+The dashboard cases cover replica observations, missing telemetry, clock skew, database waits and operation outcomes.
 Use `promtool` 3.5.0 on `PATH`, or set `PROMTOOL` to its executable; CI already provisions the pinned checker.
 
 ```sh
