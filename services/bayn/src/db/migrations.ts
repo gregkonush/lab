@@ -1,3 +1,4 @@
+import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
 import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
 import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
 import submissionDenialReason from '../../migrations/0099_submission_denial_reason'
@@ -105,6 +106,7 @@ import cashFeeOpeningPrecision from '../../migrations/0103_cash_fee_opening_prec
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '104_shadow_decision_generation_index': shadowDecisionGenerationIndex,
   '103_cash_fee_opening_precision': cashFeeOpeningPrecision,
   '102_observed_fee_accruals': observedFeeAccruals,
   '101_reclassify_expired_native_entry': reclassifyExpiredNativeEntry,
