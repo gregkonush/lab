@@ -41,6 +41,7 @@ import { parseProxyUrl } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
+import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
@@ -1304,6 +1305,38 @@ describe('Alpaca paper reads', () => {
     expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
     expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
     expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
+  })
+
+  test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {
+    const raw = {
+      activity_type: 'CFEE',
+      id: `20261015000000000::${orderId}`,
+      date: '2026-10-15',
+      net_amount: '-0.23',
+      status: 'executed',
+      description: 'Coin Pair Transaction Fee (USD)',
+    }
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, url.searchParams.has('until') ? [] : [raw]))
+      if (['/v2/positions', '/v2/orders', '/v2/account/activities/FILL'].includes(url.pathname))
+        return Effect.succeed(jsonResponse(request, []))
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-10-15T08:00:00.000Z'))),
+    )
+    expect(snapshot.history.fees).toHaveLength(1)
+    expect(snapshot.history.fees[0]?.value).toMatchObject({
+      accountId,
+      activityId: raw.id,
+      date: raw.date,
+      netAmountMicros: '-230000',
+    })
+    expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()
+    expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(canonicalHashV1([raw]))
   })
 
   test('reads a bounded fill page and derives the documented page token', async () => {

@@ -45,7 +45,12 @@ import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationClock, ReconciliationError, runOnce } from './reconciler'
 import { reconciledStateHash } from './reconciliation'
 import { decideContainment } from './simulation-reconciliation/broker-containment'
-import { decideFillPage, decideOrderPage, decideStableHistory } from './simulation-reconciliation/broker-history'
+import {
+  decideFillPage,
+  decideOrderPage,
+  decideStableHistory,
+  readStableBrokerSnapshot,
+} from './simulation-reconciliation/broker-history'
 import { decideAccountBaseline } from './simulation-reconciliation/broker-normalization'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
@@ -811,6 +816,38 @@ describe('execution reconciliation loop', () => {
     expect(control.reconciliations[0]?.fees.map((item) => item.value)).toEqual([fee])
     expect(control.restrictions).toEqual([])
   })
+
+  test.each([1, 101])(
+    'retains %d available fee settlements excluded by the provider creation-time filter',
+    async (count) => {
+      const cut = '2026-10-15T08:00:00.000Z'
+      const fees = Array.from({ length: count }, (_, index) => ({
+        accountId,
+        activityId: `available-fee-${String(index).padStart(3, '0')}`,
+        date: '2026-10-15',
+        netAmountMicros: '-230000',
+      }))
+      const feeEvidence = { ...evidence('available-fee'), observedAt: cut }
+      const read: BrokerReadShape = {
+        ...emptyRead(),
+        feeActivities: (query) => {
+          const start = query?.pageToken === undefined ? 0 : 100
+          const items = query?.until === undefined ? fees.slice(start, start + 100) : []
+          const last = items.at(-1)
+          return Effect.succeed({
+            value: {
+              items,
+              ...(items.length === 100 && last !== undefined ? { nextPageToken: last.activityId } : {}),
+            },
+            evidence: feeEvidence,
+          })
+        },
+      }
+
+      const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(cut)))
+      expect(snapshot.history.fees).toEqual(fees.map((value) => ({ value, evidence: feeEvidence })))
+    },
+  )
 
   test('rejects duplicate fee history before accounting', async () => {
     const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
