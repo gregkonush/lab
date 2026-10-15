@@ -1,4 +1,5 @@
 import { FeeActivitySchema } from '../broker/fee-activity'
+import { acknowledgeFeePosting, FeePostingKind, readAcknowledgedFeePostings } from './fee-posting'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
@@ -321,13 +322,14 @@ export const postBrokerFeePlans = (
   `,
       ),
     )
+    const acknowledged = yield* readAcknowledgedFeePostings(sql, accountId, FeePostingKind.Activity)
     const fees: FeeActivity[] = []
     const plans: LedgerPlan[] = []
     let cashDelta = 0n
     for (const row of rows) {
       const verified = yield* fromResult(verifyBrokerFeeRecord(row, accountId, identity))
       const plan = verified.originalPlan
-      if (!row.posted) {
+      if (!row.posted || !acknowledged.has(row.data.activityId)) {
         if (plan.transfers.length > 0)
           yield* journal.post(plan).pipe(
             Effect.mapError(
@@ -340,7 +342,9 @@ export const postBrokerFeePlans = (
                 }),
             ),
           )
-        yield* sql`UPDATE broker_fee_accounting SET posted_at=${row.read_evidence.observedAt}::timestamptz WHERE account_id=${accountId} AND activity_id=${row.data.activityId}`
+        if (!row.posted)
+          yield* sql`UPDATE broker_fee_accounting SET posted_at=clock_timestamp() WHERE account_id=${accountId} AND activity_id=${row.data.activityId}`
+        yield* acknowledgeFeePosting(sql, accountId, FeePostingKind.Activity, row.data.activityId, row.ledger_plan_hash)
       }
       for (const correction of verified.corrections) {
         if (!correction.record.posted) {
