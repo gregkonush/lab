@@ -1,5 +1,5 @@
 import type * as Undici from '@effect/platform-node/Undici'
-import { Context, DateTime, Effect, Option, Schema, type Result } from 'effect'
+import { Context, DateTime, Effect, Option, Schema, SchemaTransformation, type Result } from 'effect'
 
 import type { BrokerEnvironment } from '../../execution/authority'
 import {
@@ -11,6 +11,7 @@ import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
 import { Pipeable } from '../../pipeable'
+import type { CashReportingQuantum } from './cash-reporting'
 
 export const defaultFillActivitiesPageSize = 100
 const maxMarketCalendarRangeDays = 31
@@ -25,6 +26,26 @@ export const marketCalendarTimeZone = 'America/New_York' as const
 export const readPreflightTimeoutMs = 45_000
 export const responseParseOptions = { onExcessProperty: 'ignore' } as const
 export const inputParseOptions = { onExcessProperty: 'error' } as const
+const ResponseSymbol = Schema.Union([SymbolName, Schema.Literals(['BTCUSD', 'ETHUSD', 'SOLUSD'])]).pipe(
+  Schema.decodeTo(
+    SymbolName,
+    SchemaTransformation.transform({
+      decode: (symbol) => {
+        switch (symbol) {
+          case 'BTCUSD':
+            return 'BTC/USD'
+          case 'ETHUSD':
+            return 'ETH/USD'
+          case 'SOLUSD':
+            return 'SOL/USD'
+          default:
+            return symbol
+        }
+      },
+      encode: (symbol) => symbol,
+    }),
+  ),
+)
 export const redactedHeaders = [
   'authorization',
   'cookie',
@@ -225,6 +246,7 @@ export interface Account {
   readonly status: AccountStatus
   readonly currency: 'USD'
   readonly cashMicros: string
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly equityMicros: string
   readonly lastEquityMicros: string
   readonly cryptoStatus: string | null
@@ -496,7 +518,7 @@ export const AccountConfigurationResponseSchema = Schema.Struct({
 
 export const PositionResponseSchema = Schema.Struct({
   asset_id: Uuid,
-  symbol: SymbolName,
+  symbol: ResponseSymbol,
   exchange: Schema.Enum(AssetExchange),
   asset_class: Schema.Enum(AssetClass),
   avg_entry_price: Decimal,
@@ -526,7 +548,7 @@ export const AssetResponseSchema = Schema.Struct({
     Schema.Literal(AssetExchange.Otc),
     Schema.Literal(AssetExchange.Crypto),
   ]),
-  symbol: SymbolName,
+  symbol: ResponseSymbol,
   status: Schema.Enum(AssetStatus),
   tradable: Schema.Boolean,
   fractionable: Schema.Boolean,
@@ -550,7 +572,7 @@ export const OrderResponseSchema = Schema.Struct({
   replaced_by: Schema.NullOr(Uuid),
   replaces: Schema.NullOr(Uuid),
   asset_id: Uuid,
-  symbol: SymbolName,
+  symbol: ResponseSymbol,
   asset_class: Schema.Enum(AssetClass),
   notional: Schema.NullOr(Decimal),
   qty: Schema.NullOr(Decimal),
@@ -582,7 +604,7 @@ export const FeeActivityResponseSchema = Schema.Union([
   Schema.Struct({
     ...FeeActivityResponseBase,
     activity_type: Schema.Literal('CFEE'),
-    symbol: NonEmptyString,
+    symbol: ResponseSymbol,
     qty: Decimal,
     price: Decimal,
   }),
@@ -601,7 +623,7 @@ export const FillActivityResponseSchema = Schema.Struct({
   price: Decimal,
   qty: Decimal,
   side: Schema.Enum(OrderSide),
-  symbol: SymbolName,
+  symbol: ResponseSymbol,
   transaction_time: Timestamp,
   order_id: Uuid,
   type: Schema.Enum(TradeActivityType),

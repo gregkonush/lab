@@ -495,14 +495,56 @@ def validate(targets):
     keycloak_pod = resource(targets, "keycloak", "StatefulSet", "keycloak")["spec"][
         "template"
     ]["spec"]
+    keycloak_ca = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "database-ca"
+    )["secret"]
     require(
-        next(
-            volume
-            for volume in keycloak_pod["volumes"]
-            if volume["name"] == "database-ca"
-        )["secret"]["defaultMode"]
-        == 0o440,
-        "keycloak: database CA files must retain mode 0440",
+        keycloak_ca["defaultMode"] == 0o440
+        and keycloak_ca.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
+        "keycloak: mount only the public database CA certificate with mode 0440",
+    )
+    theme_mounts = [
+        mount
+        for mount in container(targets, "keycloak", "StatefulSet", "keycloak")[
+            "volumeMounts"
+        ]
+        if mount["name"] == "login-theme"
+    ]
+    require(
+        theme_mounts
+        == [
+            {
+                "name": "login-theme",
+                "mountPath": "/opt/keycloak/themes/tengri/login",
+                "readOnly": True,
+            }
+        ],
+        "keycloak: the dedicated login theme must be mounted read-only",
+    )
+    theme = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "login-theme"
+    )["configMap"]
+    require(
+        theme["items"]
+        == [
+            {"key": "theme.properties", "path": "theme.properties"},
+            {
+                "key": "webauthnRegister.js",
+                "path": "resources/js/webauthnRegister.js",
+            },
+        ],
+        "keycloak: registration assets must use the paths imported by the built-in template",
+    )
+    theme_root = Path("argocd/applications/keycloak/tengri/theme/login")
+    require(
+        resource(targets, "keycloak", "ConfigMap", theme["name"])["data"]
+        == {
+            "theme.properties": (theme_root / "theme.properties").read_text(),
+            "webauthnRegister.js": (
+                theme_root / "resources/js/webauthnRegister.js"
+            ).read_text(),
+        },
+        "keycloak: the deployed theme must contain the browser-qualified registration module",
     )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
@@ -510,6 +552,16 @@ def validate(targets):
     )
     database = resource(targets, "keycloak", "Cluster", "keycloak-db")["spec"]
     require(database["instances"] == 3, "keycloak: three database instances required")
+    capacity_mib = int(database["storage"]["size"].removesuffix("Gi")) * 1024
+    retained_wal_mib = int(
+        database["postgresql"]["parameters"]
+        .get("max_slot_wal_keep_size", "-1")
+        .removesuffix("MB")
+    )
+    require(
+        0 < retained_wal_mib <= capacity_mib // 4,
+        "keycloak: replica WAL retention must be bounded to a quarter of database storage",
+    )
     require(
         database["affinity"]["podAntiAffinityType"] == "required",
         "keycloak: database host spread required",
@@ -773,6 +825,13 @@ def main():
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["metadata"][
             "annotations"
         ].pop("argocd.argoproj.io/sync-wave"),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "database-ca"
+        )["secret"].pop("items"),
         lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
             "configuration"
         ].update(endpointURL="https://rook-ceph-rgw.rook-ceph.svc"),
@@ -814,12 +873,28 @@ def main():
         lambda data: container(data, "keycloak", "StatefulSet", "keycloak")[
             "env"
         ].append({"name": "KC_CACHE_EMBEDDED_MTLS_ENABLED", "value": "false"}),
+        lambda data: container(data, "keycloak", "StatefulSet", "keycloak").update(
+            volumeMounts=[]
+        ),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "login-theme"
+        )["configMap"]["items"].pop(),
         lambda data: resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
             "template"
         ]["spec"]["volumes"][0]["secret"].update(defaultMode=440),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "postgresql"
         ]["synchronous"].update(dataDurability="preferred"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "storage"
+        ].update(size="5Gi"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "postgresql"
+        ]["parameters"].pop("max_slot_wal_keep_size"),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "affinity"
         ].update(tolerations=[]),

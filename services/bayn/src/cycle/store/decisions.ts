@@ -17,7 +17,7 @@ import {
 import { cycleTerminalReasonForBlockedTargetPlan } from '../recovery-decisions'
 import { cycleDraftMatches, cycleDraftOf, isCycleStateTransitionAllowed } from '../transitions'
 import { cycleDecisionStoreEvidence } from './decision-contract'
-import { unusedEntryExpiresAt } from '../entry-admission'
+import { hasExpiredUnusedEntryAdmission, unusedEntryExpiresAt } from '../entry-admission'
 import type { CycleStoreDecisionFailure } from './decision-contract'
 
 export type { CycleStoreDecisionFailure } from './decision-contract'
@@ -63,7 +63,7 @@ export type ActivationDecision =
   | {
       readonly _tag: 'Block'
       readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedSubmission
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.UnusedEntryExpired
     }
 
 export type DecisionBindingDecision =
@@ -225,7 +225,9 @@ const decideActivationDataFirst = (
     return Result.succeed({
       _tag: 'Block',
       cycle,
-      reason: CycleTerminalReason.MissedSubmission,
+      reason: hasExpiredUnusedEntryAdmission(cycle, observedAt)
+        ? CycleTerminalReason.UnusedEntryExpired
+        : CycleTerminalReason.MissedSubmission,
     })
   }
   return observedAt < cycle.updatedAt
@@ -253,15 +255,15 @@ const decideDecisionBindingDataFirst = (
   if (cycle.state !== CycleState.Active) {
     return fail('conflict', 'decision may bind only while a cycle is active')
   }
+  if (hasExpiredUnusedEntryAdmission(cycle, observedAt)) {
+    return Result.succeed({ _tag: 'Block', cycle, reason: CycleTerminalReason.UnusedEntryExpired })
+  }
   if (observedAt >= cycle.window.submissionCutoffAt) {
     return Result.succeed({
       _tag: 'Block',
       cycle,
       reason: CycleTerminalReason.MissedSubmission,
     })
-  }
-  if (cycle.schemaVersion === 'bayn.autonomous-cycle.v4' && Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)) {
-    return Result.succeed({ _tag: 'Block', cycle, reason: CycleTerminalReason.UnusedEntryExpired })
   }
   const executionMarketData = document.bindings.executionMarketData
   const decisionMarketData = document.bindings.decisionMarketData ?? executionMarketData

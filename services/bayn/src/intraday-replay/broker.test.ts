@@ -1273,3 +1273,93 @@ test('fractional market close requires the captured account fractional-trading s
     }),
   )
 })
+
+for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+  test(`${symbol} settles and restores the shared broker across Sunday midnight with coin fees and a GTC close`, async () => {
+    const start = Date.parse('2026-10-11T23:59:59.950Z')
+    const asset = Result.getOrThrow(
+      normalizeAssetResult(
+        {
+          id: '12345678-1234-4234-8234-123456789abc',
+          symbol,
+          class: AssetClass.Crypto,
+          exchange: AssetExchange.Crypto,
+          status: AssetStatus.Active,
+          tradable: true,
+          fractionable: true,
+          min_order_size: '0.00001',
+          min_trade_increment: '0.000000001',
+          price_increment: '0.000000001',
+        },
+        symbol,
+        new Date(start).toISOString(),
+      ),
+    )
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(start)
+        const frozen: ReplayBrokerConfig = {
+          ...config,
+          calendar: [],
+          assets: [asset],
+          fractionalTrading: true,
+          quoteAt: (_symbol, atMs) =>
+            Effect.succeed(
+              observedQuote(
+                {
+                  ...quote,
+                  symbol,
+                  feed: 'us',
+                  delayClass: 'real_time_crypto',
+                  marketSession: 'continuous',
+                  eventAt: new Date(atMs).toISOString(),
+                  ingestedAt: new Date(atMs).toISOString(),
+                },
+                atMs,
+              ),
+            ),
+        }
+        const broker = yield* makeReplayBroker(frozen)
+        yield* submit(
+          broker,
+          intent({
+            symbol,
+            quantityAtoms: '33050000',
+            notionalLimitMicros: '3338050',
+            createdAt: new Date(start).toISOString(),
+          }),
+        )
+        const held = yield* broker.checkpoint
+        expect(held.state.ledger.positions[0]?.quantityAtoms).toBe('32967375')
+        expect(held.state.orders[0]?.order.assetClass).toBe(AssetClass.Crypto)
+        expect(held.state.fees[0]?.netAmountMicros).toBe('0')
+        expect(held.state.fees[0]?.coinDebit?.quantityAtoms).toBe('82625')
+        expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(held, frozen)).state.ledger).toEqual(held.state.ledger)
+        const restored = yield* makeReplayBroker({
+          ...frozen,
+          restoreCheckpoint: { value: held, expectedHash: held.checkpointHash },
+        })
+        const close = intent({
+          symbol,
+          side: OrderSide.Sell,
+          orderType: OrderType.Market,
+          timeInForce: TimeInForce.GoodUntilCanceled,
+          quantityAtoms: '32967375',
+          notionalLimitMicros: '3296738',
+          clientOrderId: 'replay-sell-1',
+          createdAt: new Date(start + 100).toISOString(),
+        })
+        const pending = yield* restored.mutation.submit(close, true).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(100)
+        yield* Fiber.join(pending)
+        yield* restored.mutation.submit(close, true)
+        const flat = yield* restored.checkpoint
+        expect(flat.state.orders).toHaveLength(2)
+        expect(flat.state.ledger.positions).toEqual([])
+        expect(flat.state.ledger.fills).toHaveLength(2)
+        expect(flat.state.orders[1]?.order.timeInForce).toBe(BrokerTimeInForce.GoodUntilCanceled)
+        expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.ledger).toEqual(flat.state.ledger)
+      }),
+    )
+  })
+}

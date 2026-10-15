@@ -1,3 +1,4 @@
+import { SnapshotManifestFields } from '../market-data/streaming/manifest-schema'
 import { IntradayPerformanceVolumeEvidenceSchema } from '../forward-performance/intraday-schema'
 import { validIntradayPerformanceVolumeEvidence } from '../forward-performance/intraday-volume'
 import { Data, Effect, Result, Schema } from 'effect'
@@ -119,8 +120,8 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
       marketVolumeQuantityAtoms: SignedMicrosSchema,
       intradaySource: Schema.optionalKey(
         Schema.Struct({
-          feed: Schema.Literal('iex'),
-          volumeScope: Schema.Literal('IEX_RECORDED_SESSION_VOLUME'),
+          feed: SnapshotManifestFields.feed,
+          volumeScope: Schema.Literal('RECORDED_COMPLETE_MINUTE_VOLUME'),
           evidenceHash: Sha256Schema,
         }),
       ),

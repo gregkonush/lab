@@ -3,7 +3,13 @@ import { Effect, Layer, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { FillSchema, OrderSide } from '../execution/contracts'
-import { decodeJevPortfolio, JevPositionStore, JevPurpose, type JevPortfolio } from '../jev/portfolio'
+import {
+  decodeJevPortfolio,
+  JevInventoryDebitSchema,
+  JevPositionStore,
+  JevPurpose,
+  type JevPortfolio,
+} from '../jev/portfolio'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 
 const requireMatch = Schema.decodeUnknownEffect(
@@ -49,6 +55,22 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     ) = ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...portfolio.entryIntentIds].sort())}::jsonb)) AS matches
   `,
     )
+    const debit = yield* readEntryInventoryDebit(
+      sql,
+      portfolio.brokerState.account.accountId,
+      portfolio.entryFills[0]?.symbol ?? '',
+      portfolio.entryFills[0]?.occurredAt ?? r.reconciledAt,
+      r.reconciledAt,
+    )
+    if (
+      debit.quantityAtoms !== portfolio.entryInventoryDebit.quantityAtoms ||
+      debit.costBasisMicros !== portfolio.entryInventoryDebit.costBasisMicros
+    )
+      return yield* operationalError({
+        component: 'database',
+        operation: 'jev-position',
+        message: 'Held position inventory debit differs from posted accounting',
+      })
     for (const fill of portfolio.entryFills) {
       yield* requireMatch(
         yield* sql`
@@ -71,6 +93,27 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     `,
       )
     }
+  })
+
+const readEntryInventoryDebit = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  symbol: string,
+  firstFillAt: string,
+  reconciledAt: string,
+) =>
+  Effect.gen(function* () {
+    const [debit] = yield* Schema.decodeUnknownEffect(
+      Schema.Tuple([JevInventoryDebitSchema]),
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT COALESCE(sum(quantity_atoms),0)::text AS "quantityAtoms", COALESCE(sum(cost_basis_micros),0)::text AS "costBasisMicros"
+      FROM broker_inventory_debits WHERE account_id=${accountId} AND symbol=${symbol} AND posted
+        AND effective_at >= ${firstFillAt}::timestamptz AND effective_at <= ${reconciledAt}::timestamptz
+    `,
+    )
+    return debit
   })
 
 export const makeJevPositionStore = Effect.gen(function* () {
@@ -113,6 +156,13 @@ export const makeJevPositionStore = Effect.gen(function* () {
             entryDecisionHash,
             entryIntentIds: intents.map(({ intent_id }) => intent_id),
             entryFills: rows.map(({ fill }) => fill),
+            entryInventoryDebit: yield* readEntryInventoryDebit(
+              sql,
+              brokerState.account.accountId,
+              rows[0]?.fill.symbol ?? '',
+              rows[0]?.fill.occurredAt ?? brokerState.reconciliation.reconciledAt,
+              brokerState.reconciliation.reconciledAt,
+            ),
           }),
         )
         if (portfolio.purpose !== JevPurpose.Manage)

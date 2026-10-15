@@ -3,6 +3,7 @@ import { Context, Effect, Schema } from 'effect'
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
 import { canonicalHashV1 } from '../../hash'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
+import { CashReportingQuantumSchema } from './cash-reporting'
 import {
   AccountStatus,
   AssetClass,
@@ -46,6 +47,7 @@ const account = Schema.Struct({
   status: Schema.Enum(AccountStatus),
   currency: Schema.Literal('USD'),
   cashMicros: micros,
+  cashReportingQuantumMicros: CashReportingQuantumSchema,
   equityMicros: micros,
   lastEquityMicros: micros,
   cryptoStatus: Schema.NullOr(Schema.String),

@@ -1,6 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clock'
-import { Data, Effect, Result, Schema } from 'effect'
+import { Data, Effect, Option, Result, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
@@ -64,7 +64,16 @@ import {
   type ReconciliationAlgebraFailure,
 } from '../reconciliation/algebra'
 import { Pipeable } from '../pipeable'
-import { accountBrokerFees, type BrokerFeeAccounting } from './broker-fees'
+import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
+import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
+import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } from './broker-fees'
+import {
+  prepareObservedCoinFees,
+  prepareObservedCashFees,
+  readFeeAccruals,
+  type FeeAccrualRecords,
+} from './fee-accruals'
+import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { FeeActivity } from '../broker/alpaca'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import type { BrokerStateVersion } from '../execution/broker-state-cache'
@@ -76,8 +85,11 @@ export interface IntentBinding {
 
 export interface BrokerSnapshot {
   readonly account: AccountSnapshot
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: readonly Position[]
   readonly positionsObservedAt: string
+  readonly positionSnapshotId: string
+  readonly accountEventId: string
   readonly orders: readonly Order[]
   readonly ordersObservedAt: string
   readonly fills: readonly Fill[]
@@ -104,6 +116,8 @@ interface AccountingReadPhase {
   readonly exactReceipts: ReadonlyMap<string, boolean>
   readonly ledgerExact: boolean
   readonly fees: readonly FeeActivity[]
+  readonly accruals: readonly FeeAccrual[]
+  readonly brokerFeeCashDeltaMicros: string
 }
 
 interface ComparisonReadPhase {
@@ -149,7 +163,6 @@ const ProjectedPositionRow = Schema.Struct({
   quantity_atoms: Schema.String,
   cost_basis_micros: Schema.String,
 })
-const OpeningCashRow = Schema.Tuple([Schema.Struct({ cash_micros: Schema.String, observed_at: UtcInstant })])
 const PreviousReconciliationRows = Schema.Array(
   Schema.Struct({ discrepancies: Schema.Array(DiscrepancySchema) }),
 ).check(Schema.isMaxLength(1))
@@ -182,7 +195,6 @@ const decodeBindings = Schema.decodeUnknownEffect(Schema.Array(IntentBindingRow)
 const decodeIntents = Schema.decodeUnknownEffect(Schema.Array(IntentRow), strictParseOptions)
 const decodeDurableFills = Schema.decodeUnknownEffect(Schema.Array(DurableFillRow), strictParseOptions)
 const decodeProjectedPositions = Schema.decodeUnknownEffect(Schema.Array(ProjectedPositionRow), strictParseOptions)
-const decodeOpeningCash = Schema.decodeUnknownEffect(OpeningCashRow, strictParseOptions)
 const decodeTransactions = Schema.decodeUnknownEffect(Schema.Array(AccountingTransactionRowSchema), strictParseOptions)
 const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(AccountingReceiptRowSchema), strictParseOptions)
 const decodePreviousReconciliation = Schema.decodeUnknownEffect(PreviousReconciliationRows, strictParseOptions)
@@ -380,6 +392,8 @@ export const verifyBrokerStateVersion = (
         WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= ${version.reconciledAt}::timestamptz
           AND NOT (mutation.intent_id = ${intentId} AND mutation.event_type = 'SUBMIT_STARTED')
       )
+      AND NOT EXISTS (SELECT 1 FROM broker_fee_accruals WHERE account_id = ${accountId} AND posted_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM broker_fee_accounting WHERE account_id = ${accountId} AND posted_at IS NULL)
       AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
         AND observed_at > ${version.reconciledAt}::timestamptz)
     ) AS valid
@@ -424,6 +438,7 @@ export const makeReconciliation = (
   const readAccountingPhase = (
     accountId: string,
     feeAccounting: BrokerFeeAccounting,
+    accruals: FeeAccrualRecords,
   ): Effect.Effect<AccountingReadPhase, ReconciliationStoreError> =>
     runStore(
       'reconcile',
@@ -525,7 +540,7 @@ export const makeReconciliation = (
           verifyAccountingReceipts(transactions, receipts, config),
         )
         const ledgerExact = yield* journal
-          .verifyAccount(accountId, [...plans, ...feeAccounting.plans])
+          .verifyAccount(accountId, [...plans, ...feeAccounting.plans, ...accruals.map((accrual) => accrual.plan)])
           .pipe(
             Effect.mapError((cause) =>
               storeError('reconcile', 'ledger', 'TigerBeetle account verification failed during reconciliation', cause),
@@ -540,6 +555,11 @@ export const makeReconciliation = (
           exactReceipts,
           ledgerExact,
           fees: feeAccounting.fees,
+          accruals: accruals.map((accrual) => accrual.data),
+          brokerFeeCashDeltaMicros: (
+            BigInt(feeAccounting.cashDeltaMicros) -
+            accruals.reduce((sum, accrual) => sum + BigInt(accrual.cashDebitMicros ?? '0'), 0n)
+          ).toString(),
         }
       }),
     )
@@ -580,10 +600,8 @@ export const makeReconciliation = (
             SELECT symbol, quantity_delta_atoms AS quantity_atoms, cost_basis_delta_micros AS cost_basis_micros
             FROM accounting_transactions WHERE account_id = ${accountId}
             UNION ALL
-            SELECT data->'coinDebit'->>'symbol' AS symbol,
-              -(data->'coinDebit'->>'quantityAtoms')::numeric AS quantity_atoms,
-              -coin_cost_basis_micros AS cost_basis_micros
-            FROM broker_fee_accounting WHERE account_id = ${accountId} AND data ? 'coinDebit' AND posted_at IS NOT NULL
+            SELECT symbol, -quantity_atoms, -cost_basis_micros
+            FROM broker_inventory_debits WHERE account_id = ${accountId} AND posted
           ) AS inventory
           GROUP BY symbol HAVING sum(quantity_atoms) <> 0 ORDER BY symbol COLLATE "C"
         `.pipe(Effect.flatMap(decodeProjectedPositions))
@@ -593,18 +611,7 @@ export const makeReconciliation = (
           costBasisMicros: row.cost_basis_micros,
         }))
 
-        const [openingCash] = yield* sql<Record<string, unknown>>`
-          SELECT
-            snapshot.cash_micros::text AS cash_micros,
-            to_char(event.observed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS observed_at
-          FROM account_snapshots AS snapshot
-          JOIN broker_events AS event ON event.event_id = snapshot.event_id
-          WHERE snapshot.account_id = ${accountId}
-            AND event.account_id = snapshot.account_id
-            AND event.event_kind = 'ACCOUNT'
-          ORDER BY event.source_sequence
-          LIMIT 1
-        `.pipe(Effect.flatMap(decodeOpeningCash))
+        const openingCash = yield* readOpeningCash(sql, accountId)
         return yield* fromDecision(
           'reconcile',
           compareOpeningCash({
@@ -612,6 +619,8 @@ export const makeReconciliation = (
             openingCash,
             transactions: accounting.transactions,
             fees: accounting.fees,
+            brokerFeeAccruals: accounting.accruals,
+            brokerFeeCashDeltaMicros: accounting.brokerFeeCashDeltaMicros,
             receipts: accounting.receipts,
             ledgerExact: accounting.ledgerExact,
             snapshot,
@@ -734,8 +743,9 @@ export const makeReconciliation = (
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
-        const feeAccounting = yield* accountBrokerFees(sql, journal, accountId, snapshot.fees, config.tigerBeetle)
-        const accounting = yield* readAccountingPhase(accountId, feeAccounting)
+        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
+        const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
+        const accounting = yield* readAccountingPhase(accountId, feeAccounting, accruals)
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting)
         const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt)
         const riskContext = yield* readRiskContextPhase(
@@ -747,8 +757,38 @@ export const makeReconciliation = (
       }),
     )
 
+  const requireAutocommit = Effect.gen(function* () {
+    if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+      return yield* storeError(
+        'reconcile',
+        'invariant',
+        'Broker fee plans must commit independently before ledger posting',
+      )
+  })
+  const recoverFees = (accountId: string) =>
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        yield* requireAutocommit
+        yield* writerFence.transaction(postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle))
+      }),
+    )
   const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
-    runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
+    runStore(
+      'reconcile',
+      Effect.gen(function* () {
+        yield* requireAutocommit
+        yield* writerFence.transaction(
+          Effect.gen(function* () {
+            yield* retainAccountCashReporting(sql, snapshot)
+            yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
+            yield* prepareFeeActivities(sql, snapshot.account.accountId, snapshot.fees, config.tigerBeetle)
+            yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
+          }),
+        )
+        return yield* writerFence.transaction(reconcileTransaction(snapshot))
+      }),
+    )
 
-  return { bindings, reconcile }
+  return { bindings, reconcile, recoverFees }
 }

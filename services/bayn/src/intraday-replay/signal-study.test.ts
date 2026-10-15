@@ -1,9 +1,10 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { OrderSide } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
@@ -15,7 +16,7 @@ import {
   prepareSignalStudyBatch,
   SignalScreenRule,
   signalStudyDefinition,
-  studyIoc,
+  studyOrder,
   studyRoundTrip,
   summarizeSignalFactorOutcomes,
 } from './signal-study'
@@ -26,7 +27,13 @@ const batch = (action = 'enter') => {
   return evidence
 }
 const at = Date.parse(fixture.observation.payload.observedAt)
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const original = fixture.snapshot.latestQuotes['AAPL']
 if (original === undefined) throw new Error('Fixture has no AAPL quote')
 const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
@@ -312,7 +319,7 @@ test('a share whose notional fits but fees exceed cash remains an explicit unfil
       entryArrivalQuote: quote(at + 100, { bidPrice: 9998.99, askPrice: 9999 }),
     }),
   )
-  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-one-share' })
+  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-instrument-minimum' })
   expect(result.fills).toHaveLength(0)
 })
 
@@ -352,7 +359,8 @@ test.each([
   ['wrong symbol', quote(at + 100, { symbol: 'AMZN' }), 'arrival-quote-identity-mismatch'],
 ] as const)('IOC retains %s as unresolved', (_name, arrivalQuote, reason) => {
   const result = Result.getOrThrow(
-    studyIoc({
+    studyOrder({
+      orderType: OrderType.Limit,
       symbol: 'AAPL',
       side: OrderSide.Buy,
       quantityAtoms: 10000000000n,
@@ -370,7 +378,8 @@ test.each([
 test('execution cannot silently omit the registered routing latency', () => {
   expect(
     Result.isFailure(
-      studyIoc({
+      studyOrder({
+        orderType: OrderType.Limit,
         symbol: 'AAPL',
         side: OrderSide.Buy,
         quantityAtoms: 10000000000n,

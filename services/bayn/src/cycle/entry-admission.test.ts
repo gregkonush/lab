@@ -13,7 +13,7 @@ import {
   makeIntradayCycleDraft,
   nextIntradayEntryAttemptOrdinal,
 } from './runner/calendar-decisions'
-import { decideBlock, makeInitialCycle } from './store/decisions'
+import { decideActivation, decideBlock, makeInitialCycle } from './store/decisions'
 
 const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
 const policy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
@@ -106,4 +106,53 @@ test('an expired unused equity slot releases to crypto under the same approved c
       nextAt,
     ),
   ).toBe(false)
+})
+
+test.each([CycleState.Pending, CycleState.Active])(
+  'unused %s recovery retains expiry classification at cutoff',
+  (state) => {
+    const beforeCutoff = '2026-10-14T19:54:59.000Z'
+    const cutoffAt = active.window.submissionCutoffAt
+    const cycle = { ...active, state, createdAt: beforeCutoff, updatedAt: beforeCutoff }
+    expect(unusedEntryExpiresAt(cycle)).toBe(Date.parse(cutoffAt))
+    for (const observedAt of [cutoffAt, '2026-10-14T19:55:00.001Z']) {
+      expect(Result.getOrThrow(recovery(observedAt, cycle))).toMatchObject({
+        action: 'BLOCK',
+        reason: CycleTerminalReason.UnusedEntryExpired,
+      })
+    }
+    if (state === CycleState.Pending) {
+      expect(Result.getOrThrow(decideActivation(cycle, beforeCutoff))._tag).toBe('Persist')
+      expect(Result.getOrThrow(decideActivation(cycle, cutoffAt))).toMatchObject({
+        _tag: 'Block',
+        reason: CycleTerminalReason.UnusedEntryExpired,
+      })
+    }
+  },
+)
+
+test('cutoff expiry preserves provenance, snapshot evidence and bound-decision recovery', () => {
+  for (const observedAt of [expiresAt, active.window.submissionCutoffAt]) {
+    const changed = selectCycleRecovery({
+      cycleBindingId: candidate.cycleBindingId,
+      accountId: candidate.accountId,
+      strategyProtocolHash: 'f'.repeat(64),
+      observedAt,
+      cycle: active,
+    })
+    expect(Result.getOrThrow(changed)).toMatchObject({
+      action: 'BLOCK',
+      reason: observedAt === expiresAt ? CycleTerminalReason.ProvenanceMismatch : CycleTerminalReason.MissedSubmission,
+    })
+  }
+  const snapshotBound = { ...active, bindings: { snapshotId: 'c'.repeat(64) } }
+  expect(Result.getOrThrow(recovery(active.window.submissionCutoffAt, snapshotBound))).toMatchObject({
+    action: 'BLOCK',
+    reason: CycleTerminalReason.MissedSubmission,
+  })
+  const bound = { ...snapshotBound, bindings: { ...snapshotBound.bindings, decisionHash: 'd'.repeat(64) } }
+  expect(Result.getOrThrow(recovery(active.window.submissionCutoffAt, bound))).toEqual({
+    action: 'READ_DECISION',
+    cycle: bound,
+  })
 })
