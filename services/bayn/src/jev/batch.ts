@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect'
+import { jevBenchmarkSymbol } from './markets'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -108,10 +109,12 @@ export const makeJevBatchPlan = (input: unknown) =>
     const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
     if (lifetime <= 0 || lifetime > 10_000 || material.candidates.length === 0)
       return yield* invalid('Jev batch requires candidates and a bounded validity window')
+    const firstCandidate = material.candidates[0]
+    if (firstCandidate === undefined || material.benchmarkSymbol !== jevBenchmarkSymbol(firstCandidate.symbol))
+      return yield* invalid('Jev batch benchmark anchor differs from its first candidate')
     let previous = ''
     for (const candidate of material.candidates) {
-      if (candidate.symbol <= previous || candidate.symbol === material.benchmarkSymbol)
-        return yield* invalid('Jev batch candidates must be unique, sorted and distinct from the benchmark')
+      if (candidate.symbol <= previous) return yield* invalid('Jev batch candidates must be unique and sorted')
       previous = candidate.symbol
       if (candidate.status === JevCandidatePlanStatus.Excluded) {
         continue

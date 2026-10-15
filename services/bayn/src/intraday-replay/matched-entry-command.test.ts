@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -200,6 +201,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     sessionDates: dates,
     latencyMs: 100,
     executionAssumptionsHash: canonicalHashV1({
+      instruments: replayTestInstruments,
       latencyMs: 100,
       slippageBps: 0,
       availableLiquidityPpm: 1000000,
@@ -213,10 +215,16 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     timings: [{ batchId: batch.batchPlan.batchId, witness: null }],
     witnesses: [],
     study: {
-      schemaVersion: 'bayn.jev-signal-study-input.v1',
+      schemaVersion: 'bayn.jev-signal-study-input.v2',
       runId: 'e'.repeat(64),
       source: completeSource,
-      assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+      assumptions: {
+        instruments: replayTestInstruments,
+        latencyMs: 100,
+        slippageBps: 0,
+        availableLiquidityPpm: 1000000,
+        feeMultiplierPpm: 1000000,
+      },
       batches: [batch],
     },
     inventory: dates.map((sessionDate) => ({
@@ -774,7 +782,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v4')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v5')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')

@@ -218,7 +218,7 @@ const transactionMatchesFill = (
 const validMarketVolumeEvidence = (
   volume: NonNullable<ForwardPerformanceEvidenceInput['marketVolumeEvidence']>[number],
 ): Result.Result<boolean, CanonicalHashFailure> => {
-  if (volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1') {
+  if (volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2') {
     return Result.succeed(validIntradayPerformanceVolumeEvidence(volume))
   }
   const marketVolume = parseUnsigned(volume.quantityAtoms, true)
@@ -780,7 +780,7 @@ const measureObservedCapacity = (
     }
 
     if (
-      volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1' &&
+      volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2' &&
       volume.missingMinutes.length > 0
     ) {
       reasons.add('MARKET_VOLUME_EVIDENCE_GAP')
@@ -835,7 +835,7 @@ const measureObservedCapacity = (
       windowClosedAt: volume.windowClosedAt,
       filledQuantityAtoms: filled.toString(),
       marketVolumeQuantityAtoms: marketVolume.toString(),
-      ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1'
+      ...(volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2'
         ? {
             intradaySource: { feed: 'iex' as const, volumeScope: volume.volumeScope, evidenceHash: volume.contentHash },
           }
@@ -881,7 +881,7 @@ export const makeForwardPerformanceExecutionMeasurements = (
   Result.flatMap(measureExecutionQuality(input), ({ executionQuality, contributions }) =>
     Result.map(measureObservedCapacity(input, executionQuality, contributions), (observedCapacity) => {
       const intradaySources = (input.marketVolumeEvidence ?? [])
-        .filter((volume) => volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1')
+        .filter((volume) => volume.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2')
         .filter(validIntradayPerformanceVolumeEvidence)
         .toSorted((left, right) => compareStrings(volumeSortKey(left), volumeSortKey(right)))
       return {
