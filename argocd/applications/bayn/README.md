@@ -167,10 +167,10 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v3`, `bayn.jev.continuous-markets.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v4`, `bayn.jev.available-history.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
 account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev.
-The current strategy protocol hash is `1d91d5148c8bedc5631c21881975af5be8db334826eb143335d4c7a663e0d394`.
+The current strategy protocol hash is `f75c866aeb69a9346dd26f7b42921a989df4740d66eade062db056770f7a6c1b`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -506,3 +506,15 @@ Federal Reserve host allowlist; credentials never pass through that client. Its 
 public-job activations. Verify the OBC ownership/private ACL and exact synthetic object SHA-256 readback before live
 collection, then inspect source-keyed Restate status, artifact readback and source metrics. A source failure cannot
 fail the trading endpoint or delay a protective closure.
+
+### Available-history hard cutover
+
+The current protocol removes the 30-minute admission requirement for equities and crypto. Equities first evaluate
+at the first completed minute plus two seconds. Crypto uses its current completed history continuously. Both retain
+up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
+
+Migration 108 requires terminal mutation cycles, fee-net flat inventory, no pending broker orders, fresh exact
+reconciliation and complete fill accounting. It restricts the old mandate to OBSERVE. Deploy the reviewed Bayn and
+Dorvud contracts with explicit read-only configuration, then rotate the existing sandbox mandate against the exact
+published new strategy/image before enabling PAPER through the normal Kargo activation path. Retired feature and
+strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.

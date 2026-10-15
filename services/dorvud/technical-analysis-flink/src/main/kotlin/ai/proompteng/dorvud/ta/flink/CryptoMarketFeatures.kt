@@ -13,8 +13,8 @@ import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
 
-internal const val CRYPTO_FEATURE_SCHEMA = "dorvud.crypto-market-feature.v1"
-internal const val CRYPTO_FEATURE_DEFINITION = "dorvud.crypto-continuous-1m.v1"
+internal const val CRYPTO_FEATURE_SCHEMA = "dorvud.crypto-market-feature.v2"
+internal const val CRYPTO_FEATURE_DEFINITION = "dorvud.crypto-continuous-1m.v2"
 internal const val CRYPTO_FEATURE_HISTORY = 61
 private val cryptoInterval = Duration.ofMinutes(1)
 internal val cryptoFeatureJson = Json { encodeDefaults = true }
@@ -28,19 +28,6 @@ data class CryptoRollingValues(
   val lastClosePrice: String,
   val totalVolume: String,
 )
-
-@Serializable
-data class CryptoRollingWindow(
-  val status: TechnicalReadiness,
-  val values: CryptoRollingValues? = null,
-) {
-  init {
-    require(status in setOf(TechnicalReadiness.READY, TechnicalReadiness.WARMING, TechnicalReadiness.GAP)) {
-      "invalid crypto rolling readiness"
-    }
-    require((status == TechnicalReadiness.READY) == (values != null)) { "crypto rolling readiness and values disagree" }
-  }
-}
 
 @Serializable
 data class CryptoTechnicalValues(
@@ -75,7 +62,7 @@ data class CryptoMarketFeatureMaterial(
   val historyPrefixHash: String,
   val historyHash: String,
   val inputs: List<MarketFeatureInput>,
-  val rolling30m: CryptoRollingWindow,
+  val priceWindow: CryptoRollingValues,
   val technical: CryptoTechnicalValues,
 )
 
@@ -134,8 +121,8 @@ internal fun cryptoFeatureDefinitionHash(): String =
         "Bollinger:20;population-standard-deviation;2-sigma",
         "weighted-close-and-source-VWAP:5m,30m;zero-volume:unavailable",
         "volatility:60-log-returns;population-standard-deviation;not-annualized",
-        "gap:reset-recursive-seed-and-warmup;rolling:contiguous-tail",
-        "rolling-OHLC-volume:30-bars;exact-decimal-strings",
+        "gap:reset-recursive-indicator-seed-and-warmup;price-window:observed-minutes",
+        "rolling-OHLC-volume:PT30M-maximum-context;gaps-unfilled;exact-decimal-strings",
         "technical:binary64;price-micros;RSI-percentage-point-micros;volatility-ratio-ppm",
         "bar-winner:ingestion-nanos,partition,offset;raw-content:native-json-v1",
         "history:sha256-chain-of-canonical-source-inputs;cross-host-clock-skew-ms:$FEATURE_MAX_CLOCK_SKEW_MS",
@@ -263,19 +250,15 @@ private fun cryptoTailStatus(
     else -> TechnicalReadiness.READY
   }
 
-private fun cryptoRollingValues(bars: List<CryptoFeatureBar>): CryptoRollingWindow {
-  val status = cryptoTailStatus(bars, 30)
-  if (status != TechnicalReadiness.READY) return CryptoRollingWindow(status)
-  val window = bars.takeLast(30)
-  return CryptoRollingWindow(
-    status,
-    CryptoRollingValues(
-      window.first().open,
-      window.maxOf { it.high.toBigDecimal() }.stripTrailingZeros().toPlainString(),
-      window.minOf { it.low.toBigDecimal() }.stripTrailingZeros().toPlainString(),
-      window.last().close,
-      window.fold(BigDecimal.ZERO) { total, bar -> total + bar.volume.toBigDecimal() }.stripTrailingZeros().toPlainString(),
-    ),
+private fun cryptoRollingValues(bars: List<CryptoFeatureBar>): CryptoRollingValues {
+  val end = bars.last().eventTime.plusSeconds(60)
+  val window = bars.filter { it.eventTime >= end.minusSeconds(30 * 60) }
+  return CryptoRollingValues(
+    window.first().open,
+    window.maxOf { it.high.toBigDecimal() }.stripTrailingZeros().toPlainString(),
+    window.minOf { it.low.toBigDecimal() }.stripTrailingZeros().toPlainString(),
+    window.last().close,
+    window.fold(BigDecimal.ZERO) { total, bar -> total + bar.volume.toBigDecimal() }.stripTrailingZeros().toPlainString(),
   )
 }
 

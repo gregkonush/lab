@@ -60,8 +60,8 @@ records require them; they are not runtime fallbacks and cannot start new cycles
 
 ## Active strategy
 
-The submission window opens with the regular session. After its first complete 30-minute IEX window and two-second
-decision delay, Bayn evaluates rolling windows until five minutes before the close, without an extra clock warmup.
+The submission window opens with the regular session. After its first completed minute and two-second
+decision delay, Bayn evaluates up to 30 minutes of actual, possibly sparse history until five minutes before the close, without an extra clock warmup.
 It supplies verified prices, volume, computed technical indicators, quotes, benchmark relationships and position
 context to `jev-1.13.0`. Bayn owns arithmetic, timing, sizing, risk and accounting. The default development protocol
 requires a reported entry probability of at least 0.65 and a spread no wider than 5 basis points. Complete batch

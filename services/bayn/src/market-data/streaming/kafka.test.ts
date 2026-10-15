@@ -657,7 +657,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     '%s feature arrival receipts are emitted once after incorporation, excluding transport and semantic retries',
     async (family) => {
       const fixture: unknown = JSON.parse(
-        readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
+        readFileSync(new URL('../features/fixtures/observed-price-window-v1.json', import.meta.url), 'utf8'),
       )
       const feature =
         family === 'technical'
