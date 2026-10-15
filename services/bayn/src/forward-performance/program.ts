@@ -330,7 +330,7 @@ const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarket
     const rawBars = yield* loadIntradayArchivePages(
       (after) => queries.loadIntradayBars(archiveRequest, after),
       decodeIntradayBarRows,
-      (Date.parse(request.windowClosedAt) - Date.parse(request.windowOpenedAt)) / 60_000,
+      (Date.parse(query.rangeEndAt) - Date.parse(query.rangeStartAt)) / 60_000,
     )
     return yield* Effect.fromResult(makeIntradayPerformanceVolumeEvidence(request, archiveRequest, rawBars))
   })

@@ -50,7 +50,14 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { Authority, OrderType, TimeInForce, type AuthorityState, type Position } from '../execution/contracts'
+import {
+  Authority,
+  OrderType,
+  ReconciliationStatus,
+  TimeInForce,
+  type AuthorityState,
+  type Position,
+} from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
@@ -309,6 +316,12 @@ export class ExecutionCloseAwaitingMarketData extends Data.TaggedError('Executio
   readonly cause?: unknown
   /** A verified snapshot exists, but its executable quote must be refreshed. */
   readonly quotePending?: boolean
+}> {}
+
+export class ExecutionCloseAwaitingReconciliation extends Data.TaggedError('ExecutionCloseAwaitingReconciliation')<{
+  readonly observedAt: string
+  readonly reconciliationId: string
+  readonly status: ReconciliationStatus
 }> {}
 
 export const executionCloseMarketDataDiagnostics = (failure: ExecutionCloseAwaitingMarketData) => {
@@ -1532,7 +1545,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   source: 'archive' | 'reconciled-position',
 ): Effect.Effect<
   { readonly document: ExecutionDecisionDocument; readonly reconciliation: ReconciliationPassResult },
-  CycleRunnerError | ExecutionCloseAwaitingMarketData,
+  CycleRunnerError | ExecutionCloseAwaitingMarketData | ExecutionCloseAwaitingReconciliation,
   R
 > => {
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
@@ -1588,6 +1601,15 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         failure: 'contract',
       })
     }
+    if (
+      reconciliation.brokerState.reconciliation.status !== ReconciliationStatus.Exact ||
+      !reconciliation.report.metrics.accountingExact
+    )
+      return yield* new ExecutionCloseAwaitingReconciliation({
+        observedAt: evaluatedAt,
+        reconciliationId: reconciliation.brokerState.reconciliation.reconciliationId,
+        status: reconciliation.brokerState.reconciliation.status,
+      })
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
     if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData

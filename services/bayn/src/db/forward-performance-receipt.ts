@@ -156,6 +156,8 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
         source.symbol === observation.symbol &&
         source.windowOpenedAt === observation.windowOpenedAt &&
         source.windowClosedAt === observation.windowClosedAt &&
+        source.sourceFeed === observation.intradaySource.feed &&
+        source.volumeScope === observation.intradaySource.volumeScope &&
         source.quantityAtoms === observation.marketVolumeQuantityAtoms
       )
     }),
