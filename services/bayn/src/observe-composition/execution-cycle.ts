@@ -85,7 +85,11 @@ import {
   type ObserveDecisionInput,
   type ReconciliationPassError,
 } from './decision-builder'
-import { resolveExecutionCycleCloseWindow, type ExecutionCycleCloseWindow } from './execution-window'
+import {
+  boundExecutionCycleCloseWindow,
+  resolveExecutionCycleCloseWindow,
+  type ExecutionCycleCloseWindow,
+} from './execution-window'
 
 type RecoveredExecutionContext = {
   readonly preparation: ObserveStartupPreparation
@@ -861,13 +865,15 @@ const executeBoundExecutionCycle = (
         closeDocument = closure.document
         closeReconciliation = closure.reconciliation
       }
+      const boundCloseWindow =
+        closeDocument === undefined ? closeWindow : boundExecutionCycleCloseWindow(closeWindow, closeDocument)
       closeOnly = closeDocument !== undefined
       phaseInput = closeOnly
         ? {
             ...input,
             mutationPhase: 'CLOSE',
-            executionCycleCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
-            executionCycleCloseExpiresAt: closeWindow.expiresAt,
+            executionCycleCloseSubmitCutoffAt: boundCloseWindow.submitCutoffAt,
+            executionCycleCloseExpiresAt: boundCloseWindow.expiresAt,
           }
         : entryPhaseInput
       step = yield* prepareNextMutationIntent({
@@ -880,7 +886,7 @@ const executeBoundExecutionCycle = (
         allowSubmit: executionMutationSubmissionAllowed({
           capability: capability._tag,
           phase: closeOnly ? 'CLOSE' : 'ENTRY',
-          submissionCutoffAt: closeOnly ? closeWindow.submitCutoffAt : entrySubmissionCutoffAt,
+          submissionCutoffAt: closeOnly ? boundCloseWindow.submitCutoffAt : entrySubmissionCutoffAt,
           observedAt,
         }),
       })
@@ -946,12 +952,13 @@ const executeBoundExecutionCycle = (
             exitTarget: management.target,
           })
           if (closure._tag !== 'Close') return closure
+          const boundCloseWindow = boundExecutionCycleCloseWindow(closeWindow, closure.document)
           closeOnly = true
           phaseInput = {
             ...input,
             mutationPhase: 'CLOSE',
-            executionCycleCloseSubmitCutoffAt: closeWindow.submitCutoffAt,
-            executionCycleCloseExpiresAt: closeWindow.expiresAt,
+            executionCycleCloseSubmitCutoffAt: boundCloseWindow.submitCutoffAt,
+            executionCycleCloseExpiresAt: boundCloseWindow.expiresAt,
           }
           step = yield* prepareNextMutationIntent({
             input: phaseInput,
@@ -963,7 +970,7 @@ const executeBoundExecutionCycle = (
             allowSubmit: executionMutationSubmissionAllowed({
               capability: capability._tag,
               phase: 'CLOSE',
-              submissionCutoffAt: closeWindow.submitCutoffAt,
+              submissionCutoffAt: boundCloseWindow.submitCutoffAt,
               observedAt: yield* currentUtcInstant,
             }),
           })

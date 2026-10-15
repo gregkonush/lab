@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 import { MarketSchedule, continuousExecutionPolicy } from '../market-hours'
 
-import { utcInstantFromEpochMillisResult } from '../time'
+import { utcInstantFromEpochMillis, utcInstantFromEpochMillisResult } from '../time'
 
 export const everySessionCloseStartLeadMs = 60 * 60_000
 export const everySessionCloseSubmitLeadMs = 15 * 60_000
@@ -106,3 +106,14 @@ export const resolveExecutionCycleCloseWindow = (
       expiresAt,
     }
   })
+
+export const boundExecutionCycleCloseWindow = (
+  window: ExecutionCycleCloseWindow,
+  document: { readonly expiresAt: string },
+): ExecutionCycleCloseWindow => ({
+  ...window,
+  expiresAt: document.expiresAt,
+  submitCutoffAt: utcInstantFromEpochMillis(
+    Date.parse(document.expiresAt) - (Date.parse(window.expiresAt) - Date.parse(window.submitCutoffAt)),
+  ),
+})
