@@ -64,7 +64,7 @@ data:
       "panels": [
         {
           "id": 101,
-          "title": "Cache servers",
+          "title": "Cache health",
           "type": "stat",
           "datasource": {
             "type": "prometheus",
@@ -73,10 +73,10 @@ data:
           "gridPos": {
             "x": 0,
             "y": 0,
-            "w": 4,
-            "h": 3
+            "w": 8,
+            "h": 4
           },
-          "description": "Both Valkey servers must be up. Expected 2. Missing telemetry is unknown.",
+          "description": "Both Valkey servers must be up. Expected 2. Missing telemetry is unknown. The required replica must be connected. Every cache publication also waits for its acknowledgement.",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -85,25 +85,7 @@ data:
                 "mode": "thresholds"
               },
               "decimals": 0,
-              "mappings": [
-                {
-                  "type": "value",
-                  "options": {
-                    "0": {
-                      "text": "0 / 2",
-                      "color": "red"
-                    },
-                    "1": {
-                      "text": "1 / 2",
-                      "color": "red"
-                    },
-                    "2": {
-                      "text": "2 / 2",
-                      "color": "green"
-                    }
-                  }
-                }
-              ],
+              "mappings": [],
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
@@ -118,7 +100,64 @@ data:
                 ]
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Servers"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "0 / 2",
+                            "color": "red"
+                          },
+                          "1": {
+                            "text": "1 / 2",
+                            "color": "red"
+                          },
+                          "2": {
+                            "text": "2 / 2",
+                            "color": "green"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Replica link"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "Disconnected",
+                            "color": "red"
+                          },
+                          "1": {
+                            "text": "Connected",
+                            "color": "green"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
           },
           "targets": [
             {
@@ -128,85 +167,14 @@ data:
                 "uid": "prom"
               },
               "expr": "sum(redis_up{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"})",
-              "legendFormat": "Cache servers",
+              "legendFormat": "Servers",
               "range": false,
               "instant": true,
               "interval": "30s",
               "editorMode": "code"
-            }
-          ],
-          "options": {
-            "reduceOptions": {
-              "values": false,
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": ""
             },
-            "orientation": "auto",
-            "textMode": "value",
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "center",
-            "wideLayout": true,
-            "text": {
-              "valueSize": 28
-            }
-          }
-        },
-        {
-          "id": 102,
-          "title": "Replica link",
-          "type": "stat",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom"
-          },
-          "gridPos": {
-            "x": 4,
-            "y": 0,
-            "w": 4,
-            "h": 3
-          },
-          "description": "The required replica must be connected. Every cache publication also waits for its acknowledgement.",
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "noValue": "Unknown",
-              "color": {
-                "mode": "thresholds"
-              },
-              "decimals": 0,
-              "mappings": [
-                {
-                  "type": "value",
-                  "options": {
-                    "0": {
-                      "text": "Disconnected",
-                      "color": "red"
-                    },
-                    "1": {
-                      "text": "Connected",
-                      "color": "green"
-                    }
-                  }
-                }
-              ],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "text",
-                    "value": null
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "targets": [
             {
-              "refId": "A",
+              "refId": "B",
               "datasource": {
                 "type": "prometheus",
                 "uid": "prom"
@@ -227,20 +195,21 @@ data:
               ],
               "fields": ""
             },
-            "orientation": "auto",
-            "textMode": "value",
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
             "colorMode": "value",
             "graphMode": "none",
             "justifyMode": "center",
-            "wideLayout": true,
+            "wideLayout": false,
             "text": {
-              "valueSize": 28
+              "valueSize": 24,
+              "titleSize": 13
             }
           }
         },
         {
           "id": 103,
-          "title": "API data",
+          "title": "Fresh telemetry",
           "type": "stat",
           "datasource": {
             "type": "prometheus",
@@ -249,10 +218,10 @@ data:
           "gridPos": {
             "x": 8,
             "y": 0,
-            "w": 4,
-            "h": 3
+            "w": 8,
+            "h": 4
           },
-          "description": "API processes with a heartbeat newer than 90 seconds. Expected 2. A partial rollout remains visible.",
+          "description": "API processes with a heartbeat newer than 90 seconds. Expected 2. A partial rollout remains visible. Execution workers with a heartbeat newer than 90 seconds. Expected 2.",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -304,99 +273,20 @@ data:
                 "uid": "prom"
               },
               "expr": "count((time() - bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn\",source_revision=~\"$source_revision\"}) < 90)",
-              "legendFormat": "API telemetry",
+              "legendFormat": "API",
               "range": false,
               "instant": true,
               "interval": "30s",
               "editorMode": "code"
-            }
-          ],
-          "options": {
-            "reduceOptions": {
-              "values": false,
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": ""
             },
-            "orientation": "auto",
-            "textMode": "value",
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "center",
-            "wideLayout": true,
-            "text": {
-              "valueSize": 28
-            }
-          }
-        },
-        {
-          "id": 104,
-          "title": "Worker data",
-          "type": "stat",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom"
-          },
-          "gridPos": {
-            "x": 12,
-            "y": 0,
-            "w": 4,
-            "h": 3
-          },
-          "description": "Execution workers with a heartbeat newer than 90 seconds. Expected 2.",
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "noValue": "Unknown",
-              "color": {
-                "mode": "thresholds"
-              },
-              "decimals": 0,
-              "mappings": [
-                {
-                  "type": "value",
-                  "options": {
-                    "0": {
-                      "text": "0 / 2",
-                      "color": "red"
-                    },
-                    "1": {
-                      "text": "1 / 2",
-                      "color": "red"
-                    },
-                    "2": {
-                      "text": "2 / 2",
-                      "color": "green"
-                    }
-                  }
-                }
-              ],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "red",
-                    "value": null
-                  },
-                  {
-                    "color": "green",
-                    "value": 2
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "targets": [
             {
-              "refId": "A",
+              "refId": "B",
               "datasource": {
                 "type": "prometheus",
                 "uid": "prom"
               },
               "expr": "count((time() - bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=\"bayn-execution-controller\",source_revision=~\"$source_revision\"}) < 90)",
-              "legendFormat": "Worker telemetry",
+              "legendFormat": "Workers",
               "range": false,
               "instant": true,
               "interval": "30s",
@@ -411,20 +301,21 @@ data:
               ],
               "fields": ""
             },
-            "orientation": "auto",
-            "textMode": "value",
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
             "colorMode": "value",
             "graphMode": "none",
             "justifyMode": "center",
-            "wideLayout": true,
+            "wideLayout": false,
             "text": {
-              "valueSize": 28
+              "valueSize": 24,
+              "titleSize": 13
             }
           }
         },
         {
           "id": 105,
-          "title": "Cache hit rate",
+          "title": "Cache use",
           "type": "stat",
           "datasource": {
             "type": "prometheus",
@@ -433,84 +324,10 @@ data:
           "gridPos": {
             "x": 16,
             "y": 0,
-            "w": 4,
-            "h": 3
+            "w": 8,
+            "h": 4
           },
-          "description": "Successful GET results in the current rate window. No requests means no ratio. Transport failures are separate.",
-          "fieldConfig": {
-            "defaults": {
-              "unit": "percentunit",
-              "noValue": "Unknown",
-              "color": {
-                "mode": "thresholds"
-              },
-              "decimals": 1,
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "red",
-                    "value": null
-                  },
-                  {
-                    "color": "green",
-                    "value": 0.99
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom"
-              },
-              "expr": "sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",outcome=\"hit\"}[$__rate_interval])) / sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
-              "legendFormat": "Cache hit rate",
-              "range": false,
-              "instant": true,
-              "interval": "30s",
-              "editorMode": "code"
-            }
-          ],
-          "options": {
-            "reduceOptions": {
-              "values": false,
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": ""
-            },
-            "orientation": "auto",
-            "textMode": "value",
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "center",
-            "wideLayout": true,
-            "text": {
-              "valueSize": 28
-            }
-          }
-        },
-        {
-          "id": 106,
-          "title": "Memory use",
-          "type": "stat",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom"
-          },
-          "gridPos": {
-            "x": 20,
-            "y": 0,
-            "w": 4,
-            "h": 3
-          },
-          "description": "Highest memory use of either Valkey server. The noeviction policy rejects writes when the configured limit is exhausted.",
+          "description": "Successful GET results in the current rate window. No requests means no ratio. Transport failures are separate. Highest memory use of either Valkey server. The noeviction policy rejects writes when the configured limit is exhausted.",
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
@@ -526,19 +343,64 @@ data:
                   {
                     "color": "text",
                     "value": null
-                  },
-                  {
-                    "color": "orange",
-                    "value": 0.85
-                  },
-                  {
-                    "color": "red",
-                    "value": 0.95
                   }
                 ]
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Hit rate"
+                },
+                "properties": [
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "green",
+                          "value": 0.99
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Memory"
+                },
+                "properties": [
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "text",
+                          "value": null
+                        },
+                        {
+                          "color": "orange",
+                          "value": 0.85
+                        },
+                        {
+                          "color": "red",
+                          "value": 0.95
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
           },
           "targets": [
             {
@@ -547,8 +409,21 @@ data:
                 "type": "prometheus",
                 "uid": "prom"
               },
+              "expr": "sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",outcome=\"hit\"}[$__rate_interval])) / sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+              "legendFormat": "Hit rate",
+              "range": false,
+              "instant": true,
+              "interval": "30s",
+              "editorMode": "code"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom"
+              },
               "expr": "max(redis_memory_used_bytes{job=\"bayn-valkey\",namespace=\"bayn\"} / redis_memory_max_bytes{job=\"bayn-valkey\",namespace=\"bayn\"})",
-              "legendFormat": "Cache memory",
+              "legendFormat": "Memory",
               "range": false,
               "instant": true,
               "interval": "30s",
@@ -563,14 +438,15 @@ data:
               ],
               "fields": ""
             },
-            "orientation": "auto",
-            "textMode": "value",
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
             "colorMode": "value",
             "graphMode": "none",
             "justifyMode": "center",
-            "wideLayout": true,
+            "wideLayout": false,
             "text": {
-              "valueSize": 28
+              "valueSize": 24,
+              "titleSize": 13
             }
           }
         },
@@ -584,7 +460,7 @@ data:
           },
           "gridPos": {
             "x": 0,
-            "y": 3,
+            "y": 4,
             "w": 16,
             "h": 10
           },
@@ -682,7 +558,7 @@ data:
           },
           "gridPos": {
             "x": 16,
-            "y": 3,
+            "y": 4,
             "w": 8,
             "h": 10
           },
@@ -1275,7 +1151,7 @@ data:
           },
           "gridPos": {
             "x": 0,
-            "y": 13,
+            "y": 14,
             "w": 12,
             "h": 7
           },
@@ -1373,7 +1249,7 @@ data:
           },
           "gridPos": {
             "x": 12,
-            "y": 13,
+            "y": 14,
             "w": 12,
             "h": 7
           },
@@ -1468,7 +1344,7 @@ data:
           "collapsed": true,
           "gridPos": {
             "x": 0,
-            "y": 20,
+            "y": 21,
             "w": 24,
             "h": 1
           },
@@ -1483,7 +1359,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 21,
+                "y": 22,
                 "w": 12,
                 "h": 8
               },
@@ -1555,7 +1431,7 @@ data:
               },
               "gridPos": {
                 "x": 12,
-                "y": 21,
+                "y": 22,
                 "w": 12,
                 "h": 8
               },
@@ -1641,7 +1517,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 29,
+                "y": 30,
                 "w": 12,
                 "h": 8
               },
@@ -1693,7 +1569,7 @@ data:
               },
               "gridPos": {
                 "x": 12,
-                "y": 29,
+                "y": 30,
                 "w": 12,
                 "h": 8
               },
@@ -1745,7 +1621,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 37,
+                "y": 38,
                 "w": 12,
                 "h": 8
               },
@@ -1802,7 +1678,7 @@ data:
               },
               "gridPos": {
                 "x": 12,
-                "y": 37,
+                "y": 38,
                 "w": 12,
                 "h": 8
               },
@@ -1859,7 +1735,7 @@ data:
           "collapsed": true,
           "gridPos": {
             "x": 0,
-            "y": 21,
+            "y": 22,
             "w": 24,
             "h": 1
           },
@@ -1875,7 +1751,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 22,
+                "y": 23,
                 "w": 12,
                 "h": 8
               },
@@ -1932,7 +1808,7 @@ data:
               },
               "gridPos": {
                 "x": 12,
-                "y": 22,
+                "y": 23,
                 "w": 12,
                 "h": 8
               },
@@ -1991,7 +1867,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 30,
+                "y": 31,
                 "w": 12,
                 "h": 8
               },
@@ -2042,7 +1918,7 @@ data:
               },
               "gridPos": {
                 "x": 12,
-                "y": 30,
+                "y": 31,
                 "w": 12,
                 "h": 8
               },
@@ -2098,7 +1974,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 38,
+                "y": 39,
                 "w": 12,
                 "h": 8
               },
@@ -2197,7 +2073,7 @@ data:
               },
               "gridPos": {
                 "x": 12,
-                "y": 38,
+                "y": 39,
                 "w": 12,
                 "h": 8
               },
@@ -2247,7 +2123,7 @@ data:
           "collapsed": true,
           "gridPos": {
             "x": 0,
-            "y": 22,
+            "y": 23,
             "w": 24,
             "h": 1
           },
@@ -2262,7 +2138,7 @@ data:
               },
               "gridPos": {
                 "x": 0,
-                "y": 23,
+                "y": 24,
                 "w": 24,
                 "h": 10
               },
