@@ -26,7 +26,7 @@ data:
       "editable": true,
       "graphTooltip": 1,
       "id": null,
-      "links": [],
+      "links": [{"title": "Cache and database performance", "url": "/d/bayn-cache-performance", "type": "link"}],
       "panels": [
         {
           "datasource": {
@@ -2419,7 +2419,7 @@ data:
             "type": "loki",
             "uid": "loki"
           },
-          "description": "Number of failed export attempts per rolling five minutes, grouped by source, failure reason and HTTP status. Empty data may mean no recorded failures or unavailable logs; it does not prove successful trace delivery. Counts are attempts, not lost spans.",
+          "description": "Number of failed export attempts per rolling five minutes, grouped by source, signal, failure reason and HTTP status. Empty data may mean no recorded failures or unavailable logs; it does not prove successful trace delivery. Counts are attempts, not lost spans.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2460,13 +2460,13 @@ data:
           },
           "targets": [
             {
-              "expr": "sum by (export_service, export_reason, export_http_status) (count_over_time({namespace=\"bayn\",container=~\"bayn|execution-controller|activate\"} |= \"bayn.telemetry.export\" | json export_stage=\"annotations.stage\", export_service=\"annotations.serviceName\", export_reason=\"annotations.failureReason\", export_http_status=\"annotations.httpStatus\" | export_stage=\"bayn.telemetry.export\" | __error__=\"\" [5m]))",
-              "legendFormat": "{{export_service}} · {{export_reason}} · {{export_http_status}}",
+              "expr": "sum by (export_service, export_signal, export_reason, export_http_status) (count_over_time({namespace=\"bayn\",container=~\"bayn|execution-controller|activate\"} |= \"bayn.telemetry.export\" | json export_stage=\"annotations.stage\", export_service=\"annotations.serviceName\", export_signal=\"annotations.signal\", export_reason=\"annotations.failureReason\", export_http_status=\"annotations.httpStatus\" | export_stage=\"bayn.telemetry.export\" | __error__=\"\" [5m]))",
+              "legendFormat": "{{export_service}} · {{export_signal}} · {{export_reason}} · {{export_http_status}}",
               "queryType": "range",
               "refId": "A"
             }
           ],
-          "title": "Trace export failures",
+          "title": "OTLP export failures",
           "type": "timeseries"
         },
         {
@@ -2474,7 +2474,7 @@ data:
             "type": "loki",
             "uid": "loki"
           },
-          "description": "Up to 1,000 native trace-export failure records in the selected interval, newest first. Open log details for source revision, reason and HTTP status. Empty data may mean no recorded failures or unavailable logs; check collector and Loki health before declaring recovery. Records count attempts, not lost spans.",
+          "description": "Up to 1,000 native trace or metrics export failure records in the selected interval, newest first. Open log details for source revision, reason and HTTP status. Empty data may mean no recorded failures or unavailable logs; check collector and Loki health before declaring recovery. Records count attempts, not lost spans.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -2498,13 +2498,13 @@ data:
           },
           "targets": [
             {
-              "expr": "{namespace=\"bayn\",container=~\"bayn|execution-controller|activate\"} |= \"bayn.telemetry.export\" | json export_stage=\"annotations.stage\", export_service=\"annotations.serviceName\", export_reason=\"annotations.failureReason\", export_http_status=\"annotations.httpStatus\" | export_stage=\"bayn.telemetry.export\" | __error__=\"\"",
+              "expr": "{namespace=\"bayn\",container=~\"bayn|execution-controller|activate\"} |= \"bayn.telemetry.export\" | json export_stage=\"annotations.stage\", export_service=\"annotations.serviceName\", export_signal=\"annotations.signal\", export_reason=\"annotations.failureReason\", export_http_status=\"annotations.httpStatus\" | export_stage=\"bayn.telemetry.export\" | __error__=\"\"",
               "maxLines": 1000,
               "queryType": "range",
               "refId": "A"
             }
           ],
-          "title": "Trace export failure logs",
+          "title": "OTLP export failure logs",
           "type": "logs"
         }
       ],
