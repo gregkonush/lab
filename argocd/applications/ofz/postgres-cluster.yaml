@@ -136,7 +136,7 @@ spec:
     parameters:
       archive_timeout: 60s
       wal_buffers: 16MB
-      wal_sync_method: open_datasync
+      wal_sync_method: fdatasync
       track_wal_io_timing: "on"
       track_commit_timestamp: "on"
       max_connections: "200"
