@@ -775,20 +775,14 @@ includes legacy daily SIP requests also require all eight settings from the inte
 | `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
 | `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
 
-Use `node dist/forward-performance-command.js --authority-generation <generation-hash>` to scope the report to a
-native mandate without these settings. Only complete absence is optional: partial or malformed historical settings,
+The command requires `node dist/forward-performance-command.js --authority-generation <generation-hash>`.
+Native mandates need none of these settings. Only complete absence is optional: partial or malformed historical settings,
 including inconsistent evaluation bounds, still fail configuration before evidence reads. A legacy or mixed-history
 scope without historical settings fails with an explicit error before any market query or ClickHouse acquisition;
 it never omits legacy requests, selects a default snapshot, or implies zero trades or zero performance.
 Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
-
-The live manifests require a binary with this configuration separation. For upgrades from a binary that still
-requires daily snapshot settings at live startup, publish and select the new binary before removing those settings.
-Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
-and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
-the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
 
 The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
@@ -1594,6 +1588,14 @@ a deterministic v2 compensating debit for the excess alone; its original match, 
 immutable. The original v1 regulatory correction evidence remains verifiable. Outstanding accruals and the cash
 reporting residual remain until the entire cohort settles.
 Replay checkpoint v3 retains the same crypto cash-fee kind; earlier checkpoint versions are rejected.
+Fee history uses the daily non-trade query contract with pagination. Trade timestamp filters are rejected because
+Alpaca can omit current-day crypto receipts when `until` is present. Native capture validates every fee date against
+its UTC cut and compares the complete before/after history before persisting or admitting a trade.
+Cash-yield evidence v3 binds the baseline, opening and closing reporting residuals to posted accruals and settlements
+visible at each cut. Reporting uses the native residual calculation and applies only the change between cuts. It
+does not post a transfer or treat a reporting-precision difference as income. Earlier evidence versions are rejected.
+The forward-performance command requires an explicit authority generation. The unbounded account-history command
+has been removed; cumulative accounting and ledger verification still accompany every scoped report.
 
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
 later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or

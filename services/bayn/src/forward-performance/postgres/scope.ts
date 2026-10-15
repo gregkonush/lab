@@ -1,6 +1,8 @@
 import { PgClient } from '@effect/sql-pg'
 import { DiscrepancyKind } from '../../execution/contracts'
-import { CashYieldEvidenceRow, ReconciliationRow } from './model'
+import { ReconciliationRow } from './model'
+import type { ForwardPerformanceCashYieldEvidence } from '../model'
+import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 
 export const SIGNED_I128_MIN = -(1n << 127n)
 export const SIGNED_I128_MAX = (1n << 127n) - 1n
@@ -272,7 +274,7 @@ export const signedI128 = (value: string): bigint | undefined => {
 export const reconciliationExactness = (
   accountId: string,
   reconciliation: typeof ReconciliationRow.Type,
-  cashYield: typeof CashYieldEvidenceRow.Type | undefined,
+  cashYield: ForwardPerformanceCashYieldEvidence | undefined,
 ): { readonly performanceExact: boolean; readonly cashYieldAdjustedExact: boolean } => {
   if (reconciliation.status === 'EXACT') {
     return {
@@ -288,20 +290,23 @@ export const reconciliationExactness = (
     discrepancy.kind !== DiscrepancyKind.Cash ||
     discrepancy.identity !== accountId ||
     discrepancy.lastObservedAt !== reconciliation.reconciled_at.toISOString() ||
-    cashYield.reconciliation_id !== reconciliation.reconciliation_id ||
-    cashYield.reconciliation_content_hash !== reconciliation.content_hash ||
-    cashYield.reconciled_at.toISOString() !== reconciliation.reconciled_at.toISOString()
+    cashYield.reconciliationId !== reconciliation.reconciliation_id ||
+    cashYield.reconciliationContentHash !== reconciliation.content_hash ||
+    cashYield.reconciledAt !== reconciliation.reconciled_at.toISOString()
   ) {
     return { performanceExact: false, cashYieldAdjustedExact: false }
   }
 
-  const baselineCash = signedI128(cashYield.baseline_cash_micros)
-  const openingCash = signedI128(cashYield.opening_cash_micros)
-  const preWindowCashDelta = signedI128(cashYield.pre_window_accounted_cash_delta_micros)
-  const preWindowResidual = signedI128(cashYield.pre_window_cash_residual_micros)
-  const closingCash = signedI128(cashYield.closing_cash_micros)
-  const accountedCashDelta = signedI128(cashYield.accounted_cash_delta_micros)
-  const yieldAmount = signedI128(cashYield.cash_yield_micros)
+  const baselineCash = signedI128(cashYield.baselineCashMicros)
+  const openingCash = signedI128(cashYield.openingCashMicros)
+  const preWindowCashDelta = signedI128(cashYield.preWindowAccountedCashDeltaMicros)
+  const preWindowResidual = signedI128(cashYield.preWindowCashResidualMicros)
+  const closingCash = signedI128(cashYield.closingCashMicros)
+  const accountedCashDelta = signedI128(cashYield.accountedCashDeltaMicros)
+  const yieldAmount = signedI128(cashYield.cashYieldMicros)
+  const baselineOffset = signedI128(cashYield.baselineCashReportingOffsetMicros)
+  const openingOffset = signedI128(cashYield.openingCashReportingOffsetMicros)
+  const closingOffset = signedI128(cashYield.closingCashReportingOffsetMicros)
   const expectedCash = signedI128(discrepancy.expected)
   const observedCash = signedI128(discrepancy.observed)
   if (
@@ -312,15 +317,29 @@ export const reconciliationExactness = (
     closingCash === undefined ||
     accountedCashDelta === undefined ||
     yieldAmount === undefined ||
+    baselineOffset === undefined ||
+    openingOffset === undefined ||
+    closingOffset === undefined ||
     expectedCash === undefined ||
     observedCash === undefined ||
     yieldAmount <= 0n ||
     preWindowResidual !== 0n ||
-    openingCash !== baselineCash + preWindowCashDelta ||
-    expectedCash !== openingCash + accountedCashDelta ||
+    openingCash !==
+      BigInt(
+        reportedCashMicros(
+          (baselineCash + preWindowCashDelta + openingOffset - baselineOffset).toString(),
+          cashYield.openingCashReportingQuantumMicros,
+        ),
+      ) ||
+    expectedCash !==
+      BigInt(
+        reportedCashMicros(
+          (openingCash + accountedCashDelta + closingOffset - openingOffset).toString(),
+          cashYield.closingCashReportingQuantumMicros,
+        ),
+      ) ||
     observedCash !== closingCash ||
-    observedCash - expectedCash !== yieldAmount ||
-    closingCash - openingCash - accountedCashDelta !== yieldAmount
+    observedCash - expectedCash !== yieldAmount
   ) {
     return { performanceExact: false, cashYieldAdjustedExact: false }
   }

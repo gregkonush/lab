@@ -792,6 +792,49 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })
 
+  test('retains current UTC-day crypto fees through daily pagination and stable capture', async () => {
+    const cut = '2026-10-15T09:56:00.000Z'
+    const fees = [
+      {
+        accountId,
+        activityId: 'same-day-coin',
+        date: '2026-10-15',
+        netAmountMicros: '0',
+        coinDebit: { symbol: 'ETH/USD', quantityAtoms: '82708', priceAtoms: '2364150000000' },
+      },
+      {
+        accountId,
+        activityId: 'same-day-cash',
+        date: '2026-10-15',
+        netAmountMicros: '-200000',
+        cryptoCashFee: true as const,
+      },
+    ] as const
+    let reads = 0
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      feeActivities: (query) => {
+        reads += 1
+        // Observed PAPER behavior: timestamp-bounded non-trade reads omit current-day CFEE receipts.
+        const items = Object.hasOwn(query ?? {}, 'until') ? [] : [fees[query?.pageToken === undefined ? 0 : 1]]
+        return Effect.succeed({
+          value: {
+            items,
+            ...(items.length > 0 && query?.pageToken === undefined ? { nextPageToken: 'same-day-coin' } : {}),
+          },
+          evidence: { ...evidence('current-day-fees'), observedAt: cut },
+        })
+      },
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    await Effect.runPromise(
+      provide(read, makeStore(control)).pipe(Effect.provideService(ReconciliationClock, Effect.succeed(cut))),
+    )
+    expect(control.reconciliations[0]?.fees.map((row) => row.value)).toEqual([...fees])
+    expect(reads).toBe(4)
+    expect(control.restrictions).toEqual([])
+  })
+
   test('recaptures late fee postings before persisting an account snapshot', async () => {
     let reads = 0
     const fee = { accountId: account.id, activityId: 'fee-1', date: '2026-07-22', netAmountMicros: '-230000' }
@@ -799,13 +842,17 @@ describe('execution reconciliation loop', () => {
       ...emptyRead(),
       feeActivities: () => {
         reads += 1
-        return Effect.succeed({ value: { items: reads === 1 ? [] : [fee] }, evidence: evidence(`fees-${reads}`) })
+        return Effect.succeed({
+          value: { items: reads === 1 ? [] : [fee] },
+          evidence: { ...evidence(`fees-${reads}`), observedAt: '2026-07-22T12:00:00.000Z' },
+        })
       },
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse('2026-07-22T12:00:00.000Z'))
           const fiber = yield* provide(read, makeStore(control)).pipe(Effect.forkScoped({ startImmediately: true }))
           yield* TestClock.adjust(500)
           yield* Fiber.join(fiber)
@@ -832,7 +879,7 @@ describe('execution reconciliation loop', () => {
         ...emptyRead(),
         feeActivities: (query) => {
           const start = query?.pageToken === undefined ? 0 : 100
-          const items = query?.until === undefined ? fees.slice(start, start + 100) : []
+          const items = Object.hasOwn(query ?? {}, 'until') ? [] : fees.slice(start, start + 100)
           const last = items.at(-1)
           return Effect.succeed({
             value: {
@@ -857,6 +904,27 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
     const failure = await Effect.runPromise(provide(read, makeStore(control)).pipe(Effect.flip))
+    expect(failure).toMatchObject({ failure: { _tag: 'Pagination', reason: 'InvalidFeeHistory' } })
+    expect(control.writes).toBe(0)
+    expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
+  })
+
+  test('rejects a future UTC-day fee before accounting', async () => {
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      feeActivities: () =>
+        Effect.succeed({
+          value: { items: [{ accountId, activityId: 'future-fee', date: '2026-10-16', netAmountMicros: '-200000' }] },
+          evidence: { ...evidence('future-fee'), observedAt: '2026-10-15T23:59:59.999Z' },
+        }),
+    }
+    const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
+    const failure = await Effect.runPromise(
+      provide(read, makeStore(control)).pipe(
+        Effect.provideService(ReconciliationClock, Effect.succeed('2026-10-15T23:59:59.999Z')),
+        Effect.flip,
+      ),
+    )
     expect(failure).toMatchObject({ failure: { _tag: 'Pagination', reason: 'InvalidFeeHistory' } })
     expect(control.writes).toBe(0)
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
