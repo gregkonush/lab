@@ -654,6 +654,8 @@ export const ensureExecutionCycleClosure = <R>({
             cycleId: cycle.identity.cycleId,
             reconciliationId: failure.reconciliationId,
             reconciliationStatus: failure.status,
+            unknownMutationCount: failure.unknownMutationCount,
+            unknownOrderCount: failure.unknownOrderCount,
             observedAt: failure.observedAt,
           }),
           Effect.as<ExecutionCycleClosureResult>({

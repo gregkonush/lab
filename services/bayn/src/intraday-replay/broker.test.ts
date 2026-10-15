@@ -1359,6 +1359,19 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         expect(flat.state.ledger.fills).toHaveLength(2)
         expect(flat.state.orders[1]?.order.timeInForce).toBe(BrokerTimeInForce.GoodUntilCanceled)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.ledger).toEqual(flat.state.ledger)
+        expect(flat.state.fees[1]?.cryptoCashFee).toBe(true)
+        expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.fees).toEqual(flat.state.fees)
+        const { checkpointHash: _hash, ...material } = flat
+        const oldMaterial = {
+          ...material,
+          schemaVersion: 'bayn.simulated-broker-checkpoint.v2',
+          state: {
+            ...material.state,
+            fees: material.state.fees.map(({ cryptoCashFee: _kind, ...fee }) => fee),
+          },
+        }
+        const oldCheckpoint = { ...oldMaterial, checkpointHash: Result.getOrThrow(canonicalHashV1Result(oldMaterial)) }
+        expect(Result.isFailure(restoreReplayBrokerCheckpoint(oldCheckpoint, frozen))).toBe(true)
       }),
     )
   })

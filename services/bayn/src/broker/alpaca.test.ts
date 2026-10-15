@@ -41,6 +41,7 @@ import { parseProxyUrl } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
+import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
@@ -286,6 +287,40 @@ describe('Alpaca paper reads', () => {
       },
     })
   })
+
+  test.each([
+    ['103820.560000493882', '104000.000000693882', '103820560000', '104000000001'],
+    ['-0.000000000001', '-0.000000000001', '-1', '0'],
+    ['-100.000000000001', '-101.000000000001', '-100000001', '-101000000'],
+    ['10.999999999999', '11.999999999999', '10999999', '12000000'],
+    ['10.123456000000', '11.123456000000', '10123456', '11123456'],
+  ])(
+    'bounds account equity marks without understating daily loss: %s / %s',
+    async (equity, lastEquity, current, previous) => {
+      const raw = { ...accountResponse, equity, last_equity: lastEquity }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.account))
+      expect(result.value.equityMicros).toBe(current)
+      expect(result.value.lastEquityMicros).toBe(previous)
+      expect(result.value.cashMicros).toBe('-23140200000')
+      expect(result.value.buyingPowerMicros).toBe('262113632000')
+      expect(result.evidence.contentHash).toBe(canonicalHashV1(raw))
+    },
+  )
+
+  test.each(['cash', 'buying_power', 'non_marginable_buying_power'] as const)(
+    'keeps exact-money precision checks for %s while accepting high-precision marks',
+    async (field) => {
+      const raw = { ...accountResponse, last_equity: '104000.000000693882', [field]: '1.000000000001' }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
+      expect(failure).toMatchObject({
+        operation: 'account',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    },
+  )
 
   test('reads and hashes the current fractional-trading account configuration with GET only', async () => {
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
@@ -1270,6 +1305,58 @@ describe('Alpaca paper reads', () => {
     expect(Result.getOrThrow(decimalToMicrosResult('-0.01', true, 'fee'))).toBe('-10000')
     expect(Result.isFailure(decimalToMicrosResult('-0.01', false, 'quantity'))).toBe(true)
     expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
+  })
+
+  test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {
+    const raw = {
+      activity_type: 'CFEE',
+      id: `20261015000000000::${orderId}`,
+      date: '2026-10-15',
+      net_amount: '-0.23',
+      status: 'executed',
+      description: 'Coin Pair Transaction Fee (USD)',
+    }
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, url.searchParams.has('until') ? [] : [raw]))
+      if (['/v2/positions', '/v2/orders', '/v2/account/activities/FILL'].includes(url.pathname))
+        return Effect.succeed(jsonResponse(request, []))
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-10-15T08:00:00.000Z'))),
+    )
+    expect(snapshot.history.fees).toHaveLength(1)
+    expect(snapshot.history.fees[0]?.value).toMatchObject({
+      accountId,
+      activityId: raw.id,
+      date: raw.date,
+      netAmountMicros: '-230000',
+    })
+    expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()
+    expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(canonicalHashV1([raw]))
+  })
+
+  test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, []))
+    })
+    for (const query of [
+      { pageSize: 1, until: '2026-10-15T09:56:00.000Z' },
+      { pageSize: 1, after: '2026-10-15T00:00:00.000Z' },
+    ]) {
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.feeActivities(query))))
+      expect(failure).toMatchObject({
+        operation: 'fee-activities',
+        kind: BrokerReadErrorKind.InvalidRequest,
+        retryable: false,
+      })
+    }
+    expect(calls).toBe(0)
   })
 
   test('reads a bounded fill page and derives the documented page token', async () => {

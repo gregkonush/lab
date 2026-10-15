@@ -17,6 +17,13 @@ import { Pipeable } from '../pipeable'
 const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: NormalizedBrokerSnapshot) =>
   Effect.gen(function* () {
     const accountReceipt = yield* store.events.ingest(normalized.account)
+    // Retain the report's precision with its account event, avoiding a separate durable write in
+    // the subsequent fee-preparation transaction. Reconciliation still verifies this exact binding.
+    yield* store.reconciliation.retainCashReporting({
+      account: normalized.account.account,
+      accountEventId: accountReceipt.eventId,
+      cashReportingQuantumMicros: normalized.cashReportingQuantumMicros,
+    })
     const positionsReceipt = yield* store.events.ingestPositions(normalized.positions)
     const complete = yield* store.events.completeHistory([...normalized.orderEvents, ...normalized.fillEvents])
     yield* store.accounting.verifyCompleted(normalized.fillEvents.filter((event) => complete.has(event.sourceEventId)))

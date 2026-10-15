@@ -57,10 +57,11 @@ const hashResult = (value: unknown, field: string): Result.Result<string, Broker
     }),
   )
 
-const decimalToMicrosResultDataFirst = (
+const decimalMicrosResult = (
   value: string,
   signed: boolean,
   name: string,
+  rounding: 'EXACT' | 'DOWN' | 'UP',
 ): Result.Result<string, BrokerReadContractFailure> => {
   if (!decimalPattern.test(value)) {
     return Result.fail(
@@ -76,7 +77,8 @@ const decimalToMicrosResultDataFirst = (
   const separator = absolute.indexOf('.')
   const whole = separator === -1 ? absolute : absolute.slice(0, separator)
   const fraction = separator === -1 ? '' : absolute.slice(separator + 1)
-  if (fraction.length > 6 && /[1-9]/.test(fraction.slice(6))) {
+  const subMicroRemainder = /[1-9]/.test(fraction.slice(6))
+  if (rounding === 'EXACT' && subMicroRemainder) {
     return Result.fail(
       contractFailure({
         reason: 'DECIMAL_PRECISION',
@@ -89,7 +91,15 @@ const decimalToMicrosResultDataFirst = (
     )
   }
   const micros = BigInt(whole) * 1_000_000n + BigInt((fraction.slice(0, 6) + '000000').slice(0, 6))
-  const result = negative ? -micros : micros
+  const truncated = negative ? -micros : micros
+  const adjustment = subMicroRemainder
+    ? rounding === 'UP' && !negative
+      ? 1n
+      : rounding === 'DOWN' && negative
+        ? -1n
+        : 0n
+    : 0n
+  const result = truncated + adjustment
   if (!signed && result < 0n) {
     return Result.fail(
       contractFailure({
@@ -114,7 +124,9 @@ const decimalToMicrosResultDataFirst = (
   return Result.succeed(result.toString())
 }
 
-export const decimalToMicrosResult = Pipeable.dual(3, decimalToMicrosResultDataFirst)
+export const decimalToMicrosResult = Pipeable.dual(3, (value: string, signed: boolean, name: string) =>
+  decimalMicrosResult(value, signed, name, 'EXACT'),
+)
 
 const quantityResult = (
   value: string,
@@ -226,8 +238,10 @@ const normalizeAccountResultDataFirst = (
   }
   return Result.gen(function* () {
     const cashMicros = yield* decimalToMicrosResult(raw.cash, true, 'account cash')
-    const equityMicros = yield* decimalToMicrosResult(raw.equity, true, 'account equity')
-    const lastEquityMicros = yield* decimalToMicrosResult(raw.last_equity, true, 'account last equity')
+    // Marks are not cash settlement amounts. Bound current equity down and the previous close up
+    // so converting provider mark precision to micros cannot understate the daily-loss guard.
+    const equityMicros = yield* decimalMicrosResult(raw.equity, true, 'account equity', 'DOWN')
+    const lastEquityMicros = yield* decimalMicrosResult(raw.last_equity, true, 'account last equity', 'UP')
     const buyingPowerMicros = yield* decimalToMicrosResult(raw.buying_power, true, 'account buying power')
     return {
       id: raw.id,
@@ -685,6 +699,13 @@ export const normalizeFeeActivitiesResult = (
         const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'fee net amount')
         const common = { accountId, activityId: activity.id, date: activity.date, netAmountMicros }
         if (activity.activity_type === 'FEE') return common
+        if (activity.qty === undefined) {
+          if (BigInt(netAmountMicros) >= 0n)
+            return yield* Result.fail(
+              contractFailure({ reason: 'DECIMAL_SIGN', message: 'USD crypto fee must debit cash' }),
+            )
+          return { ...common, cryptoCashFee: true as const }
+        }
         if (netAmountMicros !== '0')
           return yield* Result.fail(
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),

@@ -396,6 +396,9 @@ export const verifyBrokerStateVersion = (
       )
       AND NOT EXISTS (SELECT 1 FROM broker_fee_accruals WHERE account_id = ${accountId} AND posted_at IS NULL)
       AND NOT EXISTS (SELECT 1 FROM broker_fee_accounting WHERE account_id = ${accountId} AND posted_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM broker_fee_match_corrections WHERE account_id = ${accountId}
+        AND (posted_at IS NULL OR posted_at > ${version.reconciledAt}::timestamptz
+          OR (data->'readEvidence'->>'observedAt')::timestamptz > ${version.reconciledAt}::timestamptz))
       AND NOT EXISTS (SELECT 1 FROM broker_events WHERE account_id = ${accountId}
         AND observed_at > ${version.reconciledAt}::timestamptz)
     ) AS valid
@@ -794,5 +797,8 @@ export const makeReconciliation = (
       }),
     )
 
-  return { bindings, reconcile, recoverFees }
+  const retainCashReporting = (snapshot: Parameters<typeof retainAccountCashReporting>[1]) =>
+    runStore('reconcile', writerFence.transaction(retainAccountCashReporting(sql, snapshot)))
+
+  return { bindings, reconcile, recoverFees, retainCashReporting }
 }

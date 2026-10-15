@@ -322,6 +322,8 @@ export class ExecutionCloseAwaitingReconciliation extends Data.TaggedError('Exec
   readonly observedAt: string
   readonly reconciliationId: string
   readonly status: ReconciliationStatus
+  readonly unknownMutationCount: number
+  readonly unknownOrderCount: number
 }> {}
 
 export const executionCloseMarketDataDiagnostics = (failure: ExecutionCloseAwaitingMarketData) => {
@@ -1601,15 +1603,25 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         failure: 'contract',
       })
     }
+    // A preflight block has no executable targets. Keep the bound position recoverable rather than
+    // trying to bind liquidation evidence to that empty plan or terminalizing an unfinished close.
+    // Check the actual cut here as the fallback can acquire a newer, no-longer-exact reconciliation.
     if (
+      reconciliation.report.reconciliation.status !== ReconciliationStatus.Exact ||
       reconciliation.brokerState.reconciliation.status !== ReconciliationStatus.Exact ||
-      !reconciliation.report.metrics.accountingExact
-    )
+      reconciliation.brokerState.reconciliation.discrepancies.length !== 0 ||
+      !reconciliation.report.metrics.accountingExact ||
+      reconciliation.riskContext.unknownMutationCount !== 0 ||
+      reconciliation.brokerState.unknownOrderCount !== 0
+    ) {
       return yield* new ExecutionCloseAwaitingReconciliation({
         observedAt: evaluatedAt,
         reconciliationId: reconciliation.brokerState.reconciliation.reconciliationId,
         status: reconciliation.brokerState.reconciliation.status,
+        unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
+        unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
       })
+    }
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
     if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData

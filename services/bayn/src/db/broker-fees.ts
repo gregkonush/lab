@@ -1,3 +1,4 @@
+import { FeeActivitySchema } from '../broker/fee-activity'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
@@ -10,10 +11,11 @@ import type { LedgerPlan } from '../ledger-plan'
 import { strictParseOptions } from '../schemas'
 import {
   brokerFeePredatesOpeningCash,
-  BrokerFeeSchema,
   FeeReadEvidenceSchema,
   StoredFeeSchema,
   verifyBrokerFeeRecord,
+  prepareFeeMatchCorrection,
+  type StoredBrokerFee,
 } from '../accounting/broker-fees'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { ReconciliationStoreError } from './reconciliation'
@@ -36,6 +38,76 @@ export interface BrokerFeeAccounting {
   readonly cashDeltaMicros: string
 }
 
+const prepareCashMatchCorrections = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  observed: readonly Observed<FeeActivity>[],
+  stored: readonly StoredBrokerFee[],
+  identity: { readonly clusterId: bigint; readonly ledger: number },
+) =>
+  Effect.gen(function* () {
+    if (!stored.some((row) => row.posted && row.data.coinDebit === undefined && row.matched_cash_micros !== '0')) return
+    const matches = yield* fromResult(
+      Schema.decodeUnknownResult(
+        Schema.Array(
+          Schema.Struct({
+            activityId: Schema.String,
+            accrualId: Schema.String,
+            activityCashMicros: Schema.String,
+            accrualCashMicros: Schema.String,
+          }),
+        ),
+      )(
+        yield* sql`SELECT m.activity_id AS "activityId",m.accrual_id AS "accrualId",
+        m.activity_cash_micros::text AS "activityCashMicros",m.accrual_cash_micros::text AS "accrualCashMicros"
+        FROM broker_fee_accrual_matches m JOIN broker_fee_accounting f ON f.account_id=m.account_id AND f.activity_id=m.activity_id
+        WHERE m.account_id=${accountId} AND m.activity_cash_micros IS NOT NULL AND f.posted_at IS NOT NULL
+          AND (NOT(f.data ? 'cryptoCashFee') OR m.accrual_cash_micros>m.activity_cash_micros)
+          AND NOT EXISTS(SELECT 1 FROM broker_fee_match_corrections c WHERE c.account_id=m.account_id AND c.activity_id=m.activity_id AND c.accrual_id=m.accrual_id)
+        ORDER BY m.activity_id COLLATE "C",m.accrual_id COLLATE "C"`,
+      ),
+    )
+    const byId = new Map(stored.map((row) => [row.data.activityId, row]))
+    const observations = new Map(observed.map((row) => [row.value.activityId, row]))
+    for (const { activityId, ...match } of matches) {
+      const existing = byId.get(activityId)
+      const source = observations.get(activityId)
+      if (existing === undefined || source === undefined)
+        return yield* invariant('fee correction requires the current provider observation and stored fee')
+      const fee = yield* fromResult(Schema.decodeUnknownResult(FeeActivitySchema, strictParseOptions)(source.value))
+      const readEvidence = yield* fromResult(
+        Schema.decodeUnknownResult(FeeReadEvidenceSchema)({
+          requestId: source.evidence.requestId,
+          status: source.evidence.status,
+          contentHash: source.evidence.contentHash,
+          observedAt: source.evidence.observedAt,
+        }),
+      )
+      const hash = yield* fromResult(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee }))
+      if (hash !== existing.content_hash || fee.accountId !== accountId || fee.coinDebit !== undefined)
+        return yield* invariant('fee correction provider content differs from the original fee')
+      yield* fromResult(verifyBrokerFeeRecord(existing, accountId, identity))
+      const prepared = yield* fromResult(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: fee.cryptoCashFee === true ? 'bayn.fee-match-correction.v2' : 'bayn.fee-match-correction.v1',
+            accountId,
+            activityId,
+            feeContentHash: hash,
+            ...match,
+            readEvidence,
+          },
+          identity.ledger,
+        ),
+      )
+      const planHash = yield* fromResult(hashLedgerPlanResult(prepared.plan))
+      yield* sql`INSERT INTO broker_fee_match_corrections(correction_id,account_id,activity_id,accrual_id,cash_debit_micros,
+        data,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger)
+        VALUES(${prepared.correctionId},${accountId},${activityId},${match.accrualId},${prepared.cashDebitMicros},
+          ${sql.json(prepared.data)},${prepared.contentHash},${planHash},${identity.clusterId.toString()},${identity.ledger})`
+    }
+  })
+
 /** Called inside the account writer fence and reconciliation transaction. */
 export const prepareFeeActivities = (
   sql: PgClient.PgClient,
@@ -44,7 +116,6 @@ export const prepareFeeActivities = (
   identity: { readonly clusterId: bigint; readonly ledger: number },
 ): Effect.Effect<void, ReconciliationStoreError> =>
   Effect.gen(function* () {
-    const accruals = yield* readFeeAccruals(sql, accountId, identity)
     const assignedCoinQuantities = new Map<string, bigint>()
     const assignedCashAmounts = new Map<string, bigint>()
     const opening = observed.length === 0 ? undefined : yield* readOpeningCash(sql, accountId)
@@ -53,13 +124,15 @@ export const prepareFeeActivities = (
         'broker fee history predates the opening cash baseline; earlier baseline evidence is required',
       )
     const rows = yield* sql<Record<string, unknown>>`
-    SELECT data, COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=broker_fee_accounting.account_id AND m.activity_id=broker_fee_accounting.activity_id),0)::text AS matched_cash_micros, coin_cost_basis_micros::text AS coin_cost_basis_micros, read_evidence, content_hash, ledger_plan_hash, tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+    SELECT data,cash_match_corrections, COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=broker_fee_accounting.account_id AND m.activity_id=broker_fee_accounting.activity_id),0)::text AS matched_cash_micros, coin_cost_basis_micros::text AS coin_cost_basis_micros, read_evidence, content_hash, ledger_plan_hash, tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
       tigerbeetle_ledger::integer AS tigerbeetle_ledger, posted_at IS NOT NULL AS posted
-    FROM broker_fee_accounting WHERE account_id = ${accountId} ORDER BY activity_id COLLATE "C"
+    FROM broker_fee_accounting_evidence AS broker_fee_accounting WHERE account_id = ${accountId} ORDER BY activity_id COLLATE "C"
   `
     const stored = yield* fromResult(
       Schema.decodeUnknownResult(Schema.Array(StoredFeeSchema), strictParseOptions)(rows),
     )
+    yield* prepareCashMatchCorrections(sql, accountId, observed, stored, identity)
+    const accruals = yield* readFeeAccruals(sql, accountId, identity)
     const byId = new Map(stored.map((row) => [row.data.activityId, row]))
     const seen = new Set<string>()
     const coinAdjustments = new Map<string, { quantity: bigint; cost: bigint }>()
@@ -76,7 +149,7 @@ export const prepareFeeActivities = (
             }),
           )
           const fee = yield* fromResult(
-            Schema.decodeUnknownResult(BrokerFeeSchema, strictParseOptions)(observation.value),
+            Schema.decodeUnknownResult(FeeActivitySchema, strictParseOptions)(observation.value),
           )
           if (
             fee.accountId !== accountId ||
@@ -100,7 +173,11 @@ export const prepareFeeActivities = (
             const coin = fee.coinDebit
             let debit = BigInt(coin.quantityAtoms)
             for (const accrual of accruals) {
-              if (accrual.data.kind !== 'COIN' || accrual.data.symbol !== coin.symbol || accrual.data.date !== fee.date)
+              if (
+                accrual.data.kind !== 'COIN' ||
+                accrual.data.symbol !== coin.symbol ||
+                accrual.settlement_date !== fee.date
+              )
                 continue
               const available =
                 BigInt(accrual.coin_quantity_atoms ?? '0') -
@@ -154,29 +231,25 @@ export const prepareFeeActivities = (
               })
             }
           }
-          if (fee.coinDebit === undefined && existing === undefined && ledgerCashDelta < 0n) {
+          if (fee.cryptoCashFee === true && existing === undefined && ledgerCashDelta < 0n) {
             let remaining = -ledgerCashDelta
             for (const accrual of accruals) {
-              if (accrual.data.kind !== 'CASH' || accrual.data.date !== fee.date) continue
+              if (accrual.data.kind !== 'CASH' || accrual.settlement_date !== fee.date) continue
               const available =
                 BigInt(accrual.cash_debit_micros ?? '0') -
                 BigInt(accrual.matched_cash_micros) -
                 (assignedCashAmounts.get(accrual.accrualId) ?? 0n)
               const covered = remaining < available ? remaining : available
               if (covered <= 0n) continue
-              const released =
-                remaining < available && available - remaining <= BigInt(accrual.data.cashReportingQuantumMicros)
-                  ? available
-                  : covered
               matches.push({
                 accrualId: accrual.accrualId,
                 coinQuantityAtoms: null,
                 activityCashMicros: covered.toString(),
-                accrualCashMicros: released.toString(),
+                accrualCashMicros: covered.toString(),
               })
-              assignedCashAmounts.set(accrual.accrualId, (assignedCashAmounts.get(accrual.accrualId) ?? 0n) + released)
+              assignedCashAmounts.set(accrual.accrualId, (assignedCashAmounts.get(accrual.accrualId) ?? 0n) + covered)
               remaining -= covered
-              ledgerCashDelta += released
+              ledgerCashDelta += covered
             }
           }
           const plan =
@@ -241,10 +314,10 @@ export const postBrokerFeePlans = (
         strictParseOptions,
       )(
         yield* sql`
-    SELECT f.data,f.coin_cost_basis_micros::text AS coin_cost_basis_micros,f.read_evidence,f.content_hash,f.ledger_plan_hash,
+    SELECT f.data,f.cash_match_corrections,f.coin_cost_basis_micros::text AS coin_cost_basis_micros,f.read_evidence,f.content_hash,f.ledger_plan_hash,
       f.tigerbeetle_cluster_id::text,f.tigerbeetle_ledger::integer,f.posted_at IS NOT NULL AS posted,
       COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=f.account_id AND m.activity_id=f.activity_id),0)::text AS matched_cash_micros
-    FROM broker_fee_accounting f WHERE f.account_id=${accountId} ORDER BY f.activity_id COLLATE "C"
+    FROM broker_fee_accounting_evidence f WHERE f.account_id=${accountId} ORDER BY f.activity_id COLLATE "C"
   `,
       ),
     )
@@ -252,7 +325,8 @@ export const postBrokerFeePlans = (
     const plans: LedgerPlan[] = []
     let cashDelta = 0n
     for (const row of rows) {
-      const plan = yield* fromResult(verifyBrokerFeeRecord(row, accountId, identity))
+      const verified = yield* fromResult(verifyBrokerFeeRecord(row, accountId, identity))
+      const plan = verified.originalPlan
       if (!row.posted) {
         if (plan.transfers.length > 0)
           yield* journal.post(plan).pipe(
@@ -268,9 +342,26 @@ export const postBrokerFeePlans = (
           )
         yield* sql`UPDATE broker_fee_accounting SET posted_at=${row.read_evidence.observedAt}::timestamptz WHERE account_id=${accountId} AND activity_id=${row.data.activityId}`
       }
+      for (const correction of verified.corrections) {
+        if (!correction.record.posted) {
+          yield* journal.post(correction.plan).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ReconciliationStoreError({
+                  operation: 'reconcile',
+                  failure: 'ledger',
+                  message: 'Fee match correction ledger posting failed',
+                  cause,
+                }),
+            ),
+          )
+          yield* sql`UPDATE broker_fee_match_corrections SET posted_at=clock_timestamp() WHERE correction_id=${correction.record.correction_id}`
+        }
+        plans.push(correction.plan)
+      }
       fees.push(row.data)
       plans.push(plan)
-      cashDelta += BigInt(row.data.netAmountMicros) + BigInt(row.matched_cash_micros)
+      cashDelta += BigInt(verified.cashDeltaMicros)
     }
     return { fees, plans, cashDeltaMicros: cashDelta.toString() }
   }).pipe(

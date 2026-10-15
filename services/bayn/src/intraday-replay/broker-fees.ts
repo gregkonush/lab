@@ -20,6 +20,7 @@ export const replayFeeActivity = (
     activityId: `fee::${fill.brokerOrderId}`,
     date: fill.observedAt.slice(0, 10),
     netAmountMicros: (-(fee - received.valueMicros + received.cashMicros)).toString(),
+    ...(received.cashMicros > 0n ? { cryptoCashFee: true as const } : {}),
     ...(received.quantityAtoms === 0n
       ? {}
       : {

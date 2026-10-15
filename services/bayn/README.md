@@ -20,6 +20,9 @@ starts before the cutoff but durable binding happens afterward. Recovery still r
 evidence and cooldown guards before acquiring a successor.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
+up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
+fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
 Alpaca response decoding converts compact crypto pair identifiers such as `ETHUSD` to the canonical `ETH/USD`
 symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
 outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
@@ -114,6 +117,11 @@ materializations and collect 20 samples of full and compact read latency and
 payload size. The command is read-only against PostgreSQL and prints no account
 values. See the [migration and performance evidence](../../docs/bayn/valkey-caching-plan.md).
 
+The [cache observability runbook](../../docs/runbooks/bayn-cache-observability.md) covers native cache and database
+operation histograms, separate SET/replica acknowledgement timings, payload sizes, collected server logs, index
+catalog evidence, dashboard panels and alerts. The API reuses its existing metrics scrape; execution workers export
+native Effect metrics to the existing Mimir gateway. The runbook includes a read-only rollout acceptance command.
+
 ## Broker observation owner
 
 Broker position symbols must agree with their asset class before entering
@@ -162,9 +170,23 @@ failed cut is memoized across passes. Unprojected broker health retains its inde
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
+Stable snapshots collect all currently available fee pages without an activity-creation `until` filter. Alpaca can
+exclude an already reported settlement from that filter while its cash effect is visible. Both history scans must
+still agree, and pagination budgets, duplicate detection, response hashes and fee date validation remain enforced.
+
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+
+The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
+the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
+a separate durable write for reporting metadata. Fee plans still commit before ledger posting. A failed ingestion
+rolls back the report and its precision together; replay cannot change the retained precision or its account binding.
+
+Close preparation waits for exact accounting and resolved broker evidence before constructing a liquidation plan,
+including after a fallback obtains a newer cut. Missing settlement evidence keeps the existing position recoverable
+with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, terminalize the cycle, clear restrictions
+or authorize an order. The next exact cut can resume the same bounded close path.
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
@@ -753,20 +775,14 @@ includes legacy daily SIP requests also require all eight settings from the inte
 | `BAYN_SIGNAL_EVALUATION_START` | Evaluation start date            |
 | `BAYN_SIGNAL_EVALUATION_END`   | Evaluation end date              |
 
-Use `node dist/forward-performance-command.js --authority-generation <generation-hash>` to scope the report to a
-native mandate without these settings. Only complete absence is optional: partial or malformed historical settings,
+The command requires `node dist/forward-performance-command.js --authority-generation <generation-hash>`.
+Native mandates need none of these settings. Only complete absence is optional: partial or malformed historical settings,
 including inconsistent evaluation bounds, still fail configuration before evidence reads. A legacy or mixed-history
 scope without historical settings fails with an explicit error before any market query or ClickHouse acquisition;
 it never omits legacy requests, selects a default snapshot, or implies zero trades or zero performance.
 Historical SIP verification retains its explicit evaluation start; intraday archive evidence and immutable receipt
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
-
-The live manifests require a binary with this configuration separation. For upgrades from a binary that still
-requires daily snapshot settings at live startup, publish and select the new binary before removing those settings.
-Before rolling back to such an older binary, restore all eight settings in each of the service, execution-controller
-and activation manifests, and deploy that restored configuration with the compatible binary first. Only then select
-the older binary through the existing Kargo delivery path. No database migration or evidence rewrite is involved.
 
 The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
@@ -1560,6 +1576,27 @@ watermark contracts used by the reporter. It preserves original numeric tokens f
 prices, applies the report ingestion cutoff, and counts only complete minutes in the archive row budget.
 Bayn's existing read-only ClickHouse identity requires `SELECT` on that one crypto source table.
 
+USD crypto `CFEE` receipts carry a cash debit without coin fields. Regulatory `FEE` receipts cannot settle crypto
+accruals. Crypto settlement cohorts derive their UTC date from every exact retained source fill; the original stored
+accrual metadata and hashes remain immutable. Migration 105 adds verified, immutable corrections for regulatory
+receipts previously matched to crypto accruals. The native reconciliation path posts the compensating ledger debit
+with a deterministic identifier, then matches the actual crypto receipt. Retries verify every original and correction
+plan. Pending corrections and corrections posted after a report cut prevent complete accounting evidence.
+Cash receipts release only the amount actually covered, including partial settlement of a pooled UTC cohort.
+Migration 106 prevents reporting precision from authorizing a larger release. An already posted overrelease receives
+a deterministic v2 compensating debit for the excess alone; its original match, provider hash, and ledger plan stay
+immutable. The original v1 regulatory correction evidence remains verifiable. Outstanding accruals and the cash
+reporting residual remain until the entire cohort settles.
+Replay checkpoint v3 retains the same crypto cash-fee kind; earlier checkpoint versions are rejected.
+Fee history uses the daily non-trade query contract with pagination. Trade timestamp filters are rejected because
+Alpaca can omit current-day crypto receipts when `until` is present. Native capture validates every fee date against
+its UTC cut and compares the complete before/after history before persisting or admitting a trade.
+Cash-yield evidence v3 binds the baseline, opening and closing reporting residuals to posted accruals and settlements
+visible at each cut. Reporting uses the native residual calculation and applies only the change between cuts. It
+does not post a transfer or treat a reporting-precision difference as income. Earlier evidence versions are rejected.
+The forward-performance command requires an explicit authority generation. The unbounded account-history command
+has been removed; cumulative accounting and ledger verification still accompany every scoped report.
+
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
 later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
 fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
@@ -1572,8 +1609,8 @@ matching feature availability. Admission, inference ranking, account allocation,
 remain shared with equities.
 
 Research inputs require frozen instrument metadata. The single replay execution core handles IOC orders and market
-recovery; simulated broker checkpoint v2 reconstructs coin and cash fee activities before exposing restored state.
-Study input v2 and checkpoint v2 replace their prior contracts. Existing frozen studies keep their original revision
+recovery; simulated broker checkpoint v3 reconstructs coin and cash fee activities before exposing restored state.
+Study input v2 and checkpoint v3 replace their prior contracts. Existing frozen studies keep their original revision
 and receipts; reruns require newly registered inputs and cannot inherit qualification from an older report. New native
 management observations require `entryInventoryDebit`, verified from posted accounting even when both values are zero.
 Historical observations remain immutable; readers reject records missing this evidence instead of inventing a fee debit.
