@@ -458,6 +458,28 @@ export const runtimeHealthIsFresh = (state: RuntimeState, input: RuntimeHealthFr
 const runtimeReadyWithFreshness = (state: RuntimeState, freshness?: RuntimeHealthFreshnessInput): boolean =>
   isReady(state) && (freshness === undefined || runtimeHealthIsFresh(state, freshness))
 
+export const statusReadinessResponseDecision = (
+  state: RuntimeState,
+  freshness: RuntimeHealthFreshnessInput,
+): HttpResponseDecision => {
+  const failedDependencies: string[] = (['postgresql', 'tigerBeetle', 'cycle'] as const).filter(
+    (name) => state.health.dependencies[name].status !== 'AVAILABLE',
+  )
+  if (!runtimeHealthIsFresh(state, freshness)) failedDependencies.push('health')
+  if (state.status !== 'READY' && state.status !== 'DEGRADED') failedDependencies.push('startup')
+  const ready = failedDependencies.length === 0
+  return jsonDecision(
+    {
+      ready,
+      status: state.status,
+      checkedAt: state.health.checkedAt,
+      probeSequence: state.health.sequence,
+      failedDependencies,
+    },
+    ready ? 200 : 503,
+  )
+}
+
 export const readinessResponseDecision = (
   state: RuntimeState,
   freshness?: RuntimeHealthFreshnessInput,
@@ -1346,6 +1368,10 @@ const registerHttpRoutes = (
     Effect.map(({ current, nowMs }) => readinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
     Effect.flatMap(interpretResponseDecision),
   )
+  const statusReady = currentStateAndTime.pipe(
+    Effect.map(({ current, nowMs }) => statusReadinessResponseDecision(current, { nowMs, leaseMs: freshnessLeaseMs })),
+    Effect.flatMap(interpretResponseDecision),
+  )
   const status = currentStateAndTime.pipe(
     Effect.map(({ current, nowMs }) =>
       jsonDecision(
@@ -1396,6 +1422,7 @@ const registerHttpRoutes = (
   return Effect.gen(function* () {
     yield* router.add('GET', '/livez', interpretResponseDecision(jsonDecision({ service: 'bayn', live: true })))
     yield* router.add('GET', '/readyz', ready)
+    yield* router.add('GET', '/status-readyz', statusReady)
     yield* router.add('GET', '/metrics', metrics)
     yield* router.add('GET', '/v1/status', status)
     yield* router.add('*', '*', fallback)

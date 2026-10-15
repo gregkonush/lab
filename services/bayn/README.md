@@ -720,7 +720,8 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
-  authority. Its readiness checks PostgreSQL, ledger, broker reconciliation, and the bound execution controller.
+  authority. Its Kubernetes readiness checks fresh PostgreSQL, ledger and cycle-projection reads. Broker reconciliation
+  and the bound execution controller retain their own operational readiness in `/readyz` and `/v1/status`.
   It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
   `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
   live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.
@@ -997,6 +998,9 @@ lineage. Image publication alone does not authorize the revised strategy.
 
 - `GET /livez`: process liveness.
 - `GET /readyz`: current dependency and execution-readiness projection.
+- `GET /status-readyz`: status-service readiness, requiring a fresh health pass and available PostgreSQL,
+  TigerBeetle and cycle-projection reads. The status Deployment uses this probe so broker-confirmation waits and
+  trading restrictions remain visible through `/v1/status`. Execution readiness and order admission are unchanged.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 

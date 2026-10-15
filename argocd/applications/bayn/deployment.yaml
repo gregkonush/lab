@@ -64,7 +64,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: c16f5afa5ae001ba32a185cc076ac17fdcebdaa4
+              value: 60636b35031dedf1a0b0eee0ede0d8494ff957a4
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: BAYN_GLITCHTIP_DSN
@@ -84,7 +84,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:2a788824629d558a83eb667af1da8730200c10b57d5e00ab9fafa15b86e2c319
+              value: sha256:c644d504fd4e5f41bc8e51584bede965531f9240f6e54c64b578a4bf43962756
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "420011c3d2552eaf702adadc67ecb8441bf320bdea89aad090dd0ad243b528e0"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -172,7 +172,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:2a788824629d558a83eb667af1da8730200c10b57d5e00ab9fafa15b86e2c319\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"c16f5afa5ae001ba32a185cc076ac17fdcebdaa4\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:5ad8979af365c86e639877e5c3f7f63245d576e85e4c1ffab387f5c93b386acd\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"930a4f0d5da423c397aad0c1d2d222d66da9abe2\"\n  },\n  \"requestHash\": \"6147e517664a294c04cb20dfe03f09c99d30db3f14d3ef4c525ab0ead81abfcf\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:c644d504fd4e5f41bc8e51584bede965531f9240f6e54c64b578a4bf43962756\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"60636b35031dedf1a0b0eee0ede0d8494ff957a4\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:5ad8979af365c86e639877e5c3f7f63245d576e85e4c1ffab387f5c93b386acd\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"930a4f0d5da423c397aad0c1d2d222d66da9abe2\"\n  },\n  \"requestHash\": \"6147e517664a294c04cb20dfe03f09c99d30db3f14d3ef4c525ab0ead81abfcf\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
           startupProbe:
             httpGet:
               path: /livez
@@ -181,7 +181,7 @@ spec:
             failureThreshold: 30
           readinessProbe:
             httpGet:
-              path: /readyz
+              path: /status-readyz
               port: http
             periodSeconds: 5
             timeoutSeconds: 2
