@@ -1,0 +1,1236 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bayn-cache-performance-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: Trading
+data:
+  bayn-cache-performance.json: |
+    {
+      "uid": "bayn-cache-performance",
+      "title": "Bayn Cache and Database Performance",
+      "schemaVersion": 41,
+      "version": 1,
+      "tags": [
+        "bayn",
+        "valkey",
+        "postgresql"
+      ],
+      "timezone": "browser",
+      "refresh": "15s",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "editable": true,
+      "links": [
+        {
+          "title": "Trading operations",
+          "url": "/d/bayn-cycle-operations",
+          "type": "link",
+          "targetBlank": false
+        }
+      ],
+      "templating": {
+        "list": [
+          {
+            "name": "source_revision",
+            "label": "Running source",
+            "type": "query",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prom"
+            },
+            "query": {
+              "query": "label_values(bayn_build_info{job=\"bayn\",namespace=\"bayn\"}, source_revision)",
+              "refId": "StandardVariableQuery"
+            },
+            "refresh": 2,
+            "includeAll": false,
+            "multi": false
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Valkey server and exporter health",
+          "type": "timeseries",
+          "description": "Both data-server/exporter pairs must be observable. Missing data is unknown, not healthy.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "up{job=\"bayn-valkey\",namespace=\"bayn\"}",
+              "legendFormat": "scrape {{pod}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "redis_up{job=\"bayn-valkey\",namespace=\"bayn\"}",
+              "legendFormat": "server {{pod}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bool",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 2,
+          "title": "Required replica and link",
+          "type": "timeseries",
+          "description": "Two data pods, one required acknowledged replica, manual failover. Link series exists on the replica.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "redis_connected_slaves{job=\"bayn-valkey\",namespace=\"bayn\"}",
+              "legendFormat": "replicas {{pod}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "redis_master_link_up{job=\"bayn-valkey\",namespace=\"bayn\"}",
+              "legendFormat": "link {{pod}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 3,
+          "title": "Native cache read/write latency",
+          "type": "timeseries",
+          "description": "Inclusive command time includes semaphore queueing and reconnect. Put includes SET and required WAIT. Quantiles need enough samples.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get|bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get|bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get|bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "SET and replica acknowledgement latency",
+          "type": "timeseries",
+          "description": "Child stages separate SET from the complete WAIT loop. Their inclusive durations must not be added to the parent put duration.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set|bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set|bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set|bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 5,
+          "title": "Cache outcomes and publication failures",
+          "type": "timeseries",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by(outcome) (rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+              "legendFormat": "reads {{outcome}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "sum by(operation,category,cause_category) (rate(bayn_valkey_failures_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+              "legendFormat": "failure {{operation}} {{category}} {{cause_category}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 6,
+          "title": "Application cache hit ratio",
+          "type": "timeseries",
+          "description": "Successful GET results only. A miss remains a required-materialization failure; transport errors are separate. No requests means no ratio.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 16,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",outcome=\"hit\"}[$__rate_interval])) / sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+              "legendFormat": "hit ratio",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Waits without an acknowledged replica",
+          "type": "timeseries",
+          "description": "Counts WAIT replies below the required one-replica acknowledgement, including eventual successful retries.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(bayn_valkey_unacknowledged_waits_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+              "legendFormat": "unacknowledged WAIT replies",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 8,
+          "title": "Materialization decode and validation latency",
+          "type": "timeseries",
+          "description": "Full snapshot versus compact state includes GET, JSON decoding, schema checks and content hashing.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 24,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 9,
+          "title": "Materialization payload bytes",
+          "type": "timeseries",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 32,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,kind) (rate(bayn_broker_materialization_bytes_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{kind}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,kind) (rate(bayn_broker_materialization_bytes_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{kind}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 10,
+          "title": "Broker capture and publication latency",
+          "type": "timeseries",
+          "description": "Separate broker acquisition, publication including PostgreSQL, and durable read fence. Stages are inclusive.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 32,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture|bayn.broker.observation.publish|bayn.broker.observation.fence\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture|bayn.broker.observation.publish|bayn.broker.observation.fence\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture|bayn.broker.observation.publish|bayn.broker.observation.fence\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 11,
+          "title": "PostgreSQL writer fence and commit latency",
+          "type": "timeseries",
+          "description": "Shows lock/authority wait separately from transaction commit. Includes failures in the outcome panel.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 40,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence|bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence|bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence|bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 12,
+          "title": "Reconciliation persistence latency",
+          "type": "timeseries",
+          "description": "Inclusive persistence duration. Use child spans to attribute time; do not sum parent/child durations.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 40,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 13,
+          "title": "Generation settlement statement latency",
+          "type": "timeseries",
+          "description": "Actual production statement time, excluding the surrounding transaction commit. The recovered/clear authority paths can do different work.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 48,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p50 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p95 {{stage}} {{operation}}",
+              "range": true
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
+              "legendFormat": "p99 {{stage}} {{operation}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 14,
+          "title": "Operation throughput and failures",
+          "type": "timeseries",
+          "description": "Count every completed, failed and interrupted named operation. Fixed stage/operation labels; no cache keys or trading identifiers.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 48,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by(stage,outcome) (rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
+              "legendFormat": "{{stage}} {{outcome}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 15,
+          "title": "Valkey memory use",
+          "type": "timeseries",
+          "description": "Memory limit is 512MiB and policy is noeviction. High memory can reject new publications.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 56,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "redis_memory_used_bytes{job=\"bayn-valkey\",namespace=\"bayn\"}",
+              "legendFormat": "used {{pod}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "redis_memory_max_bytes{job=\"bayn-valkey\",namespace=\"bayn\"}",
+              "legendFormat": "limit {{pod}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 16,
+          "title": "Expiration and eviction rate",
+          "type": "timeseries",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 56,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "rate(redis_expired_keys_total{job=\"bayn-valkey\",namespace=\"bayn\"}[$__rate_interval])",
+              "legendFormat": "expired {{pod}}",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "rate(redis_evicted_keys_total{job=\"bayn-valkey\",namespace=\"bayn\"}[$__rate_interval])",
+              "legendFormat": "evicted {{pod}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 17,
+          "title": "Replication byte distance",
+          "type": "timeseries",
+          "description": "A sampled byte distance, not an acknowledgement guarantee. Required WAIT completion is measured in the application.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 64,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "clamp_min(max(redis_master_repl_offset{job=\"bayn-valkey\",namespace=\"bayn\"}) - min(redis_slave_repl_offset{job=\"bayn-valkey\",namespace=\"bayn\"}), 0)",
+              "legendFormat": "outstanding replica bytes",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 18,
+          "title": "Native metrics heartbeat age",
+          "type": "timeseries",
+          "description": "Workers export every fifteen seconds; APIs retain the existing thirty-second scrape. This panel shows the newest heartbeat per service.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 64,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "time() - max by(service) (bayn_telemetry_heartbeat_timestamp_seconds{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\"})",
+              "legendFormat": "{{service}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 19,
+          "title": "Generation index validity and readiness",
+          "type": "timeseries",
+          "description": "Catalog evidence for the exact generation expression index. Zero includes absence; missing telemetry is unknown.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 72,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_bayn_generation_index_valid{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+              "legendFormat": "valid",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "cnpg_bayn_generation_index_ready{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+              "legendFormat": "ready",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bool",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 20,
+          "title": "Generation index activity",
+          "type": "timeseries",
+          "description": "Cluster-wide index activity since statistics reset. Zero scans can be correct when no eligible restricted generation exists. This does not prove one statement used the index.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 72,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "rate(cnpg_bayn_generation_index_scans_total{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}[$__rate_interval])",
+              "legendFormat": "index scans/s",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "rate(cnpg_bayn_generation_index_tuples_read_total{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}[$__rate_interval])",
+              "legendFormat": "entries/s",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 21,
+          "title": "PostgreSQL waits",
+          "type": "timeseries",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 80,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_bayn_waits_backends{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\",wait_event_type!=\"none\"}",
+              "legendFormat": "{{backend_type}} {{wait_event_type}} {{wait_event}}",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 22,
+          "title": "PostgreSQL replication and flush lag",
+          "type": "timeseries",
+          "description": "Flush lag can be absent when idle. Interpret with streaming standby and measured-lag counts on the existing database metrics.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 80,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "cnpg_bayn_replication_max_flush_lag_seconds{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+              "legendFormat": "reported flush lag",
+              "range": true
+            },
+            {
+              "refId": "B",
+              "expr": "cnpg_bayn_replication_max_reply_age_seconds{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}",
+              "legendFormat": "standby reply age",
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 23,
+          "title": "Valkey server and exporter logs",
+          "type": "logs",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 88,
+            "w": 24,
+            "h": 9
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "{namespace=\"bayn\",service=\"bayn-valkey\",container=~\"valkey|exporter\"}",
+              "queryType": "range"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          }
+        }
+      ]
+    }

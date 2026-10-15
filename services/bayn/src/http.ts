@@ -1,7 +1,8 @@
 import { createServer } from 'node:http'
 
 import { NodeHttpServer } from '@effect/platform-node'
-import { Clock, Effect, Ref, Scope } from 'effect'
+import { Clock, Effect, Metric, Ref, Scope } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
 import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
@@ -16,6 +17,7 @@ import { Authority, KillState, ReconciliationStatus } from './execution/contract
 import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
 import { Pipeable } from './pipeable'
 import { defaultJevProtocolDocument } from './jev/protocol'
+import { telemetryHeartbeat } from './telemetry'
 
 export type HttpResponseDecision =
   | {
@@ -1287,6 +1289,9 @@ const renderPrometheusMetricsDataFirst = (
       (condition) =>
         `bayn_execution_session_condition{condition="${condition.toLowerCase()}"} ${condition === sessionReadiness.condition ? 1 : 0}`,
     ),
+    '# HELP bayn_operation_metrics_expected This service revision requires native operation metrics in production.',
+    '# TYPE bayn_operation_metrics_expected gauge',
+    'bayn_operation_metrics_expected 1',
     '# HELP bayn_build_info Verified runtime build provenance.',
     '# TYPE bayn_build_info gauge',
     `bayn_build_info{source_revision="${prometheusLabel(provenance.sourceRevision)}",image_digest="${prometheusLabel(provenance.image.digest)}",verification="${prometheusLabel(provenanceVerification)}"} 1`,
@@ -1356,18 +1361,31 @@ const registerHttpRoutes = (
     Effect.flatMap(interpretResponseDecision),
   )
   const metrics = currentStateAndTime.pipe(
-    Effect.map(({ current, nowMs }) =>
-      textDecision(
-        renderPrometheusMetricsDataFirst(
-          current,
-          config,
-          provenance,
-          provenanceVerification,
-          runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
-        ),
-        'text/plain; version=0.0.4; charset=utf-8',
-        { 'cache-control': 'no-store' },
-      ),
+    Effect.flatMap(({ current, nowMs }) =>
+      Effect.gen(function* () {
+        yield* Metric.update(
+          telemetryHeartbeat.pipe(
+            Metric.withAttributes({
+              namespace: 'bayn',
+              service: 'bayn',
+              source_revision: provenance.sourceRevision,
+            }),
+          ),
+          nowMs / 1000,
+        )
+        const native = yield* PrometheusMetrics.format()
+        return textDecision(
+          renderPrometheusMetricsDataFirst(
+            current,
+            config,
+            provenance,
+            provenanceVerification,
+            runtimeReadyWithFreshness(current, { nowMs, leaseMs: freshnessLeaseMs }),
+          ) + native,
+          'text/plain; version=0.0.4; charset=utf-8',
+          { 'cache-control': 'no-store' },
+        )
+      }),
     ),
     Effect.flatMap(interpretResponseDecision),
   )

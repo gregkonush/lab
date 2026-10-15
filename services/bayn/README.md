@@ -114,6 +114,11 @@ materializations and collect 20 samples of full and compact read latency and
 payload size. The command is read-only against PostgreSQL and prints no account
 values. See the [migration and performance evidence](../../docs/bayn/valkey-caching-plan.md).
 
+The [cache observability runbook](../../docs/runbooks/bayn-cache-observability.md) covers native cache and database
+operation histograms, separate SET/replica acknowledgement timings, payload sizes, collected server logs, index
+catalog evidence, dashboard panels and alerts. The API reuses its existing metrics scrape; execution workers export
+native Effect metrics to the existing Mimir gateway. The runbook includes a read-only rollout acceptance command.
+
 ## Broker observation owner
 
 Broker position symbols must agree with their asset class before entering

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { NodeRedis } from '@effect/platform-node'
-import { ConfigProvider, Effect, Fiber, Layer, Option, Result } from 'effect'
+import { ConfigProvider, Effect, Fiber, Layer, Metric, Option, Result } from 'effect'
+import { PrometheusMetrics } from 'effect/observability'
 import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError, TimeoutError } from 'redis'
 
 import {
@@ -141,7 +142,12 @@ const runTransport = async <A, E>(
 ) => {
   const fixture = await transportFixture(mode)
   try {
-    const result = await effect.pipe(Effect.provide(fixture.layer), Effect.result, Effect.runPromise)
+    const result = await effect.pipe(
+      Effect.provide(fixture.layer),
+      Effect.provideService(Metric.MetricRegistry, new Map()),
+      Effect.result,
+      Effect.runPromise,
+    )
     await fixture.closed()
     expect(fixture.closes()).toBe(1)
     return result
@@ -181,10 +187,41 @@ describe('required native Effect Valkey binding', () => {
           expect(Option.getOrNull(yield* cache.get('bayn:large'))).toBe(value)
           yield* cache.remove('bayn:large')
           expect(Option.isNone(yield* cache.get('bayn:large'))).toBe(true)
+          return yield* PrometheusMetrics.format()
         }),
       ),
     )
     expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      for (const stage of ['put', 'set', 'replica-ack'])
+        expect(result.success).toMatch(
+          new RegExp(`bayn_operation_duration_seconds_count\\{[^\\n]*stage="bayn.valkey.${stage}"[^\\n]*\\} 1`),
+        )
+      expect(result.success).toMatch(/bayn_valkey_reads_total\{[^\n]*outcome="hit"[^\n]*\} 1/)
+      expect(result.success).toMatch(/bayn_valkey_reads_total\{[^\n]*outcome="miss"[^\n]*\} 1/)
+      expect(result.success).not.toContain('bayn:large')
+      expect(result.success).not.toContain('x'.repeat(100))
+    }
+  })
+  test('exports bounded failure categories without keys or native error text', async () => {
+    const result = await runTransport(
+      'error',
+      operation((cache) =>
+        Effect.gen(function* () {
+          yield* cache.get('bayn:private-key').pipe(Effect.exit)
+          return yield* PrometheusMetrics.format()
+        }),
+      ),
+    )
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success).toMatch(
+        /bayn_valkey_failures_total\{(?=[^\n]*category="command_failed")(?=[^\n]*operation="get")[^\n]*\} 1/,
+      )
+      expect(result.success).not.toContain('bayn:private-key')
+      expect(result.success).not.toContain('WRONGTYPE')
+      expect(result.success).not.toContain('bayn_valkey_reads_total')
+    }
   })
   test('replica acknowledgement uses the remaining command budget without replaying the write', async () => {
     const fixture = await transportFixture('delayed-replica')
