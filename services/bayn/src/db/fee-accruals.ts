@@ -4,7 +4,7 @@ import { FeeAccrualSchema, prepareFeeAccrual } from '../accounting/fee-accrual'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { JournalService } from '../ledger'
 import { Sha256Schema, strictParseOptions } from '../schemas'
-import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
+import { CashReportingQuantumSchema, reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { ReconciliationStoreError, type BrokerSnapshot } from './reconciliation'
 import { OrderSide } from '../execution/contracts'
 
@@ -284,14 +284,33 @@ export const prepareObservedCashFees = (sql: PgClient.PgClient, snapshot: Broker
       yield* sql`SELECT 1 FROM account_snapshots a JOIN broker_events e USING(event_id) WHERE a.event_id=${snapshot.accountEventId}
     AND a.account_id=${accountId} AND a.cash_micros=${snapshot.account.cashMicros}::numeric AND e.observed_at=${snapshot.account.observedAt}::timestamptz AND e.event_kind='ACCOUNT'`
     if (bound.length !== 1) return yield* invariant('Cash settlement differs from its durable broker account snapshot')
+    const [opening] = yield* fromResult(
+      Schema.decodeUnknownResult(
+        Schema.Tuple([
+          Schema.Struct({
+            openingAccountEventId: Sha256Schema,
+            openingCashReportingQuantumMicros: CashReportingQuantumSchema,
+          }),
+        ]),
+        strictParseOptions,
+      )(
+        yield* sql`SELECT a.event_id AS "openingAccountEventId",r.quantum_micros::text AS "openingCashReportingQuantumMicros"
+        FROM account_snapshots a JOIN broker_events e USING(event_id) LEFT JOIN account_cash_reporting r ON r.account_event_id=a.event_id
+        WHERE a.account_id=${accountId} AND e.event_kind='ACCOUNT' AND e.observed_at<(
+          SELECT min(t.occurred_at) FROM accounting_transactions t WHERE t.account_id=${accountId}
+          AND t.transaction_id IN ${sql.in(sources.sourceTrades.map((trade) => trade.transactionId))})
+        ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1`,
+      ),
+    )
     yield* persistAccrual(
       sql,
       {
-        schemaVersion: 'bayn.broker-fee-accrual.v1',
+        schemaVersion: 'bayn.broker-fee-accrual.v2',
         kind: 'CASH',
         accountId,
         symbol: 'USD',
         ...sources,
+        ...opening,
         accountEventId: snapshot.accountEventId,
         observedAt: snapshot.account.observedAt,
         projectedCashMicros: balance.cash,

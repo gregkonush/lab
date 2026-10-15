@@ -41,6 +41,9 @@ those accruals and post only the remaining adjustment. Activity allocation does 
 qualification waits until every accrual for the account, asset and trading date is covered. A partial pooled receipt
 cannot finalize another cycle or authority generation. Missing receipts remain incomplete cost evidence, never
 zero fees or final economic qualification.
+Migration 103 binds each cash accrual to the latest retained account report before its source sell fills and to both
+reports' actual precision. It rejects unbound cash-accrual records instead of rewriting financial evidence. Coin
+accrual evidence and ledger identities remain unchanged.
 
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.

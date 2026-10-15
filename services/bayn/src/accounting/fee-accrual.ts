@@ -10,11 +10,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { PositiveMicrosSchema, SignedMicrosSchema, UnsignedMicrosSchema } from '../execution/contracts'
-import {
-  CashReportingQuantumSchema,
-  maximumCashReportingQuantumMicros,
-  reportedCashMicros,
-} from '../broker/alpaca/cash-reporting'
+import { CashReportingQuantumSchema, reportedCashMicros } from '../broker/alpaca/cash-reporting'
 
 const SourceTrade = Schema.Struct({
   transactionId: Sha256Schema,
@@ -22,7 +18,6 @@ const SourceTrade = Schema.Struct({
   priceAtoms: PositiveMicrosSchema,
 })
 const Common = {
-  schemaVersion: Schema.Literal('bayn.broker-fee-accrual.v1'),
   accountId: StrictNonEmptyStringSchema,
   date: IsoDateSchema,
   cycleId: Sha256Schema,
@@ -32,6 +27,7 @@ const Common = {
 export const FeeAccrualSchema = Schema.Union([
   Schema.Struct({
     ...Common,
+    schemaVersion: Schema.Literal('bayn.broker-fee-accrual.v1'),
     kind: Schema.Literal('COIN'),
     symbol: SymbolSchema,
     positionSnapshotId: Sha256Schema,
@@ -42,8 +38,11 @@ export const FeeAccrualSchema = Schema.Union([
   }),
   Schema.Struct({
     ...Common,
+    schemaVersion: Schema.Literal('bayn.broker-fee-accrual.v2'),
     kind: Schema.Literal('CASH'),
     symbol: Schema.Literal('USD'),
+    openingAccountEventId: Sha256Schema,
+    openingCashReportingQuantumMicros: CashReportingQuantumSchema,
     accountEventId: Sha256Schema,
     projectedCashMicros: SignedMicrosSchema,
     observedCashMicros: SignedMicrosSchema,
@@ -102,8 +101,7 @@ export const prepareFeeAccrual = (input: unknown, ledger: number) =>
       const maximum =
         (soldNotional * 25n + 9_999_999_999_999_999n) / 10_000_000_000_000_000n +
         BigInt(data.cashReportingQuantumMicros) * BigInt(data.sourceTrades.length) +
-        // The opening report may have used the provider's coarsest precision, independently of this report.
-        BigInt(maximumCashReportingQuantumMicros)
+        BigInt(data.openingCashReportingQuantumMicros)
       if (
         expense <= 0n ||
         expense > maximum ||

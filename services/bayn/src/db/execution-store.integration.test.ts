@@ -985,6 +985,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         journalControl.failPosts = false
         yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
         yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
+        yield* retainAccountCashReporting(sql, snapshot)
         expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(1)
         const sellAt = '2026-08-28T14:31:01.000Z'
         const sell = makeFill('observed-eth-sell', OrderSide.Sell, '32967375', '2500000000', sellAt)
@@ -1007,6 +1008,24 @@ describePostgres('PostgreSQL execution persistence', () => {
           reconciledAt: sellAt,
         }
         yield* retainAccountCashReporting(sql, cashSnapshot)
+        expect(
+          yield* fence
+            .transaction(
+              Effect.gen(function* () {
+                const unknownOpening = { ...acct, observedAt: '2026-08-28T14:31:00.500Z' }
+                yield* events.ingest({
+                  ...opening,
+                  sourceEventId: 'settlement-opening-without-reporting',
+                  contentHash: canonicalHashV1(unknownOpening),
+                  occurredAt: unknownOpening.observedAt,
+                  observedAt: unknownOpening.observedAt,
+                  account: unknownOpening,
+                })
+                yield* prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle)
+              }),
+            )
+            .pipe(Effect.flip),
+        ).toMatchObject({ failure: 'invariant' })
         yield* fence.transaction(prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle))
         yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
         expect(
@@ -1017,6 +1036,23 @@ describePostgres('PostgreSQL execution persistence', () => {
           ['CASH', '200000', true],
           ['COIN', '200392', true],
         ])
+        const cashAccrual = (yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).find(
+          (row) => row.data.kind === 'CASH',
+        )
+        expect(cashAccrual?.data).toMatchObject({
+          schemaVersion: 'bayn.broker-fee-accrual.v2',
+          openingAccountEventId: acctReceipt.eventId,
+          openingCashReportingQuantumMicros: '10000',
+        })
+        yield* fence
+          .transaction(sql`INSERT INTO broker_fee_accruals(
+            accrual_id,account_id,kind,symbol,cycle_id,fee_date,position_snapshot_id,account_event_id,observed_at,
+            coin_quantity_atoms,cash_debit_micros,expense_micros,data,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger)
+            SELECT ${hash('forged-opening-precision')},account_id,kind,symbol,cycle_id,fee_date,position_snapshot_id,account_event_id,observed_at,
+              coin_quantity_atoms,cash_debit_micros,expense_micros,jsonb_set(data,'{openingCashReportingQuantumMicros}','"1"'::jsonb),content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger
+            FROM broker_fee_accruals WHERE kind='CASH'`)
+          .pipe(Effect.flip)
+        expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(2)
         const fees = [
           {
             value: {

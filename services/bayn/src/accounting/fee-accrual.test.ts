@@ -17,13 +17,15 @@ const coin = {
   sourceTrades: [{ transactionId: 'c'.repeat(64), quantityAtoms: '33050000', priceAtoms: '2425310000000' }],
 }
 const cash = {
-  schemaVersion: 'bayn.broker-fee-accrual.v1',
+  schemaVersion: 'bayn.broker-fee-accrual.v2',
   kind: 'CASH',
   accountId: coin.accountId,
   symbol: 'USD',
   date: coin.date,
   cycleId: coin.cycleId,
   accountEventId: 'b'.repeat(64),
+  openingAccountEventId: 'f'.repeat(64),
+  openingCashReportingQuantumMicros: '10000',
   observedAt: coin.observedAt,
   projectedCashMicros: '99875398174',
   observedCashMicros: '99875200000',
@@ -78,6 +80,7 @@ test('a more precise closing report retains the possible cent precision of its o
     Result.getOrThrow(prepareFeeAccrual({ ...observed, observedCashMicros: '99875168391' }, 7001)).cashDebitMicros,
   ).toBe('208585')
   expect(Result.isFailure(prepareFeeAccrual({ ...observed, observedCashMicros: '99875168390' }, 7001))).toBe(true)
+  expect(Result.isFailure(prepareFeeAccrual({ ...observed, openingCashReportingQuantumMicros: '1' }, 7001))).toBe(true)
 })
 for (const change of [
   { symbol: 'AAPL' },
