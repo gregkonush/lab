@@ -11,6 +11,22 @@ const stage = stages.find((document) => document.getIn(['metadata', 'name']) ===
 const steps = stage.spec.promotionTemplate.spec.steps
 const build = read('.github/workflows/bayn-build-push.yml')
 
+test('installs error-tracking configuration before every runtime that consumes it', () => {
+  const config = read('argocd/applications/bayn/glitchtip-dsns.yaml')
+  expect(config.kind).toBe('ConfigMap')
+  expect(read('argocd/applications/bayn/kustomization.yaml').resources).toContain('glitchtip-dsns.yaml')
+  const configWave = Number(config.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0)
+  for (const file of ['deployment', 'execution-controller', 'execution-activation', 'research-worker']) {
+    const runtime = read(`argocd/applications/bayn/${file}.yaml`)
+    const reference = runtime.spec.template.spec.containers[0].env.find(
+      (entry: { name: string }) => entry.name === 'BAYN_GLITCHTIP_DSN',
+    ).valueFrom.configMapKeyRef
+    expect(reference.name).toBe(config.metadata.name)
+    expect(Object.hasOwn(config.data, reference.key)).toBe(true)
+    expect(configWave).toBeLessThan(Number(runtime.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0))
+  }
+})
+
 test('a newer unpublished main commit cannot hold a verified Bayn image or mix its source binding', () => {
   const warehouses = YAML.parseAllDocuments(
     readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
@@ -205,10 +221,11 @@ test('writes source, digest, and research lineage into the correct field in ever
       expect(parse.config.path).toBe(`./src/${path}`)
       expect(steps.indexOf(parse)).toBeLessThan(steps.indexOf(update))
       const output = parse.config.outputs.find((candidate: { name: string }) => candidate.name === match[2])
-      const field = /^findIndex\(spec\.template\.spec\.containers\[0\]\.env, \.name == '(\w+)'\)$/.exec(
+      const field = /^string\(findIndex\(spec\.template\.spec\.containers\[0\]\.env, \.name == '(\w+)'\)\)$/.exec(
         output.fromExpression,
       )
-      if (field === null) throw new Error(`Environment index must use findIndex by name: ${output.fromExpression}`)
+      if (field === null)
+        throw new Error(`Environment index must persist as a string resolved by name: ${output.fromExpression}`)
       expect(environment.filter((entry: { name: string }) => entry.name === field[1])).toHaveLength(1)
       assignments.set(field[1], change.value)
     }
