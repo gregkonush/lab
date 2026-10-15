@@ -35,7 +35,9 @@ retained broker snapshot. Fee bounds reject unrelated balance changes. USD cash 
 reported by the provider, while the ledger retains six-decimal micros.
 Migration 102 adds immutable settlement accruals and receipt matches. Preparation commits before ledger posting;
 recovery posts the same deterministic plans before accounting later fills. Delayed coin and USD fee activities match
-those accruals and post only the remaining adjustment. Missing receipts remain incomplete cost evidence, never
+those accruals and post only the remaining adjustment. Activity allocation does not establish individual trade origin:
+qualification waits until every accrual for the account, asset and trading date is covered. A partial pooled receipt
+cannot finalize another cycle or authority generation. Missing receipts remain incomplete cost evidence, never
 zero fees or final economic qualification.
 
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:

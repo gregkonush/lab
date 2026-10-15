@@ -46,6 +46,26 @@ const fromResult = <A, E>(value: Result.Result<A, E>) =>
 type Identity = { readonly clusterId: bigint; readonly ledger: number }
 export type FeeAccrualRecords = Effect.Success<ReturnType<typeof readFeeAccruals>>
 
+export const feeAccrualCohortSettled = (
+  record: typeof StoredAccrual.Type,
+  records: readonly (typeof StoredAccrual.Type)[],
+): boolean =>
+  records
+    .filter(
+      (candidate) =>
+        candidate.data.accountId === record.data.accountId &&
+        candidate.data.kind === record.data.kind &&
+        candidate.data.symbol === record.data.symbol &&
+        candidate.data.date === record.data.date,
+    )
+    .every(
+      (candidate) =>
+        candidate.posted &&
+        (candidate.data.kind === 'COIN'
+          ? candidate.matched_coin_quantity_atoms === candidate.coin_quantity_atoms
+          : candidate.matched_cash_micros === candidate.cash_debit_micros),
+    )
+
 export const readStoredFeeAccruals = (sql: PgClient.PgClient, accountId: string) =>
   Effect.gen(function* () {
     return yield* fromResult(

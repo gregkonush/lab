@@ -1,4 +1,4 @@
-import { verifyFeeAccrualRecord } from '../db/fee-accruals'
+import { feeAccrualCohortSettled, verifyFeeAccrualRecord } from '../db/fee-accruals'
 import { quantityFromDecimal } from '../quantity'
 import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
@@ -698,10 +698,7 @@ const readForwardPerformanceInput = (
         accrualId: accrual.accrualId,
         accountId: accrual.data.accountId,
         expenseMicros: accrual.expenseMicros,
-        settled:
-          accrual.data.kind === 'COIN'
-            ? accrual.matched_coin_quantity_atoms === accrual.coinQuantityAtoms
-            : accrual.matched_cash_micros === accrual.cashDebitMicros,
+        settled: feeAccrualCohortSettled(accrual, accruals),
       })),
       brokerFees: feeRecords
         .filter((record) => generationFeeIds.has(record.data.activityId))
