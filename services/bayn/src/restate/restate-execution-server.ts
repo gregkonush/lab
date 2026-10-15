@@ -26,6 +26,7 @@ import {
   telemetryRuntimeConfig,
 } from '../telemetry'
 import { startInferenceExpenseProjection } from '../inference-expense-runtime'
+import { initializeErrorTracking, reportTerminalFailure } from '../error-tracking'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
   readonly message: string
@@ -128,9 +129,13 @@ export const restateExecutionServerProgram = Effect.gen(function* () {
 }).pipe(Effect.scoped)
 
 if (import.meta.main) {
+  initializeErrorTracking('bayn-execution-controller')
   NodeRuntime.runMain(
     Layer.effectDiscard(
-      restateExecutionServerProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-controller' })),
+      restateExecutionServerProgram.pipe(
+        reportTerminalFailure('bayn-execution-controller'),
+        Effect.annotateLogs({ service: 'bayn-execution-controller' }),
+      ),
     ).pipe(
       Layer.provide(ValkeyCacheLive),
       Layer.provide(

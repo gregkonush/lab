@@ -82,6 +82,11 @@ spec:
                 secretKeyRef:
                   name: bayn-research-db
                   key: fqdn-uri
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn-research
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
