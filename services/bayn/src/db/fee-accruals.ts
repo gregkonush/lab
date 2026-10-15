@@ -296,7 +296,7 @@ export const prepareObservedCashFees = (sql: PgClient.PgClient, snapshot: Broker
       )(
         yield* sql`SELECT a.event_id AS "openingAccountEventId",r.quantum_micros::text AS "openingCashReportingQuantumMicros"
         FROM account_snapshots a JOIN broker_events e USING(event_id) LEFT JOIN account_cash_reporting r ON r.account_event_id=a.event_id
-        WHERE a.account_id=${accountId} AND e.event_kind='ACCOUNT' AND e.observed_at<(
+        WHERE a.account_id=${accountId} AND e.account_id=${accountId} AND e.event_kind='ACCOUNT' AND e.observed_at<(
           SELECT min(t.occurred_at) FROM accounting_transactions t WHERE t.account_id=${accountId}
           AND t.transaction_id IN ${sql.in(sources.sourceTrades.map((trade) => trade.transactionId))})
         ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1`,

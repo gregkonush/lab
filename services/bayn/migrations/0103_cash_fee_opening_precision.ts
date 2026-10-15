@@ -20,7 +20,7 @@ export default Effect.gen(function* () {
       WHERE t.account_id=NEW.account_id AND t.side='SELL';
     SELECT a.event_id,r.quantum_micros INTO opening_id,opening_quantum
       FROM account_snapshots a JOIN broker_events e USING(event_id) LEFT JOIN account_cash_reporting r ON r.account_event_id=a.event_id
-      WHERE a.account_id=NEW.account_id AND e.event_kind='ACCOUNT' AND e.observed_at<first_fill
+      WHERE a.account_id=NEW.account_id AND e.account_id=NEW.account_id AND e.event_kind='ACCOUNT' AND e.observed_at<first_fill
       ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1;
     IF opening_id IS NULL OR opening_id IS DISTINCT FROM NEW.data->>'openingAccountEventId'
       OR opening_quantum::text IS DISTINCT FROM NEW.data->>'openingCashReportingQuantumMicros'
