@@ -56,6 +56,12 @@ resources:
 migrationJob:
   enabled: true
   activeDeadlineSeconds: 900
+  # Upstream chart 9.0.1 does not inherit extraEnvVars in the migration pod.
+  # Without this, Django skips the PostgreSQL-backed task and session apps,
+  # reporting a successful migration while omitting db_* / django_session.
+  extraEnvVars:
+    - name: VALKEY_URL
+      value: ""
   resources:
     requests:
       cpu: 100m
