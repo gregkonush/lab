@@ -13,7 +13,7 @@ export const FeeReadEvidenceSchema = Schema.Struct({
   observedAt: UtcInstantSchema,
 })
 export const FeeMatchCorrectionDataSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.fee-match-correction.v1'),
+  schemaVersion: Schema.Literals(['bayn.fee-match-correction.v1', 'bayn.fee-match-correction.v2']),
   accountId: StrictNonEmptyStringSchema,
   activityId: StrictNonEmptyStringSchema,
   accrualId: Sha256Schema,
@@ -33,18 +33,28 @@ export const StoredFeeMatchCorrectionSchema = Schema.Struct({
 })
 export type StoredFeeMatchCorrection = typeof StoredFeeMatchCorrectionSchema.Type
 
+export const feeMatchCorrectionCashDebitMicros = (data: typeof FeeMatchCorrectionDataSchema.Type): string =>
+  (
+    BigInt(data.accrualCashMicros) -
+    (data.schemaVersion === 'bayn.fee-match-correction.v2' ? BigInt(data.activityCashMicros) : 0n)
+  ).toString()
+
 export const prepareFeeMatchCorrection = (input: unknown, ledger: number) =>
   Result.gen(function* () {
     const data = yield* Schema.decodeUnknownResult(FeeMatchCorrectionDataSchema)(input).pipe(
       Result.mapError(() => new BrokerFeeEvidenceError({ message: 'invalid fee match correction evidence' })),
     )
-    if (BigInt(data.activityCashMicros) > BigInt(data.accrualCashMicros))
+    const cashDebitMicros = feeMatchCorrectionCashDebitMicros(data)
+    if (BigInt(data.activityCashMicros) > BigInt(data.accrualCashMicros) || BigInt(cashDebitMicros) <= 0n)
       return yield* Result.fail(
         new BrokerFeeEvidenceError({ message: 'fee correction exceeds its original accrual release' }),
       )
     const { readEvidence: _read, schemaVersion: _version, ...identity } = data
     const correctionId = yield* canonicalHashV1Result({
-      schemaVersion: 'bayn.fee-match-correction-id.v1',
+      schemaVersion:
+        data.schemaVersion === 'bayn.fee-match-correction.v1'
+          ? 'bayn.fee-match-correction-id.v1'
+          : 'bayn.fee-match-correction-id.v2',
       ...identity,
     }).pipe(Result.mapError(() => new BrokerFeeEvidenceError({ message: 'fee correction identity cannot be hashed' })))
     const contentHash = yield* canonicalHashV1Result(data).pipe(
@@ -53,10 +63,10 @@ export const prepareFeeMatchCorrection = (input: unknown, ledger: number) =>
     const plan = brokerFeeLedgerPlan(
       data.accountId,
       `fee-match-correction:${correctionId}`,
-      `-${data.accrualCashMicros}`,
+      `-${cashDebitMicros}`,
       ledger,
     )
-    return { data, correctionId, contentHash, plan }
+    return { data, correctionId, contentHash, cashDebitMicros, plan }
   })
 
 export const StoredFeeSchema = Schema.Struct({
@@ -139,7 +149,7 @@ export const verifyBrokerFeeRecord = (
       )
       if (
         coin !== undefined ||
-        record.data.cryptoCashFee === true ||
+        (record.data.cryptoCashFee === true) !== (correction.data.schemaVersion === 'bayn.fee-match-correction.v2') ||
         correction.data.accountId !== accountId ||
         correction.data.activityId !== record.data.activityId ||
         correction.data.feeContentHash !== record.content_hash ||
@@ -155,7 +165,7 @@ export const verifyBrokerFeeRecord = (
           new BrokerFeeEvidenceError({ message: 'fee correction conflicts with its immutable source or ledger' }),
         )
       ids.add(correction.data.accrualId)
-      correctedCash += BigInt(correction.data.accrualCashMicros)
+      correctedCash += BigInt(prepared.cashDebitMicros)
       corrections.push({ record: correction, plan: prepared.plan })
     }
     if (correctedCash > BigInt(record.matched_cash_micros))

@@ -46,16 +46,34 @@ const prepareCashMatchCorrections = (
   identity: { readonly clusterId: bigint; readonly ledger: number },
 ) =>
   Effect.gen(function* () {
-    for (const existing of stored) {
-      if (
-        !existing.posted ||
-        existing.data.coinDebit !== undefined ||
-        existing.data.cryptoCashFee === true ||
-        existing.matched_cash_micros === '0'
-      )
-        continue
-      const source = observed.find((observation) => observation.value.activityId === existing.data.activityId)
-      if (source === undefined) return yield* invariant('fee correction requires the current provider observation')
+    if (!stored.some((row) => row.posted && row.data.coinDebit === undefined && row.matched_cash_micros !== '0')) return
+    const matches = yield* fromResult(
+      Schema.decodeUnknownResult(
+        Schema.Array(
+          Schema.Struct({
+            activityId: Schema.String,
+            accrualId: Schema.String,
+            activityCashMicros: Schema.String,
+            accrualCashMicros: Schema.String,
+          }),
+        ),
+      )(
+        yield* sql`SELECT m.activity_id AS "activityId",m.accrual_id AS "accrualId",
+        m.activity_cash_micros::text AS "activityCashMicros",m.accrual_cash_micros::text AS "accrualCashMicros"
+        FROM broker_fee_accrual_matches m JOIN broker_fee_accounting f ON f.account_id=m.account_id AND f.activity_id=m.activity_id
+        WHERE m.account_id=${accountId} AND m.activity_cash_micros IS NOT NULL AND f.posted_at IS NOT NULL
+          AND (NOT(f.data ? 'cryptoCashFee') OR m.accrual_cash_micros>m.activity_cash_micros)
+          AND NOT EXISTS(SELECT 1 FROM broker_fee_match_corrections c WHERE c.account_id=m.account_id AND c.activity_id=m.activity_id AND c.accrual_id=m.accrual_id)
+        ORDER BY m.activity_id COLLATE "C",m.accrual_id COLLATE "C"`,
+      ),
+    )
+    const byId = new Map(stored.map((row) => [row.data.activityId, row]))
+    const observations = new Map(observed.map((row) => [row.value.activityId, row]))
+    for (const { activityId, ...match } of matches) {
+      const existing = byId.get(activityId)
+      const source = observations.get(activityId)
+      if (existing === undefined || source === undefined)
+        return yield* invariant('fee correction requires the current provider observation and stored fee')
       const fee = yield* fromResult(Schema.decodeUnknownResult(FeeActivitySchema, strictParseOptions)(source.value))
       const readEvidence = yield* fromResult(
         Schema.decodeUnknownResult(FeeReadEvidenceSchema)({
@@ -66,50 +84,27 @@ const prepareCashMatchCorrections = (
         }),
       )
       const hash = yield* fromResult(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee }))
-      if (
-        hash !== existing.content_hash ||
-        fee.accountId !== accountId ||
-        fee.coinDebit !== undefined ||
-        fee.cryptoCashFee === true
-      )
-        return yield* invariant('fee correction provider content differs from the original non-crypto fee')
+      if (hash !== existing.content_hash || fee.accountId !== accountId || fee.coinDebit !== undefined)
+        return yield* invariant('fee correction provider content differs from the original fee')
       yield* fromResult(verifyBrokerFeeRecord(existing, accountId, identity))
-      const matches = yield* fromResult(
-        Schema.decodeUnknownResult(
-          Schema.Array(
-            Schema.Struct({
-              accrualId: Schema.String,
-              activityCashMicros: Schema.String,
-              accrualCashMicros: Schema.String,
-            }),
-          ),
-        )(
-          yield* sql`SELECT accrual_id AS "accrualId",activity_cash_micros::text AS "activityCashMicros",accrual_cash_micros::text AS "accrualCashMicros"
-      FROM broker_fee_accrual_matches WHERE account_id=${accountId} AND activity_id=${fee.activityId} AND accrual_cash_micros IS NOT NULL ORDER BY accrual_id COLLATE "C"`,
+      const prepared = yield* fromResult(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: fee.cryptoCashFee === true ? 'bayn.fee-match-correction.v2' : 'bayn.fee-match-correction.v1',
+            accountId,
+            activityId,
+            feeContentHash: hash,
+            ...match,
+            readEvidence,
+          },
+          identity.ledger,
         ),
       )
-      for (const match of matches) {
-        if (existing.cash_match_corrections.some((correction) => correction.data.accrualId === match.accrualId))
-          continue
-        const prepared = yield* fromResult(
-          prepareFeeMatchCorrection(
-            {
-              schemaVersion: 'bayn.fee-match-correction.v1',
-              accountId,
-              activityId: fee.activityId,
-              feeContentHash: hash,
-              ...match,
-              readEvidence,
-            },
-            identity.ledger,
-          ),
-        )
-        const planHash = yield* fromResult(hashLedgerPlanResult(prepared.plan))
-        yield* sql`INSERT INTO broker_fee_match_corrections(correction_id,account_id,activity_id,accrual_id,cash_debit_micros,
+      const planHash = yield* fromResult(hashLedgerPlanResult(prepared.plan))
+      yield* sql`INSERT INTO broker_fee_match_corrections(correction_id,account_id,activity_id,accrual_id,cash_debit_micros,
         data,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger)
-        VALUES(${prepared.correctionId},${accountId},${fee.activityId},${match.accrualId},${match.accrualCashMicros},
+        VALUES(${prepared.correctionId},${accountId},${activityId},${match.accrualId},${prepared.cashDebitMicros},
           ${sql.json(prepared.data)},${prepared.contentHash},${planHash},${identity.clusterId.toString()},${identity.ledger})`
-      }
     }
   })
 
@@ -246,19 +241,15 @@ export const prepareFeeActivities = (
                 (assignedCashAmounts.get(accrual.accrualId) ?? 0n)
               const covered = remaining < available ? remaining : available
               if (covered <= 0n) continue
-              const released =
-                remaining < available && available - remaining <= BigInt(accrual.data.cashReportingQuantumMicros)
-                  ? available
-                  : covered
               matches.push({
                 accrualId: accrual.accrualId,
                 coinQuantityAtoms: null,
                 activityCashMicros: covered.toString(),
-                accrualCashMicros: released.toString(),
+                accrualCashMicros: covered.toString(),
               })
-              assignedCashAmounts.set(accrual.accrualId, (assignedCashAmounts.get(accrual.accrualId) ?? 0n) + released)
+              assignedCashAmounts.set(accrual.accrualId, (assignedCashAmounts.get(accrual.accrualId) ?? 0n) + covered)
               remaining -= covered
-              ledgerCashDelta += released
+              ledgerCashDelta += covered
             }
           }
           const plan =
