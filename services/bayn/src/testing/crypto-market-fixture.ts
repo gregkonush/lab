@@ -1,9 +1,12 @@
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result } from 'effect'
 
-import btc from '../market-data/features/fixtures/crypto-continuous-v1.json'
-import eth from '../market-data/features/fixtures/crypto-eth-continuous-v1.json'
-import sol from '../market-data/features/fixtures/crypto-sol-continuous-v1.json'
+import btc from '../market-data/features/fixtures/crypto-continuous-v2.json'
+import eth from '../market-data/features/fixtures/crypto-eth-continuous-v2.json'
+import sol from '../market-data/features/fixtures/crypto-sol-continuous-v2.json'
+import btcFirst from '../market-data/features/fixtures/crypto-continuous-first-minute-v2.json'
+import ethFirst from '../market-data/features/fixtures/crypto-eth-continuous-first-minute-v2.json'
+import solFirst from '../market-data/features/fixtures/crypto-sol-continuous-first-minute-v2.json'
 import { cryptoMarketProfile, jevBenchmarkSymbol } from '../jev/markets'
 import { continuousMarketHours } from '../market-hours'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap'
@@ -15,13 +18,14 @@ import type { MarketSource } from '../market-data/streaming/raw-events'
 export const cryptoMarketFixture = (
   candidate: 'BTC/USD' | 'ETH/USD' | 'SOL/USD' = 'BTC/USD',
   timing: {
+    readonly firstMinute?: boolean
     readonly tradeLagMs?: number
     readonly quoteLagMs?: number
     readonly benchmarkQuoteLagMs?: number
     readonly missingTradeSymbols?: readonly string[]
   } = {},
 ) => {
-  const fixtures = [btc, eth, sol]
+  const fixtures = timing.firstMinute === true ? [btcFirst, ethFirst, solFirst] : [btc, eth, sol]
   const end = btc.feature.material.windowEndMs
   const observedAtMs = end + 3000
   const source: MarketSource = {
@@ -63,7 +67,7 @@ export const cryptoMarketFixture = (
         {
           topic: source.topics.bars,
           partition,
-          offset: String(61 + index),
+          offset: String(fixture.records.length + index),
           value: JSON.stringify({
             provider: 'alpaca',
             feed: 'us',
@@ -85,7 +89,7 @@ export const cryptoMarketFixture = (
         observedAtMs,
       )
     }
-    positions.push({ topic: source.topics.bars, partition, offset: '63' })
+    positions.push({ topic: source.topics.bars, partition, offset: String(fixture.records.length + 2) })
     positions.push({ topic: source.topics.features, partition: featurePartition, offset: '1' })
   }
   positions.sort((left, right) => left.topic.localeCompare(right.topic) || left.partition - right.partition)

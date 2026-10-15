@@ -25,7 +25,7 @@ const fixture = () => {
     inference: {
       mode: 'measured-provider',
       model: jevModel,
-      inputDefinition: 'bayn.jev-trading-signal-state.v3',
+      inputDefinition: 'bayn.jev-trading-signal-state.v4',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     },
     allocatedDataCostPerSessionMicros: '0',
@@ -82,7 +82,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v3')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v4')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
   const strategy = prepared.strategy.provenance.strategy

@@ -369,9 +369,9 @@
   ],
   "feature": {
     "material": {
-      "schemaVersion": "dorvud.crypto-market-feature.v1",
-      "definitionId": "dorvud.crypto-continuous-1m.v1",
-      "definitionHash": "742549a7cb130e055c34ebbe4a9a3be242c59dc0b4716bf40b3c6d3b467c4777",
+      "schemaVersion": "dorvud.crypto-market-feature.v2",
+      "definitionId": "dorvud.crypto-continuous-1m.v2",
+      "definitionHash": "eb2568eb1debf5a0897afe76a6c8e9566d9d6730227dbf0632a37afba852ba7c",
       "provider": "alpaca",
       "location": "us",
       "marketSession": "continuous",
@@ -871,15 +871,12 @@
           "contentHash": "b350696c28695a38039cb1d527a664130af08c076793c31e70c0f6345d8fd01c"
         }
       ],
-      "rolling30m": {
-        "status": "READY",
-        "values": {
-          "referencePrice": "100.123456789",
-          "rangeHighPrice": "100.123456789",
-          "rangeLowPrice": "100.123456789",
-          "lastClosePrice": "100.123456789",
-          "totalVolume": "0.00000003"
-        }
+      "priceWindow": {
+        "referencePrice": "100.123456789",
+        "rangeHighPrice": "100.123456789",
+        "rangeLowPrice": "100.123456789",
+        "lastClosePrice": "100.123456789",
+        "totalVolume": "0.00000003"
       },
       "technical": {
         "ema12PriceMicros": {
@@ -940,7 +937,7 @@
         }
       }
     },
-    "featureId": "cece8bfd7373e5dae45fbdc6434bfc2b3e35fa2238c9841ceb6c66233d82c839",
+    "featureId": "7bf56b9a683e9f0c880fc433b3c2d656a6da7379bad38cf9e59d2febcb217a80",
     "computedAtMs": 1791676862123,
     "producerRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }

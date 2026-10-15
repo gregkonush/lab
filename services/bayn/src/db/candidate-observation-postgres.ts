@@ -55,8 +55,7 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
           const protocolHash = yield* Effect.fromResult(
             makeStrategyProtocolHashResult({
               name: 'jev',
-              behaviorHash:
-                reproduced.protocol.schemaVersion === 'bayn.jev.protocol.v3' ? jevBehaviorHash : jevBehaviorHash,
+              behaviorHash: jevBehaviorHash,
               parameterHash,
               parameterSchemaVersion: reproduced.protocol.schemaVersion,
             }),
