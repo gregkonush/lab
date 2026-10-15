@@ -498,6 +498,9 @@ identityTest(
     cpSync(path.dirname(path.dirname(z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN))), primaryHome, {
       recursive: true,
     })
+    cpSync(path.join(root, 'argocd/applications/keycloak/tengri/theme'), path.join(primaryHome, 'themes/tengri'), {
+      recursive: true,
+    })
     const startKeycloak = async (
       home: string,
       name: string,
@@ -678,6 +681,11 @@ identityTest(
     })
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
+    await context.addInitScript(() => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+    })
     const page = await context.newPage()
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
@@ -708,10 +716,15 @@ identityTest(
               .join('\n'),
         )
       })
-    page.on('dialog', (dialog) => void dialog.accept('Isolated virtual passkey'))
     await page.waitForLoadState('domcontentloaded')
     await page.getByRole('button', { name: /Register/ }).click()
-    await page.waitForURL((url) => url.origin === base, { timeout: 20_000 })
+    await page
+      .waitForURL((url) => url.origin === base, { timeout: 20_000 })
+      .catch(async (cause: unknown) => {
+        throw new Error('Isolated passkey enrollment: ' + (await page.locator('body').innerText()).slice(0, 1200), {
+          cause,
+        })
+      })
     if (new URL(page.url()).pathname !== '/') {
       const denied = await control.query(
         "SELECT receipt->>'reason' AS reason FROM ofz.audit WHERE (receipt->>'allowed')::boolean=false ORDER BY sequence DESC LIMIT 3",
@@ -845,7 +858,11 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
+    await adminCall('', 'PUT', { loginTheme: 'keycloak', sslRequired: 'none' })
+    expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
+    await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
+    expect(z.object({ loginTheme: z.string() }).parse(await (await adminCall('')).json()).loginTheme).toBe('tengri')
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z
@@ -1205,7 +1222,11 @@ identityTest(
         automaticPresenceSimulation: true,
       },
     })
-    secondPage.on('dialog', (dialog) => void dialog.accept('Second isolated passkey'))
+    await secondContext.addInitScript(() => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+    })
     const enroll = async (id: string) => {
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
