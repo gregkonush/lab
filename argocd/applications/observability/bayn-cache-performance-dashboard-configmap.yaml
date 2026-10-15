@@ -180,19 +180,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get|bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get|bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.get|bayn.valkey.put\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -238,19 +241,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set|bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set|bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.valkey.set|bayn.valkey.replica-ack\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -296,13 +302,15 @@ data:
               "refId": "A",
               "expr": "sum by(outcome) (rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
               "legendFormat": "reads {{outcome}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "sum by(operation,category,cause_category) (rate(bayn_valkey_failures_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
               "legendFormat": "failure {{operation}} {{category}} {{cause_category}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -348,7 +356,8 @@ data:
               "refId": "A",
               "expr": "sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",outcome=\"hit\"}[$__rate_interval])) / sum(rate(bayn_valkey_reads_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
               "legendFormat": "hit ratio",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -394,7 +403,8 @@ data:
               "refId": "A",
               "expr": "sum(rate(bayn_valkey_unacknowledged_waits_total{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
               "legendFormat": "unacknowledged WAIT replies",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -440,19 +450,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.materialization\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -498,13 +511,15 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,kind) (rate(bayn_broker_materialization_bytes_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval])))",
               "legendFormat": "p50 {{kind}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,kind) (rate(bayn_broker_materialization_bytes_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval])))",
               "legendFormat": "p95 {{kind}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -550,19 +565,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture|bayn.broker.observation.publish|bayn.broker.observation.fence\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture|bayn.broker.observation.publish|bayn.broker.observation.fence\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.broker.observation.capture|bayn.broker.observation.publish|bayn.broker.observation.fence\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -608,19 +626,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence|bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence|bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.writer-fence|bayn.postgres.commit\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -666,19 +687,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.reconciliation.persist\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -724,19 +748,22 @@ data:
               "refId": "A",
               "expr": "histogram_quantile(0.5, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p50 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "histogram_quantile(0.95, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p95 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "C",
               "expr": "histogram_quantile(0.99, sum by(le,stage,operation) (rate(bayn_operation_duration_seconds_bucket{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\",stage=~\"bayn.postgres.generation-settlement\",outcome=\"succeeded\"}[$__rate_interval])))",
               "legendFormat": "p99 {{stage}} {{operation}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -782,7 +809,8 @@ data:
               "refId": "A",
               "expr": "sum by(stage,outcome) (rate(bayn_operation_duration_seconds_count{namespace=\"bayn\",service=~\"bayn|bayn-execution-controller\",source_revision=~\"$source_revision\"}[$__rate_interval]))",
               "legendFormat": "{{stage}} {{outcome}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -880,13 +908,15 @@ data:
               "refId": "A",
               "expr": "rate(redis_expired_keys_total{job=\"bayn-valkey\",namespace=\"bayn\"}[$__rate_interval])",
               "legendFormat": "expired {{pod}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "rate(redis_evicted_keys_total{job=\"bayn-valkey\",namespace=\"bayn\"}[$__rate_interval])",
               "legendFormat": "evicted {{pod}}",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
@@ -1076,13 +1106,15 @@ data:
               "refId": "A",
               "expr": "rate(cnpg_bayn_generation_index_scans_total{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}[$__rate_interval])",
               "legendFormat": "index scans/s",
-              "range": true
+              "range": true,
+              "interval": "30s"
             },
             {
               "refId": "B",
               "expr": "rate(cnpg_bayn_generation_index_tuples_read_total{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\"}[$__rate_interval])",
               "legendFormat": "entries/s",
-              "range": true
+              "range": true,
+              "interval": "30s"
             }
           ],
           "fieldConfig": {
