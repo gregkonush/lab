@@ -34,6 +34,8 @@ export const readCashReportingOffsets = (
             AND ack.source_kind='ACTIVITY' AND ack.source_id=f.activity_id
           WHERE m.accrual_id=a.accrual_id AND ack.acknowledged_at<=cuts.as_of AND f.first_observed_at<=cuts.as_of),0)
         -COALESCE((SELECT sum(c.cash_debit_micros) FROM broker_fee_match_corrections c
+          JOIN broker_fee_posting_acknowledgements ack ON ack.account_id=c.account_id
+            AND ack.source_kind='ACTIVITY' AND ack.source_id=c.activity_id AND ack.acknowledged_at<=cuts.as_of
           WHERE c.accrual_id=a.accrual_id AND c.posted_at<=cuts.as_of
             AND (c.data->'readEvidence'->>'observedAt')::timestamptz<=cuts.as_of),0))::text AS matched_cash_micros
       FROM cuts LEFT JOIN broker_fee_accruals a ON a.account_id=${accountId} AND a.kind='CASH'

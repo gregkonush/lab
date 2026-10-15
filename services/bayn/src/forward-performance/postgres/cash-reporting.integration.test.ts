@@ -83,7 +83,7 @@ describePostgres('cash reporting residuals at historical cuts', () => {
               yield* sql`CREATE TEMP TABLE broker_fee_accruals(accrual_id text,account_id text,kind text,observed_at timestamptz,posted_at timestamptz) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE broker_fee_accrual_matches(accrual_id text,account_id text,activity_id text,accrual_cash_micros numeric) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE broker_fee_accounting(account_id text,activity_id text,first_observed_at timestamptz,posted_at timestamptz) ON COMMIT DROP`
-              yield* sql`CREATE TEMP TABLE broker_fee_match_corrections(accrual_id text,cash_debit_micros numeric,posted_at timestamptz,data jsonb) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE broker_fee_match_corrections(account_id text,activity_id text,accrual_id text,cash_debit_micros numeric,posted_at timestamptz,data jsonb) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE broker_fee_posting_acknowledgements(account_id text,source_kind text,source_id text,acknowledged_at timestamptz) ON COMMIT DROP`
               for (const row of [old, recent])
                 yield* sql`INSERT INTO broker_fee_accruals VALUES(${row.accrual_id},${accountId},'CASH',${row.data.observedAt},${row.data.observedAt})`
@@ -95,7 +95,7 @@ describePostgres('cash reporting residuals at historical cuts', () => {
                 (${old.accrual_id},${accountId},'reg',210000),
                 (${old.accrual_id},${accountId},'crypto-old',210000),
                 (${recent.accrual_id},${accountId},'crypto-recent',190000)`
-              yield* sql`INSERT INTO broker_fee_match_corrections VALUES(${old.accrual_id},210000,'2026-10-15T09:51:08Z',
+              yield* sql`INSERT INTO broker_fee_match_corrections VALUES(${accountId},'reg',${old.accrual_id},210000,'2026-10-15T09:51:08Z',
                 '{"readEvidence":{"observedAt":"2026-10-15T09:51:01.000Z"}}'::jsonb)`
               yield* sql`INSERT INTO broker_fee_posting_acknowledgements SELECT account_id,'ACCRUAL',accrual_id,posted_at FROM broker_fee_accruals`
               yield* sql`INSERT INTO broker_fee_posting_acknowledgements SELECT account_id,'ACTIVITY',activity_id,posted_at FROM broker_fee_accounting`
@@ -110,6 +110,13 @@ describePostgres('cash reporting residuals at historical cuts', () => {
                 opening: new Date('2026-10-15T09:51:09Z'),
                 closing: new Date('2026-10-15T11:01:00Z'),
               })
+              yield* sql`UPDATE broker_fee_posting_acknowledgements SET acknowledged_at='2026-10-15T10:00:00Z' WHERE source_id='reg'`
+              const delayedParent = yield* readCashReportingOffsets(sql, accountId, records, {
+                baseline: new Date('2026-10-15T04:00:00Z'),
+                opening: new Date('2026-10-15T04:00:00Z'),
+                closing: new Date('2026-10-15T09:52:00Z'),
+              })
+              yield* sql`UPDATE broker_fee_posting_acknowledgements SET acknowledged_at='2026-10-15T07:50:00Z' WHERE source_id='reg'`
               yield* sql`UPDATE broker_fee_posting_acknowledgements SET acknowledged_at='2026-10-15T10:45:00Z' WHERE source_id='crypto-old'`
               const retried = yield* readCashReportingOffsets(sql, accountId, records, {
                 baseline: new Date('2026-10-15T04:00:00Z'),
@@ -128,13 +135,14 @@ describePostgres('cash reporting residuals at historical cuts', () => {
                 opening: new Date('2026-10-15T04:00:00Z'),
                 closing: new Date('2026-10-15T11:01:00Z'),
               })
-              return { window, settlement, retried, lateAccrual, unknown }
+              return { window, settlement, delayedParent, retried, lateAccrual, unknown }
             }),
           )
         }),
       )
       expect(results.window).toEqual({ baseline: '3024', opening: '3024', closing: '-3104' })
       expect(results.settlement).toEqual({ baseline: '0', opening: '3024', closing: '0' })
+      expect(results.delayedParent).toEqual({ baseline: '3024', opening: '3024', closing: undefined })
       expect(results.retried).toEqual({ baseline: '3024', opening: undefined, closing: '0' })
       expect(results.lateAccrual).toEqual({ baseline: '3024', opening: '3024', closing: undefined })
       expect(results.unknown).toEqual({ baseline: '3024', opening: '3024', closing: undefined })
