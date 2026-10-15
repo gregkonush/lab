@@ -76,6 +76,14 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
+## Reproducible image dependencies
+
+The Bayn Nix dependency build normalizes the two CLI symlinks in the
+`browserslist` / `update-browserslist-db` dependency cycle before verifying its fixed-output hash.
+Bun's isolated installer can omit these links in otherwise identical locked installs. Normalization preserves
+package contents, rejects unexpected links or missing targets, and is idempotent. The dependency-input CI check
+exercises all four link-presence combinations; both native image builds still verify their exact dependency hashes.
+
 ## Required Valkey broker materializations
 
 Bayn uses Effect's native `@effect/platform-node/NodeRedis` binding for authenticated
