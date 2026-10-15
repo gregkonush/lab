@@ -53,11 +53,7 @@ import { loadIntradayArchivePages } from '../market-data/intraday/program'
 import { makeIntradayMarketDataQueries } from '../market-data/intraday/queries'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
 import { verifyIntradayArchiveWatermarks } from '../market-data/intraday/verification'
-import {
-  feeMatchCorrectionCashDebitMicros,
-  verifyBrokerFeeRecord,
-  type BrokerFeeEvidenceError,
-} from '../accounting/broker-fees'
+import { brokerFeeCashDeltaMicros, verifyBrokerFeeRecord, type BrokerFeeEvidenceError } from '../accounting/broker-fees'
 
 export type ForwardPerformanceProgramCause =
   | InferenceCostError
@@ -705,10 +701,15 @@ const readForwardPerformanceInput = (
       transactions: postgres.transactionEvidence,
       accountFeeAccruals: postgres.brokerFeeAccrualRecords,
       ...(postgres.brokerFeeRecords === undefined ? {} : { accountBrokerFees: feeRecords }),
-      ...(postgres.accountOpenPositionCount === undefined
+      ...(postgres.accountReconciliation === undefined
         ? {}
         : {
-            accountPositionCounts: { postgres: postgres.accountOpenPositionCount, ledger: ledger.openPositionCount },
+            accountPositionCounts: {
+              postgres: postgres.openPositionCount,
+              ledger: ledger.openPositionCount,
+              reconciledAt: postgres.accountReconciliation.reconciledAt,
+              exact: postgres.accountReconciliation.performanceExact,
+            },
           }),
       ...(Result.isSuccess(ledgerVerification) &&
       ledgerVerification.success.exactReceipts.size === postgres.ledgerTransactions.length &&
@@ -725,14 +726,7 @@ const readForwardPerformanceInput = (
         .filter((record) => generationFeeIds.has(record.data.activityId))
         .map((record) => ({
           ...record.data,
-          netAmountMicros: (
-            BigInt(record.data.netAmountMicros) +
-            BigInt(record.matched_cash_micros) -
-            record.cash_match_corrections.reduce(
-              (sum, correction) => sum + BigInt(feeMatchCorrectionCashDebitMicros(correction.data)),
-              0n,
-            )
-          ).toString(),
+          netAmountMicros: brokerFeeCashDeltaMicros(record),
           ...(record.coin_cost_basis_micros === null ? {} : { inventoryCostMicros: record.coin_cost_basis_micros }),
         })),
       executionEvidence,
