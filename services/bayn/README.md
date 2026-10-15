@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v3` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v4` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -75,6 +75,14 @@ plans and results for these diagnostics through a bounded read-only command. It 
 pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
+
+## Reproducible image dependencies
+
+The Bayn Nix dependency build normalizes the two CLI symlinks in the
+`browserslist` / `update-browserslist-db` dependency cycle before verifying its fixed-output hash.
+Bun's isolated installer can omit these links in otherwise identical locked installs. Normalization preserves
+package contents, rejects unexpected links or missing targets, and is idempotent. The dependency-input CI check
+exercises all four link-presence combinations; both native image builds still verify their exact dependency hashes.
 
 ## Required Valkey broker materializations
 
@@ -177,6 +185,9 @@ still agree, and pagination budgets, duplicate detection, response hashes and fe
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+Observed cash-fee preparation uses that same indexed baseline reader before adding the retained fill and fee cash
+deltas. Its regression checks the executed PostgreSQL plans against a populated account history, including foreign
+accounts and account events without retained snapshots; this does not change fee bounds or ledger posting order.
 
 The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
 the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
@@ -315,6 +326,11 @@ for interpreting and persisting broker history.
 
 ## Active strategy
 
+Entry and position-management observations share the native Jev reader and declare their purpose. New entries
+must meet the cycle's submission deadline. Management of an already filled position remains valid after that
+deadline and within the execution session; it retains the original fill-based holding deadline, freshness checks,
+and the controller's forced-close window. This includes continuous crypto cycles whose entry lease lasts one minute.
+
 Bayn supplies TypeSafe's pinned `jev-1.13.0` System One model with verified prices, volume, computed technical
 indicators, quotes, benchmark relationships and actual position context. Bayn computes quantities, cost basis,
 holding time, returns, sizing and risk. The model returns typed probability distributions for entry or management.
@@ -335,9 +351,9 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The submission window opens with the regular session. Bayn waits for its first fully elapsed 30-minute IEX window and
-the two-second decision delay. It evaluates the source-controlled candidate universe against SPY until five minutes
-before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
+The submission window opens with the regular session. Bayn can evaluate after the first completed minute and
+the two-second decision delay, at 09:31:02 New York time on a normal session. It uses up to 30 minutes of actual
+completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
 wider than five basis points. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
@@ -420,19 +436,22 @@ maximum-hold exit when fresh executable evidence is unavailable.
 
 Entry observations evaluate candidate availability independently. The active Jev protocol binds
 `bayn.candidate-evidence.quote-window-trade.v1`. A candidate needs a quote no older than 10 seconds, a real trade
-at or after the lookback start and available by observation, and 30 consecutive minute bars with their matching rolling feature.
+at or after the context start and available by observation, and at least one real finalized minute bar with a matching
+observed-price feature. The latest completed minute must be present; older missing minutes remain explicit gaps.
 The quote may precede the completed bar boundary. Neither a post-range trade nor a trade within the quote-age limit
 is required. Jev receives the trade's actual age as context, not as an executable price. Quote and trade ingestion
-delays still obey the feed bound. Missing input, a stale quote, or late input excludes that candidate.
+delays still obey the feed bound. Missing current input or a stale quote excludes that candidate. Real historical backfills are usable after their
+actual arrival and never supply a current executable quote.
 SPY retains the mandatory benchmark evidence contract. Source identity, canonical ordering, watermarks, finality,
 and premature data still fail the whole observation. Raw candidate rows, exclusions, and all observed matching
 feature receipts remain in the hashed snapshot, including features for rejected candidates.
 
-Missing minute bars are reported with their timestamps. A complete raw window without a matching observed feature
-has a separate reason. The IEX feed can omit a minute when its trades do not qualify for a bar; see Alpaca's
-[minute-bar rules](https://alpaca.markets/learn/stock-minute-bars). Bayn neither creates substitute bars nor combines
-30 nonconsecutive bars into a 30-minute feature. Stored observations without the new evidence policy reproduce
-their original contract. The active runtime selects the new policy explicitly.
+Missing historical minutes are reported with their timestamps and do not impose another warmup. A missing latest
+completed minute or matching observed feature still blocks that symbol. The IEX feed can omit a minute when its
+trades do not qualify for a bar; see Alpaca's [minute-bar rules](https://alpaca.markets/learn/stock-minute-bars). Bayn
+never creates substitute bars. Return horizons without their actual reference bar and incomplete volume comparisons
+remain unknown. Candidate and benchmark momentum use the earliest actual minute present in both histories.
+The active runtime accepts only the current observed-history contracts; retired snapshots are not converted.
 
 Native Jev targets retain every candidate result and exclusion with the exact full-batch evidence. Source exclusions
 alone cannot authorize a no-entry decision. A version-two or version-three entry batch with every candidate excluded by
@@ -460,11 +479,11 @@ incomplete; typed failures, defects and cleanup timeout do not replace the commi
 interruption still cancels and joins cleanup without undoing the terminal state. This is evidence closure, not a
 durable retry queue or a guarantee against process death after the terminal commit.
 
-Quotes, trades, and finalized bars ingested beyond their declared delay limits remain invalid. Candidate exclusion
-does not relax those limits. Required benchmark and execution evidence must become available within the existing
-deadlines. An invalid historical bar remains invalid while it is in the rolling window; waiting only helps once a
-compliant window is available. Premature feed evidence, non-final bars, and unclassified freshness violations remain
-errors. Historical replay uses the same candidate evaluation and retains every rejected observation.
+Quotes, trades and the latest completed bar retain their declared feed-delay and freshness bounds. Older real
+finalized bars can arrive through recovery before observation; their actual ingestion and receipt times remain
+bound in the snapshot. Required benchmark and execution evidence must arrive within the existing deadlines.
+Premature feed evidence, non-final bars, future arrivals and malformed inputs remain errors. Historical replay
+uses the same observed-history policy and retains every rejected observation.
 
 The protocol, universe, thresholds, feed contract, and execution model are source-controlled TypeScript. The image
 embeds and verifies the source revision and the behavior, parameter, protocol, and risk-policy hashes.
@@ -715,7 +734,8 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   certify later fee evidence, including a delayed posting of an earlier observation.
 
 - The public Bayn deployment serves read-only status and health. It does not schedule execution or hold mutation
-  authority. Its readiness checks PostgreSQL, ledger, broker reconciliation, and the bound execution controller.
+  authority. Its Kubernetes readiness checks fresh PostgreSQL, ledger and cycle-projection reads. Broker reconciliation
+  and the bound execution controller retain their own operational readiness in `/readyz` and `/v1/status`.
   It acquires no archive client and performs no ClickHouse probes. Without a direct market-data observation,
   `/v1/status` omits the `signal` dependency and reports `data.status: UNKNOWN`; archive connectivity cannot certify
   live Kafka availability. Trading retains the worker's direct Kafka checks and all entry and position-management gates.
@@ -842,6 +862,18 @@ an abandoned gap without posting the request twice. Earlier sessions remain outs
 
 The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
 Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
+
+Expense reports capture requests and frozen quotes in one PostgreSQL statement, including inside the execution
+writer transaction. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
+history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
+while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
+contribute to the report subtotal. Trading and expense posting continue throughout the read.
+
+The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` identifies the PostgreSQL capture;
+`ledgerTimestampMax`, `verifiedSessionTransferCount` and `exactLedgerPrefix` identify the verified native prefix. `transferCount` and
+`knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
+timestamps belong to different systems and are never compared to infer ordering. Pending quotes remain explicitly
+unverified, and verification does not establish invoice reconciliation.
 
 ```sh
 node dist/inference-cost-command.js --ledger-session 2026-10-06
@@ -980,6 +1012,9 @@ lineage. Image publication alone does not authorize the revised strategy.
 
 - `GET /livez`: process liveness.
 - `GET /readyz`: current dependency and execution-readiness projection.
+- `GET /status-readyz`: status-service readiness, requiring a fresh health pass and available PostgreSQL,
+  TigerBeetle and cycle-projection reads. The status Deployment uses this probe so broker-confirmation waits and
+  trading restrictions remain visible through `/v1/status`. Execution readiness and order admission are unchanged.
 - `GET /v1/status`: bounded controller, strategy, authority, cycle, reconciliation, accounting, build, and blocker
   state.
 
@@ -1000,7 +1035,7 @@ bearer header is not retained with the result. Private activation, deactivation,
 status handlers retain exclusive state mutation or shared reads as appropriate. Deployment activation alone does not
 establish trading readiness.
 
-For equities, the first complete observation is 30 minutes and two seconds after the exchange opens, bounded below
+For equities, the first observation is one minute and two seconds after the exchange opens, bounded below
 by submission opening. Continuous crypto admissions immediately use their completed rolling history; their first
 observation time equals submission opening. Both calculations use the persisted `executionCalendarSchemaVersion`,
 which is also exposed on the current and last cycle.
@@ -1208,13 +1243,13 @@ export and interval replay APIs have been removed. New complete original interva
 [market-data archive](../../docs/bayn/market-data-archive.md) passes its source and coverage checks. `openBacktestSource`
 validates the admitted offline source; it cannot establish an unobserved trading arrival or complete a missing interval.
 Malformed inputs fail with a typed error. The result remains `UNQUALIFIED` with controller coverage `UNKNOWN`.
-It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's 30-minute
+It does not prove capture completeness, train a model, produce an executable snapshot, or change Jev's observed-history
 contract. Capture interval verification remains the caller's responsibility before economic research.
 
 The [offline Ridge pair](../../docs/bayn/six-bar-ridge.md#offline-paired-portfolio) uses explicitly admitted
 control-study input v7 with deterministic entry and artifact v2. It compares the seven-feature score with the genuine training-only
 day-weighted target mean under the same fixed-principal budget and mechanical execution rules. Native
-30-minute-plus-two-second eligibility is unchanged. It uses original-capture six-bar observations and the
+First-completed-minute eligibility is unchanged. It uses original-capture six-bar observations and the
 existing serial portfolio; missing inputs remain incomplete even when the baseline would choose cash. It grants
 no production registration, qualification or capital authority.
 
@@ -1441,8 +1476,14 @@ additional full execution windows are needed, preserving the earlier dataset ver
 existing Bayn CI gate.
 The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
 mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
-row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
+row-order-independent retained replay, one-atom quantity and one-micro notional boundaries, cash and cost-basis conservation,
 authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
+Critical-path campaigns also exercise the shared equity/BTC/ETH/SOL planner's precision, liquidity and capital
+bounds; exact submission cutoffs; crash recovery before and after entry-lease expiry; durable decision retries;
+and observed crypto coin/cash fee bounds with stable ledger identities across repeated broker observations.
+Sparse history generators vary real completed-bar coverage and late historical arrivals, require the latest
+candidate and benchmark minute, reject future arrivals, and reproduce immutable snapshot evidence and common
+momentum references. First-minute exchange queries clamp history to the actual session open.
 All data is synthetic; no broker, database, or live account is contacted.
 
 Run a longer, reproducible 1,000-case-per-property campaign with a new seed:
@@ -1461,7 +1502,7 @@ Replay one failure using the reported seed/path and the exact test name, for exa
 ```sh
 cd services/bayn
 BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_PATH='0:1:2' bun test src/intraday-replay/ledger.property.test.ts \
-  --test-name-pattern 'property: a one-micro oversell' --timeout 150000
+  --test-name-pattern 'property: a one-atom oversell' --timeout 150000
 ```
 
 Never apply a shrink path to the whole suite. After fixing a discovered product defect, keep the minimized

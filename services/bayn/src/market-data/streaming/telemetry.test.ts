@@ -12,7 +12,6 @@ import { Result, Schema } from 'effect'
 import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from '../intraday/model'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { validateBarCoverage, validateBarStructure } from '../intraday/verification'
-import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { selectStreamingInputs } from './inputs'
 import { RequiredMarketFeatureSchema } from '../features/contract'
 
@@ -101,13 +100,10 @@ test('required feature diagnostics strip extra fields and retain only query-boun
 for (const delayMs of [50000, 89689]) {
   test(`rejected benchmark bar retains its actual publication delay ${delayMs}ms and governing bound`, () => {
     const { cut, query, snapshot } = streamingFixture()
-    const original = snapshot.bars.find((bar) => bar.symbol === 'SPY')
+    const original = snapshot.bars.findLast((bar) => bar.symbol === 'SPY')
     if (original === undefined) throw new Error('Missing benchmark fixture')
     const bar = { ...original, ingestedAt: new Date(Date.parse(original.eventAt) + delayMs).toISOString() }
-    const checked =
-      delayMs < 60000
-        ? validateBarStructure(query, [bar])
-        : validateBarCoverage(query, [bar], 0, BarPublicationPolicy.TimelyEquivalentRevision)
+    const checked = delayMs < 60000 ? validateBarStructure(query, [bar]) : validateBarCoverage(query, [bar], 0)
     expect(Result.isFailure(checked)).toBe(true)
     if (Result.isSuccess(checked)) throw new Error('Invalid benchmark unexpectedly accepted')
     expect(snapshotFailureMeasurement(checked.failure, query, cut.projection)).toMatchObject({

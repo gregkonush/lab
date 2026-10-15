@@ -100,11 +100,8 @@ class CryptoMarketFeaturesTest {
       }
     val feature = assertNotNull(fixture.calculate(bars).feature)
     assertEquals(
-      CryptoRollingWindow(
-        TechnicalReadiness.READY,
-        CryptoRollingValues(price, price, price, price, "0.00000000370370367384"),
-      ),
-      feature.material.rolling30m,
+      CryptoRollingValues(price, price, price, price, "0.00000000370370367384"),
+      feature.material.priceWindow,
     )
     assertEquals(61, feature.material.inputs.size)
     assertEquals(
@@ -170,7 +167,7 @@ class CryptoMarketFeaturesTest {
     assertEquals(ready("101145000"), feature.material.technical.ema12PriceMicros)
     assertEquals(ready("101075012"), feature.material.technical.ema26PriceMicros)
     assertEquals(CRYPTO_SESSION, feature.material.marketSession)
-    assertEquals(TechnicalReadiness.READY, feature.material.rolling30m.status)
+    assertEquals("100.91", feature.material.priceWindow.referencePrice)
     assertEquals(fixture.start.plusSeconds(121 * 60).toEpochMilli(), feature.material.windowEndMs)
   }
 
@@ -220,13 +217,8 @@ class CryptoMarketFeaturesTest {
         ?.ema26PriceMicros
         ?.status,
     )
-    assertEquals(
-      TechnicalReadiness.GAP,
-      missing.feature
-        ?.material
-        ?.rolling30m
-        ?.status,
-    )
+    assertNotNull(missing.feature?.material?.priceWindow)
+    assertEquals(29, missing.state.bars.count { it.eventTime >= fixture.start.plusSeconds(31 * 60) })
     val repaired = advanceCryptoFeature(missing.state, fixture.bar(50), fixture.computed, fixture.revision)
     assertEquals(fixture.calculate((0..60).map { fixture.bar(it) }), repaired)
     val zero =
@@ -254,8 +246,7 @@ class CryptoMarketFeaturesTest {
       "0",
       zero.feature
         ?.material
-        ?.rolling30m
-        ?.values
+        ?.priceWindow
         ?.totalVolume,
     )
   }

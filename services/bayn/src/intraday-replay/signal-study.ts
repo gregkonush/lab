@@ -59,7 +59,7 @@ export const signalStudyDefinition = {
     DETERMINISTIC_BREAKOUT:
       'Apply the retained momentum thresholds to every available candidate, ranked by exact benchmark-relative return then symbol.',
     RELATIVE_MOMENTUM:
-      'Strictly positive exact 30-minute return and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
+      'Strictly positive exact return from the common observed reference and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
   },
   breakoutThresholds: {
     lookbackReturnBps: defaultIntradayMomentumProtocolDocument.minimumLookbackReturnBps,

@@ -33,7 +33,7 @@ export const cryptoMarketProfile = Object.freeze({
   sourceTopics: Object.freeze({ bars: cryptoRawTopic, quotes: cryptoRawTopic, trades: cryptoRawTopic }),
   streamingInput: Object.freeze({
     featureTopic: cryptoFeatureTopic,
-    requiredDefinitionId: 'dorvud.crypto-continuous-1m.v1',
+    requiredDefinitionId: 'dorvud.crypto-continuous-1m.v2',
     requiredDefinitionHash: canonicalHashV1(cryptoFeatureDefinitionMaterial),
   }),
 })

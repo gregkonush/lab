@@ -453,11 +453,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: kargo-sha-7d7efb75e625e16a98a5d16d62bad0eb0d3ce7a4
+              value: kargo-sha-3ff242603190d5e4f3803eb380238db3132f1024
             - name: TORGHUT_COMMIT
-              value: 7d7efb75e625e16a98a5d16d62bad0eb0d3ce7a4
+              value: 3ff242603190d5e4f3803eb380238db3132f1024
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:6cef648a37c3a395c25cf458f55d9c623f0cf9c722e7eeb35bccaa42ffbbf85a
+              value: sha256:dfddd547c6e09f41259aadcb7bdb7472bdb27523cb513b4ee5cc6f5fcd75944e
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
               value: linux/amd64,linux/arm64
             - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS

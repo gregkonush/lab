@@ -1,8 +1,8 @@
 {
   "material": {
     "schemaVersion": "dorvud.market-feature.v1",
-    "definitionId": "dorvud.rolling-price-30m.v1",
-    "definitionHash": "f9c3d3e8146e17ed2c143aad3cbcb8f1d741d2203bb98df7d240bf66306630de",
+    "definitionId": "dorvud.observed-price-window.v1",
+    "definitionHash": "4b30ed1fa6183c29f5616460567da6bb3000b1f599512dc90a1234d50e606181",
     "provider": "alpaca",
     "feed": "iex",
     "delayClass": "real_time_exchange_only",
@@ -263,7 +263,7 @@
       "totalVolumeMicros": "307500000"
     }
   },
-  "featureId": "d0b7607f571893fa4564d286f8b5865169eb4d4f572c0ca7aec521a3a822d697",
+  "featureId": "fd22754c5a7ed8816f4fdffef3a6b392682eabb0a11833186afea344ced8c17d",
   "computedAtMs": 1789135202000,
   "producerRevision": "test-revision"
 }
