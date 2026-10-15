@@ -76,6 +76,36 @@ describe('Accepted prompt retention', () => {
 })
 
 describe('Codex event replay', () => {
+  const runtimeError: TengriCodexEvent = {
+    ...event,
+    kind: 'error',
+    method: 'error',
+    threadId: '',
+    turnId: '',
+    itemId: '',
+    text: 'Codex app-server is restarting',
+  }
+
+  test('keeps only the latest unscoped runtime error', () => {
+    const latest = { ...runtimeError, sequence: 8 }
+    expect(appendCodexEvent([runtimeError], latest)).toEqual([latest])
+    expect(appendCodexEvent([latest], runtimeError)).toEqual([latest])
+  })
+
+  test('clears recovered runtime errors while preserving failed turns and warnings', () => {
+    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
+    const warning = { ...runtimeError, kind: 'warning' as const }
+    const started = { ...event, sequence: 8, kind: 'thread-state' as const, method: 'turn/started' }
+    const next = appendCodexEvent([runtimeError, turnError, warning], started)
+    expect(next).toEqual([turnError, warning, started])
+  })
+
+  test('does not replay a runtime error older than a successful thread snapshot', () => {
+    expect(appendCodexEventAfterRestore([], runtimeError, new Map(), 8)).toEqual([])
+    const laterError = { ...runtimeError, sequence: 9 }
+    expect(appendCodexEventAfterRestore([], laterError, new Map(), 8)).toEqual([laterError])
+  })
+
   test('keeps pending approvals when later notices exceed the event buffer', () => {
     const approval = {
       ...event,

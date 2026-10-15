@@ -92,6 +92,9 @@ import {
   type MarketDataSnapshot,
 } from './market-data'
 import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from './market-data/intraday/model'
+import { marketDataOperationError } from './market-data/errors'
+import { unusedEntryExpiresAt } from './cycle/entry-admission'
+import { decideDecisionBinding } from './cycle/store/decisions'
 import { constructStreamingSnapshot } from './market-data/streaming/snapshot'
 import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
 import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
@@ -301,19 +304,26 @@ test('close-only recovery allows only close submissions strictly before the dead
 })
 
 test.each(['RecoveryOnly', 'CloseOnly', 'Mutation'] as const)(
-  '%s preserves an untouched cycle through its entry window',
+  '%s preserves an untouched native cycle only through its admission lease',
   (capability) => {
-    for (const observedAt of [
-      cycle.window.submissionOpenAt,
-      utcInstantFromEpochMillis(Date.parse(cycle.window.submissionCutoffAt) - 1),
-    ]) {
+    for (const observedAt of [cycle.createdAt, utcInstantFromEpochMillis(unusedEntryExpiresAt(cycle) - 1)]) {
       expect(decideUnboundExecutionCycleTerminalization({ capability, observedAt, cycle })).toBeUndefined()
     }
     expect(
       decideUnboundExecutionCycleTerminalization({ capability, observedAt: cycle.window.submissionCutoffAt, cycle }),
-    ).toBe(capability === 'Mutation' ? undefined : CycleTerminalReason.Authority)
+    ).toBe(CycleTerminalReason.UnusedEntryExpired)
   },
 )
+
+test('a native empty admission expires before close-only authority can strand its slot at the cutoff', () => {
+  expect(
+    decideUnboundExecutionCycleTerminalization({
+      capability: 'CloseOnly',
+      observedAt: cycle.window.submissionCutoffAt,
+      cycle,
+    }),
+  ).toBe(CycleTerminalReason.UnusedEntryExpired)
+})
 
 test('preservation does not include a partially bound snapshot', () => {
   expect(
@@ -328,7 +338,7 @@ test('preservation does not include a partially bound snapshot', () => {
 test.each(['RecoveryOnly', 'CloseOnly'] as const)(
   '%s startup preserves its open unbound cycle without discovering a replacement',
   async (executionMode) => {
-    const observedAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+    const observedAt = evaluatedAt
     const terminalCycle = Effect.runSync(
       decodeAutonomousCycle({
         ...cycle,
@@ -607,8 +617,8 @@ const cycle = Effect.runSync(
     state: CycleState.Active,
     bindings: {},
     stateVersion: 3,
-    createdAt: window.submissionOpenAt,
-    updatedAt: window.submissionOpenAt,
+    createdAt: new Date(Date.parse(evaluatedAt) - 1000).toISOString(),
+    updatedAt: new Date(Date.parse(evaluatedAt) - 1000).toISOString(),
   }),
 )
 
@@ -979,6 +989,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   })
   const brokerAccount: BrokerAccount = {
     cryptoStatus: null,
+    cashReportingQuantumMicros: '1' as const,
     nonMarginableBuyingPowerMicros: null,
 
     id: accountId,
@@ -1033,6 +1044,8 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
         asOf: reconciledAt,
       }),
     hasAccountBaseline: () => Effect.succeed(true),
+    recoverFees: () => Effect.void,
+    retainCashReporting: () => Effect.void,
     bindings: () => Effect.succeed([]),
     reconcile: () => Effect.succeed(persisted),
     ensureAuthorityGeneration: () => Effect.succeed(authority),
@@ -3860,7 +3873,10 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect((await buildClose()).contentHash).toBe(close.contentHash)
-    expect((await buildClose(reconciliationResultAt(observedAt, 1, 0, [position]))).dispatchable).toBeFalse()
+    await expect(buildClose(reconciliationResultAt(observedAt, 1, 0, [position]))).rejects.toMatchObject({
+      _tag: 'ExecutionCloseAwaitingReconciliation',
+      unknownMutationCount: 1,
+    })
 
     const residual = await buildClose(
       reconciliationResultAt(observedAt, 0, 0, [
@@ -5135,6 +5151,8 @@ describe('OBSERVE runtime composition', () => {
       verifyCompleted: () => unused,
       value: () => unused,
       hasAccountBaseline: () => unused,
+      recoverFees: () => Effect.void,
+      retainCashReporting: () => Effect.void,
       bindings: () => unused,
       reconcile: () => unused,
       ensureAuthorityGeneration: () => Effect.succeed(authority),
@@ -5276,6 +5294,7 @@ describe('OBSERVE runtime composition', () => {
     })
     const brokerAccount: BrokerAccount = {
       cryptoStatus: null,
+      cashReportingQuantumMicros: '1' as const,
       nonMarginableBuyingPowerMicros: null,
 
       id: accountId,
@@ -5374,6 +5393,8 @@ describe('OBSERVE runtime composition', () => {
                 asOf: reconciledAt,
               }),
             hasAccountBaseline: () => Effect.succeed(true),
+            recoverFees: () => Effect.void,
+            retainCashReporting: () => Effect.void,
             bindings: () => Effect.succeed([]),
             reconcile: () =>
               Deferred.succeed(persistenceStarted, undefined).pipe(
@@ -5892,7 +5913,20 @@ test('persists the pricing quote event and its full freshness deadline for every
   expect(Result.isFailure(makeExecutionDecisionDocument(withoutAllowance))).toBeTrue()
 })
 
-test('recovery preserves the open session for a real next strategy decision', async () => {
+test('decision construction crossing the admission lease cannot bind its completed decision', async () => {
+  const fixture = await executionLifecycleFixture()
+  expect(Result.getOrThrow(decideDecisionBinding(cycle, fixture.document, fixture.document.createdAt, []))._tag).toBe(
+    'Persist',
+  )
+  const late = Result.getOrThrow(
+    decideDecisionBinding(cycle, fixture.document, utcInstantFromEpochMillis(unusedEntryExpiresAt(cycle)), []),
+  )
+  expect(late._tag).toBe('Block')
+  if (late._tag !== 'Block') throw new Error('Expected expired admission')
+  expect(late.reason).toBe(CycleTerminalReason.UnusedEntryExpired)
+})
+
+test('recovery preserves a fresh admission for a real next strategy decision', async () => {
   const fixture = await executionLifecycleFixture()
   let stored = cycle
   let bound: CycleDecisionDocument | undefined
@@ -5953,19 +5987,22 @@ test('recovery preserves the open session for a real next strategy decision', as
           ),
     ),
     loadSnapshot: (query) =>
-      Effect.sync(() => {
-        snapshotLoads += 1
-        const snapshot = streamingFixtureFromRaw(
-          makeIntradayMomentumTestSnapshot(
-            currentIntradayProtocol,
-            { ...query, archiveWatermarks: [] },
-            { NVDA: 0.02 },
-            10,
-          ),
-          query,
-        ).snapshot
-        snapshots.push(snapshot)
-        return snapshot
+      Effect.suspend(() => {
+        if (!projectionReady) return Effect.fail(marketDataOperationError('load', 'projection disconnected', undefined))
+        return Effect.sync(() => {
+          snapshotLoads += 1
+          const snapshot = streamingFixtureFromRaw(
+            makeIntradayMomentumTestSnapshot(
+              currentIntradayProtocol,
+              { ...query, archiveWatermarks: [] },
+              { NVDA: 0.02 },
+              10,
+            ),
+            query,
+          ).snapshot
+          snapshots.push(snapshot)
+          return snapshot
+        })
       }),
     verifyReference: fixtureStreamingReference,
   }
@@ -5995,7 +6032,7 @@ test('recovery preserves the open session for a real next strategy decision', as
         observedAt: beforeOpenAt,
       })
       stored = cycle
-      yield* TestClock.setTime(Date.parse(cycle.window.submissionOpenAt) + 1_000)
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
       const input = { ...fixture.input, intradayMarketData }
       const startup = { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void }
       const restricted = yield* yield* makeMutationAutonomousCycleStartupProduction(input, 'RecoveryOnly')(startup)

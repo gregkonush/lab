@@ -1,3 +1,4 @@
+import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { Data, Effect, Result, Scope } from 'effect'
 
 import type { RuntimeConfig } from '../config'
@@ -90,7 +91,7 @@ const validateCashYieldEvidence = (
   Result.gen(function* () {
     if (evidence === undefined) return 0n
     if (
-      evidence.schemaVersion !== 'bayn.forward-performance-cash-yield-evidence.v1' ||
+      evidence.schemaVersion !== 'bayn.forward-performance-cash-yield-evidence.v3' ||
       !SHA256_PATTERN.test(evidence.reconciliationId) ||
       !SHA256_PATTERN.test(evidence.reconciliationContentHash) ||
       !SHA256_PATTERN.test(evidence.baselineAccountEventId) ||
@@ -134,6 +135,18 @@ const validateCashYieldEvidence = (
 
     const baselineCash = yield* parseSignedI128(evidence.baselineCashMicros, 'baselineCashMicros')
     const openingCash = yield* parseSignedI128(evidence.openingCashMicros, 'openingCashMicros')
+    const baselineOffset = yield* parseSignedI128(
+      evidence.baselineCashReportingOffsetMicros,
+      'baselineCashReportingOffsetMicros',
+    )
+    const openingOffset = yield* parseSignedI128(
+      evidence.openingCashReportingOffsetMicros,
+      'openingCashReportingOffsetMicros',
+    )
+    const closingOffset = yield* parseSignedI128(
+      evidence.closingCashReportingOffsetMicros,
+      'closingCashReportingOffsetMicros',
+    )
     const preWindowCashDelta = yield* parseSignedI128(
       evidence.preWindowAccountedCashDeltaMicros,
       'preWindowAccountedCashDeltaMicros',
@@ -145,9 +158,26 @@ const validateCashYieldEvidence = (
     const closingCash = yield* parseSignedI128(evidence.closingCashMicros, 'closingCashMicros')
     const accountedCashDelta = yield* parseSignedI128(evidence.accountedCashDeltaMicros, 'accountedCashDeltaMicros')
     const cashYieldAmount = yield* parseSignedI128(evidence.cashYieldMicros, 'cashYieldMicros')
-    const derivedPreWindowResidual = openingCash - baselineCash - preWindowCashDelta
-    const derivedCashYield = closingCash - openingCash - accountedCashDelta
+    const derivedPreWindowResidual =
+      openingCash -
+      BigInt(
+        reportedCashMicros(
+          (baselineCash + preWindowCashDelta + openingOffset - baselineOffset).toString(),
+          evidence.openingCashReportingQuantumMicros,
+        ),
+      )
+    const derivedCashYield =
+      closingCash -
+      BigInt(
+        reportedCashMicros(
+          (openingCash + accountedCashDelta + closingOffset - openingOffset).toString(),
+          evidence.closingCashReportingQuantumMicros,
+        ),
+      )
     if (
+      (openingOffset < 0n ? -openingOffset : openingOffset) * 2n > BigInt(evidence.openingCashReportingQuantumMicros) ||
+      (closingOffset < 0n ? -closingOffset : closingOffset) * 2n > BigInt(evidence.closingCashReportingQuantumMicros) ||
+      (evidence.baselineAccountEventId === evidence.openingAccountEventId && baselineOffset !== openingOffset) ||
       preWindowResidual !== 0n ||
       derivedPreWindowResidual !== preWindowResidual ||
       derivedCashYield < 0n ||

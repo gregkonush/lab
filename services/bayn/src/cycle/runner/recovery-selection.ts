@@ -2,6 +2,7 @@ import { Result } from 'effect'
 
 import { CycleState, CycleTerminalReason, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
 import { isTerminalCycleState } from '../transitions'
+import { hasExpiredUnusedEntryAdmission } from '../entry-admission'
 import { selectBoundDecision } from './recovery-decision-binding'
 import {
   decodeCycleRecoveryStateResult,
@@ -85,6 +86,18 @@ const selectDeadlineOrProvenance = (
   cycle: AutonomousCycle,
 ): CycleRecoverySelection | undefined => {
   const observedAt = state.observedAt
+  if (
+    cycle.identity.strategyProtocolHash === state.strategyProtocolHash &&
+    state.decisionDocument == null &&
+    hasExpiredUnusedEntryAdmission(cycle, observedAt)
+  ) {
+    return {
+      action: 'BLOCK',
+      cycleId: cycle.identity.cycleId,
+      observedAt,
+      reason: CycleTerminalReason.UnusedEntryExpired,
+    }
+  }
   if (
     (cycle.state === CycleState.Active || cycle.state === CycleState.Pending) &&
     observedAt >= cycle.window.submissionCutoffAt

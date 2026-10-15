@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { Pipeable } from '../pipeable'
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
-import { CycleState, CycleTerminalReason } from './model'
+import { CycleState, CycleTerminalReason, type ExecutionCalendarObservation } from './model'
 import { EntryAllocationReason } from './entry-allocation-observation'
 
 export interface CycleOperationsThresholds {
@@ -17,6 +17,7 @@ export interface CycleOperationsSnapshot {
   readonly accountId: string
   readonly signalSessionDate: string
   readonly executionSessionDate: string
+  readonly executionCalendarSchemaVersion: ExecutionCalendarObservation['executionCalendarSchemaVersion']
   readonly phase: CycleState
   readonly snapshotId: string | null
   readonly decisionHash: string | null
@@ -190,6 +191,7 @@ export enum CycleOperationsReason {
   LastCycleNoTrade = 'LAST_CYCLE_NO_TRADE',
   TurnoverBudgetExhausted = 'TURNOVER_BUDGET_EXHAUSTED',
   LastCycleBlocked = 'LAST_CYCLE_BLOCKED',
+  UnusedEntryExpired = 'UNUSED_ENTRY_EXPIRED',
   MissedPublicationDeadline = 'MISSED_PUBLICATION_DEADLINE',
   MissedSubmissionCutoff = 'MISSED_SUBMISSION_CUTOFF',
   MissedExecutionClose = 'MISSED_EXECUTION_CLOSE',
@@ -295,6 +297,8 @@ const lifecycleCondition = (
   const current = projection.current
   if (current === null) {
     if (projection.last?.phase === CycleState.Blocked) {
+      if (projection.last.terminalReason === CycleTerminalReason.UnusedEntryExpired)
+        return [CycleOperationsCondition.Waiting, CycleOperationsReason.UnusedEntryExpired]
       return [
         maximumAuthority !== Authority.Execution ||
         (projection.last.terminalReason === CycleTerminalReason.Authority &&

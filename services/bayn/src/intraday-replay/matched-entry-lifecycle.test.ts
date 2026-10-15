@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
@@ -31,7 +32,13 @@ const quote = (t: number, overrides: Partial<IntradayQuote> = {}) => {
 const terms = {
   symbol: 'AAPL',
   protocol: fixture.protocol,
-  assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+  assumptions: {
+    instruments: replayTestInstruments,
+    latencyMs: 100,
+    slippageBps: 0,
+    availableLiquidityPpm: 1000000,
+    feeMultiplierPpm: 1000000,
+  },
   entryBudgetMicros: '10000000000',
   decidedAtMs: at,
   cutoffMs: at + 30 * 60000,

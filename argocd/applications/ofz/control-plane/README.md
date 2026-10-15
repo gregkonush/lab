@@ -1,21 +1,29 @@
 # Fenced Ofz control plane
 
 The active Ofz application includes this directory. Kargo selects one successful immutable Ofz image and applies
-its digest to the API, exporter, both migration jobs and the initial bootstrap job. The application tracks `kargo/ofz`; the selected image's
+its digest to the API, exporter, both migration jobs, bootstrap and activation. The application tracks `kargo/ofz`; the selected image's
 source revision, digest and build run are recorded on the rendered resources.
 
 CNPG manages seven separate login roles with namespace-bound SealedSecrets. The short-lived `ofz_migrator` and
 `tengri_migrator` owners initialize their respective databases through Sync hooks before the serving deployments.
 The next hook runs `ofz bootstrap` with the protected approved administrator manifest and retains the platform fence.
 Every outer SealedSecret is in wave -9, before the database and native consumers. Network policies are in wave -5,
-before the migration hooks in -4 and bootstrap in -3. There is no automatic activation hook.
+before the migration hooks in -4 and bootstrap in -3. The PostSync activation hook uses the same protected manifest
+and its distinct activation operation ID. It requires the real archive checkpoint and exact native relationships.
+Retries return the original receipt and cannot lift a later recovery or offboarding fence. Keep Ofz reconciliation
+held until the independent database restores, real identity configuration and selected controller/guest images are ready.
 The API uses `ofz_api`; only `ofz_archiver` can acknowledge audit exports. BFF, controller and supervisor roles have
 separate credentials and table grants. None of these roles can create roles or databases, replicate, bypass RLS or
 act as superuser. The fixed connection limits cover simultaneous serving surges and preserve the existing SQL budget.
 
+The namespace-local `ofz-ca-source` SecretStore publishes only `ca.crt` into `ofz-db-public-ca` through the existing
+External Secrets controller. The shared `ofz-database-ca` ClusterSecretStore can read only that public bundle and serves
+only Tengri and the BFF namespaces. It cannot read the CNPG Secret containing `ca.key`. Ofz database callers project
+only `ca.crt` into their mounts. Certificate refresh uses the existing one-minute reconciliation intervals.
+
 SpiceDB's qualified read/write pool limits and disabled dispatch caches now live in the active application.
 The obsolete prepared Ofz overlay is removed. `bash services/ofz/test-ha-manifests.sh` renders this source alongside
-the remaining prepared Tengri, BFF and Keycloak targets and checks their shared contracts.
+the active Tengri, BFF and Keycloak targets and checks their shared contracts. The prepared application overlays are removed.
 
 The API requires the exact `spiffe://proompteng.ai/ns/ofz/sa/ofz-api` registration. Its namespace, Pod label, service
 account and container selectors are explicit in the SPIRE configuration. API network access remains restricted to

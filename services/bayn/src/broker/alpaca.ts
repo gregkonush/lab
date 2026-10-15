@@ -51,6 +51,7 @@ export {
   type Observed,
   type StableBrokerSnapshot,
   type FillActivitiesQuery,
+  type FeeActivitiesQuery,
   type FillActivity,
   type FeeActivity,
   type FeeActivityPage,

@@ -869,6 +869,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
     setAgent: (nextAgent: typeof readyAgent | null) => {
       agent = nextAgent
     },
+    setAuthenticated: (value: boolean) => {
+      authenticated = value
+    },
     waitForHeldLifecycleAction: () => heldLifecycleActionStarted,
     waitForHeldCodexAccount: () => heldCodexAccountStarted,
     waitForHeldResume: () => heldResumeStarted,
@@ -1932,6 +1935,106 @@ test('keeps the application menu and status controls separate on narrow viewport
   expect(menuBounds).not.toBeNull()
   expect(statusBounds).not.toBeNull()
   expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(statusBounds!.x)
+})
+
+test('shows a submitted message before the server accepts it and restores rejected drafts', async ({ page }) => {
+  await mockTengri(page)
+  let releaseSend = () => {}
+  const heldSend = new Promise<void>((resolve) => {
+    releaseSend = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'send-turn') {
+      await heldSend
+      await route.fulfill({ status: 503, json: { error: 'Send was rejected' } })
+    } else await route.fallback()
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const composer = tengri.getByRole('textbox', { name: 'Message your agent' })
+  await composer.fill('Show this immediately.')
+  await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
+  try {
+    await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveText('Show this immediately.', {
+      timeout: 1_000,
+    })
+    await expect(composer).toHaveValue('')
+  } finally {
+    releaseSend()
+  }
+  await expect(tengri.getByText('Send was rejected', { exact: true })).toBeVisible()
+  await expect(composer).toHaveValue('Show this immediately.')
+  await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+})
+
+test('keeps the chat connection and models when another desktop window takes focus', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  const before = mock.actions.filter(
+    (action) => action.action === 'codex-models' || action.action === 'codex-account',
+  ).length
+  const streamCount = () =>
+    page.evaluate(
+      () =>
+        Reflect.get(window, '__tengriEventSources').filter((source: { url: string }) =>
+          source.url.includes('/api/tengri/events?'),
+        ).length,
+    )
+  const beforeStreams = await streamCount()
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder', exact: true }).click()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'assistant-text',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'background-answer',
+    approvalId: '',
+    rawJson: '{}',
+    text: 'Arrived while Finder was focused.',
+  })
+  await expect(tengri.getByText('Arrived while Finder was focused.', { exact: true })).toBeAttached()
+  await dock.getByRole('button', { name: 'Open Tengri', exact: true }).click()
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  expect(
+    mock.actions.filter((action) => action.action === 'codex-models' || action.action === 'codex-account').length,
+  ).toBe(before)
+  expect(await streamCount()).toBe(beforeStreams)
+})
+
+test('removes duplicate recovered restart notices from the live conversation', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  for (const sequence of [1, 2])
+    await emitCodexEvent(page, {
+      sequence,
+      kind: 'error',
+      method: 'error',
+      threadId: '',
+      turnId: '',
+      itemId: '',
+      approvalId: '',
+      rawJson: '{}',
+      text: 'Codex app-server is restarting',
+    })
+  await expect(tengri.getByText('Codex app-server is restarting', { exact: true })).toHaveCount(1)
+  await emitCodexEvent(page, {
+    sequence: 3,
+    kind: 'thread-state',
+    method: 'turn/started',
+    threadId: '',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    rawJson: '{}',
+    text: '',
+  })
+  await expect(tengri.getByText('Codex app-server is restarting', { exact: true })).toHaveCount(0)
 })
 
 test('sends a real agent turn and executes sleep, resume, and confirmed deletion', async ({ page }) => {
@@ -3571,6 +3674,55 @@ test('refreshes a failed agent without requesting unsupported recovery or deleti
   expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
   await expect(failed.getByRole('button', { name: 'Delete Failed Agent' })).toBeVisible()
 })
+
+test('backs off failed snapshot polls after the cached idle deadline', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
+  const mock = await mockTengri(page, { agent: { ...readyAgent, idleDeadline: '2026-08-26T12:33:00.000Z' } })
+  await page.goto('/')
+  await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+  const initialRequests = mock.getSnapshotRequestCount()
+  mock.failNextSnapshots(2)
+
+  await page.clock.fastForward(1_100)
+  await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + 1)
+  await expect(page.getByText('Connection interrupted. Using the last confirmed agent state.')).toBeVisible()
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const before = await page.evaluate(() => Date.now())
+    await page.clock.runFor(5_000)
+    expect(await page.evaluate(() => Date.now())).toBeGreaterThanOrEqual(before + 5_000)
+    expect(mock.getSnapshotRequestCount()).toBe(initialRequests + attempt)
+    if (attempt === 2) mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+    await page.clock.fastForward(26_000)
+    await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + attempt + 1)
+  }
+  await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+})
+
+for (const recoveredState of ['sleeping', 'signed out'] as const) {
+  test(`recovers a desktop after repeated identical snapshot failures to ${recoveredState}`, async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-08-26T12:34:00.000Z') })
+    const mock = await mockTengri(page)
+    await page.goto('/')
+    await expect(page.getByRole('navigation', { name: 'Dock' })).toBeVisible()
+    const initialRequests = mock.getSnapshotRequestCount()
+    mock.failNextSnapshots(2)
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      await page.clock.fastForward(31_000)
+      await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + attempt)
+      await expect(page.getByText('Connection interrupted. Using the last confirmed agent state.')).toBeVisible()
+    }
+
+    if (recoveredState === 'sleeping') mock.setAgent({ ...readyAgent, phase: 'sleeping' })
+    else mock.setAuthenticated(false)
+    await page.clock.fastForward(31_000)
+    await expect.poll(() => mock.getSnapshotRequestCount()).toBe(initialRequests + 3)
+    await expect(
+      page.getByRole('dialog', { name: recoveredState === 'sleeping' ? 'Tengri is sleeping' : 'Sign in to Tengri' }),
+    ).toBeVisible()
+    expect(mock.actions.some((action) => action.action === 'delete-agent')).toBe(false)
+  })
+}
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })

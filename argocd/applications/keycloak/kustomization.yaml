@@ -13,7 +13,14 @@ resources:
   - keycloak-admin-sealedsecret.yaml
   - keycloak.yaml
   - postgres-cluster.yaml
+  - postgres-backups.yaml
+  - database-backup-sealedsecret.yaml
   - certificate.yaml
   - network-policy.yaml
   - pod-disruption-budget.yaml
   - tengri
+configMapGenerator:
+  - name: keycloak-tengri-login-theme
+    files:
+      - theme.properties=tengri/theme/login/theme.properties
+      - webauthnRegister.js=tengri/theme/login/resources/js/webauthnRegister.js
