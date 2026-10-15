@@ -10,7 +10,11 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { PositiveMicrosSchema, SignedMicrosSchema, UnsignedMicrosSchema } from '../execution/contracts'
-import { CashReportingQuantumSchema, reportedCashMicros } from '../broker/alpaca/cash-reporting'
+import {
+  CashReportingQuantumSchema,
+  maximumCashReportingQuantumMicros,
+  reportedCashMicros,
+} from '../broker/alpaca/cash-reporting'
 
 const SourceTrade = Schema.Struct({
   transactionId: Sha256Schema,
@@ -97,7 +101,9 @@ export const prepareFeeAccrual = (input: unknown, ledger: number) =>
       )
       const maximum =
         (soldNotional * 25n + 9_999_999_999_999_999n) / 10_000_000_000_000_000n +
-        BigInt(data.cashReportingQuantumMicros) * BigInt(data.sourceTrades.length)
+        BigInt(data.cashReportingQuantumMicros) * BigInt(data.sourceTrades.length) +
+        // The opening report may have used the provider's coarsest precision, independently of this report.
+        BigInt(maximumCashReportingQuantumMicros)
       if (
         expense <= 0n ||
         expense > maximum ||

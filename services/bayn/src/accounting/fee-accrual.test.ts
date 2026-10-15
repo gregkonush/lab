@@ -48,6 +48,37 @@ test('a sell accrues the observed USD debit at the broker reporting precision', 
   expect(result.coinQuantityAtoms).toBeNull()
   expect(result.plan.transfers.map((t) => t.amount)).toEqual([200000n])
 })
+test('the captured ETH close admits both cash reporting boundaries without estimating the fee', () => {
+  const observed = {
+    ...cash,
+    projectedCashMicros: '99875376976',
+    observedCashMicros: '99875170000',
+    sourceTrades: [{ transactionId: 'd'.repeat(64), quantityAtoms: '32967375', priceAtoms: '2409457000000' }],
+  }
+  const result = Result.getOrThrow(prepareFeeAccrual(observed, 7001))
+  expect(result.cashDebitMicros).toBe('210000')
+  expect(result.plan.transfers.map((transfer) => transfer.amount)).toEqual([210000n])
+  expect(Result.isFailure(prepareFeeAccrual({ ...observed, observedCashMicros: '99875160000' }, 7001))).toBe(true)
+  const replay = Result.getOrThrow(
+    prepareFeeAccrual({ ...observed, accountEventId: 'e'.repeat(64), observedAt: '2026-10-15T02:02:00.000Z' }, 7001),
+  )
+  expect(replay.accrualId).toBe(result.accrualId)
+  expect(replay.plan).toEqual(result.plan)
+})
+test('a more precise closing report retains the possible cent precision of its opening balance', () => {
+  const observed = {
+    ...cash,
+    projectedCashMicros: '99875376976',
+    observedCashMicros: '99875168397',
+    cashReportingQuantumMicros: '1',
+    sourceTrades: [{ transactionId: 'd'.repeat(64), quantityAtoms: '32967375', priceAtoms: '2409457000000' }],
+  }
+  expect(Result.getOrThrow(prepareFeeAccrual(observed, 7001)).cashDebitMicros).toBe('208579')
+  expect(
+    Result.getOrThrow(prepareFeeAccrual({ ...observed, observedCashMicros: '99875168391' }, 7001)).cashDebitMicros,
+  ).toBe('208585')
+  expect(Result.isFailure(prepareFeeAccrual({ ...observed, observedCashMicros: '99875168390' }, 7001))).toBe(true)
+})
 for (const change of [
   { symbol: 'AAPL' },
   { observedQuantityAtoms: '32000000' },
