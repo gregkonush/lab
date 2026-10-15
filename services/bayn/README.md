@@ -843,6 +843,18 @@ an abandoned gap without posting the request twice. Earlier sessions remain outs
 The projection owns separate scoped PostgreSQL and TigerBeetle clients. Closing positions never waits for it.
 Both execution replicas may safely recover the same pending quotes. To inspect a complete private session cut:
 
+Expense reports capture requests and frozen quotes in one PostgreSQL statement, including inside the execution
+writer transaction. The reader pins a native TigerBeetle timestamp and verifies every session transfer and the
+history-enabled account balances at that cut. A subsequent quote read identifies legitimate charges committed
+while the report runs; unknown transfers and mismatched balances still fail. Only the original captured quotes
+contribute to the report subtotal. Trading and expense posting continue throughout the read.
+
+The ledger report uses `bayn.inference-expense-ledger-report.v2`. `sourceAsOf` identifies the PostgreSQL capture;
+`ledgerTimestampMax` and `verifiedSessionTransferCount` identify the verified native prefix. `transferCount` and
+`knownEstimatedCostPicoUsd` describe the captured quote set. Forward reports retain both cut witnesses. These
+timestamps belong to different systems and are never compared to infer ordering. Pending quotes remain explicitly
+unverified, and verification does not establish invoice reconciliation.
+
 ```sh
 node dist/inference-cost-command.js --ledger-session 2026-10-06
 ```
