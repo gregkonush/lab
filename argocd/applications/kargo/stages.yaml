@@ -1953,11 +1953,11 @@ spec:
               - name: lineage
                 fromExpression: fromJSON(find(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE').value)
               - name: sourceIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
               - name: digestIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
               - name: lineageIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
         - uses: kustomize-set-image
           config:
             path: ./out/argocd/applications/bayn
@@ -1981,11 +1981,11 @@ spec:
             path: ./src/argocd/applications/bayn/execution-controller.yaml
             outputs:
               - name: sourceIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
               - name: digestIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
               - name: lineageIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-controller.yaml
@@ -2004,13 +2004,13 @@ spec:
             path: ./src/argocd/applications/bayn/execution-activation.yaml
             outputs:
               - name: sourceIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_CODE_REVISION'))
               - name: digestIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_IMAGE_DIGEST'))
               - name: lineageIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'))
               - name: generationIndex
-                fromExpression: findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION')
+                fromExpression: string(findIndex(spec.template.spec.containers[0].env, .name == 'BAYN_EXECUTION_ACTIVATION_GENERATION'))
         - uses: yaml-update
           config:
             path: ./out/argocd/applications/bayn/execution-activation.yaml
