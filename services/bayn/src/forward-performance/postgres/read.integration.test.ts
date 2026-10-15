@@ -14,6 +14,9 @@ import { runForwardPerformanceReport, type ForwardPerformanceReaders } from '../
 import type { ForwardPerformanceConfig } from '../config'
 import { coinRoundTrip } from '../coin-fee-episodes.test-support'
 import { postgresMigrations } from '../../db/postgres-migrations'
+import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
+import { Authority } from '../../execution/contracts'
 import { makeCycleStore } from '../../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../../cycle/construction'
 import { makeIntradayCycleDraft } from '../../cycle/runner/calendar-decisions'
@@ -80,6 +83,11 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
             yield* sql`DROP SCHEMA public CASCADE`
             yield* sql`CREATE SCHEMA public`
             yield* postgresMigrations
+            yield* makeObserveAuthorityInterpreter(
+              sql,
+              makeAuthorityPostgres(sql),
+              identity,
+            ).readOrInitializeObserveAuthority({ generationHash: hash('e'), maximum: Authority.Observe })
             const policy = Result.getOrThrow(
               makeCycleExecutionPolicyFromModel(defaultJevProtocolDocument.executionModel),
             )
@@ -119,24 +127,27 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
               Effect.gen(function* () {
                 for (const [index, prepared] of fixture.accounting.entries()) {
                   const t = prepared.transaction
+                  if (t.intentId === undefined) throw new Error('Missing synthetic source intent')
+                  yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+                    VALUES(${t.intentId},'bayn.paper-intent.v3',${accountId},${`client-${index}`},${t.symbol},${t.side},'LIMIT','IOC',${t.quantityAtoms},${t.notionalMicros},'PLANNED',${t.occurredAt},${t.occurredAt},${draft.identity.cycleId},'jev',${hash(index === 0 ? '9' : '7')},${hash('8')},${hash('e')})`
                   yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at)
             VALUES(${t.brokerEventId},'bayn.paper-broker-event.v1',${t.brokerEventId},'FILL','ALPACA',${accountId},
             ${`synthetic-fill-${index}`},${(index + 1) * 2},${t.occurredAt},${t.occurredAt})`
                   yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,
-            symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp)
+            symbol,side,quantity_atoms,price_atoms,fee_micros,source_timestamp,intent_id)
             VALUES(${t.brokerEventId},${accountId},'bayn.fill.v2',${`synthetic-fill-${index}`},${`order-${index}`},
-            ${`client-${index}`},${t.symbol},${t.side},${t.quantityAtoms},${t.priceAtoms},${t.feeMicros},${t.occurredAt.replace('.000Z', '.000000000Z')})`
-                  yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,account_id,symbol,
+            ${`client-${index}`},${t.symbol},${t.side},${t.quantityAtoms},${t.priceAtoms},${t.feeMicros},${t.occurredAt.replace('.000Z', '.000000000Z')},${t.intentId})`
+                  yield* sql`INSERT INTO accounting_transactions(transaction_id,schema_version,broker_event_id,intent_id,account_id,symbol,
             side,quantity_atoms,price_atoms,notional_micros,fee_micros,cost_basis_micros,realized_pnl_micros,
             quantity_delta_atoms,cost_basis_delta_micros,cash_delta_micros,ledger_plan_hash,content_hash,occurred_at)
-            VALUES(${t.transactionId},${t.schemaVersion},${t.brokerEventId},${accountId},${t.symbol},${t.side},
+            VALUES(${t.transactionId},${t.schemaVersion},${t.brokerEventId},${t.intentId},${accountId},${t.symbol},${t.side},
             ${t.quantityAtoms},${t.priceAtoms},${t.notionalMicros},${t.feeMicros},${t.costBasisMicros},${t.realizedPnlMicros},
             ${t.quantityDeltaAtoms},${t.costBasisDeltaMicros},${t.cashDeltaMicros},${t.ledgerPlanHash},${t.contentHash},${t.occurredAt})`
                   const receipt = Result.getOrThrow(planAccountingReceipt(prepared, '2001', 7001))
-                  yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,broker_event_id,tigerbeetle_cluster_id,
+                  yield* sql`INSERT INTO accounting_receipts(receipt_id,schema_version,broker_event_id,intent_id,tigerbeetle_cluster_id,
             tigerbeetle_ledger,account_ids,transfer_ids,debit_micros,credit_micros,content_hash,recorded_at)
-            VALUES(${receipt.receiptId},${receipt.schemaVersion},${t.brokerEventId},'2001',7001,${receipt.accountIds}::numeric[],
+            VALUES(${receipt.receiptId},${receipt.schemaVersion},${t.brokerEventId},${t.intentId},'2001',7001,${receipt.accountIds}::numeric[],
             ${receipt.transferIds}::numeric[],${receipt.debitMicros},${receipt.creditMicros},${receipt.contentHash},${t.occurredAt})`
                 }
                 for (const [index, at, cash] of [
@@ -170,6 +181,9 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
           VALUES(${hash('9')},'bayn.paper-reconciliation.v1',${accountId},${hash('8')},${hash('8')},${hash('7')},'EXACT','[]'::jsonb,'2026-09-18T21:00:00Z')`
               }),
             )
+            // Report terminality is synthetic; the cohort view still binds the real durable source intents.
+            yield* sql`CREATE TEMP TABLE intents AS SELECT * FROM public.intents`
+            yield* sql`UPDATE pg_temp.intents SET state='TERMINAL'`
             const postgres = yield* readForwardPerformancePostgres(sql, accountId)
             const readers: ForwardPerformanceReaders = {
               postgres: readForwardPerformancePostgres,

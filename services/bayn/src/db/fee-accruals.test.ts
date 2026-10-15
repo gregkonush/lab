@@ -48,6 +48,7 @@ const accrual = (kind: 'COIN' | 'CASH', cycle: string, amount: number, matched: 
   return {
     accrual_id: prepared.accrualId,
     data: prepared.data,
+    settlement_date: prepared.data.date,
     content_hash: prepared.contentHash,
     coin_quantity_atoms: prepared.coinQuantityAtoms,
     cash_debit_micros: prepared.cashDebitMicros,
@@ -107,6 +108,7 @@ test('an unsettled cash observation carries its exact sub-cent reporting residua
         {
           ...original,
           data: prepared.data,
+          settlement_date: prepared.data.date,
           accrual_id: prepared.accrualId,
           content_hash: prepared.contentHash,
           cash_debit_micros: prepared.cashDebitMicros,

@@ -2,6 +2,8 @@ mod admission;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
+#[cfg(test)]
+mod probe_output;
 pub mod runner;
 pub mod supervisor;
 mod vmm;
