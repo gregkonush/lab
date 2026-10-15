@@ -24,6 +24,7 @@ from minio.retention import COMPLIANCE, GOVERNANCE, Retention
 from minio.sseconfig import Rule, SSEConfig
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
+from psycopg import sql
 
 module = importlib.util.spec_from_file_location(
     "audit_export", Path(__file__).resolve().parents[1] / "audit_export.py"
@@ -133,6 +134,92 @@ class ArchiveBoundaries(unittest.TestCase):
             psycopg.OperationalError("fixture-secret"), "archive_failed"
         )
         self.assertNotIn("fixture-secret", json.dumps(report))
+
+
+class ArchivePolling(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        config = conninfo_to_dict(os.environ["OFZ_TEST_DSN"])
+        config.update(sslmode="verify-full", sslrootcert=os.environ["OFZ_TEST_CA_FILE"])
+        cls.administrator = psycopg.connect(**config, autocommit=True)
+        cls.database_name = f"ofz_poll_{uuid.uuid4().hex}"
+        cls.administrator.execute(
+            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(cls.database_name))
+        )
+        cls.database = psycopg.connect(
+            **dict(config, dbname=cls.database_name),
+            autocommit=True,
+            row_factory=dict_row,
+        )
+        cls.database.execute("""
+            CREATE SCHEMA ofz;
+            CREATE TABLE ofz.audit (
+                sequence bigint PRIMARY KEY, receipt jsonb NOT NULL,
+                target_hash bytea NOT NULL, created_at_ms bigint NOT NULL
+            );
+            CREATE TABLE ofz.audit_outbox (
+                audit_sequence bigint PRIMARY KEY REFERENCES ofz.audit(sequence),
+                acknowledged_at_ms bigint
+            );
+            CREATE INDEX audit_outbox_unacknowledged ON ofz.audit_outbox(audit_sequence)
+                WHERE acknowledged_at_ms IS NULL;
+            INSERT INTO ofz.audit
+                SELECT n,jsonb_build_object('fixture',repeat(md5(n::text),32)),
+                    decode(repeat('00',32),'hex'),n
+                FROM generate_series(1,10300) n;
+            INSERT INTO ofz.audit_outbox
+                SELECT sequence,CASE WHEN sequence<=10000 THEN 1 END FROM ofz.audit;
+        """)
+        cls.database.execute("VACUUM ANALYZE ofz.audit")
+        cls.database.execute("VACUUM ANALYZE ofz.audit_outbox")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.database.close()
+        cls.administrator.execute(
+            sql.SQL("DROP DATABASE {}").format(sql.Identifier(cls.database_name))
+        )
+        cls.administrator.close()
+
+    def setUp(self):
+        self.database.execute("BEGIN")
+
+    def tearDown(self):
+        self.database.execute("ROLLBACK")
+
+    def test_bounded_order_preserves_late_commits_and_missing_outboxes(self):
+        self.database.execute("DELETE FROM ofz.audit_outbox WHERE audit_sequence=5")
+        self.database.execute(
+            "UPDATE ofz.audit_outbox SET acknowledged_at_ms=NULL WHERE audit_sequence=10"
+        )
+        self.database.execute(
+            "UPDATE ofz.audit_outbox SET acknowledged_at_ms=1 WHERE audit_sequence=10005"
+        )
+        rows = self.database.execute(archive.PENDING_AUDIT_QUERY, (10000,)).fetchall()
+        self.assertEqual(
+            [row["sequence"] for row in rows], [5, 10, *range(10001, 10063)]
+        )
+        self.assertFalse(rows[0]["has_outbox"])
+        self.assertTrue(all(row["has_outbox"] for row in rows[1:]))
+
+    def test_poll_reads_payloads_only_for_the_selected_batch(self):
+        plan = self.database.execute(
+            "EXPLAIN (ANALYZE, FORMAT JSON) " + archive.PENDING_AUDIT_QUERY, (10000,)
+        ).fetchone()["QUERY PLAN"][0]["Plan"]
+
+        def payload_rows(node):
+            own = 0
+            if (
+                node.get("Relation Name") == "audit"
+                and node["Node Type"] != "Index Only Scan"
+            ):
+                own = (
+                    node["Actual Rows"] + node.get("Rows Removed by Filter", 0)
+                ) * node["Actual Loops"]
+            return own + sum(payload_rows(child) for child in node.get("Plans", []))
+
+        self.assertEqual(plan["Actual Rows"], 64)
+        self.assertLessEqual(payload_rows(plan), 64)
 
 
 class RealArchive(unittest.TestCase):
