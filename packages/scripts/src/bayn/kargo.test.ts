@@ -221,10 +221,11 @@ test('writes source, digest, and research lineage into the correct field in ever
       expect(parse.config.path).toBe(`./src/${path}`)
       expect(steps.indexOf(parse)).toBeLessThan(steps.indexOf(update))
       const output = parse.config.outputs.find((candidate: { name: string }) => candidate.name === match[2])
-      const field = /^findIndex\(spec\.template\.spec\.containers\[0\]\.env, \.name == '(\w+)'\)$/.exec(
+      const field = /^string\(findIndex\(spec\.template\.spec\.containers\[0\]\.env, \.name == '(\w+)'\)\)$/.exec(
         output.fromExpression,
       )
-      if (field === null) throw new Error(`Environment index must use findIndex by name: ${output.fromExpression}`)
+      if (field === null)
+        throw new Error(`Environment index must persist as a string resolved by name: ${output.fromExpression}`)
       expect(environment.filter((entry: { name: string }) => entry.name === field[1])).toHaveLength(1)
       assignments.set(field[1], change.value)
     }
