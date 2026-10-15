@@ -124,6 +124,7 @@ const store: ReconciliationPersistence = {
   },
   reconciliation: {
     recoverFees: () => Effect.void,
+    retainCashReporting: () => Effect.void,
     bindings: (boundAccountId) => {
       expect(boundAccountId).toBe(accountId)
       return Effect.succeed([])
