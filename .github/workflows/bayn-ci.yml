@@ -41,6 +41,8 @@ jobs:
               - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
               - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/normalize-bayn-bun-deps.sh'
+              - 'nix/images/normalize-bayn-bun-deps.test.sh'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/images/bun-workspace-deps-source.nix'
               - 'nix/images/bun-workspace-deps-source.test.sh'
@@ -71,6 +73,8 @@ jobs:
               - 'services/bayn/**'
               - 'nix/images/bayn.nix'
               - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/normalize-bayn-bun-deps.sh'
+              - 'nix/images/normalize-bayn-bun-deps.test.sh'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/images/bun-workspace-deps-source.nix'
               - 'nix/packages.nix'
@@ -325,6 +329,7 @@ jobs:
             substituters = https://cache.nixos.org/
       - name: Prove dependency source boundary
         run: |
+          bash nix/images/normalize-bayn-bun-deps.test.sh
           bash nix/images/bun-workspace-deps-source.test.sh
           bash nix/verify-bayn-image-command.test.sh
 
