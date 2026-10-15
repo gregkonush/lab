@@ -1476,7 +1476,7 @@ additional full execution windows are needed, preserving the earlier dataset ver
 existing Bayn CI gate.
 The generators produce valid archive rows, source envelopes, risk entries, and partial-fill lifecycles before
 mutating them. They cover strict decoding and recovery after rejection, canonical evidence identity, physical
-row-order-independent retained replay, one-micro quantity/notional boundaries, cash and cost-basis conservation,
+row-order-independent retained replay, one-atom quantity and one-micro notional boundaries, cash and cost-basis conservation,
 authority/freshness failures, and exact decimal acceptance thresholds against an independent bootstrap oracle.
 Critical-path campaigns also exercise the shared equity/BTC/ETH/SOL planner's precision, liquidity and capital
 bounds; exact submission cutoffs; crash recovery before and after entry-lease expiry; durable decision retries;
@@ -1502,7 +1502,7 @@ Replay one failure using the reported seed/path and the exact test name, for exa
 ```sh
 cd services/bayn
 BAYN_PROPERTY_SEED=123456789 BAYN_PROPERTY_PATH='0:1:2' bun test src/intraday-replay/ledger.property.test.ts \
-  --test-name-pattern 'property: a one-micro oversell' --timeout 150000
+  --test-name-pattern 'property: a one-atom oversell' --timeout 150000
 ```
 
 Never apply a shrink path to the whole suite. After fixing a discovered product defect, keep the minimized
