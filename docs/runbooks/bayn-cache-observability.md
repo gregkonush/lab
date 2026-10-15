@@ -80,9 +80,12 @@ From another terminal run the read-only verifier, using the full deployed source
 python3 services/bayn/tools/verify-cache-observability.py --source <40-character-source-sha>
 ```
 
-It checks both exporter/server pairs, required replication, four fresh source-bound native heartbeats, operation
-histograms, cache hits, payload sizes, index validity/activity, evaluated rules, collected server logs and native WAIT
-traces. A quiet server can have old log timestamps; the verifier searches forty-eight hours. Inspect Grafana's loaded
+It checks both exporter/server pairs, required replication, at least two fresh source-bound native heartbeats per
+service, continuous broker/cache operation histograms, cache hits, payload sizes, index validity/activity, evaluated
+rules and native WAIT traces. Writer, commit, reconciliation and generation-settlement counts are reported separately;
+an absent conditional stage remains unobserved until its flow runs. Collected server logs are reported over forty-eight
+hours. An empty window remains unobserved because healthy servers can be quiet; it does not prove collection works.
+Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
 Validate the fifteen missing-data/threshold behavior cases with the existing native PromQL test harness.
@@ -90,6 +93,7 @@ Use `promtool` 3.5.0 on `PATH`, or set `PROMTOOL` to its executable; CI already 
 
 ```sh
 bun test packages/scripts/src/shared/__tests__/bayn-cache-promql.test.ts
+bun test packages/scripts/src/shared/__tests__/bayn-cache-verifier.test.ts
 ```
 
 Recover an application regression through the prior eligible Kargo image. Revert unwanted collector, catalog,

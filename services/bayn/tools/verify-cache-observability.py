@@ -55,16 +55,14 @@ def verify(args):
     )
 
     app = f'namespace="bayn",source_revision="{args.source}",service=~"bayn|bayn-execution-controller"'
-    heartbeat = query(f"bayn_telemetry_heartbeat_timestamp_seconds{{{app}}}")
-    heartbeat_checked_at = time.time()
+    heartbeat_metric = f"bayn_telemetry_heartbeat_timestamp_seconds{{{app}}}"
+    heartbeat = query(
+        f"({heartbeat_metric} > time() - 90) and ({heartbeat_metric} <= time() + 5)"
+    )
     for service in ["bayn", "bayn-execution-controller"]:
         rows = [row for row in heartbeat if row["metric"].get("service") == service]
-        require(len(rows) == 2, f"expected two source-bound heartbeats for {service}")
         require(
-            all(
-                0 <= heartbeat_checked_at - float(row["value"][1]) < 90 for row in rows
-            ),
-            f"stale {service} heartbeat",
+            len(rows) >= 2, f"expected two fresh source-bound heartbeats for {service}"
         )
 
     expected = {
@@ -76,6 +74,8 @@ def verify(args):
         "bayn.broker.observation.fence",
         "bayn.broker.observation.capture",
         "bayn.broker.observation.publish",
+    }
+    conditional = {
         "bayn.postgres.writer-fence",
         "bayn.postgres.commit",
         "bayn.reconciliation.persist",
@@ -93,7 +93,7 @@ def verify(args):
     require(
         all(
             any(row["metric"].get("stage") == stage for row in buckets)
-            for stage in expected
+            for stage in expected | (conditional & stages.keys())
         ),
         "histogram buckets are missing",
     )
@@ -139,10 +139,7 @@ def verify(args):
         },
     )
     log_rows = logs.get("data", {}).get("result", [])
-    require(
-        logs.get("status") == "success" and log_rows,
-        "Valkey server/exporter logs are absent over 48 hours",
-    )
+    require(logs.get("status") == "success", "Valkey server/exporter log query failed")
 
     traces = read_json(
         args.tempo,
@@ -166,6 +163,9 @@ def verify(args):
         "valkeyExporterPairsUp": 2,
         "sourceBoundHeartbeats": len(heartbeat),
         "operationCounts": stages,
+        "conditionalOperationCounts": {
+            stage: stages.get(stage) for stage in sorted(conditional)
+        },
         "histogramSeries": len(buckets),
         "indexValid": True,
         "indexReady": True,
@@ -173,12 +173,17 @@ def verify(args):
             {"name": rule["name"], "health": rule["health"], "state": rule["state"]}
             for rule in groups[0]["rules"]
         ],
-        "valkeyLogStreams": len(log_rows),
+        "valkeyLogCollection": {
+            "state": "OBSERVED" if log_rows else "NOT_OBSERVED",
+            "streams": len(log_rows),
+            "windowHours": 48,
+        },
         "replicaAckTraces": len(traces["traces"]),
         "limits": [
             "Read-only acceptance; notification delivery is not tested",
             "Index counters do not prove a particular query plan",
             "Quiet server logs can have old event timestamps",
+            "Conditional stages without samples and empty log windows are unobserved, not proof of collection",
         ],
     }
 
