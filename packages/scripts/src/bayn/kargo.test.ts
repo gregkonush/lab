@@ -11,6 +11,22 @@ const stage = stages.find((document) => document.getIn(['metadata', 'name']) ===
 const steps = stage.spec.promotionTemplate.spec.steps
 const build = read('.github/workflows/bayn-build-push.yml')
 
+test('installs error-tracking configuration before every runtime that consumes it', () => {
+  const config = read('argocd/applications/bayn/glitchtip-dsns.yaml')
+  expect(config.kind).toBe('ConfigMap')
+  expect(read('argocd/applications/bayn/kustomization.yaml').resources).toContain('glitchtip-dsns.yaml')
+  const configWave = Number(config.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0)
+  for (const file of ['deployment', 'execution-controller', 'execution-activation', 'research-worker']) {
+    const runtime = read(`argocd/applications/bayn/${file}.yaml`)
+    const reference = runtime.spec.template.spec.containers[0].env.find(
+      (entry: { name: string }) => entry.name === 'BAYN_GLITCHTIP_DSN',
+    ).valueFrom.configMapKeyRef
+    expect(reference.name).toBe(config.metadata.name)
+    expect(Object.hasOwn(config.data, reference.key)).toBe(true)
+    expect(configWave).toBeLessThan(Number(runtime.metadata.annotations?.['argocd.argoproj.io/sync-wave'] ?? 0))
+  }
+})
+
 test('a newer unpublished main commit cannot hold a verified Bayn image or mix its source binding', () => {
   const warehouses = YAML.parseAllDocuments(
     readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
