@@ -13,6 +13,7 @@ import { defaultExecutionModel } from './execution-model/model'
 
 // Shared feature-window contract for the active and retained intraday protocols.
 export const intradayLookbackMinutes = 30
+export const intradayMinimumCompletedHistoryMs = 60_000
 export const intradayDecisionDelaySeconds = 2
 
 export const intradayUniverse = {
@@ -76,7 +77,7 @@ export const intradayStreamingContract = Object.freeze({
   snapshotSchemaVersion: 'bayn.streaming-market-snapshot.v1',
   featureTopic: intradayFeatureTopic,
   featureSchemaVersion: MarketFeatureContract.V1,
-  requiredDefinitionId: MarketFeatureDefinition.RollingPrice30m,
+  requiredDefinitionId: MarketFeatureDefinition.ObservedPriceWindow,
   requiredDefinitionHash: sha256(JSON.stringify(rollingFeatureDefinitionMaterial)),
   clockSkewAllowanceMs: marketFeatureClockSkewAllowanceMs,
   bootstrapTimestampPolicy: KafkaBootstrapTimestampPolicy.ProducerClock,
@@ -88,7 +89,7 @@ export const IntradayStreamingInputSchema = Schema.Struct({
   snapshotSchemaVersion: Schema.Literal(intradayStreamingContract.snapshotSchemaVersion),
   featureTopic: Schema.Literal(intradayFeatureTopic),
   featureSchemaVersion: Schema.Literal(MarketFeatureContract.V1),
-  requiredDefinitionId: Schema.Literal(MarketFeatureDefinition.RollingPrice30m),
+  requiredDefinitionId: Schema.Literal(MarketFeatureDefinition.ObservedPriceWindow),
   requiredDefinitionHash: Schema.Literal(intradayStreamingContract.requiredDefinitionHash),
   clockSkewAllowanceMs: Schema.Literal(marketFeatureClockSkewAllowanceMs),
   bootstrapTimestampPolicy: Schema.Literal(KafkaBootstrapTimestampPolicy.ProducerClock),

@@ -2,6 +2,7 @@ import { exchangeSessions } from '../market-hours'
 import { jevBenchmarkSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
+import { missingMinuteBars } from '../market-data/streaming/inputs'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { Result } from 'effect'
 
@@ -73,7 +74,7 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
-    if (rolling === undefined || quote === undefined || trade === undefined || bars.length !== 30)
+    if (rolling === undefined || quote === undefined || trade === undefined || bars.length === 0)
       return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
     const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
     const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
@@ -96,24 +97,33 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
               { status: scalar.status, value: scalar.value === null ? null : Number(scalar.value) / 1_000_000 },
             ]),
           )
-    const closes = bars.map((bar) => bar.close)
     const first = bars[0]
     const last = bars.at(-1)
     if (first === undefined || last === undefined) return yield* unavailable('Jev rolling signal window is empty')
     const returnsBps = Object.fromEntries(
       [1, 5, 15, 30].map((minutes) => {
-        const reference = bars.at(-minutes)
+        const referenceAt = Date.parse(manifest.rangeEndAt) - minutes * 60_000
+        const reference = bars.find((bar) => Date.parse(bar.eventAt) === referenceAt)
         return [String(minutes), reference === undefined ? null : (last.close / reference.open - 1) * 10_000]
       }),
     )
-    const earlyVolume = bars.slice(0, 15).reduce((total, bar) => total + bar.volume, 0)
-    const recentVolume = bars.slice(15).reduce((total, bar) => total + bar.volume, 0)
-    const minuteReturns = closes.slice(1).map((close, index) => Math.log(close / (closes[index] ?? close)))
+    const midpoint = Date.parse(manifest.rangeEndAt) - 15 * 60_000
+    const earlyBars = bars.filter((bar) => Date.parse(bar.eventAt) < midpoint)
+    const recentBars = bars.filter((bar) => Date.parse(bar.eventAt) >= midpoint)
+    const earlyVolume = earlyBars.reduce((total, bar) => total + bar.volume, 0)
+    const recentVolume = recentBars.reduce((total, bar) => total + bar.volume, 0)
+    const minuteReturns = bars.flatMap((bar, index) => {
+      const previous = bars[index - 1]
+      return previous !== undefined && Date.parse(bar.eventAt) - Date.parse(previous.eventAt) === 60_000
+        ? [Math.log(bar.close / previous.close)]
+        : []
+    })
     const mean = minuteReturns.reduce((sum, value) => sum + value, 0) / minuteReturns.length
     const volatilityBps =
-      Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
+      minuteReturns.length === 0
+        ? null
+        : Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
     const values = rollingValues(rolling.value)
-    if (values === null) return yield* unavailable('Rolling values are not ready')
     return {
       prices: {
         reference: yield* priceNumberToMicros(values.reference),
@@ -126,7 +136,8 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
       state: {
         symbol,
         bars1m: bars.map(({ open, high, low, close, volume, vwap, tradeCount }, index) => ({
-          minuteBeforeWindowEnd: 30 - index,
+          minuteBeforeWindowEnd:
+            (Date.parse(manifest.rangeEndAt) - Date.parse(bars[index]?.eventAt ?? first.eventAt)) / 60_000,
           open,
           high,
           low,
@@ -143,7 +154,13 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
           ageMs: quoteAgeMs,
         },
         latestTrade: { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
-        rolling30m: {
+        priceWindow: {
+          contextStartAt: manifest.rangeStartAt,
+          contextEndAt: manifest.rangeEndAt,
+          referenceAt: first.eventAt,
+          observedBarCount: bars.length,
+          expectedBarCount: (Date.parse(manifest.rangeEndAt) - Date.parse(manifest.rangeStartAt)) / 60_000,
+          missingMinuteAt: missingMinuteBars(bars, manifest.rangeStartAt, manifest.rangeEndAt),
           referencePrice: values.reference,
           rangeHigh: values.high,
           rangeLow: values.low,
@@ -151,14 +168,38 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
         },
         returnsBps,
         minuteLogReturnVolatilityBps: volatilityBps,
-        recent15mVolumeToPrior15m: earlyVolume === 0 ? null : recentVolume / earlyVolume,
+        recent15mVolumeToPrior15m:
+          earlyBars.length !== 15 || recentBars.length !== 15 || earlyVolume === 0 ? null : recentVolume / earlyVolume,
         technicalIndicators: technicalValues,
         technicalAvailability: recordedTechnicalValues === undefined ? 'UNAVAILABLE' : 'RECORDED',
       },
     }
   })
 
-/** Exact 30-minute absolute/relative momentum, before any model output is available. */
+const commonMomentumPrices = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  benchmarkSymbol: string,
+  candidate: Result.Result.Success<ReturnType<typeof jevSignalFor>>,
+  benchmark: Result.Result.Success<ReturnType<typeof jevSignalFor>>,
+) =>
+  Result.gen(function* () {
+    const candidateBars = snapshot.bars
+      .filter((bar) => bar.symbol === symbol)
+      .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
+    const benchmarkBars = snapshot.bars.filter((bar) => bar.symbol === benchmarkSymbol)
+    const reference = candidateBars.find((bar) => benchmarkBars.some((entry) => entry.eventAt === bar.eventAt))
+    const benchmarkReference = benchmarkBars.find((bar) => bar.eventAt === reference?.eventAt)
+    if (reference === undefined || benchmarkReference === undefined)
+      return yield* unavailable('Relative momentum requires a common actual observed minute')
+    return {
+      referenceAt: reference.eventAt,
+      candidate: { ...candidate.prices, reference: yield* priceNumberToMicros(reference.open) },
+      benchmark: { ...benchmark.prices, reference: yield* priceNumberToMicros(benchmarkReference.open) },
+    }
+  })
+
+/** Candidate and benchmark returns use the same actual observed reference minute. */
 export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
   Result.gen(function* () {
     const signals = []
@@ -171,12 +212,13 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, pro
         continue
       const candidate = yield* jevSignalFor(snapshot, symbol)
       const benchmark = yield* jevSignalFor(snapshot, jevBenchmarkSymbol(symbol))
-      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
+      const common = yield* commonMomentumPrices(snapshot, symbol, jevBenchmarkSymbol(symbol), candidate, benchmark)
+      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
       const quote = snapshot.latestQuotes[symbol]
       if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
       if (
         (yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)) === null &&
-        candidate.prices.bid + candidate.prices.ask > 2n * candidate.prices.reference &&
+        common.candidate.bid + common.candidate.ask > 2n * common.candidate.reference &&
         excessReturn.numerator > 0n
       )
         signals.push({ symbol, excessReturn })
@@ -269,7 +311,8 @@ const requestFromSnapshot = (
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
     const candidate = yield* jevSignalFor(snapshot, symbol)
     const benchmark = yield* jevSignalFor(snapshot, benchmarkSymbol)
-    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
+    const common = yield* commonMomentumPrices(snapshot, symbol, benchmarkSymbol, candidate, benchmark)
+    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
     const continuous = isContinuousMarket(snapshot.manifest.calendar)
     const session = continuous
       ? undefined
@@ -346,7 +389,13 @@ const requestFromSnapshot = (
         },
         candidate: candidate.state,
         benchmark: benchmark.state,
-        relativeSignals: metrics,
+        relativeSignals: {
+          ...metrics,
+          referenceAt: common.referenceAt,
+          horizonMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
+          benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
+        },
       },
       questions: native.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
     })

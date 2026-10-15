@@ -1,4 +1,5 @@
 import { equityMarketProfile } from '../jev/markets'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { brokerCalendarResponseHash } from '../market-hours'
 
 import { exchangeSessions } from '../market-hours'
@@ -35,6 +36,7 @@ import {
 } from './six-bar-ridge'
 import type { BacktestSourceManifest } from './source'
 import { signalStudyDefinition } from './signal-study'
+import { jevHistoryStartMs } from '../jev/observation-query'
 
 export enum RidgeControlPolicy {
   Ridge = 'SIX_BAR_RIDGE_V1',
@@ -64,7 +66,7 @@ export interface RidgeExecutionContext {
 }
 
 export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, allocationBudgetMicros: string) => ({
-  schemaVersion: 'bayn.six-bar-ridge-execution-label.v1',
+  schemaVersion: 'bayn.six-bar-ridge-execution-label.v2',
   allocationBudgetMicros,
   target: '10000 * net-execution-pnl / fixed-allocation-budget',
   allocation: 'Whole shares bounded by fixed adverse-limit principal, current cash including fees, and native risk.',
@@ -76,6 +78,7 @@ export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, al
   executionModel: context.protocol.executionModel,
   executionLimitSlippageBps: signalStudyDefinition.limitSlippageBps,
   eligibility: {
+    minimumCompletedHistoryMs: intradayMinimumCompletedHistoryMs,
     lookbackMinutes: context.protocol.lookbackMinutes,
     decisionDelaySeconds: context.protocol.decisionDelaySeconds,
     entryCutoffMinutesBeforeClose: context.protocol.entryCutoffMinutesBeforeClose,
@@ -168,8 +171,7 @@ export const prepareBoundRidge = (
       const firstPoll =
         Date.parse(session.openAt) +
         Math.ceil(
-          (context.protocol.lookbackMinutes * 60_000 + context.protocol.decisionDelaySeconds * 1000) /
-            context.pollIntervalMs,
+          (intradayMinimumCompletedHistoryMs + context.protocol.decisionDelaySeconds * 1000) / context.pollIntervalMs,
         ) *
           context.pollIntervalMs
       if (
@@ -294,7 +296,9 @@ export const selectBoundRidge = (
       const observation = yield* extractSixBarResearchObservation(cursor, {
         ...query,
         calendar: bound.calendar,
-        rangeStartAt: utcInstantFromEpochMillis(Date.parse(query.rangeEndAt) - 6 * 60_000),
+        rangeStartAt: utcInstantFromEpochMillis(
+          jevHistoryStartMs(bound.calendar, query.sessionDate, Date.parse(query.rangeEndAt), 6),
+        ),
         symbols: [symbol, sixBarResearchDefinition.benchmarkSymbol].sort(),
         candidateSymbols: [symbol],
         candidateEvidencePolicy: sixBarResearchDefinition.candidateEvidencePolicy,
@@ -313,7 +317,10 @@ export const selectBoundRidge = (
     }
     if (
       observations.some(
-        (observation) => observation.status !== SixBarResearchStatus.Available && !isCandidateExclusion(observation),
+        (observation) =>
+          observation.status !== SixBarResearchStatus.Available &&
+          observation.reason !== SixBarUnavailableReason.SessionHistory &&
+          !isCandidateExclusion(observation),
       )
     )
       return { status: 'UNAVAILABLE' as const, observations }

@@ -1,6 +1,6 @@
 import { continuousMarketHours, isContinuousMarket, snapshotMarketCloseAt } from '../../market-hours'
 import { InstrumentSymbolSchema } from '../../instruments'
-import { BarPublicationPolicy, maximumBarPublicationDelayMs } from './bar-publication'
+import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
@@ -707,16 +707,12 @@ export const validateBarCoverage = (
   request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   clockSkewMs = 0,
-  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<void, IntradaySnapshotFailure> => {
   for (const bar of bars) {
-    const maximumAvailabilityDelay = millisecondsAsNanos(
-      (publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision
-        ? maximumBarPublicationDelayMs(bar)
-        : (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) +
-          minuteMs +
-          request.maximumQuoteAgeMs) + clockSkewMs,
-    )
+    // Historical inputs retain their actual recovery time. Only the current completed
+    // minute needs timely publication; executable quote freshness is checked separately.
+    if (intradayInstantNanos(bar.eventAt) < intradayInstantNanos(request.rangeEndAt) - 60_000_000_000n) continue
+    const maximumAvailabilityDelay = millisecondsAsNanos(maximumBarPublicationDelayMs(bar) + clockSkewMs)
     if (intradayAgeNanos(bar.ingestedAt, bar.eventAt) > maximumAvailabilityDelay) {
       return Result.fail(
         new IntradaySnapshotFailure({
@@ -970,7 +966,6 @@ export const candidateAvailability = (
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
   clockSkewMs = 0,
-  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<
   {
     readonly latest: Readonly<Record<string, IntradayQuote>>
@@ -992,7 +987,6 @@ export const candidateAvailability = (
           symbolRequest,
           bars.filter((bar) => bar.symbol === symbol),
           clockSkewMs,
-          publicationPolicy,
         ),
         () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )

@@ -6,13 +6,14 @@ The retained control has not established positive net economics.
 
 ## Exact entry policy
 
-`bayn.positive-relative-momentum-entry.v1` admits a flat-portfolio candidate only when its verified current midpoint
-is strictly above its 30-minute reference and its exact return minus SPY's exact return is strictly positive. Comparisons
+`bayn.positive-relative-observed-momentum-entry.v1` admits a flat-portfolio candidate only when its verified current midpoint
+is strictly above the first actual reference minute common to the candidate and benchmark, and its exact return
+minus the benchmark's exact return is strictly positive. Comparisons
 use integer price micros and exact rational arithmetic; rounded displayed basis points never decide admission. A positive
 stock return can qualify while SPY is declining. There is no restored 15 bp absolute threshold, 10 bp excess threshold,
 breakout threshold, range-location threshold, new technical indicator, or calibrated profit claim.
 
-Existing source identity, complete window, freshness, two-sided displayed-size and maximum 5 bp entry-spread checks
+Existing source identity, latest completed minute, freshness, two-sided displayed-size and maximum 5 bp entry-spread checks
 remain. The complete recorded candidate universe survives as requested candidates or explicit exclusions. Missing,
 future, malformed or stale evidence cannot become a valid non-signal. If every candidate is positively verified but
 fails an entry gate, the batch makes zero model calls and produces zero targets. A fully non-requested batch containing
