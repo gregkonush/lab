@@ -1081,6 +1081,150 @@ data:
                     "value": "Database operation"
                   }
                 ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.submit"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Submit execution"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.jev.observation-reproduction"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Reproduce model input"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.jev.inference"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Model inference"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.restriction-persistence"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Persist restrictions"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.intent.read"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Read execution intent"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.generation.settle"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Settle execution generation"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.intent.reconcile"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Reconcile execution intent"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.broker-state-confirmation"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Confirm broker state"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.mutation.latest"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Read latest order mutation"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.jev.observation-integrity"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Verify model input"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.alpaca.mutation"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Broker order request"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "bayn.execution.intent.commit"
+                },
+                "properties": [
+                  {
+                    "id": "displayName",
+                    "value": "Commit execution intent"
+                  }
+                ]
               }
             ]
           },
