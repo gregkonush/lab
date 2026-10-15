@@ -20,6 +20,9 @@ starts before the cutoff but durable binding happens afterward. Recovery still r
 evidence and cooldown guards before acquiring a successor.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
+up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
+fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
 Alpaca response decoding converts compact crypto pair identifiers such as `ETHUSD` to the canonical `ETH/USD`
 symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
 outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
@@ -114,6 +117,11 @@ materializations and collect 20 samples of full and compact read latency and
 payload size. The command is read-only against PostgreSQL and prints no account
 values. See the [migration and performance evidence](../../docs/bayn/valkey-caching-plan.md).
 
+The [cache observability runbook](../../docs/runbooks/bayn-cache-observability.md) covers native cache and database
+operation histograms, separate SET/replica acknowledgement timings, payload sizes, collected server logs, index
+catalog evidence, dashboard panels and alerts. The API reuses its existing metrics scrape; execution workers export
+native Effect metrics to the existing Mimir gateway. The runbook includes a read-only rollout acceptance command.
+
 ## Broker observation owner
 
 Broker position symbols must agree with their asset class before entering
@@ -165,6 +173,16 @@ There is no refresh-on-miss path for normal submission.
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+
+The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
+the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
+a separate durable write for reporting metadata. Fee plans still commit before ledger posting. A failed ingestion
+rolls back the report and its precision together; replay cannot change the retained precision or its account binding.
+
+Close preparation waits for exact accounting and resolved broker evidence before constructing a liquidation plan,
+including after a fallback obtains a newer cut. Missing settlement evidence keeps the existing position recoverable
+with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, terminalize the cycle, clear restrictions
+or authorize an order. The next exact cut can resume the same bounded close path.
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts
@@ -1555,6 +1573,16 @@ The forward-performance reader uses the same snapshot calendar and feed contract
 reports retain `us`, `real_time_crypto`, fractional quantities, and the finite execution window. Volume evidence v2
 uses complete recorded minute bars within that window; it does not label a short crypto cycle as a whole-day volume.
 Missing bars leave capacity unknown. Retained reports keep their original hashes.
+The archive adapter reads Dorvud's native `signal.crypto_market_events_v1` into the same bar, quote, trade, and
+watermark contracts used by the reporter. It preserves original numeric tokens for fractional volume and terminal
+prices, applies the report ingestion cutoff, and counts only complete minutes in the archive row budget.
+Bayn's existing read-only ClickHouse identity requires `SELECT` on that one crypto source table.
+
+Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
+later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
+fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
+An inexact close reconciliation returns `CLOSE_RECONCILIATION_PENDING` at the regular reconciliation cadence before
+reading archive data or binding a liquidation document; exact evidence resumes the same close path.
 
 Each crypto observation evaluates BTC/USD, ETH/USD, and SOL/USD together. Candidate exclusions preserve independent
 opportunities and required benchmark failures. Snapshot failure logs include per-symbol bar coverage, quote age, and

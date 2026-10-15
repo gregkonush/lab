@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Result, Schema } from 'effect'
+import { Effect, Layer, Metric, Option, Result, Schema } from 'effect'
 
 import {
   BrokerObservations,
@@ -19,7 +19,12 @@ import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { currentUtcInstant } from '../time'
 import { canonicalHashV1 } from '../hash'
 import { ValkeyCache } from '../valkey-cache'
+import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+
+const materializationBytes = Metric.histogram('bayn_broker_materialization_bytes', {
+  boundaries: [4096, 16384, 65536, 262144, 1048576, 4194304],
+})
 
 const StateMaterialization = Schema.Struct({ snapshotHash: Sha256Schema, state: ObservedBrokerStateSchema })
 
@@ -83,22 +88,24 @@ export const makeBrokerObservationStore = (
     )
   const payloadKey = (kind: 'snapshot' | 'state', hash: string) =>
     `bayn:broker:${kind}:${canonicalHashV1({ accountId, sourceRevision, hash })}`
-  const readPayload = Effect.fn('bayn.broker.observation.materialization')(function* <A>(
-    kind: 'snapshot' | 'state',
-    hash: string,
-    schema: Schema.Codec<A, unknown>,
-  ) {
-    const encoded = yield* cache.get(payloadKey(kind, hash))
-    if (Option.isNone(encoded)) return yield* observationUnavailable('Required Valkey broker materialization is absent')
-    const value = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
-    if (canonicalHashV1(value) !== hash)
-      return yield* observationUnavailable('Valkey broker materialization content hash changed')
-    yield* Effect.annotateCurrentSpan({
-      'bayn.broker.payload_kind': kind,
-      'bayn.broker.payload_bytes': Buffer.byteLength(encoded.value),
-    })
-    return value
-  })
+  const readPayload = <A>(kind: 'snapshot' | 'state', hash: string, schema: Schema.Codec<A, unknown>) =>
+    Effect.gen(function* () {
+      const encoded = yield* cache.get(payloadKey(kind, hash))
+      if (Option.isNone(encoded))
+        return yield* observationUnavailable('Required Valkey broker materialization is absent')
+      const value = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
+      if (canonicalHashV1(value) !== hash)
+        return yield* observationUnavailable('Valkey broker materialization content hash changed')
+      yield* Metric.update(
+        materializationBytes.pipe(Metric.withAttributes({ namespace: 'bayn', kind })),
+        Buffer.byteLength(encoded.value),
+      )
+      yield* Effect.annotateCurrentSpan({
+        'bayn.broker.payload_kind': kind,
+        'bayn.broker.payload_bytes': Buffer.byteLength(encoded.value),
+      })
+      return value
+    }).pipe(withObservedStage('bayn.broker.observation.materialization', { dependency: 'valkey', operation: kind }))
 
   const activate = (nextPollNotBeforeMs: number) =>
     run(
@@ -313,7 +320,7 @@ export const makeBrokerObservationStore = (
           return { ...pending, pending: true }
         }
         return { ...row, pending: false }
-      }).pipe(Effect.withSpan('bayn.broker.observation.fence')),
+      }).pipe(withObservedStage('bayn.broker.observation.fence', { dependency: 'postgresql' })),
     )
   const requireSettled = (pending: boolean) =>
     pending

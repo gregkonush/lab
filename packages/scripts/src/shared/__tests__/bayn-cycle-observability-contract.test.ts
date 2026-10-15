@@ -110,6 +110,21 @@ describe('Bayn cycle operations alert contract', () => {
     const grafanaConfiguration = YAML.parse(
       readRepoFile('argocd/applications/observability/grafana-values.yaml'),
     ) as Record<string, any>
+    const resources = YAML.parse(readRepoFile('argocd/applications/observability/kustomization.yaml'))
+      .resources as string[]
+    for (const resource of resources.filter(
+      (path) => path.startsWith('bayn-') && path.endsWith('dashboard-configmap.yaml'),
+    )) {
+      const { name } = YAML.parse(readRepoFile(`argocd/applications/observability/${resource}`)).metadata
+      expect(grafanaConfiguration.dashboardsConfigMaps[name]).toBe(name)
+      expect(grafanaConfiguration.dashboardProviders['dashboardproviders.yaml'].providers).toContainEqual(
+        expect.objectContaining({
+          name,
+          type: 'file',
+          options: { path: `/var/lib/grafana/dashboards/${name}` },
+        }),
+      )
+    }
     const deployment = YAML.parse(
       readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml'),
     ) as Record<string, any>
@@ -315,12 +330,12 @@ describe('Bayn cycle operations alert contract', () => {
       'Execution latency',
       'Safety freshness',
       'Running build',
-      'Trace export failures',
-      'Trace export failure logs',
+      'OTLP export failures',
+      'OTLP export failure logs',
     ])
     expect(new Set(dashboard.panels.map(({ title }) => title)).size).toBe(dashboard.panels.length)
-    const exportFailures = dashboard.panels.find(({ title }) => title === 'Trace export failures')
-    const exportLogs = dashboard.panels.find(({ title }) => title === 'Trace export failure logs')
+    const exportFailures = dashboard.panels.find(({ title }) => title === 'OTLP export failures')
+    const exportLogs = dashboard.panels.find(({ title }) => title === 'OTLP export failure logs')
     expect(exportFailures?.type).toBe('timeseries')
     expect(exportLogs?.type).toBe('logs')
     for (const panel of [exportFailures, exportLogs]) {
@@ -332,6 +347,7 @@ describe('Bayn cycle operations alert contract', () => {
       expect(expression).toMatch(/\|= "bayn\.telemetry\.export" \| json /)
       expect(expression).toContain('export_stage="annotations.stage"')
       expect(expression).toContain('export_service="annotations.serviceName"')
+      expect(expression).toContain('export_signal="annotations.signal"')
       expect(expression).toContain('export_reason="annotations.failureReason"')
       expect(expression).toContain('export_http_status="annotations.httpStatus"')
       expect(expression).toContain('| export_stage="bayn.telemetry.export" | __error__=""')
@@ -339,7 +355,7 @@ describe('Bayn cycle operations alert contract', () => {
       expect(panel?.description).toContain('unavailable logs')
     }
     expect(exportFailures?.targets?.[0]?.expr).toBe(
-      `sum by (export_service, export_reason, export_http_status) (count_over_time(${exportLogs?.targets?.[0]?.expr} [5m]))`,
+      `sum by (export_service, export_signal, export_reason, export_http_status) (count_over_time(${exportLogs?.targets?.[0]?.expr} [5m]))`,
     )
     expect(exportFailures?.description).toContain('failed export attempts')
     expect(exportFailures?.description).toContain('lost spans')

@@ -526,6 +526,28 @@ test('round trips native archive provenance and rejects a rehashed nested source
     decodeForwardPerformanceReceiptEnvelopeResult({ ...outer, contentHash: canonicalHashV1(outer) }),
   )
   expect(decoded.receipt.observedCapacity.intradaySources).toEqual([evidence])
+  const mismatchedFeedMaterial = {
+    ...material,
+    observedCapacity: {
+      ...material.observedCapacity,
+      observations: material.observedCapacity.observations.map((observation) => ({
+        ...observation,
+        intradaySource: { ...observation.intradaySource, feed: 'us' as const },
+      })),
+    },
+  }
+  const mismatchedFeedReceipt = { ...mismatchedFeedMaterial, receiptHash: canonicalHashV1(mismatchedFeedMaterial) }
+  const mismatchedFeedEnvelope = {
+    ...envelopeMaterial,
+    receipt: mismatchedFeedReceipt,
+    receiptHash: mismatchedFeedReceipt.receiptHash,
+  }
+  expect(
+    decodeForwardPerformanceReceiptEnvelopeResult({
+      ...mismatchedFeedEnvelope,
+      contentHash: canonicalHashV1(mismatchedFeedEnvelope),
+    })._tag,
+  ).toBe('Failure')
   const altered = { ...evidence, decisionSnapshotId: '0'.repeat(64) }
   const { contentHash: _hash, ...alteredMaterial } = altered
   material.observedCapacity.intradaySources[0] = {

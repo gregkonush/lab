@@ -110,7 +110,10 @@ without rebuilding on every chunk. Following stops when the reader scrolls upwar
 content growth does not leave the viewport behind the response.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
-Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
+Messages appear immediately while the request runs. Failed sends restore the text and attachments for retry.
+Open chat windows keep their event streams and model selection when another desktop window takes focus.
+Recovered runtime restart notices disappear after a successful turn start or thread recovery; failed turns remain visible.
+Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
