@@ -1,4 +1,5 @@
 import { nativeFeatureMatchesBars, rollingWindowStartMs, type NativeMarketFeature } from '../features/native-feature'
+import { diagnoseStreamingInputs } from './inputs'
 import { isCryptoMarketFeature } from '../features/crypto-contract'
 import { Result, Schema } from 'effect'
 import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '@platformatic/kafka'
@@ -72,8 +73,25 @@ export const snapshotFailureMeasurement = (
     const value = facts?.[key]
     if (typeof value === 'number' && Number.isFinite(value) && value >= 0) durations[key] = value
   }
+  const diagnosed = diagnoseStreamingInputs(projection, query)
+  const candidateCoverage = Result.isSuccess(diagnosed)
+    ? diagnosed.success.candidates.map(({ matchingFeature, ...candidate }) => ({
+        ...candidate,
+        matchingFeature:
+          matchingFeature === null
+            ? null
+            : { featureId: matchingFeature.value.featureId, availableAtMs: matchingFeature.availableAtMs },
+      }))
+    : null
   return {
-    schemaVersion: 'bayn.market-snapshot-failure.v1',
+    schemaVersion: 'bayn.market-snapshot-failure.v2',
+    candidateCoverage,
+    inputFailure: Result.isFailure(diagnosed) ? diagnosed.failure.reason : null,
+    projectionCoverage: projectionCoverageMeasurements(
+      projection,
+      query.symbols ?? query.universe,
+      Date.parse(query.observedAt),
+    ),
     failureReason: failure.reason,
     ...(failure.ingestionDelayDirection === undefined
       ? {}

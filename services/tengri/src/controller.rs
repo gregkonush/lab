@@ -1208,12 +1208,43 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
     if lease.annotations().contains_key(RETIRING_ANNOTATION) {
         return retire_slot(context, lease).await;
     }
-    if lease
-        .spec
-        .as_ref()
-        .and_then(|s| s.holder_identity.as_ref())
-        .is_some()
-    {
+    if let Some(holder) = lease.spec.as_ref().and_then(|s| s.holder_identity.as_ref()) {
+        if let Some(uid) = lease.annotations().get(POD_UID_ANNOTATION) {
+            let allocation: Allocation = serde_json::from_str(holder)?;
+            let pods = Api::<Pod>::namespaced(context.client.clone(), &context.namespace);
+            let pod = pods.get(&lease.name_any()).await?;
+            ensure!(
+                pod.uid().as_ref() == Some(uid),
+                "claimed slot Pod was replaced"
+            );
+            ensure!(
+                pod.metadata
+                    .owner_references
+                    .as_ref()
+                    .is_some_and(|owners| owners.iter().any(|owner| owner.uid
+                        == allocation.microvm_uid
+                        && owner.name == allocation.microvm_id
+                        && owner.kind == "MicroVM"
+                        && owner.controller == Some(true))),
+                "claimed slot Pod ownership changed"
+            );
+            let supervisor = pod
+                .spec
+                .as_ref()
+                .and_then(|spec| {
+                    spec.containers
+                        .iter()
+                        .find(|container| container.name == "supervisor")
+                })
+                .context("claimed slot has no supervisor")?;
+            if supervisor.image.as_deref() != Some(context.runtime_image.as_ref()) {
+                context.leader()?;
+                pods.patch(&lease.name_any(), &PatchParams::default(), &Patch::Strategic(json!({
+                    "metadata": {"uid": uid, "resourceVersion": pod.resource_version().context("slot Pod has no version")?},
+                    "spec": {"containers": [{"name": "supervisor", "image": context.runtime_image.as_ref()}]}
+                }))).await?;
+            }
+        }
         return prepare_slot(context, lease).await;
     }
     if let Some(uid) = lease.annotations().get(POD_UID_ANNOTATION) {
@@ -1625,6 +1656,66 @@ mod tests {
             code: 404,
             response: json!({"apiVersion":"v1", "kind":"Status", "status":"Failure", "reason":"NotFound", "message":"not found", "code":404}),
             body: None,
+        }
+    }
+
+    fn claimed_upgrade_fixture() -> (Lease, serde_json::Value) {
+        let allocation = allocation_for(&agent()).unwrap();
+        let lease = serde_json::from_value(json!({
+            "apiVersion":"coordination.k8s.io/v1", "kind":"Lease",
+            "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod"}},
+            "spec":{"holderIdentity":serde_json::to_string(&allocation).unwrap()}
+        }))
+        .unwrap();
+        let pod = json!({
+            "apiVersion":"v1", "kind":"Pod",
+            "metadata":{"name":"slot-test","uid":"original-pod","resourceVersion":"11","ownerReferences":[{
+                "apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM",
+                "name":allocation.microvm_id,"uid":allocation.microvm_uid,"controller":true
+            }]},
+            "spec":{"containers":[{"name":"supervisor","image":"old-runtime"},{"name":"runner","image":"old-runtime"}]}
+        });
+        (lease, pod)
+    }
+
+    #[tokio::test]
+    async fn claimed_supervisor_upgrade_preserves_the_vmm_and_is_idempotent() {
+        let (lease, pod) = claimed_upgrade_fixture();
+        let mut updated = pod.clone();
+        updated["spec"]["containers"][0]["image"] = json!("runtime-image");
+        let (client, pending) = mock(vec![
+            get("/api/v1/namespaces/tengri/pods/slot-test", pod),
+            Exchange {
+                method: Method::PATCH,
+                path: "/api/v1/namespaces/tengri/pods/slot-test",
+                code: 200,
+                body: Some(
+                    json!({"metadata":{"uid":"original-pod","resourceVersion":"11"},
+                    "spec":{"containers":[{"name":"supervisor","image":"runtime-image"}]}}),
+                ),
+                response: updated.clone(),
+            },
+            get("/api/v1/namespaces/tengri/pods/slot-test", updated),
+        ]);
+        let context = context(client);
+        maintain_slot(&context, &lease).await.unwrap();
+        maintain_slot(&context, &lease).await.unwrap();
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn claimed_supervisor_upgrade_rejects_replaced_pods_and_changed_owners() {
+        for changed_owner in [false, true] {
+            let (lease, mut pod) = claimed_upgrade_fixture();
+            if changed_owner {
+                pod["metadata"]["ownerReferences"][0]["uid"] = json!("another-owner");
+            } else {
+                pod["metadata"]["uid"] = json!("another-pod");
+            }
+            let (client, pending) =
+                mock(vec![get("/api/v1/namespaces/tengri/pods/slot-test", pod)]);
+            assert!(maintain_slot(&context(client), &lease).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
         }
     }
 

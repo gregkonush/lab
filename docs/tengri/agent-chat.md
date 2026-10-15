@@ -45,10 +45,9 @@ Changing models resets an incompatible effort to the selected model's default. N
 An active turn keeps its original settings; the selectors become available after it finishes.
 
 If the catalog fails to load, the chat displays the error with **Retry models** and blocks starting a new turn.
-During a rollout, an older controller or guest can explicitly report that model selection is unsupported. The chat
-then explains that it uses the existing Codex settings and continues sending without model or reasoning overrides.
-Updated guests default to `gpt-6.1-sol`; omitted options preserve the guest configuration and existing thread settings.
-Retrying the catalog restores the selectors when the compatible controller and guest are available.
+Every supported guest exposes `model/list`; a missing RPC is a request failure, not a compatibility mode that drops
+the selected settings. Retrying the catalog restores the selectors once it succeeds. Automatic conversation recovery
+can still read history without applying unavailable options, preserving the guest configuration and thread settings.
 If the account does not offer the selected model or effort, the selection stays visible until the user chooses an
 available option. An unavailable saved selection is not applied during automatic recovery, and the selectors stay
 editable after recovery fails so the user can choose valid settings and retry the same conversation. Tengri does not

@@ -278,6 +278,15 @@ systemExtensions:
   - proompteng/talos-kata-runtimes
 patches:
   - file: tengri-runner-amd64.json
+  - idOverride: 37-8bf7ec00-171c-11f1-8000-7cc255f16774-ephemeral-boot
+    annotations:
+      name: Disable redundant growth mounts on Turin ephemeral storage
+    inline: |
+      apiVersion: v1alpha1
+      kind: VolumeConfig
+      name: EPHEMERAL
+      provisioning:
+        grow: false
   - idOverride: 35-8bf7ec00-171c-11f1-8000-7cc255f16774-workload-placement
     annotations:
       name: Advertise 100G workload capacity

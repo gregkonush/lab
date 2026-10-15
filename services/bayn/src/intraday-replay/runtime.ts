@@ -223,8 +223,6 @@ export const makeReplayExecutionRuntime = (input: ReplayExecutionRuntimeInput) =
       Context.add(MutationStore, mutationStore),
     )
     const readAuthorityState = store.authorityGeneration.readAuthorityState
-    if (readAuthorityState === undefined)
-      return yield* new ReplayBrokerFailure({ message: 'Replay runtime requires durable authority reads' })
     const readAuthority = readAuthorityState.pipe(Effect.mapError(replayGenerationRecoveryError))
     const reconcileForActivation = reconcileReplayForActivation(
       input.currentUtcInstant,

@@ -82,7 +82,7 @@ test('preserves HTTP status and recognized conversation errors without trusting 
       412,
       { error: 'Model selection unavailable', code: 'model_selection_unavailable' },
       'Model selection unavailable',
-      'model_selection_unavailable',
+      undefined,
     ],
     [503, { error: 'Unavailable', code: 'model_selection_unavailable' }, 'Unavailable', undefined],
     [503, { error: 'Unavailable', code: 'file_conflict' }, 'Unavailable', undefined],

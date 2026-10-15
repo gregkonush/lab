@@ -40,7 +40,8 @@ import {
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
 import { Pipeable } from '../../pipeable'
 import { quantityFromDecimal } from '../../quantity'
-import { decodeInstrument } from '../../instruments'
+import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
+import { cashReportingQuantum } from './cash-reporting'
 
 const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
@@ -56,10 +57,11 @@ const hashResult = (value: unknown, field: string): Result.Result<string, Broker
     }),
   )
 
-const decimalToMicrosResultDataFirst = (
+const decimalMicrosResult = (
   value: string,
   signed: boolean,
   name: string,
+  rounding: 'EXACT' | 'DOWN' | 'UP',
 ): Result.Result<string, BrokerReadContractFailure> => {
   if (!decimalPattern.test(value)) {
     return Result.fail(
@@ -75,7 +77,8 @@ const decimalToMicrosResultDataFirst = (
   const separator = absolute.indexOf('.')
   const whole = separator === -1 ? absolute : absolute.slice(0, separator)
   const fraction = separator === -1 ? '' : absolute.slice(separator + 1)
-  if (fraction.length > 6 && /[1-9]/.test(fraction.slice(6))) {
+  const subMicroRemainder = /[1-9]/.test(fraction.slice(6))
+  if (rounding === 'EXACT' && subMicroRemainder) {
     return Result.fail(
       contractFailure({
         reason: 'DECIMAL_PRECISION',
@@ -88,7 +91,15 @@ const decimalToMicrosResultDataFirst = (
     )
   }
   const micros = BigInt(whole) * 1_000_000n + BigInt((fraction.slice(0, 6) + '000000').slice(0, 6))
-  const result = negative ? -micros : micros
+  const truncated = negative ? -micros : micros
+  const adjustment = subMicroRemainder
+    ? rounding === 'UP' && !negative
+      ? 1n
+      : rounding === 'DOWN' && negative
+        ? -1n
+        : 0n
+    : 0n
+  const result = truncated + adjustment
   if (!signed && result < 0n) {
     return Result.fail(
       contractFailure({
@@ -113,7 +124,9 @@ const decimalToMicrosResultDataFirst = (
   return Result.succeed(result.toString())
 }
 
-export const decimalToMicrosResult = Pipeable.dual(3, decimalToMicrosResultDataFirst)
+export const decimalToMicrosResult = Pipeable.dual(3, (value: string, signed: boolean, name: string) =>
+  decimalMicrosResult(value, signed, name, 'EXACT'),
+)
 
 const quantityResult = (
   value: string,
@@ -225,14 +238,17 @@ const normalizeAccountResultDataFirst = (
   }
   return Result.gen(function* () {
     const cashMicros = yield* decimalToMicrosResult(raw.cash, true, 'account cash')
-    const equityMicros = yield* decimalToMicrosResult(raw.equity, true, 'account equity')
-    const lastEquityMicros = yield* decimalToMicrosResult(raw.last_equity, true, 'account last equity')
+    // Marks are not cash settlement amounts. Bound current equity down and the previous close up
+    // so converting provider mark precision to micros cannot understate the daily-loss guard.
+    const equityMicros = yield* decimalMicrosResult(raw.equity, true, 'account equity', 'DOWN')
+    const lastEquityMicros = yield* decimalMicrosResult(raw.last_equity, true, 'account last equity', 'UP')
     const buyingPowerMicros = yield* decimalToMicrosResult(raw.buying_power, true, 'account buying power')
     return {
       id: raw.id,
       status: raw.status,
       currency: raw.currency,
       cashMicros,
+      cashReportingQuantumMicros: cashReportingQuantum(raw.cash),
       equityMicros,
       lastEquityMicros,
       cryptoStatus: raw.crypto_status ?? null,
@@ -288,6 +304,16 @@ const normalizePositionResultDataFirst = (
     )
   }
   const assetClass = raw.asset_class
+  const symbol = raw.symbol
+  if ((instrumentMarket(symbol) === MarketKind.Crypto) !== (assetClass === AssetClass.Crypto)) {
+    return Result.fail(
+      contractFailure({
+        reason: 'ASSET_BINDING',
+        message: 'position symbol and asset class must agree',
+        facts: { field: 'position.symbol', actual: raw.symbol },
+      }),
+    )
+  }
   return Result.gen(function* () {
     const rawQuantity = BigInt(yield* quantityResult(raw.qty, 'position quantity', { signed: true }))
     const magnitude = rawQuantity < 0n ? -rawQuantity : rawQuantity
@@ -300,7 +326,7 @@ const normalizePositionResultDataFirst = (
     return {
       accountId,
       assetId: raw.asset_id,
-      symbol: raw.symbol,
+      symbol,
       exchange: raw.exchange,
       assetClass,
       side: raw.side,
@@ -673,12 +699,18 @@ export const normalizeFeeActivitiesResult = (
         const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'fee net amount')
         const common = { accountId, activityId: activity.id, date: activity.date, netAmountMicros }
         if (activity.activity_type === 'FEE') return common
+        if (activity.qty === undefined) {
+          if (BigInt(netAmountMicros) >= 0n)
+            return yield* Result.fail(
+              contractFailure({ reason: 'DECIMAL_SIGN', message: 'USD crypto fee must debit cash' }),
+            )
+          return { ...common, cryptoCashFee: true as const }
+        }
         if (netAmountMicros !== '0')
           return yield* Result.fail(
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),
           )
-        const aliases: Readonly<Record<string, string>> = { BTCUSD: 'BTC/USD', ETHUSD: 'ETH/USD', SOLUSD: 'SOL/USD' }
-        const symbol = aliases[activity.symbol] ?? activity.symbol
+        const symbol = activity.symbol
         if (!['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(symbol))
           return yield* Result.fail(
             contractFailure({ reason: 'ASSET_BINDING', message: 'coin fee has an unsupported instrument' }),

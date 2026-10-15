@@ -55,7 +55,9 @@ import { canonicalHashV1Result } from '../hash'
 
 export const jevMarketForSymbol = (symbol: string): JevMarketProfile =>
   instrumentMarket(symbol) === MarketKind.Crypto ? cryptoMarketProfile : equityMarketProfile
-export const jevMarketForCycle = (cycle: Pick<AutonomousCycle, 'window'>): JevMarketProfile =>
+export const jevMarketForCycle = (cycle: {
+  readonly window: Pick<AutonomousCycle['window'], 'executionCalendarSchemaVersion'>
+}): JevMarketProfile =>
   cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
     ? cryptoMarketProfile
     : equityMarketProfile
@@ -64,13 +66,9 @@ export const jevMarketForFeed = (feed: string): JevMarketProfile =>
 export const jevBenchmarkSymbol = (symbol: string): string =>
   instrumentMarket(symbol) === MarketKind.Equity ? 'SPY' : symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
 export const jevCycleCandidates = (
-  cycle: Pick<AutonomousCycle, 'window' | 'identity'>,
+  cycle: { readonly window: Pick<AutonomousCycle['window'], 'executionCalendarSchemaVersion'> },
   allowed: readonly string[],
 ): readonly string[] => {
   const market = jevMarketForCycle(cycle)
-  const candidates = allowed.filter((symbol) => market.candidateSymbols.some((candidate) => candidate === symbol))
-  if (market.market === MarketKind.Equity) return candidates
-  const ordinal = 'entryAttemptOrdinal' in cycle.identity ? cycle.identity.entryAttemptOrdinal : 1
-  const symbol = candidates[(ordinal - 1) % candidates.length]
-  return symbol === undefined ? [] : [symbol]
+  return allowed.filter((symbol) => market.candidateSymbols.some((candidate) => candidate === symbol))
 }

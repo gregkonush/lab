@@ -17,6 +17,7 @@ import {
 import { cycleTerminalReasonForBlockedTargetPlan } from '../recovery-decisions'
 import { cycleDraftMatches, cycleDraftOf, isCycleStateTransitionAllowed } from '../transitions'
 import { cycleDecisionStoreEvidence } from './decision-contract'
+import { hasExpiredUnusedEntryAdmission, unusedEntryExpiresAt } from '../entry-admission'
 import type { CycleStoreDecisionFailure } from './decision-contract'
 
 export type { CycleStoreDecisionFailure } from './decision-contract'
@@ -62,7 +63,7 @@ export type ActivationDecision =
   | {
       readonly _tag: 'Block'
       readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedSubmission
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.UnusedEntryExpired
     }
 
 export type DecisionBindingDecision =
@@ -78,7 +79,7 @@ export type DecisionBindingDecision =
   | {
       readonly _tag: 'Block'
       readonly cycle: AutonomousCycle
-      readonly reason: CycleTerminalReason.MissedSubmission
+      readonly reason: CycleTerminalReason.MissedSubmission | CycleTerminalReason.UnusedEntryExpired
     }
 
 export type CompletionDecision =
@@ -224,7 +225,9 @@ const decideActivationDataFirst = (
     return Result.succeed({
       _tag: 'Block',
       cycle,
-      reason: CycleTerminalReason.MissedSubmission,
+      reason: hasExpiredUnusedEntryAdmission(cycle, observedAt)
+        ? CycleTerminalReason.UnusedEntryExpired
+        : CycleTerminalReason.MissedSubmission,
     })
   }
   return observedAt < cycle.updatedAt
@@ -251,6 +254,9 @@ const decideDecisionBindingDataFirst = (
   }
   if (cycle.state !== CycleState.Active) {
     return fail('conflict', 'decision may bind only while a cycle is active')
+  }
+  if (hasExpiredUnusedEntryAdmission(cycle, observedAt)) {
+    return Result.succeed({ _tag: 'Block', cycle, reason: CycleTerminalReason.UnusedEntryExpired })
   }
   if (observedAt >= cycle.window.submissionCutoffAt) {
     return Result.succeed({
@@ -370,6 +376,14 @@ const decideBlockDataFirst = (
   if (reason === CycleTerminalReason.MissedSubmission && observedAt < cycle.window.submissionCutoffAt) {
     return fail('invariant', 'missed-submission transition cannot precede the broker submission cutoff')
   }
+  if (
+    reason === CycleTerminalReason.UnusedEntryExpired &&
+    (cycle.schemaVersion !== 'bayn.autonomous-cycle.v4' ||
+      cycle.bindings.snapshotId !== undefined ||
+      cycle.bindings.decisionHash !== undefined ||
+      Date.parse(observedAt) < unusedEntryExpiresAt(cycle))
+  )
+    return fail('invariant', 'unused-entry expiry requires an unbound intraday cycle after its admission lease')
   if (observedAt < cycle.updatedAt) return fail('conflict', 'cycle update time cannot move backward')
   const decisionHash = cycle.bindings.decisionHash
   return cycle.state === CycleState.Active && decisionHash !== undefined

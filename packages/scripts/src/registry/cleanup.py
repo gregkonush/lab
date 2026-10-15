@@ -133,6 +133,10 @@ class Store:
             digest = path.read_text().strip()
             if encoded(digest) != value:
                 raise ValueError(f"Revision link disagrees with its name: {path}")
+            try:
+                signature(self.blob(digest))
+            except FileNotFoundError:
+                return None
             return digest
 
         emit(

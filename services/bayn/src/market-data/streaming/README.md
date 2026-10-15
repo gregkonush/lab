@@ -197,6 +197,8 @@ boundary, and its source-reference suffix matches the currently selected raw bar
 hashes. The producer retains complete session provenance; Bayn independently verifies the decision-window suffix,
 not older raw bars outside its retained window. The full technical payload and source references are hashed into the
 snapshot. Recorded live and simulated snapshots reproduce this evidence and reject changed receipts or availability.
+The selected market source owns the optional topic. Sharing a consumer with equities does not attach their technical
+topic to a crypto snapshot or its bootstrap evidence.
 
 An observed replacement supersedes an older technical receipt for the same session and window, even if its raw
 correction has not arrived yet. Selection and diagnostics leave that window unavailable until the replacement
