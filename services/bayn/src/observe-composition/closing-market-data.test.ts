@@ -1,3 +1,4 @@
+import { MarketSchedule } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -265,6 +266,8 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        marketSchedule: MarketSchedule.Sessions,
+        observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
         sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
         sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
@@ -515,6 +518,8 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        marketSchedule: MarketSchedule.Sessions,
+        observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
         sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
         sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,

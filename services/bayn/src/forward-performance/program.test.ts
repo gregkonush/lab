@@ -102,6 +102,7 @@ interface SqlObservation {
 }
 
 interface SqlFixture {
+  readonly cashReportingQuantumMicros?: '1' | '10000' | null
   readonly extraReconciliationDiscrepancy?: boolean
   readonly preWindowCashResidualMicros?: string
   readonly brokerFeeTimes?: {
@@ -114,7 +115,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
   const query = ((strings: TemplateStringsArray) => {
     const statement = strings.join('?').replaceAll(/\s+/g, ' ').trim()
     observation.statements.push(statement)
-    if (statement.includes('SELECT fee.data, fee.coin_cost_basis_micros')) {
+    if (statement.includes('FROM broker_fee_accounting AS fee WHERE fee.account_id')) {
       const times = fixture.brokerFeeTimes
       return Effect.succeed(
         times === undefined
@@ -127,6 +128,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   date: '2026-07-20',
                   netAmountMicros: '-100',
                 },
+                matched_cash_micros: '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
                   requestId: 'synthetic-fee-read',
@@ -194,11 +196,15 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
           baseline_cash_micros: '1000',
           opening_account_event_id: hash('c'),
           opening_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T13:00:00.000Z')),
+          opening_cash_reporting_quantum_micros:
+            fixture.cashReportingQuantumMicros === undefined ? '1' : fixture.cashReportingQuantumMicros,
           opening_cash_micros: '1000',
           pre_window_accounted_cash_delta_micros: '0',
           pre_window_cash_residual_micros: fixture.preWindowCashResidualMicros ?? '0',
           closing_account_event_id: hash('d'),
           closing_observed_at: DateTime.toDateUtc(DateTime.makeUnsafe('2026-07-20T21:00:00.000Z')),
+          closing_cash_reporting_quantum_micros:
+            fixture.cashReportingQuantumMicros === undefined ? '1' : fixture.cashReportingQuantumMicros,
           closing_cash_micros: '1200',
           accounted_cash_delta_micros: '0',
           cash_yield_micros: '200',
@@ -424,6 +430,13 @@ describe('forward performance read program', () => {
     expect(evidence.brokerFeeRecords?.[0]?.posted).toBe(postedAt !== null)
     expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('first_observed_at')
     expect(evidence.brokerFeeRecords?.[0]).not.toHaveProperty('posted_at')
+  })
+
+  test('historical snapshots without reporting precision cannot become cash-yield evidence', async () => {
+    const sql = makeReadOnlySql({ statements: [] }, { cashReportingQuantumMicros: null })
+    const evidence = await Effect.runPromise(readForwardPerformancePostgres(sql, identityResult.success.accountId))
+    expect(evidence.cashReportingPrecisionKnown).toBe(false)
+    expect(evidence.cashYieldEvidence).toBeUndefined()
   })
 
   test('constructs exact immutable Signal volume evidence without rounding fractional microshares', () => {
@@ -767,7 +780,7 @@ describe('forward performance read program', () => {
       cashYieldAdjustedExact: false,
     })
     expect(observedCashYieldEvidence).toEqual({
-      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
       reconciliationId: hash('a'),
       reconciliationContentHash: hash('b'),
       reconciledAt: '2026-07-20T21:01:00.000Z',
@@ -777,11 +790,13 @@ describe('forward performance read program', () => {
       openingAccountEventId: hash('c'),
       openingObservedAt: '2026-07-20T13:00:00.000Z',
       openingCashMicros: '1000',
+      openingCashReportingQuantumMicros: '1',
       preWindowAccountedCashDeltaMicros: '0',
       preWindowCashResidualMicros: '0',
       closingAccountEventId: hash('d'),
       closingObservedAt: '2026-07-20T21:00:00.000Z',
       closingCashMicros: '1200',
+      closingCashReportingQuantumMicros: '1',
       accountedCashDeltaMicros: '0',
       cashYieldMicros: '200',
     })
@@ -1019,6 +1034,8 @@ describe('forward performance read program', () => {
       inferenceExpenses: () => Effect.succeed([]),
       postgres: () =>
         Effect.succeed({
+          cashReportingPrecisionKnown: true,
+          brokerFeeAccrualRecords: [],
           cycles: [
             {
               cycleId,
@@ -1054,7 +1071,7 @@ describe('forward performance read program', () => {
           },
           startingCapitalMicros: '1000',
           cashYieldEvidence: {
-            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+            schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
             reconciliationId: hash('7'),
             reconciliationContentHash: hash('8'),
             reconciledAt: '2026-07-20T21:01:00.000Z',
@@ -1064,11 +1081,13 @@ describe('forward performance read program', () => {
             openingAccountEventId: hash('9'),
             openingObservedAt: '2026-07-20T13:00:00.000Z',
             openingCashMicros: '1000',
+            openingCashReportingQuantumMicros: '1',
             preWindowAccountedCashDeltaMicros: '0',
             preWindowCashResidualMicros: '0',
             closingAccountEventId: hash('a'),
             closingObservedAt: '2026-07-20T21:00:00.000Z',
             closingCashMicros: '2100',
+            closingCashReportingQuantumMicros: '1',
             accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
             cashYieldMicros: '200',
           },
@@ -1118,7 +1137,7 @@ describe('forward performance read program', () => {
       },
       ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
         expect(cashYieldEvidence).toEqual({
-          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v1',
+          schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2',
           reconciliationId: hash('7'),
           reconciliationContentHash: hash('8'),
           reconciledAt: '2026-07-20T21:01:00.000Z',
@@ -1128,11 +1147,13 @@ describe('forward performance read program', () => {
           openingAccountEventId: hash('9'),
           openingObservedAt: '2026-07-20T13:00:00.000Z',
           openingCashMicros: '1000',
+          openingCashReportingQuantumMicros: '1',
           preWindowAccountedCashDeltaMicros: '0',
           preWindowCashResidualMicros: '0',
           closingAccountEventId: hash('a'),
           closingObservedAt: '2026-07-20T21:00:00.000Z',
           closingCashMicros: '2100',
+          closingCashReportingQuantumMicros: '1',
           accountedCashDeltaMicros: prepared.transaction.cashDeltaMicros,
           cashYieldMicros: '200',
         })

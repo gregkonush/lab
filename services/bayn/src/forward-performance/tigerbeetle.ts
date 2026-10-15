@@ -1,3 +1,4 @@
+import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { Data, Effect, Result, Scope } from 'effect'
 
 import type { RuntimeConfig } from '../config'
@@ -90,7 +91,7 @@ const validateCashYieldEvidence = (
   Result.gen(function* () {
     if (evidence === undefined) return 0n
     if (
-      evidence.schemaVersion !== 'bayn.forward-performance-cash-yield-evidence.v1' ||
+      evidence.schemaVersion !== 'bayn.forward-performance-cash-yield-evidence.v2' ||
       !SHA256_PATTERN.test(evidence.reconciliationId) ||
       !SHA256_PATTERN.test(evidence.reconciliationContentHash) ||
       !SHA256_PATTERN.test(evidence.baselineAccountEventId) ||
@@ -145,8 +146,16 @@ const validateCashYieldEvidence = (
     const closingCash = yield* parseSignedI128(evidence.closingCashMicros, 'closingCashMicros')
     const accountedCashDelta = yield* parseSignedI128(evidence.accountedCashDeltaMicros, 'accountedCashDeltaMicros')
     const cashYieldAmount = yield* parseSignedI128(evidence.cashYieldMicros, 'cashYieldMicros')
-    const derivedPreWindowResidual = openingCash - baselineCash - preWindowCashDelta
-    const derivedCashYield = closingCash - openingCash - accountedCashDelta
+    const derivedPreWindowResidual =
+      openingCash -
+      BigInt(
+        reportedCashMicros((baselineCash + preWindowCashDelta).toString(), evidence.openingCashReportingQuantumMicros),
+      )
+    const derivedCashYield =
+      closingCash -
+      BigInt(
+        reportedCashMicros((openingCash + accountedCashDelta).toString(), evidence.closingCashReportingQuantumMicros),
+      )
     if (
       preWindowResidual !== 0n ||
       derivedPreWindowResidual !== preWindowResidual ||
