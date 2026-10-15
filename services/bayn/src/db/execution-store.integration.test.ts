@@ -14,7 +14,7 @@ import {
 } from '../broker/observations'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import type { RuntimeConfig } from '../config'
-import { operationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import {
   AccountStatus,
@@ -40,6 +40,7 @@ import {
   ExecutionStoreLive,
   FillAccountingStore,
   ReconciliationStore,
+  type ReconciliationStoreShape,
   ValuationStore,
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
@@ -51,7 +52,9 @@ import { hashLedgerPlanResult } from '../ledger-plan'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import type { FeeActivity } from '../broker/alpaca'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
-import { verifyBrokerStateVersion } from './reconciliation'
+import { persistStableSnapshot } from '../simulation-reconciliation/broker-persistence'
+import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca'
+import { verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
@@ -73,6 +76,8 @@ const accountId = 'paper-account-execution-store'
 const observedAt = '2026-08-28T14:31:00.000Z'
 const occurredAt = '2026-08-28T14:30:59.000Z'
 const hash = (value: string): string => canonicalHashV1({ value })
+const reconcileSnapshot = (store: ReconciliationStoreShape, snapshot: BrokerSnapshot) =>
+  store.reconcile(snapshot.account.accountId, Effect.succeed(snapshot)).pipe(Effect.map((result) => result.persisted))
 const brokerIdentity = Result.getOrThrow(
   makeBrokerIdentity({
     schemaVersion: 'bayn.broker-identity.v2',
@@ -95,21 +100,20 @@ const config: RuntimeConfig = {
 interface JournalControl {
   failPosts: boolean
   postCount: number
+  beforePost?: Effect.Effect<void, OperationalError>
 }
 
 const journal = (control: JournalControl): JournalService => ({
   post: () =>
-    Effect.suspend(() => {
+    Effect.gen(function* () {
       control.postCount += 1
-      return control.failPosts
-        ? Effect.fail(
-            operationalError({
-              component: 'journal',
-              operation: 'post',
-              message: 'injected TigerBeetle failure',
-            }),
-          )
-        : Effect.void
+      if (control.beforePost !== undefined) yield* control.beforePost
+      if (control.failPosts)
+        return yield* operationalError({
+          component: 'journal',
+          operation: 'post',
+          message: 'injected TigerBeetle failure',
+        })
     }),
   verifyAccount: () => Effect.succeed(true),
   journalAndReconcile: () => Effect.die(new Error('unexpected simulation journal call')),
@@ -273,6 +277,7 @@ describePostgres('PostgreSQL execution persistence', () => {
   beforeEach(async () => {
     journalControl.failPosts = false
     journalControl.postCount = 0
+    delete journalControl.beforePost
     await runtime.runPromise(resetDatabase.pipe(Effect.provide(NodeServices.layer)))
   })
 
@@ -442,6 +447,198 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.counts).toEqual({ events: 3, snapshots: 1, valuations: 1 })
   })
 
+  test('rejects an ambient transaction before running reconciliation ingestion', async () => {
+    let ingested = false
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const reconciliation = yield* ReconciliationStore
+        const fence = yield* WriterFence
+        const failure = yield* Effect.flip(
+          fence.transaction(
+            reconciliation.reconcile(
+              accountId,
+              Effect.sync(() => {
+                ingested = true
+              }).pipe(Effect.andThen(Effect.die('ingestion must remain lazy'))),
+            ),
+          ),
+        )
+        expect(failure).toMatchObject({ operation: 'reconciliation', failure: 'invariant' })
+        expect(ingested).toBe(false)
+        expect(journalControl.postCount).toBe(0)
+      }),
+    )
+  })
+
+  test('reconciles a stable broker cut in two durable transactions, including replay', async () => {
+    const commits: string[] = []
+    const tracer = Tracer.make({
+      span(options) {
+        if (options.name === 'bayn.postgres.commit') commits.push(options.name)
+        return new Tracer.NativeSpan(options)
+      },
+    })
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = {
+          events: yield* BrokerEventStore,
+          accounting: yield* FillAccountingStore,
+          valuation: yield* ValuationStore,
+          reconciliation: yield* ReconciliationStore,
+          authorityRestriction: yield* AuthorityRestrictionStore,
+        }
+        const evidence = (kind: string) => ({
+          requestId: `co-commit-${kind}`,
+          status: 200,
+          contentHash: hash(`co-commit-${kind}`),
+          observedAt,
+        })
+        const snapshot = {
+          account: {
+            value: {
+              id: accountId,
+              status: BrokerAccountStatus.Active,
+              currency: 'USD' as const,
+              cashMicros: '1000000000',
+              equityMicros: '1000000000',
+              lastEquityMicros: '1000000000',
+              buyingPowerMicros: '1000000000',
+              cashReportingQuantumMicros: '1' as const,
+              cryptoStatus: null,
+              nonMarginableBuyingPowerMicros: null,
+              accountBlocked: false,
+              tradingBlocked: false,
+              tradeSuspendedByUser: false,
+              observedAt,
+            },
+            evidence: evidence('account'),
+          },
+          positions: { value: [], evidence: evidence('positions') },
+          history: { orders: { rows: [], observedAt }, fills: [], fees: [] },
+        }
+        for (const replay of [false, true]) {
+          commits.length = 0
+          const result = yield* persistStableSnapshot(store, snapshot, Effect.succeed(observedAt)).pipe(
+            Effect.provideService(Tracer.Tracer, tracer),
+          )
+          expect(result.report.reconciliation.status).toBe(ReconciliationStatus.Exact)
+          expect(result.brokerState.positions).toEqual([])
+          expect(commits, `replay=${replay}`).toHaveLength(2)
+        }
+        const sql = yield* PgClient.PgClient
+        const [counts] = yield* sql<{ accounts: number; snapshots: number; reconciliations: number }>`
+          SELECT (SELECT count(*)::integer FROM account_snapshots) AS accounts,
+            (SELECT count(*)::integer FROM position_snapshots) AS snapshots,
+            (SELECT count(*)::integer FROM reconciliations) AS reconciliations`
+        expect(counts).toEqual({ accounts: 1, snapshots: 1, reconciliations: 1 })
+      }),
+    )
+  })
+
+  test('commits fee preparation with its source cut before posting and recovers it before replaying ingestion', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const reconciliation = yield* ReconciliationStore
+        const events = yield* BrokerEventStore
+        const valuations = yield* ValuationStore
+        const sql = yield* PgClient.PgClient
+        const ingest = (at: string, cashMicros: string, fees: readonly Observed<FeeActivity>[]) =>
+          Effect.gen(function* () {
+            const raw = flatAccountEvent()
+            const account = { ...raw.account, observedAt: at, cashMicros, equityMicros: cashMicros }
+            const accountReceipt = yield* events.ingest({
+              ...raw,
+              sourceEventId: `fee-cut:${at}`,
+              contentHash: canonicalHashV1(account),
+              occurredAt: at,
+              observedAt: at,
+              account,
+            })
+            const positions = yield* events.ingestPositions({
+              accountId,
+              sourceHash: hash(`fee-cut:${at}`),
+              observedAt: at,
+              positions: [],
+            })
+            const valuation = yield* valuations.value({
+              accountEventId: accountReceipt.eventId,
+              positionSnapshotId: positions.snapshotId,
+            })
+            return {
+              account,
+              cashReportingQuantumMicros: '1' as const,
+              positions: [],
+              positionsObservedAt: at,
+              positionSnapshotId: positions.snapshotId,
+              accountEventId: accountReceipt.eventId,
+              orders: [],
+              ordersObservedAt: at,
+              fills: [],
+              fees,
+              valuation,
+              reconciledAt: at,
+            }
+          })
+        yield* reconciliation.reconcile(accountId, ingest(observedAt, '1000000000', []))
+        const at = '2026-08-28T14:32:00.000Z'
+        const fee: Observed<FeeActivity> = {
+          value: { accountId, activityId: 'co-committed-fee', date: '2026-08-28', netAmountMicros: '-10000' },
+          evidence: { requestId: 'fee-read', status: 200, contentHash: hash('fee-read'), observedAt: at },
+        }
+        // A separately reserved connection cannot see uncommitted preparation on the writer connection.
+        journalControl.beforePost = Effect.scoped(
+          Effect.gen(function* () {
+            const observer = yield* sql.reserve
+            const rows = yield* observer.executeValues(
+              `SELECT EXISTS (
+              SELECT 1 FROM broker_fee_accounting f
+              JOIN account_snapshots a ON a.account_id=f.account_id AND a.cash_micros=999990000
+              JOIN account_cash_reporting r ON r.account_event_id=a.event_id
+              WHERE f.activity_id='co-committed-fee' AND f.xmin=a.xmin AND a.xmin=r.xmin
+            )`,
+              [],
+            )
+            expect(rows).toEqual([[true]])
+          }),
+        ).pipe(
+          Effect.mapError((cause) =>
+            operationalError({
+              component: 'journal',
+              operation: 'post',
+              message: 'independent commit witness failed',
+              cause,
+            }),
+          ),
+        )
+        journalControl.failPosts = true
+        const failed = yield* Effect.flip(reconciliation.reconcile(accountId, ingest(at, '999990000', [fee])))
+        expect(failed).toMatchObject({ failure: 'ledger' })
+        expect(journalControl.postCount).toBe(1)
+        const [prepared] = yield* sql<{ pending: number; reconciliations: number }>`SELECT
+          (SELECT count(*)::integer FROM broker_fee_accounting WHERE posted_at IS NULL) AS pending,
+          (SELECT count(*)::integer FROM reconciliations) AS reconciliations`
+        expect(prepared).toEqual({ pending: 1, reconciliations: 1 })
+
+        journalControl.failPosts = false
+        const recovered = yield* reconciliation.reconcile(
+          accountId,
+          Effect.sync(() => expect(journalControl.postCount).toBe(2)).pipe(
+            Effect.andThen(ingest(at, '999990000', [fee])),
+          ),
+        )
+        expect(recovered.persisted.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        const replay = yield* reconciliation.reconcile(accountId, ingest(at, '999990000', [fee]))
+        expect(replay.persisted).toEqual(recovered.persisted)
+        expect(journalControl.postCount).toBe(2)
+        const [counts] = yield* sql<{ accounts: number; fees: number; acknowledgements: number }>`SELECT
+          (SELECT count(*)::integer FROM account_snapshots) AS accounts,
+          (SELECT count(*)::integer FROM broker_fee_accounting) AS fees,
+          (SELECT count(*)::integer FROM broker_fee_posting_acknowledgements) AS acknowledgements`
+        expect(counts).toEqual({ accounts: 2, fees: 1, acknowledgements: 1 })
+      }),
+    )
+  })
+
   test('reuses the writer transaction for snapshot persistence and completed accounting verification', async () => {
     const fill = fillEvent('transaction-fill', OrderSide.Buy, '3000000000', '100000000')
     const sourceHash = hash('transaction-positions')
@@ -521,7 +718,9 @@ describePostgres('PostgreSQL execution persistence', () => {
             }),
           )
           .pipe(Effect.provideService(Tracer.Tracer, tracer))
-        const reconciled = yield* reconciliation.reconcile(material).pipe(Effect.provideService(Tracer.Tracer, tracer))
+        const reconciled = yield* reconcileSnapshot(reconciliation, material).pipe(
+          Effect.provideService(Tracer.Tracer, tracer),
+        )
         expect(reconciled.reconciliation.status).toBe(ReconciliationStatus.Exact)
         const sql = yield* PgClient.PgClient
         const [reporting] = yield* sql<{ same_transaction: boolean }>`
@@ -544,15 +743,15 @@ describePostgres('PostgreSQL execution persistence', () => {
   })
 
   for (const failure of ['typed', 'defect', 'interruption'] as const) {
-    test(`rolls back the entire writer transaction after ${failure} failure`, async () => {
+    test(`rolls back co-committed reconciliation preparation after ${failure} failure`, async () => {
       const result = await runtime.runPromise(
         Effect.gen(function* () {
           const events = yield* BrokerEventStore
           const valuations = yield* ValuationStore
           const reconciliation = yield* ReconciliationStore
-          const fence = yield* WriterFence
-          const exit = yield* fence
-            .transaction(
+          const exit = yield* reconciliation
+            .reconcile(
+              accountId,
               Effect.gen(function* () {
                 const accountReceipt = yield* events.ingest(flatAccountEvent())
                 yield* reconciliation.retainCashReporting({
@@ -1615,7 +1814,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const
-        const exact = yield* store.reconcile(snapshot)
+        const exact = yield* reconcileSnapshot(store, snapshot)
         const version = {
           reconciliationId: exact.reconciliation.reconciliationId,
           reconciledAt: exact.reconciliation.reconciledAt,
@@ -1623,7 +1822,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           authorityVersion: state.version,
         }
         yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent'))
-        const newer = yield* store.reconcile({ ...snapshot, reconciledAt: '2026-08-28T14:33:00.000Z' })
+        const newer = yield* reconcileSnapshot(store, { ...snapshot, reconciledAt: '2026-08-28T14:33:00.000Z' })
         expect(
           (yield* verifyBrokerStateVersion(sql, accountId, version, hash('current-intent')).pipe(Effect.flip)).failure,
         ).toBe('invariant')
@@ -1707,13 +1906,13 @@ describePostgres('PostgreSQL execution persistence', () => {
           valuation,
           reconciledAt: '2026-08-28T14:32:00.000Z',
         } as const
-        const exact = yield* reconciliation.reconcile(baseline)
-        const discrepant = yield* reconciliation.reconcile({
+        const exact = yield* reconcileSnapshot(reconciliation, baseline)
+        const discrepant = yield* reconcileSnapshot(reconciliation, {
           ...baseline,
           orders: [order()],
           reconciledAt: '2026-08-28T14:33:00.000Z',
         })
-        const resolved = yield* reconciliation.reconcile({
+        const resolved = yield* reconcileSnapshot(reconciliation, {
           ...baseline,
           reconciledAt: '2026-08-28T14:34:00.000Z',
         })

@@ -22,7 +22,7 @@ const run = (
   readStableBrokerSnapshot(dependencies.read, dependencies.now).pipe(
     withObservedStage('bayn.reconciliation.broker-snapshot', { dependency: 'broker' }),
     Effect.flatMap((snapshot) =>
-      persistStableSnapshot(dependencies.store, dependencies.fence, snapshot, dependencies.now).pipe(
+      persistStableSnapshot(dependencies.store, snapshot, dependencies.now).pipe(
         withObservedStage('bayn.reconciliation.persist'),
       ),
     ),

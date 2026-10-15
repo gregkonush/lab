@@ -178,10 +178,13 @@ Opening cash and fee baselines read the first retained account snapshot in broke
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
 
-The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
-the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
-a separate durable write for reporting metadata. Fee plans still commit before ledger posting. A failed ingestion
-rolls back the report and its precision together; replay cannot change the retained precision or its account binding.
+Reconciliation owns two writer-fenced transactions. The first recovers previously committed fee plans before
+accounting new fills, then ingests the broker cut, retains its cash precision and prepares new fee plans together.
+The second posts those newly committed plans, verifies accounting and records reconciliation. Preparation must
+commit before its ledger posting; the operation rejects an ambient transaction that would erase this boundary.
+Fee preparation rechecks the exact account, amount, time and precision binding without rewriting it. Failed
+preparation rolls back the new cut and its precision together; previously committed plans remain recoverable.
+Replay cannot change the retained precision or account binding, duplicate inventory debits or bypass writer fencing.
 
 Close preparation waits for exact accounting and resolved broker evidence before constructing a liquidation plan,
 including after a fallback obtains a newer cut. Missing settlement evidence keeps the existing position recoverable
