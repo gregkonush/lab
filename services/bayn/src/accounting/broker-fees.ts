@@ -1,27 +1,67 @@
+import { FeeActivitySchema } from '../broker/fee-activity'
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult, type LedgerPlan } from '../ledger-plan'
 import { PositiveMicrosSchema, UnsignedMicrosSchema } from '../execution/contracts'
-import { SymbolSchema, IsoDateSchema, Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
+import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
 import { brokerFeeLedgerPlan, coinFeeLedgerPlan } from './domain'
 
-export const BrokerFeeSchema = Schema.Struct({
-  accountId: StrictNonEmptyStringSchema,
-  activityId: StrictNonEmptyStringSchema,
-  date: IsoDateSchema,
-  coinDebit: Schema.optionalKey(
-    Schema.Struct({ symbol: SymbolSchema, quantityAtoms: PositiveMicrosSchema, priceAtoms: PositiveMicrosSchema }),
-  ),
-  netAmountMicros: Schema.String.check(Schema.isPattern(/^(?:0|-?[1-9][0-9]*)$/)),
-})
 export const FeeReadEvidenceSchema = Schema.Struct({
   requestId: StrictNonEmptyStringSchema,
   status: Schema.Literal(200),
   contentHash: Sha256Schema,
   observedAt: UtcInstantSchema,
 })
+export const FeeMatchCorrectionDataSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.fee-match-correction.v1'),
+  accountId: StrictNonEmptyStringSchema,
+  activityId: StrictNonEmptyStringSchema,
+  accrualId: Sha256Schema,
+  feeContentHash: Sha256Schema,
+  activityCashMicros: PositiveMicrosSchema,
+  accrualCashMicros: PositiveMicrosSchema,
+  readEvidence: FeeReadEvidenceSchema,
+})
+export const StoredFeeMatchCorrectionSchema = Schema.Struct({
+  correction_id: Sha256Schema,
+  data: FeeMatchCorrectionDataSchema,
+  content_hash: Sha256Schema,
+  ledger_plan_hash: Sha256Schema,
+  tigerbeetle_cluster_id: Schema.String,
+  tigerbeetle_ledger: Schema.Int,
+  posted: Schema.Boolean,
+})
+export type StoredFeeMatchCorrection = typeof StoredFeeMatchCorrectionSchema.Type
+
+export const prepareFeeMatchCorrection = (input: unknown, ledger: number) =>
+  Result.gen(function* () {
+    const data = yield* Schema.decodeUnknownResult(FeeMatchCorrectionDataSchema)(input).pipe(
+      Result.mapError(() => new BrokerFeeEvidenceError({ message: 'invalid fee match correction evidence' })),
+    )
+    if (BigInt(data.activityCashMicros) > BigInt(data.accrualCashMicros))
+      return yield* Result.fail(
+        new BrokerFeeEvidenceError({ message: 'fee correction exceeds its original accrual release' }),
+      )
+    const { readEvidence: _read, schemaVersion: _version, ...identity } = data
+    const correctionId = yield* canonicalHashV1Result({
+      schemaVersion: 'bayn.fee-match-correction-id.v1',
+      ...identity,
+    }).pipe(Result.mapError(() => new BrokerFeeEvidenceError({ message: 'fee correction identity cannot be hashed' })))
+    const contentHash = yield* canonicalHashV1Result(data).pipe(
+      Result.mapError(() => new BrokerFeeEvidenceError({ message: 'fee correction evidence cannot be hashed' })),
+    )
+    const plan = brokerFeeLedgerPlan(
+      data.accountId,
+      `fee-match-correction:${correctionId}`,
+      `-${data.accrualCashMicros}`,
+      ledger,
+    )
+    return { data, correctionId, contentHash, plan }
+  })
+
 export const StoredFeeSchema = Schema.Struct({
-  data: BrokerFeeSchema,
+  data: FeeActivitySchema,
+  cash_match_corrections: Schema.Array(StoredFeeMatchCorrectionSchema),
   matched_cash_micros: UnsignedMicrosSchema,
   coin_cost_basis_micros: Schema.NullOr(UnsignedMicrosSchema),
   read_evidence: FeeReadEvidenceSchema,
@@ -38,7 +78,14 @@ export const verifyBrokerFeeRecord = (
   record: StoredBrokerFee,
   accountId: string,
   identity: { readonly clusterId: bigint; readonly ledger: number },
-): Result.Result<LedgerPlan, BrokerFeeEvidenceError> =>
+): Result.Result<
+  {
+    readonly originalPlan: LedgerPlan
+    readonly corrections: readonly { readonly record: StoredFeeMatchCorrection; readonly plan: LedgerPlan }[]
+    readonly cashDeltaMicros: string
+  },
+  BrokerFeeEvidenceError
+> =>
   Result.gen(function* () {
     const coin = record.data.coinDebit
     if (
@@ -82,7 +129,48 @@ export const verifyBrokerFeeRecord = (
           message: 'broker fee identity conflicts with its account, content, date or ledger evidence',
         }),
       )
-    return plan
+    const corrections: { record: StoredFeeMatchCorrection; plan: LedgerPlan }[] = []
+    const ids = new Set<string>()
+    let correctedCash = 0n
+    for (const correction of record.cash_match_corrections) {
+      const prepared = yield* prepareFeeMatchCorrection(correction.data, identity.ledger)
+      const correctionPlanHash = yield* hashLedgerPlanResult(prepared.plan).pipe(
+        Result.mapError(() => new BrokerFeeEvidenceError({ message: 'fee correction ledger cannot be hashed' })),
+      )
+      if (
+        coin !== undefined ||
+        record.data.cryptoCashFee === true ||
+        correction.data.accountId !== accountId ||
+        correction.data.activityId !== record.data.activityId ||
+        correction.data.feeContentHash !== record.content_hash ||
+        correction.data.readEvidence.observedAt < record.read_evidence.observedAt ||
+        correction.correction_id !== prepared.correctionId ||
+        correction.content_hash !== prepared.contentHash ||
+        correction.ledger_plan_hash !== correctionPlanHash ||
+        correction.tigerbeetle_cluster_id !== identity.clusterId.toString() ||
+        correction.tigerbeetle_ledger !== identity.ledger ||
+        ids.has(correction.data.accrualId)
+      )
+        return yield* Result.fail(
+          new BrokerFeeEvidenceError({ message: 'fee correction conflicts with its immutable source or ledger' }),
+        )
+      ids.add(correction.data.accrualId)
+      correctedCash += BigInt(correction.data.accrualCashMicros)
+      corrections.push({ record: correction, plan: prepared.plan })
+    }
+    if (correctedCash > BigInt(record.matched_cash_micros))
+      return yield* Result.fail(
+        new BrokerFeeEvidenceError({ message: 'fee correction exceeds the original matched cash' }),
+      )
+    return {
+      originalPlan: plan,
+      corrections,
+      cashDeltaMicros: (
+        BigInt(record.data.netAmountMicros) +
+        BigInt(record.matched_cash_micros) -
+        correctedCash
+      ).toString(),
+    }
   })
 
 const feeDateFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -93,5 +181,11 @@ const feeDateFormatter = new Intl.DateTimeFormat('en-CA', {
 })
 
 /** Alpaca supplies a trading date, not a fee settlement timestamp. */
-export const brokerFeePredatesOpeningCash = (fee: { readonly date: string }, openingObservedAt: string): boolean =>
-  fee.date < feeDateFormatter.format(new Date(openingObservedAt))
+export const brokerFeePredatesOpeningCash = (
+  fee: { readonly date: string; readonly cryptoCashFee?: true; readonly coinDebit?: unknown },
+  openingObservedAt: string,
+): boolean =>
+  fee.date <
+  (fee.cryptoCashFee === true || fee.coinDebit !== undefined
+    ? openingObservedAt.slice(0, 10)
+    : feeDateFormatter.format(new Date(openingObservedAt)))

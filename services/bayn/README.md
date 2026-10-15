@@ -1578,6 +1578,14 @@ watermark contracts used by the reporter. It preserves original numeric tokens f
 prices, applies the report ingestion cutoff, and counts only complete minutes in the archive row budget.
 Bayn's existing read-only ClickHouse identity requires `SELECT` on that one crypto source table.
 
+USD crypto `CFEE` receipts carry a cash debit without coin fields. Regulatory `FEE` receipts cannot settle crypto
+accruals. Crypto settlement cohorts derive their UTC date from every exact retained source fill; the original stored
+accrual metadata and hashes remain immutable. Migration 105 adds verified, immutable corrections for regulatory
+receipts previously matched to crypto accruals. The native reconciliation path posts the compensating ledger debit
+with a deterministic identifier, then matches the actual crypto receipt. Retries verify every original and correction
+plan. Pending corrections and corrections posted after a report cut prevent complete accounting evidence.
+Replay checkpoint v3 retains the same crypto cash-fee kind; earlier checkpoint versions are rejected.
+
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
 later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
 fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
@@ -1590,8 +1598,8 @@ matching feature availability. Admission, inference ranking, account allocation,
 remain shared with equities.
 
 Research inputs require frozen instrument metadata. The single replay execution core handles IOC orders and market
-recovery; simulated broker checkpoint v2 reconstructs coin and cash fee activities before exposing restored state.
-Study input v2 and checkpoint v2 replace their prior contracts. Existing frozen studies keep their original revision
+recovery; simulated broker checkpoint v3 reconstructs coin and cash fee activities before exposing restored state.
+Study input v2 and checkpoint v3 replace their prior contracts. Existing frozen studies keep their original revision
 and receipts; reruns require newly registered inputs and cannot inherit qualification from an older report. New native
 management observations require `entryInventoryDebit`, verified from posted accounting even when both values are zero.
 Historical observations remain immutable; readers reject records missing this evidence instead of inventing a fee debit.

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
 import type { Statement } from 'effect/sql/Statement'
 
@@ -44,6 +44,13 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { migrationLoader } from './migrations'
+import { prepareFeeAccrual } from '../accounting/fee-accrual'
+import { brokerFeeLedgerPlan } from '../accounting/domain'
+import { hashLedgerPlanResult } from '../ledger-plan'
+import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
+import type { FeeActivity } from '../broker/alpaca'
+import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { verifyBrokerStateVersion } from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
@@ -867,11 +874,34 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  test('observed crypto settlement commits before posting, survives failure and matches delayed receipts once', async () => {
+  test.each(['crypto', 'regulatory', 'retained'] as const)('crypto fee settlement: %s', async (scenario) => {
+    const historical = scenario === 'retained'
+    const hasRegulatory = scenario !== 'crypto'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        if (historical) {
+          yield* sql`DROP SCHEMA public CASCADE`
+          yield* sql`CREATE SCHEMA public`
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 105))),
+            table: 'schema_migrations',
+          }).pipe(Effect.provide(NodeServices.layer))
+        }
         const fence = yield* WriterFence
+        const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
+          Effect.gen(function* () {
+            const [row] = yield* sql<{
+              accrual_id: string
+              data: unknown
+              ledger_plan_hash: string
+            }>`SELECT accrual_id,data,ledger_plan_hash FROM broker_fee_accruals WHERE kind=${kind}`
+            if (row === undefined) throw new Error('Missing retained accrual')
+            const verified = Result.getOrThrow(prepareFeeAccrual(row.data, config.tigerBeetle.ledger))
+            expect(Result.getOrThrow(hashLedgerPlanResult(verified.plan))).toBe(row.ledger_plan_hash)
+            yield* journal(journalControl).post(verified.plan)
+            yield* sql`UPDATE broker_fee_accruals SET posted_at=${verified.data.observedAt} WHERE accrual_id=${row.accrual_id}`
+          })
         const events = yield* BrokerEventStore
         const accounting = yield* FillAccountingStore
         const valuations = yield* ValuationStore
@@ -1004,22 +1034,27 @@ describePostgres('PostgreSQL execution persistence', () => {
           cashReportingQuantumMicros: '1',
         })
         yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
-        journalControl.failPosts = true
-        expect(
-          yield* fence
-            .transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
-            .pipe(Effect.flip),
-        ).toMatchObject({ failure: 'ledger' })
-        const prepared = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
-        expect(prepared.map((row) => [row.coinQuantityAtoms, row.expenseMicros, row.posted])).toEqual([
-          ['82625', '200392', false],
-        ])
-        journalControl.failPosts = false
-        yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        if (historical) yield* fence.transaction(postRetainedAccrual('COIN'))
+        else {
+          journalControl.failPosts = true
+          expect(
+            yield* fence
+              .transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+              .pipe(Effect.flip),
+          ).toMatchObject({ failure: 'ledger' })
+          const prepared = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
+          expect(prepared.map((row) => [row.coinQuantityAtoms, row.expenseMicros, row.posted])).toEqual([
+            ['82625', '200392', false],
+          ])
+          journalControl.failPosts = false
+          yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        }
         yield* fence.transaction(prepareObservedCoinFees(sql, snapshot, config.tigerBeetle))
         yield* retainAccountCashReporting(sql, snapshot)
-        expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(1)
-        const sellAt = '2026-08-28T14:31:01.000Z'
+        if (historical)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM broker_fee_accruals`).toEqual([{ count: 1 }])
+        else expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(1)
+        const sellAt = historical ? '2026-08-29T00:01:01.000Z' : '2026-08-28T14:31:01.000Z'
         const sell = makeFill('observed-eth-sell', OrderSide.Sell, '32967375', '2500000000', sellAt)
         const sellOrder = yield* retain(sell)
         const cashAccount = { ...acct, cashMicros: '1002060000', equityMicros: '1002060000', observedAt: sellAt }
@@ -1058,8 +1093,91 @@ describePostgres('PostgreSQL execution persistence', () => {
             )
             .pipe(Effect.flip),
         ).toMatchObject({ failure: 'invariant' })
-        yield* fence.transaction(prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle))
-        yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        if (historical) {
+          const [source] = yield* sql<{
+            transaction_id: string
+            quantity_atoms: string
+            price_atoms: string
+          }>`SELECT transaction_id,quantity_atoms::text,price_atoms::text FROM accounting_transactions WHERE account_id=${accountId} AND side='SELL'`
+          const [projected] = yield* sql<{
+            cash: string
+          }>`SELECT ((SELECT a.cash_micros FROM account_snapshots a JOIN broker_events e USING(event_id) WHERE a.account_id=${accountId} ORDER BY e.source_sequence LIMIT 1)
+            +(SELECT sum(cash_delta_micros) FROM accounting_transactions WHERE account_id=${accountId})
+            +COALESCE((SELECT sum(cash_delta_micros) FROM broker_cash_fee_deltas WHERE account_id=${accountId}),0))::text AS cash`
+          if (source === undefined || projected === undefined) throw new Error('Missing historical source')
+          const legacy = Result.getOrThrow(
+            prepareFeeAccrual(
+              {
+                schemaVersion: 'bayn.broker-fee-accrual.v2',
+                kind: 'CASH',
+                accountId,
+                symbol: 'USD',
+                cycleId,
+                date: '2026-08-28',
+                observedAt: sellAt,
+                openingAccountEventId: acctReceipt.eventId,
+                openingCashReportingQuantumMicros: '10000',
+                accountEventId: cashReceipt.eventId,
+                projectedCashMicros: projected.cash,
+                observedCashMicros: cashAccount.cashMicros,
+                cashReportingQuantumMicros: '10000',
+                sourceTrades: [
+                  {
+                    transactionId: source.transaction_id,
+                    quantityAtoms: source.quantity_atoms,
+                    priceAtoms: source.price_atoms,
+                  },
+                ],
+              },
+              config.tigerBeetle.ledger,
+            ),
+          )
+          const legacyPlanHash = Result.getOrThrow(hashLedgerPlanResult(legacy.plan))
+          yield* fence.transaction(sql`INSERT INTO broker_fee_accruals(accrual_id,account_id,kind,symbol,cycle_id,fee_date,account_event_id,observed_at,
+            cash_debit_micros,expense_micros,data,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger)
+            VALUES(${legacy.accrualId},${accountId},'CASH','USD',${cycleId},'2026-08-28',${cashReceipt.eventId},${sellAt},
+              ${legacy.cashDebitMicros},${legacy.expenseMicros},${sql.json(legacy.data)},${legacy.contentHash},${legacyPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger})`)
+        } else yield* fence.transaction(prepareObservedCashFees(sql, cashSnapshot, config.tigerBeetle))
+        if (historical) yield* fence.transaction(postRetainedAccrual('CASH'))
+        else yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        const regulatory = {
+          accountId,
+          activityId: 'historical-regulatory-fee',
+          date: '2026-08-28',
+          netAmountMicros: '-1140000',
+        }
+        const regulatoryPlan = brokerFeeLedgerPlan(
+          accountId,
+          regulatory.activityId,
+          '-940000',
+          config.tigerBeetle.ledger,
+        )
+        if (historical) {
+          const [accrual] = yield* sql<{
+            accrual_id: string
+          }>`SELECT accrual_id FROM broker_fee_accruals WHERE kind='CASH'`
+          if (accrual === undefined) throw new Error('Missing historical cash accrual')
+          const readEvidence = {
+            requestId: 'settled-fees',
+            status: 200,
+            contentHash: hash('settled-fees'),
+            observedAt: sellAt,
+          }
+          yield* fence.transaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
+              VALUES(${accountId},${regulatory.activityId},${regulatory.date},${regulatory.netAmountMicros},${sql.json(regulatory)},${sql.json(readEvidence)},
+                ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...regulatory })},${Result.getOrThrow(hashLedgerPlanResult(regulatoryPlan))},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+              yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
+              VALUES(${accrual.accrual_id},${accountId},${regulatory.activityId},200000,200000)`
+            }),
+          )
+          yield* journal(journalControl).post(regulatoryPlan)
+          yield* sql`UPDATE broker_fee_accounting SET posted_at=${sellAt} WHERE activity_id=${regulatory.activityId}`
+          yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }).pipe(
+            Effect.provide(NodeServices.layer),
+          )
+        }
         expect(
           (yield* readFeeAccruals(sql, accountId, config.tigerBeetle))
             .map((row) => [row.data.kind, row.expenseMicros, row.posted])
@@ -1069,11 +1187,12 @@ describePostgres('PostgreSQL execution persistence', () => {
           ['COIN', '200392', true],
         ])
         expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe(
-          '-1942',
+          historical ? '0' : '-1942',
         )
         const cashAccrual = (yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).find(
           (row) => row.data.kind === 'CASH',
         )
+        expect(String(cashAccrual?.settlement_date)).toBe(sellAt.slice(0, 10))
         expect(cashAccrual?.data).toMatchObject({
           schemaVersion: 'bayn.broker-fee-accrual.v2',
           openingAccountEventId: acctReceipt.eventId,
@@ -1088,7 +1207,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             FROM broker_fee_accruals WHERE kind='CASH'`)
           .pipe(Effect.flip)
         expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(2)
-        const fees = [
+        const fees: Observed<FeeActivity>[] = [
           {
             value: {
               accountId,
@@ -1097,27 +1216,120 @@ describePostgres('PostgreSQL execution persistence', () => {
               netAmountMicros: '0',
               coinDebit: { symbol: 'ETH/USD', quantityAtoms: '82625', priceAtoms: '2425310000000' },
             },
-            evidence: { requestId: 'settled-fees', status: 200, contentHash: hash('settled-fees'), observedAt: sellAt },
+            evidence: {
+              requestId: 'settled-fees',
+              status: 200,
+              contentHash: hash('settled-fees'),
+              observedAt: sellAt,
+            },
           },
           {
-            value: { accountId, activityId: 'settled-cash-fee', date: '2026-08-28', netAmountMicros: '-206046' },
-            evidence: { requestId: 'settled-fees', status: 200, contentHash: hash('settled-fees'), observedAt: sellAt },
+            value: {
+              accountId,
+              activityId: 'settled-cash-fee',
+              date: sellAt.slice(0, 10),
+              cryptoCashFee: true as const,
+              netAmountMicros: '-206046',
+            },
+            evidence: {
+              requestId: 'settled-fees',
+              status: 200,
+              contentHash: hash('settled-fees'),
+              observedAt: sellAt,
+            },
           },
         ]
+        if (hasRegulatory)
+          fees.push({
+            value: regulatory,
+            evidence: {
+              requestId: 'settled-fees',
+              status: 200,
+              contentHash: hash('settled-fees'),
+              observedAt: sellAt,
+            },
+          })
         const post = Effect.gen(function* () {
           yield* fence.transaction(prepareFeeActivities(sql, accountId, fees, config.tigerBeetle))
           return yield* fence.transaction(
             postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle),
           )
         })
+        if (historical) {
+          yield* fence.transaction(prepareFeeActivities(sql, accountId, fees, config.tigerBeetle))
+          expect(yield* sql`SELECT count(*)::integer AS count FROM broker_fee_match_corrections`).toEqual([
+            { count: 1 },
+          ])
+          journalControl.failPosts = true
+          expect(
+            yield* fence
+              .transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+              .pipe(Effect.flip),
+          ).toMatchObject({ failure: 'ledger' })
+          expect(yield* sql`SELECT posted_at IS NULL AS pending FROM broker_fee_match_corrections`).toEqual([
+            { pending: true },
+          ])
+          journalControl.failPosts = false
+        }
         const result = yield* post
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
-        expect(result.cashDeltaMicros).toBe('-6046')
+        expect(result.cashDeltaMicros).toBe(hasRegulatory ? '-1146046' : '-6046')
         expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe('0')
-        expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual([6046n])
-        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at) VALUES(${hash('settlement-report-cut')},'bayn.paper-reconciliation.v1',${accountId},${hash('settlement-report-state')},${hash('settlement-report-state')},${hash('settlement-report-content')},'EXACT','[]'::jsonb,${sellAt})`
+        expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual(
+          historical ? [200000n, 940000n, 6046n] : hasRegulatory ? [1140000n, 6046n] : [6046n],
+        )
+        if (historical) {
+          const [original] = yield* sql<{
+            ledger_plan_hash: string
+          }>`SELECT ledger_plan_hash FROM broker_fee_accounting WHERE activity_id=${regulatory.activityId}`
+          expect(original?.ledger_plan_hash).toBe(Result.getOrThrow(hashLedgerPlanResult(regulatoryPlan)))
+          expect(
+            yield* sql`SELECT count(*)::integer AS count,bool_and(posted_at IS NOT NULL) AS posted FROM broker_fee_match_corrections`,
+          ).toEqual([{ count: 1, posted: true }])
+          expect(
+            yield* sql`SELECT count(*)::integer AS count FROM broker_fee_accrual_matches WHERE activity_id=${regulatory.activityId}`,
+          ).toEqual([{ count: 1 }])
+          const [cash] = yield* sql<{
+            cash: string
+          }>`SELECT ((SELECT a.cash_micros FROM account_snapshots a JOIN broker_events e USING(event_id) WHERE a.account_id=${accountId} ORDER BY e.source_sequence LIMIT 1)
+            +(SELECT sum(cash_delta_micros) FROM accounting_transactions WHERE account_id=${accountId})
+            +(SELECT sum(cash_delta_micros) FROM broker_cash_fee_deltas WHERE account_id=${accountId}))::text AS cash`
+          expect(cash?.cash).toBe('1000915896')
+          expect(reportedCashMicros(String(cash?.cash), '10000')).toBe('1000920000')
+        }
+        if (scenario === 'regulatory') {
+          expect(
+            yield* sql`SELECT count(*)::integer AS count FROM broker_fee_accrual_matches WHERE activity_id=${regulatory.activityId}`,
+          ).toEqual([{ count: 0 }])
+          expect(yield* sql`SELECT count(*)::integer AS count FROM broker_fee_match_corrections`).toEqual([
+            { count: 0 },
+          ])
+        }
+        const reportAt = hasRegulatory ? new Date(Date.parse(sellAt) + 2000).toISOString() : sellAt
+        if (hasRegulatory) {
+          const settledAccount = {
+            ...cashAccount,
+            cashMicros: '1000920000',
+            equityMicros: '1000920000',
+            observedAt: reportAt,
+          }
+          const settledReceipt = yield* events.ingest({
+            ...opening,
+            sourceEventId: 'after-regulatory-settlement',
+            contentHash: canonicalHashV1(settledAccount),
+            occurredAt: reportAt,
+            observedAt: reportAt,
+            account: settledAccount,
+          })
+          yield* retainAccountCashReporting(sql, {
+            ...cashSnapshot,
+            account: settledAccount,
+            accountEventId: settledReceipt.eventId,
+          })
+        }
+        yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at) VALUES(${hash('settlement-report-cut')},'bayn.paper-reconciliation.v1',${accountId},${hash('settlement-report-state')},${hash('settlement-report-state')},${hash('settlement-report-content')},'EXACT','[]'::jsonb,${reportAt})`
         yield* fence.transaction(
           Effect.gen(function* () {
             yield* sql`CREATE TEMP TABLE autonomous_cycles ON COMMIT DROP AS SELECT * FROM public.autonomous_cycles`
@@ -1130,7 +1342,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               openingCashReportingQuantumMicros: '1',
               closingCashReportingQuantumMicros: '10000',
             })
-            expect(report.cashYieldEvidence?.accountedCashDeltaMicros).toBe('2055896')
+            expect(report.cashYieldEvidence?.accountedCashDeltaMicros).toBe(hasRegulatory ? '915896' : '2055896')
           }),
         )
         yield* accounting.verifyCompleted([buy, sell])

@@ -103,10 +103,12 @@ import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandat
 import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
 import observedFeeAccruals from '../../migrations/0102_observed_fee_accruals'
 import cashFeeOpeningPrecision from '../../migrations/0103_cash_fee_opening_precision'
+import cryptoCashFeeSettlement from '../../migrations/0105_crypto_cash_fee_settlement'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '104_shadow_decision_generation_index': shadowDecisionGenerationIndex,
+  '105_crypto_cash_fee_settlement': cryptoCashFeeSettlement,
   '103_cash_fee_opening_precision': cashFeeOpeningPrecision,
   '102_observed_fee_accruals': observedFeeAccruals,
   '101_reclassify_expired_native_entry': reclassifyExpiredNativeEntry,

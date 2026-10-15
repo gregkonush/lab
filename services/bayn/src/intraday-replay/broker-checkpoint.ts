@@ -1,3 +1,4 @@
+import { FeeActivitySchema } from '../broker/fee-activity'
 import { replayFeeActivity } from './broker-fees'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { instrumentMarket, MarketKind, InstrumentSymbolSchema } from '../instruments'
@@ -87,7 +88,7 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v2'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v3'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -133,21 +134,7 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
         orderStatus: Schema.Enum(OrderStatus),
       }),
     ),
-    fees: Schema.Array(
-      Schema.Struct({
-        accountId: StrictNonEmptyStringSchema,
-        activityId: StrictNonEmptyStringSchema,
-        date: IsoDateSchema,
-        netAmountMicros: SignedMicrosSchema,
-        coinDebit: Schema.optionalKey(
-          Schema.Struct({
-            symbol: InstrumentSymbolSchema,
-            quantityAtoms: PositiveMicrosSchema,
-            priceAtoms: PositiveMicrosSchema,
-          }),
-        ),
-      }),
-    ),
+    fees: Schema.Array(FeeActivitySchema),
     sessionCloses: Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema, equityMicros: UnsignedMicrosSchema })),
   }),
   checkpointHash: Sha256Schema,
@@ -335,7 +322,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v2' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v3' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,
