@@ -62,8 +62,8 @@ test('Bayn dashboard requires both replica observations and retains buffer-pin w
   )
   const panels = metricPanels(dashboard.panels)
   const replica = panels
-    .find((panel) => panel.title === 'Cache health')
-    ?.targets.find((target) => target.legendFormat === 'Replica link')?.expr
+    .flatMap((panel) => panel.targets)
+    .find((target) => target.legendFormat === 'Replica link')?.expr
   const waits = panels.find((panel) => panel.title === 'Database I/O and lock waits')?.targets[0]?.expr
   if (replica === undefined || waits === undefined) throw new Error('Required Bayn dashboard query is missing')
   const cacheSeries = (metric: string, pod: string, value: number) => ({
