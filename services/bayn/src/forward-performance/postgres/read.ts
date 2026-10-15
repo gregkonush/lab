@@ -852,6 +852,9 @@ export const readForwardPerformancePostgresDataFirst = (
               })
         const cashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined =
           cashYieldRow === undefined ||
+          offsets.baseline === undefined ||
+          offsets.opening === undefined ||
+          offsets.closing === undefined ||
           cashYieldRow.opening_cash_reporting_quantum_micros === null ||
           cashYieldRow.closing_cash_reporting_quantum_micros === null
             ? undefined

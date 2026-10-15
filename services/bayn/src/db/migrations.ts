@@ -105,9 +105,11 @@ import observedFeeAccruals from '../../migrations/0102_observed_fee_accruals'
 import cashFeeOpeningPrecision from '../../migrations/0103_cash_fee_opening_precision'
 import cryptoCashFeeSettlement from '../../migrations/0105_crypto_cash_fee_settlement'
 import cashFeeOverrelease from '../../migrations/0106_cash_fee_overrelease'
+import feePostingAcknowledgements from '../../migrations/0107_fee_posting_acknowledgements'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '107_fee_posting_acknowledgements': feePostingAcknowledgements,
   '106_cash_fee_overrelease': cashFeeOverrelease,
   '104_shadow_decision_generation_index': shadowDecisionGenerationIndex,
   '105_crypto_cash_fee_settlement': cryptoCashFeeSettlement,
