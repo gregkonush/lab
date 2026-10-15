@@ -24,7 +24,6 @@ const fixture = nativeJevFixture()
 const session = exchangeSessions(fixture.snapshot.manifest.calendar)[0]
 if (session === undefined) throw new Error('Expected fixture calendar')
 const openMs = Date.parse(session.openAt)
-const closeMs = openMs + 60 * 60_000
 const simulate = (
   options: {
     action?: 'hold' | 'exit'
@@ -33,10 +32,12 @@ const simulate = (
     receiptLatencyMs?: number
     failed?: boolean
     partial?: boolean
+    sessionDurationMs?: number
   } = {},
 ) =>
   Effect.runPromise(
     Effect.gen(function* () {
+      const closeMs = openMs + (options.sessionDurationMs ?? 60 * 60_000)
       const fs = yield* FileSystem.FileSystem
       const directory = `${yield* fs.makeTempDirectoryScoped()}/evidence`
       const providerClock = yield* TestClock.make()
@@ -141,7 +142,7 @@ const simulate = (
   )
 
 test('a control manages its own partial entry, retries its model exit, and charges measured inference once', async () => {
-  const { report, requests, calls } = await simulate({ partial: true })
+  const { report, requests, calls } = await simulate({ partial: true, sessionDurationMs: 60 * 60_000 + 30_000 })
   expect(report.completion).toBe('COMPLETE')
   expect(report.completedEpisodes).toBeGreaterThan(5)
   const modelEpisodes = report.episodes.filter((episode) => episode.reason === ControlExit.Model)

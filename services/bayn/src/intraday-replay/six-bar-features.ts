@@ -64,6 +64,7 @@ export enum SixBarResearchStatus {
 }
 
 export enum SixBarUnavailableReason {
+  SessionHistory = 'six-completed-session-minutes-required',
   RetainedCut = 'retained-cut-unavailable',
   Bars = 'six-contiguous-bars-unavailable',
   Quote = 'quote-unavailable',
@@ -117,13 +118,16 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       request.symbols?.length !== 2 ||
       !request.symbols.includes(sixBarResearchDefinition.benchmarkSymbol) ||
       request.purpose !== undefined ||
-      end - start !== 6n * minute ||
+      end <= start ||
+      end - start > 6n * minute ||
       request.maximumQuoteAgeMs !== sixBarResearchDefinition.maximumQuoteAgeMs ||
       request.minimumWatermarkLagMs !== sixBarResearchDefinition.minimumWatermarkLagMs ||
       request.candidateEvidencePolicy !== sixBarResearchDefinition.candidateEvidencePolicy ||
       request.feed !== 'iex' ||
       request.delayClass !== 'real_time_exchange_only' ||
       session === undefined ||
+      Date.parse(request.rangeStartAt) !==
+        Math.max(Date.parse(session.openAt), Date.parse(request.rangeEndAt) - 6 * 60_000) ||
       observedAtMs >= Date.parse(session.closeAt)
     )
       return yield* Result.fail(
@@ -254,6 +258,11 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
     yield* validateIdentity(request, [...quotes, ...trades], request.observedAt, true)
     yield* validateBarStructure(request, bars)
     yield* validateBarStructure(request, publications)
+    if (end - start < 6n * minute)
+      return yield* unavailable(
+        SixBarUnavailableReason.SessionHistory,
+        'Waiting for six completed session minutes; no six-bar score is defined yet',
+      )
     for (const input of selected) {
       const present = new Set(input.bars.map((entry) => intradayInstantNanos(entry.value.eventAt)))
       const missing: string[] = []
