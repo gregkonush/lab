@@ -715,7 +715,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const account = flatAccountEvent()
         const accountReceipt = yield* events.ingest(account)
         const positionsReceipt = yield* events.ingestPositions(positionSnapshot(hash('opening-empty-positions'), []))
-        yield* valuations.value({
+        const valuation = yield* valuations.value({
           accountEventId: accountReceipt.eventId,
           positionSnapshotId: positionsReceipt.snapshotId,
         })
@@ -748,10 +748,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               apply(target, receiver, argumentsList) {
                 const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
                 const query = statement.compile()[0]
-                if (
-                  query.includes('FROM account_snapshots AS snapshot') &&
-                  query.includes('ORDER BY event.source_sequence')
-                )
+                if (query.includes('FROM account_snapshots') && query.includes('source_sequence'))
                   lookups.push(statement)
                 return statement
               },
@@ -761,9 +758,27 @@ describePostgres('PostgreSQL execution persistence', () => {
               evidence: { requestId: 'opening-fee-request', status: 200, contentHash: hash('opening-fee'), observedAt },
             }
             yield* prepareFeeActivities(monitored, accountId, [fee], config.tigerBeetle)
+            yield* prepareObservedCashFees(
+              monitored,
+              {
+                account: account.account,
+                accountEventId: accountReceipt.eventId,
+                cashReportingQuantumMicros: '1',
+                positions: [],
+                positionSnapshotId: positionsReceipt.snapshotId,
+                positionsObservedAt: observedAt,
+                orders: [],
+                ordersObservedAt: observedAt,
+                fills: [],
+                fees: [fee],
+                valuation,
+                reconciledAt: observedAt,
+              },
+              config.tigerBeetle,
+            )
             const opening = yield* readOpeningCash(monitored, accountId)
             expect(opening).toEqual({ cash_micros: '1000000000', observed_at: observedAt })
-            expect(lookups).toHaveLength(2)
+            expect(lookups).toHaveLength(3)
             for (const lookup of lookups) {
               const [query, parameters] = lookup.compile()
               const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
@@ -1176,9 +1191,10 @@ describePostgres('PostgreSQL execution persistence', () => {
           )
           yield* journal(journalControl).post(regulatoryPlan)
           yield* sql`UPDATE broker_fee_accounting SET posted_at=${sellAt} WHERE activity_id=${regulatory.activityId}`
-          yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }).pipe(
-            Effect.provide(NodeServices.layer),
-          )
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 108))),
+            table: 'schema_migrations',
+          }).pipe(Effect.provide(NodeServices.layer))
         }
         expect(
           (yield* readFeeAccruals(sql, accountId, config.tigerBeetle))
@@ -1245,9 +1261,10 @@ describePostgres('PostgreSQL execution persistence', () => {
             )
             yield* journal(journalControl).post(originalPlan)
             yield* sql`UPDATE broker_fee_accounting SET posted_at=${sellAt} WHERE activity_id=${partial.value.activityId}`
-            yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }).pipe(
-              Effect.provide(NodeServices.layer),
-            )
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 108))),
+              table: 'schema_migrations',
+            }).pipe(Effect.provide(NodeServices.layer))
           } else {
             expect(
               yield* fence

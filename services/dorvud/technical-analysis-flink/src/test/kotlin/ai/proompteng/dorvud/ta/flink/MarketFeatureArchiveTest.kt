@@ -9,7 +9,7 @@ import kotlin.test.assertNull
 class MarketFeatureArchiveTest {
   private val json = Json { encodeDefaults = true }
 
-  private fun fixture() = java.io.File("../../bayn/src/market-data/features/fixtures/rolling-price-v1.json").readText()
+  private fun fixture() = java.io.File("../../bayn/src/market-data/features/fixtures/observed-price-window-v1.json").readText()
 
   private fun record() = ArchiveKafkaRecord("torghut.market-features.v1", 2, 12, fixture())
 
@@ -78,9 +78,9 @@ class MarketFeatureArchiveTest {
     }
   }
 
-  @Test fun `archive rejects incomplete provenance even with recomputed content hash`() {
+  @Test fun `archive rejects missing range-completion provenance even with recomputed content hash`() {
     val feature = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
-    val material = feature.material.copy(inputs = feature.material.inputs.drop(1))
+    val material = feature.material.copy(inputs = feature.material.inputs.dropLast(1))
     val changed =
       feature.copy(
         material = material,

@@ -135,10 +135,11 @@ export const streamingFixtureFromRaw = (
   let offset = 0
   for (const symbol of request.purpose === undefined ? (request.symbols ?? []) : []) {
     const bars = raw.bars.filter((bar) => bar.symbol === symbol)
-    if (bars.length !== 30) continue
+    if (bars.length === 0 || !bars.some((bar) => Date.parse(bar.eventAt) === Date.parse(request.rangeEndAt) - 60_000))
+      continue
     const material = {
       schemaVersion: MarketFeatureContract.V1,
-      definitionId: MarketFeatureDefinition.RollingPrice30m,
+      definitionId: MarketFeatureDefinition.ObservedPriceWindow,
       definitionHash: equityMarketProfile.streamingInput.requiredDefinitionHash,
       provider: 'alpaca',
       feed: 'iex',
