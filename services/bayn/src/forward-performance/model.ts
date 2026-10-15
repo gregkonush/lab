@@ -340,6 +340,9 @@ export interface ForwardPerformanceEvidenceInput {
   readonly startingCapitalMicros?: string
   readonly transactions: readonly ForwardPerformanceTransactionEvidence[]
   readonly accountTransactions?: readonly AccountingTransaction[]
+  /** Verified cumulative account fee evidence, independent of the selected financial scope. */
+  readonly accountFeeAccruals?: readonly (typeof import('../db/fee-accruals').StoredAccrual.Type)[]
+  readonly accountBrokerFees?: readonly import('../accounting/broker-fees').StoredBrokerFee[]
   readonly brokerFeeAccruals?: readonly {
     readonly accrualId: string
     readonly accountId: string
