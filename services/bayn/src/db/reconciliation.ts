@@ -68,6 +68,7 @@ import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } from './broker-fees'
 import {
+  cashAccrualReportingOffsetMicros,
   prepareObservedCoinFees,
   prepareObservedCashFees,
   readFeeAccruals,
@@ -118,6 +119,7 @@ interface AccountingReadPhase {
   readonly fees: readonly FeeActivity[]
   readonly accruals: readonly FeeAccrual[]
   readonly brokerFeeCashDeltaMicros: string
+  readonly cashReportingOffsetMicros: string
 }
 
 interface ComparisonReadPhase {
@@ -556,6 +558,7 @@ export const makeReconciliation = (
           ledgerExact,
           fees: feeAccounting.fees,
           accruals: accruals.map((accrual) => accrual.data),
+          cashReportingOffsetMicros: cashAccrualReportingOffsetMicros(accruals),
           brokerFeeCashDeltaMicros: (
             BigInt(feeAccounting.cashDeltaMicros) -
             accruals.reduce((sum, accrual) => sum + BigInt(accrual.cashDebitMicros ?? '0'), 0n)
@@ -621,6 +624,7 @@ export const makeReconciliation = (
             fees: accounting.fees,
             brokerFeeAccruals: accounting.accruals,
             brokerFeeCashDeltaMicros: accounting.brokerFeeCashDeltaMicros,
+            cashReportingOffsetMicros: accounting.cashReportingOffsetMicros,
             receipts: accounting.receipts,
             ledgerExact: accounting.ledgerExact,
             snapshot,

@@ -418,6 +418,7 @@ export const compareOpeningCash = (input: {
   readonly transactions: readonly AccountingTransaction[]
   readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
   readonly brokerFeeAccruals: readonly FeeAccrual[]
+  readonly cashReportingOffsetMicros: string
   readonly brokerFeeCashDeltaMicros: string
   readonly receipts: readonly AccountingReceipt[]
   readonly ledgerExact: boolean
@@ -454,9 +455,13 @@ export const compareOpeningCash = (input: {
         })
     }
     expectedCash += yield* parseAccountingAmount('transaction-cash-delta', input.brokerFeeCashDeltaMicros)
-    const expectedCashMicros = reportedCashMicros(expectedCash.toString(), input.snapshot.cashReportingQuantumMicros)
+    const reportingOffset = yield* parseAccountingAmount('transaction-cash-delta', input.cashReportingOffsetMicros)
+    const expectedCashMicros = reportedCashMicros(
+      (expectedCash + reportingOffset).toString(),
+      input.snapshot.cashReportingQuantumMicros,
+    )
     const accountingHashValue = yield* accountingHash({
-      schemaVersion: 'bayn.accounting-state.v2',
+      schemaVersion: 'bayn.accounting-state.v3',
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
@@ -464,6 +469,7 @@ export const compareOpeningCash = (input: {
       brokerFeeAccruals: input.brokerFeeAccruals,
       brokerFeeCashDeltaMicros: input.brokerFeeCashDeltaMicros,
       cashReportingQuantumMicros: input.snapshot.cashReportingQuantumMicros,
+      cashReportingOffsetMicros: input.cashReportingOffsetMicros,
       receipts: input.receipts,
       ledgerExact: input.ledgerExact,
     })

@@ -206,6 +206,7 @@ const comparisonInput = (status: AccountStatus = AccountStatus.Active): Paramete
     receipts: [receipt],
     ledgerExact: true,
     brokerFeeAccruals: [],
+    cashReportingOffsetMicros: '0',
     brokerFeeCashDeltaMicros: '0',
     snapshot: {
       cashReportingQuantumMicros: '1',
@@ -434,7 +435,7 @@ describe('PostgreSQL reconciliation algebra', () => {
 
     expect(result.accountingHash).toBe(
       canonicalHashV1({
-        schemaVersion: 'bayn.accounting-state.v2',
+        schemaVersion: 'bayn.accounting-state.v3',
         cashReportingQuantumMicros: '1',
         accountId,
         openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
@@ -442,6 +443,7 @@ describe('PostgreSQL reconciliation algebra', () => {
         receipts: [receipt],
         ledgerExact: true,
         brokerFeeAccruals: [],
+        cashReportingOffsetMicros: '0',
         brokerFeeCashDeltaMicros: '0',
       }),
     )
@@ -452,6 +454,42 @@ describe('PostgreSQL reconciliation algebra', () => {
       positionDifferenceMicros: '0',
       equityDifferenceMicros: '0',
     })
+  })
+
+  test('cash reconciliation carries a witnessed reporting residual across a later buy without a cent tolerance', () => {
+    const input = comparisonInput()
+    const currentCash = '99796960000'
+    const compare = (offset: string, observedCash: string) =>
+      successOf(
+        compareOpeningCash({
+          ...input,
+          openingCash: { ...input.openingCash, cash_micros: '99796953702' },
+          transactions: [],
+          receipts: [],
+          intents: [],
+          durableFills: [],
+          projectedPositions: [],
+          cashReportingOffsetMicros: offset,
+          snapshot: {
+            ...input.snapshot,
+            cashReportingQuantumMicros: '10000',
+            positions: [],
+            orders: [],
+            fills: [],
+            account: { ...input.snapshot.account, cashMicros: observedCash, equityMicros: observedCash },
+            valuation: {
+              ...input.snapshot.valuation,
+              cashMicros: observedCash,
+              equityMicros: observedCash,
+              longMarketValueMicros: '0',
+            },
+          },
+        }),
+      )
+    expect(compare('0', currentCash).comparison.metrics.cashDifferenceMicros).not.toBe('0')
+    expect(compare('3024', currentCash).comparison.metrics.cashDifferenceMicros).toBe('0')
+    expect(compare('3024', '99796970000').comparison.metrics.cashDifferenceMicros).not.toBe('0')
+    expect(compare('3024', currentCash).accountingHash).not.toBe(compare('0', currentCash).accountingHash)
   })
 
   test('returns exact accounting amount and canonicalization failures without throwing', () => {
@@ -512,6 +550,7 @@ describe('PostgreSQL reconciliation algebra', () => {
         receipts: [receipt],
         ledgerExact: true,
         brokerFeeAccruals: [],
+        cashReportingOffsetMicros: '0',
         brokerFeeCashDeltaMicros: '0',
         snapshot: {
           cashReportingQuantumMicros: '1',
@@ -552,6 +591,7 @@ describe('PostgreSQL reconciliation algebra', () => {
         receipts: [],
         ledgerExact: true,
         brokerFeeAccruals: [],
+        cashReportingOffsetMicros: '0',
         brokerFeeCashDeltaMicros: '0',
         snapshot: {
           cashReportingQuantumMicros: '1',

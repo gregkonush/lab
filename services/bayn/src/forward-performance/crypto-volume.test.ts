@@ -46,6 +46,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       high: '103.123456789',
       low: '103.123456789',
       close: '103.123456789',
+      native_payload: `{"T":"b","S":"${symbol}","t":"${new Date(end + minute * 60_000).toISOString()}","o":103.123456789,"h":103.123456789,"l":103.123456789,"c":103.123456789,"v":0.031234567}`,
       is_final: '1',
     }))
     const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(request, archive, bars))

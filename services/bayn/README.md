@@ -1555,6 +1555,16 @@ The forward-performance reader uses the same snapshot calendar and feed contract
 reports retain `us`, `real_time_crypto`, fractional quantities, and the finite execution window. Volume evidence v2
 uses complete recorded minute bars within that window; it does not label a short crypto cycle as a whole-day volume.
 Missing bars leave capacity unknown. Retained reports keep their original hashes.
+The archive adapter reads Dorvud's native `signal.crypto_market_events_v1` into the same bar, quote, trade, and
+watermark contracts used by the reporter. It preserves original numeric tokens for fractional volume and terminal
+prices, applies the report ingestion cutoff, and counts only complete minutes in the archive row budget.
+Bayn's existing read-only ClickHouse identity requires `SELECT` on that one crypto source table.
+
+Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
+later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
+fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
+An inexact close reconciliation returns `CLOSE_RECONCILIATION_PENDING` at the regular reconciliation cadence before
+reading archive data or binding a liquidation document; exact evidence resumes the same close path.
 
 Each crypto observation evaluates BTC/USD, ETH/USD, and SOL/USD together. Candidate exclusions preserve independent
 opportunities and required benchmark failures. Snapshot failure logs include per-symbol bar coverage, quote age, and
