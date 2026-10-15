@@ -67,6 +67,11 @@ spec:
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
