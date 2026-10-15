@@ -322,6 +322,8 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
                   SELECT 1
                   FROM autonomous_cycle_shadow_decisions AS decision
                   WHERE decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
+                  -- Retain correlation so the planner cannot hash and decode every historical JSON document.
+                  OFFSET 0
                 )
                 AND NOT EXISTS (
                   SELECT 1

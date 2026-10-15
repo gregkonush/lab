@@ -588,6 +588,9 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   Controller scheduling, internal stages, PostgreSQL and broker spans can be inspected together in Tempo and joined
   to structured logs. Propagation reads existing context without adding durable commands or I/O.
 - PostgreSQL is the authoritative cycle, grant, intent, mutation, reconciliation, and controller-status ledger.
+- Generation settlement indexes the immutable decision document's authority-generation binding. Its existence probe
+  stays correlated with the current generation, so PostgreSQL cannot hash and decode unrelated historical evidence.
+  Migration 102 adds the expression index; the recovery predicates, row locks and authority checks remain unchanged.
 - Each writer transaction reserves its own PostgreSQL connection and holds the advisory fence through commit or
   rollback. A disconnected transaction fails without replaying its writes; the next pass obtains a usable connection
   and reconciles durable state. Nested fence calls stay in their owning transaction.
