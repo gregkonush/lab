@@ -3876,7 +3876,7 @@ data:
             runbook_url: docs/runbooks/bayn-cache-observability.md
         - alert: BaynValkeyReplicaUnavailable
           expr: max(redis_connected_slaves{job="bayn-valkey",namespace="bayn"}) < 1 or max(redis_master_link_up{job="bayn-valkey",namespace="bayn"})
-            < 1
+            < 1 or sum(absent(redis_connected_slaves{job="bayn-valkey",namespace="bayn"})) > 0 or sum(absent(redis_master_link_up{job="bayn-valkey",namespace="bayn"})) > 0
           for: 1m
           labels:
             team: trading

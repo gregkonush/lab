@@ -310,3 +310,61 @@ tests:
   - eval_time: 10m
     alertname: BaynGenerationIndexUnavailable
     exp_alerts: []
+
+- name: missing connected-replica observation remains unavailable with healthy exporters
+  interval: 15s
+  input_series:
+  - series: up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_master_link_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyReplicaUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn Valkey has lost its required replica
+        description: Bayn requires one acknowledged replica before publishing broker observations. Recover the peer and inspect
+          link/offset history; do not weaken WAIT.
+        runbook_url: docs/runbooks/bayn-cache-observability.md
+
+- name: missing replica-link observation remains unavailable with healthy exporters
+  interval: 15s
+  input_series:
+  - series: up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  - series: redis_up{job="bayn-valkey",namespace="bayn",pod="b"}
+    values: 1+0x80
+  - series: redis_connected_slaves{job="bayn-valkey",namespace="bayn",pod="a"}
+    values: 1+0x80
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: BaynValkeyReplicaUnavailable
+    exp_alerts:
+    - exp_labels:
+        team: trading
+        namespace: bayn
+        service: bayn-valkey
+        notify: email
+        severity: critical
+      exp_annotations:
+        summary: Bayn Valkey has lost its required replica
+        description: Bayn requires one acknowledged replica before publishing broker observations. Recover the peer and inspect
+          link/offset history; do not weaken WAIT.
+        runbook_url: docs/runbooks/bayn-cache-observability.md

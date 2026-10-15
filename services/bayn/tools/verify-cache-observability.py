@@ -56,11 +56,14 @@ def verify(args):
 
     app = f'namespace="bayn",source_revision="{args.source}",service=~"bayn|bayn-execution-controller"'
     heartbeat = query(f"bayn_telemetry_heartbeat_timestamp_seconds{{{app}}}")
+    heartbeat_checked_at = time.time()
     for service in ["bayn", "bayn-execution-controller"]:
         rows = [row for row in heartbeat if row["metric"].get("service") == service]
         require(len(rows) == 2, f"expected two source-bound heartbeats for {service}")
         require(
-            all(0 <= now - float(row["value"][1]) < 90 for row in rows),
+            all(
+                0 <= heartbeat_checked_at - float(row["value"][1]) < 90 for row in rows
+            ),
             f"stale {service} heartbeat",
         )
 
@@ -94,10 +97,8 @@ def verify(args):
         ),
         "histogram buckets are missing",
     )
-    require(
-        values(f'sum(bayn_valkey_reads_total{{{app},outcome="hit"}})')[0] > 0,
-        "native cache hits are absent",
-    )
+    hits = values(f'sum(bayn_valkey_reads_total{{{app},outcome="hit"}})')
+    require(bool(hits) and hits[0] > 0, "native cache hits are absent")
     require(
         len(query(f"bayn_broker_materialization_bytes_count{{{app}}}")) > 0,
         "payload byte histograms are absent",

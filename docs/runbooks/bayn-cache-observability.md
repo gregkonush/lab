@@ -47,7 +47,7 @@ The `bayn-cache-performance.rules` Mimir group contains eight rules. They use th
 | Alert                             | Trigger and next evidence                                                                                                                                                                  |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `BaynValkeyMetricsUnavailable`    | Fewer than two healthy exporter/server pairs for two minutes. Check discovery, scrape errors and both pods.                                                                                |
-| `BaynValkeyReplicaUnavailable`    | No connected replica or replica link down for one minute. Publication requires WAIT; recover the peer.                                                                                     |
+| `BaynValkeyReplicaUnavailable`    | No connected replica, replica link down or missing replication observation for one minute. Publication requires WAIT; recover the peer.                                                    |
 | `BaynValkeyMemoryPressure`        | More than 85% of configured cache memory for ten minutes. Inspect payload bytes and expiry; `noeviction` can reject writes.                                                                |
 | `BaynValkeyPublicationFailure`    | A failed replicated put in the last five minutes, held for one minute. Join failure category with the publication trace.                                                                   |
 | `BaynValkeyLatencyHigh`           | Successful GET/PUT p99 above 250ms for five minutes, with at least twenty samples. Compare SET, WAIT and queueing. This diagnostic threshold is one quarter of the command deadline.       |
@@ -85,7 +85,7 @@ histograms, cache hits, payload sizes, index validity/activity, evaluated rules,
 traces. A quiet server can have old log timestamps; the verifier searches forty-eight hours. Inspect Grafana's loaded
 dashboard and its panel queries after acceptance. Notification delivery and a long-term latency SLO are separate evidence.
 
-Validate the thirteen missing-data/threshold behavior cases with the existing native PromQL test harness.
+Validate the fifteen missing-data/threshold behavior cases with the existing native PromQL test harness.
 Use `promtool` 3.5.0 on `PATH`, or set `PROMTOOL` to its executable; CI already provisions the pinned checker.
 
 ```sh
