@@ -73,7 +73,10 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.3`; journals from another VMM revision require fenced recovery. Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
+`1.16.1+tengri-async-io.4`; journals from another VMM revision require fenced recovery. Disk requests start on the
+bounded io_uring workers, so buffered I/O cannot run inline on the VMM thread that also handles terminal vsock traffic.
+The ring requires both pre-registered files and asynchronous execution for every operation.
+Snapshot-backed mappings use random-read advice during demand-paged restore to avoid reading unused
 guest RAM. Full snapshot capture resets normal readahead before reading every page. Snapshot restore consumes the
 generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume

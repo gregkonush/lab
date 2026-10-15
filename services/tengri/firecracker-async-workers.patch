@@ -32,3 +32,32 @@
 +
          if let Some(eventfd) = eventfd {
              instance.register_eventfd(eventfd)?;
+--- a/src/vmm/src/io_uring/operation/mod.rs
++++ b/src/vmm/src/io_uring/operation/mod.rs
+@@ -132,9 +132,11 @@
+
+         inner.opcode = self.opcode as u8;
+         inner.fd = i32::try_from(self.fd).unwrap();
+         // Simplifying assumption that we only used pre-registered FDs.
+-        inner.flags = self.flags | (1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT);
++        inner.flags = self.flags
++            | (1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT)
++            | (1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT);
+
+         if let Some(addr) = self.addr {
+             inner.__bindgen_anon_2.addr = addr as u64;
+         }
+--- a/src/vmm/src/io_uring/restriction.rs
++++ b/src/vmm/src/io_uring/restriction.rs
+@@ -45,9 +45,10 @@
+                     io_uring_register_restriction_op::IORING_RESTRICTION_SQE_FLAGS_REQUIRED,
+                 )
+                 .unwrap();
+                 instance.__bindgen_anon_1.sqe_flags =
+-                    1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT;
++                    (1 << io_uring_sqe_flags_bit::IOSQE_FIXED_FILE_BIT)
++                        | (1 << io_uring_sqe_flags_bit::IOSQE_ASYNC_BIT);
+             }
+         };
+
+         instance
