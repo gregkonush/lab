@@ -107,6 +107,7 @@ interface SqlObservation {
 interface SqlFixture {
   readonly cashReportingQuantumMicros?: '1' | '10000' | null
   readonly extraReconciliationDiscrepancy?: boolean
+  readonly cryptoCashMatch?: string
   readonly brokerFeeTimes?: {
     readonly firstObservedAt: string
     readonly postedAt: string | null
@@ -129,9 +130,10 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                   activityId: 'synthetic-delayed-fee',
                   date: '2026-07-20',
                   netAmountMicros: '-100',
+                  ...(fixture.cryptoCashMatch === undefined ? {} : { cryptoCashFee: true }),
                 },
                 cash_match_corrections: [],
-                matched_cash_micros: '0',
+                matched_cash_micros: fixture.cryptoCashMatch ?? '0',
                 coin_cost_basis_micros: null,
                 read_evidence: {
                   requestId: 'synthetic-fee-read',
@@ -148,7 +150,7 @@ const makeReadOnlySql = (observation: SqlObservation, fixture: SqlFixture = {}):
                 last_correction_posted_at: null,
                 posted_at: times.postedAt === null ? null : new Date(times.postedAt),
                 includes_generation: true,
-                includes_other_generation: false,
+                includes_other_generation: fixture.cryptoCashMatch !== undefined,
               },
             ],
       )
@@ -415,6 +417,28 @@ const marketReaderConfig = {
 }
 
 describe('forward performance read program', () => {
+  test.each([
+    ['100', 0],
+    ['99', 1],
+  ] as const)(
+    'attributes only incremental crypto cash expense across generations (matched=%s)',
+    async (matched, ambiguous) => {
+      const sql = makeReadOnlySql(
+        { statements: [] },
+        {
+          cryptoCashMatch: matched,
+          brokerFeeTimes: { firstObservedAt: '2026-07-20T21:00:00.000Z', postedAt: '2026-07-20T21:00:00.000Z' },
+        },
+      )
+      const data = await Effect.runPromise(
+        readForwardPerformancePostgres(sql, identityResult.success.accountId, hash('9')),
+      )
+      expect(data.brokerFeeRecords).toHaveLength(1)
+      expect(data.ambiguousBrokerFeeCount).toBe(ambiguous)
+      expect(data.generationBrokerFeeIds).toEqual([])
+    },
+  )
+
   test.each([
     ['at-cut', '2026-07-20T21:01:00.000Z', '2026-07-20T21:01:00.000Z', 0],
     ['observed-after-cut', '2026-07-20T21:01:00.001Z', '2026-07-20T21:01:00.001Z', 1],
@@ -895,8 +919,8 @@ describe('forward performance read program', () => {
           marketVolumeRequests: [],
           unclosedCycleCount: 0,
           unresolvedMutationCount: 0,
-          openPositionCount: 1,
-          accountOpenPositionCount: 0,
+          openPositionCount: 0,
+          accountReconciliation: { reconciledAt: '2026-09-18T21:00:00.000Z', performanceExact: true },
           unaccountedFillCount: 0,
           postReconciliationActivityCount: 0,
         }),
@@ -919,7 +943,7 @@ describe('forward performance read program', () => {
       Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
     expect(report.positionEpisodes).toMatchObject({
-      schemaVersion: 'bayn.position-episode-evidence.v2',
+      schemaVersion: 'bayn.position-episode-evidence.v3',
       status: 'MEASURED',
       completedCount: 0,
       crossScopeCount: 1,
