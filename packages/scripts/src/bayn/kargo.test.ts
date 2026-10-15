@@ -11,6 +11,20 @@ const stage = stages.find((document) => document.getIn(['metadata', 'name']) ===
 const steps = stage.spec.promotionTemplate.spec.steps
 const build = read('.github/workflows/bayn-build-push.yml')
 
+test('a newer unpublished main commit cannot hold a verified Bayn image or mix its source binding', () => {
+  const warehouses = YAML.parseAllDocuments(
+    readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
+  )
+  const warehouse = warehouses.find((document) => document.getIn(['metadata', 'name']) === 'bayn')?.toJSON()
+  expect(warehouse.spec.subscriptions.some((subscription: { git?: unknown }) => subscription.git !== undefined)).toBe(
+    false,
+  )
+  expect(steps[0].config.checkout[0].commit).toBe(
+    "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}",
+  )
+  expect(JSON.stringify(steps)).not.toContain('commitFrom(vars.gitRepo)')
+})
+
 test('delivers the sealed Jev credential only to the worker without blocking independent recovery when absent', () => {
   const secret = read('argocd/applications/bayn/jev-sealedsecret.yaml')
   expect(secret.metadata).toMatchObject({
@@ -135,7 +149,7 @@ test('keeps the reviewed GitOps identity consistent with the image build', () =>
   }
 })
 
-test('correlates automatic Bayn Freight with the exact immutable build inputs', () => {
+test('discovers only immutable main-published Bayn images with matching source annotations', () => {
   const warehouses = YAML.parseAllDocuments(
     readFileSync(new URL('argocd/applications/kargo/warehouses.yaml', root), 'utf8'),
   )
@@ -147,9 +161,23 @@ test('correlates automatic Bayn Freight with the exact immutable build inputs', 
     source_revision: '${{ github.sha }}',
     tag: 'sha-${{ github.sha }}',
   })
-  const paths = build.on.push.paths.map((path: string) => path.replace(/\/\*\*$/, ''))
-  expect(warehouse.spec.subscriptions[0].git.includePaths).toEqual(
-    paths.map((path: string) => (path.includes('*') ? `glob:${path}` : path)),
+  expect(build.jobs.image.with.publish_on_dispatch).toBe(false)
+  expect(build.on.push.paths).toEqual(
+    expect.arrayContaining(['services/bayn/**', 'nix/images/bayn.nix', 'argocd/applications/bayn/**']),
+  )
+  expect(warehouse.spec.subscriptions).toHaveLength(1)
+  expect(warehouse.spec.subscriptions[0].image).toMatchObject({
+    repoURL: 'registry.ide-newton.ts.net/lab/bayn',
+    imageSelectionStrategy: 'NewestBuild',
+    allowTagsRegexes: ['^kargo-sha-[0-9a-f]{40}$'],
+    cacheByTag: true,
+  })
+  const image = "imageFrom('registry.ide-newton.ts.net/lab/bayn')"
+  expect(warehouse.spec.freightCreationCriteria.expression).toContain(
+    `${image}.Tag == 'kargo-sha-' + ${image}.Annotations['org.opencontainers.image.revision']`,
+  )
+  expect(warehouse.spec.freightCreationCriteria.expression).toContain(
+    `${image}.Annotations['org.opencontainers.image.source'] == 'https://github.com/proompteng/lab'`,
   )
 })
 
@@ -168,7 +196,9 @@ test('writes source, digest, and research lineage into the correct field in ever
       const match = /^spec\.template\.spec\.containers\.0\.env\.(\d+)\.value$/.exec(change.key)
       if (match) assignments.set(environment[Number(match[1])].name, change.value)
     }
-    expect(assignments.get('BAYN_CODE_REVISION')).toBe('${{ commitFrom(vars.gitRepo).ID }}')
+    expect(assignments.get('BAYN_CODE_REVISION')).toBe(
+      "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}",
+    )
     expect(assignments.get('BAYN_IMAGE_DIGEST')).toBe('${{ imageFrom(vars.imageRepo).Digest }}')
     const lineage = assignments.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
     const configuredLineage = environment.some(
@@ -221,7 +251,10 @@ test.each([
   )
   expect(labels).toHaveLength(2)
   for (const update of labels) {
-    const expanded = update.value.replace('${{ commitFrom(vars.gitRepo).ID[0:12] }}', revision.slice(0, 12))
+    const expanded = update.value.replace(
+      "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'][0:12] }}",
+      revision.slice(0, 12),
+    )
     const rendered = YAML.parse(`version: ${expanded}`).version
     expect(typeof rendered).toBe('string')
     expect(rendered).toBe(`sha-${revision.slice(0, 12)}`)

@@ -125,6 +125,7 @@ def bootstrap():
                 "identityProviders",
                 "identityProviderMappers",
                 "clients",
+                "loginTheme",
             }
         }
         if not contains(current, scalar):
@@ -223,7 +224,15 @@ def bootstrap():
         request("PUT", client_path, token, {"secret": secret}, expected=(204,))
         if request("GET", client_path + "/client-secret", token).get("value") != secret:
             raise RuntimeError("Dedicated client credential reconciliation failed")
-    request("PUT", path, token, {"enabled": True}, expected=(204,))
+    request(
+        "PUT",
+        path,
+        token,
+        {"enabled": True, "loginTheme": realm["loginTheme"]},
+        expected=(204,),
+    )
+    if request("GET", path, token).get("loginTheme") != realm["loginTheme"]:
+        raise RuntimeError("Dedicated login theme reconciliation failed")
     print(
         "Dedicated Tengri realm, immutable GitHub identity and passkey requirements verified"
     )

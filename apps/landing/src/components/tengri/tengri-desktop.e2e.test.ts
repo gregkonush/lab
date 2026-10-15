@@ -138,11 +138,10 @@ type MockOptions = {
   blockDraftStorage?: boolean
   codexAuthenticated?: boolean
   codexModels?: typeof codexModelFixtures
-  failCodexModels?: boolean
+  codexModelsError?: { status: number; error: string; code?: string }
   failCreateOnce?: boolean
   commitFailedCreate?: boolean
   failSendTurnOnce?: boolean
-  legacyCodexModels?: boolean
   paginateCodexModels?: boolean
   deferSleepReconciliation?: boolean
   extraFiles?: typeof workspaceEntries
@@ -678,18 +677,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-models':
-        if (options.legacyCodexModels) {
-          await route.fulfill({
-            status: 412,
-            json: {
-              error: 'Model selection needs an updated guest. Chat continues with existing Codex settings.',
-              code: 'model_selection_unavailable',
-            },
-          })
-          return
-        }
-        if (options.failCodexModels) {
-          await route.fulfill({ status: 503, json: { error: 'Codex model catalog unavailable' } })
+        if (options.codexModelsError) {
+          const { status, ...body } = options.codexModelsError
+          await route.fulfill({ status, json: body })
           return
         }
         result = options.paginateCodexModels
@@ -1787,65 +1777,46 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
     })
 })
 
-test('reports a model catalog outage and retries without creating a conversation', async ({ page }) => {
-  const options = { failCodexModels: true }
-  const mock = await mockTengri(page, options)
-  await page.goto('/')
-  const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByRole('alert')).toContainText('Codex model catalog unavailable')
-  await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
-  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
-  expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
-  options.failCodexModels = false
-  await tengri.getByRole('button', { name: 'Retry models' }).click()
-  await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
-  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeEnabled()
-})
-
 for (const savedThread of [false, true]) {
-  test(`continues ${savedThread ? 'saved' : 'new'} conversations while model selection awaits a guest update`, async ({
-    page,
-  }) => {
-    const options = { legacyCodexModels: true }
-    const mock = await mockTengri(page, options)
-    if (savedThread) {
-      await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
-    }
-    await page.goto('/')
-    const tengri = page.getByRole('region', { name: 'Tengri window' })
-    await expect(tengri.getByRole('alert')).toContainText('Chat continues with existing Codex settings')
-    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
-    await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Continue in this workspace')
-    await tengri.getByRole('button', { name: 'Send message' }).click()
-    await expect.poll(() => mock.actions.some((action) => action.action === 'send-turn')).toBe(true)
-    for (const action of mock.actions.filter((action) =>
-      ['create-thread', 'resume-thread', 'send-turn'].includes(String(action.action)),
-    )) {
-      expect(action).not.toHaveProperty('model')
-      expect(action).not.toHaveProperty('reasoningEffort')
-    }
-    expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
-    await emitCodexEvent(page, {
-      sequence: 1,
-      kind: 'thread-state',
-      method: 'turn/completed',
-      threadId: savedThread ? 'thread-existing' : 'thread-1',
-      turnId: 'turn-1',
-      itemId: '',
-      approvalId: '',
-      text: '',
-      rawJson: '{"params":{"turn":{"id":"turn-1","status":"completed"}}}',
+  for (const catalogFailure of [
+    { name: 'catalog outage', status: 503 },
+    { name: 'retired capability response', status: 412, code: 'model_selection_unavailable' },
+  ]) {
+    test(`blocks new turns in ${savedThread ? 'saved' : 'new'} conversations after a ${catalogFailure.name}`, async ({
+      page,
+    }) => {
+      const options: MockOptions = {
+        codexModelsError: { ...catalogFailure, error: 'Codex model catalog unavailable' },
+      }
+      const mock = await mockTengri(page, options)
+      if (savedThread) {
+        await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+      }
+      await page.goto('/')
+      const tengri = page.getByRole('region', { name: 'Tengri window' })
+      await expect(tengri.getByRole('alert')).toContainText('Codex model catalog unavailable')
+      await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
+      if (savedThread) {
+        await expect.poll(() => mock.actions.some((action) => action.action === 'resume-thread')).toBe(true)
+      }
+      const composer = tengri.getByRole('textbox', { name: 'Message your agent' })
+      await composer.fill('Use the selected settings')
+      await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      await composer.press('Enter')
+      expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(
+        false,
+      )
+      options.codexModelsError = undefined
+      await tengri.getByRole('button', { name: 'Retry models' }).click()
+      await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+      await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
+      await tengri.getByRole('button', { name: 'Send message' }).click()
+      await expect
+        .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
+        .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
+      expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(!savedThread)
     })
-    options.legacyCodexModels = false
-    await tengri.getByRole('button', { name: 'Retry models' }).click()
-    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
-    await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Reasoning effort' }), 'High')
-    await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Use the selected settings')
-    await tengri.getByRole('button', { name: 'Send message' }).click()
-    await expect
-      .poll(() => mock.actions.filter((action) => action.action === 'send-turn').at(-1))
-      .toMatchObject({ model: 'gpt-6.1-sol', reasoningEffort: 'high', text: 'Use the selected settings' })
-  })
+  }
 }
 
 for (const unavailable of ['model', 'effort']) {
@@ -1961,6 +1932,106 @@ test('keeps the application menu and status controls separate on narrow viewport
   expect(menuBounds).not.toBeNull()
   expect(statusBounds).not.toBeNull()
   expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(statusBounds!.x)
+})
+
+test('shows a submitted message before the server accepts it and restores rejected drafts', async ({ page }) => {
+  await mockTengri(page)
+  let releaseSend = () => {}
+  const heldSend = new Promise<void>((resolve) => {
+    releaseSend = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON().action === 'send-turn') {
+      await heldSend
+      await route.fulfill({ status: 503, json: { error: 'Send was rejected' } })
+    } else await route.fallback()
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const composer = tengri.getByRole('textbox', { name: 'Message your agent' })
+  await composer.fill('Show this immediately.')
+  await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
+  try {
+    await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveText('Show this immediately.', {
+      timeout: 1_000,
+    })
+    await expect(composer).toHaveValue('')
+  } finally {
+    releaseSend()
+  }
+  await expect(tengri.getByText('Send was rejected', { exact: true })).toBeVisible()
+  await expect(composer).toHaveValue('Show this immediately.')
+  await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+})
+
+test('keeps the chat connection and models when another desktop window takes focus', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  const before = mock.actions.filter(
+    (action) => action.action === 'codex-models' || action.action === 'codex-account',
+  ).length
+  const streamCount = () =>
+    page.evaluate(
+      () =>
+        Reflect.get(window, '__tengriEventSources').filter((source: { url: string }) =>
+          source.url.includes('/api/tengri/events?'),
+        ).length,
+    )
+  const beforeStreams = await streamCount()
+  const dock = page.getByRole('navigation', { name: 'Dock' })
+  await dock.getByRole('button', { name: 'Open Finder', exact: true }).click()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'assistant-text',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'background-answer',
+    approvalId: '',
+    rawJson: '{}',
+    text: 'Arrived while Finder was focused.',
+  })
+  await expect(tengri.getByText('Arrived while Finder was focused.', { exact: true })).toBeAttached()
+  await dock.getByRole('button', { name: 'Open Tengri', exact: true }).click()
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  expect(
+    mock.actions.filter((action) => action.action === 'codex-models' || action.action === 'codex-account').length,
+  ).toBe(before)
+  expect(await streamCount()).toBe(beforeStreams)
+})
+
+test('removes duplicate recovered restart notices from the live conversation', async ({ page }) => {
+  await mockTengri(page)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  for (const sequence of [1, 2])
+    await emitCodexEvent(page, {
+      sequence,
+      kind: 'error',
+      method: 'error',
+      threadId: '',
+      turnId: '',
+      itemId: '',
+      approvalId: '',
+      rawJson: '{}',
+      text: 'Codex app-server is restarting',
+    })
+  await expect(tengri.getByText('Codex app-server is restarting', { exact: true })).toHaveCount(1)
+  await emitCodexEvent(page, {
+    sequence: 3,
+    kind: 'thread-state',
+    method: 'turn/started',
+    threadId: '',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    rawJson: '{}',
+    text: '',
+  })
+  await expect(tengri.getByText('Codex app-server is restarting', { exact: true })).toHaveCount(0)
 })
 
 test('sends a real agent turn and executes sleep, resume, and confirmed deletion', async ({ page }) => {

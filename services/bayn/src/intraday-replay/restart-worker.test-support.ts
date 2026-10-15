@@ -179,8 +179,6 @@ const main = Effect.scoped(
       (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
       const state = yield* broker.snapshot
       const readAuthority = runtime.store.authorityGeneration.readAuthorityState
-      if (readAuthority === undefined)
-        return yield* new ReplayBrokerFailure({ message: 'Restart acceptance requires durable authority readback' })
       const authority = yield* readAuthority
       yield* fs.writeFileString(
         resultPath,

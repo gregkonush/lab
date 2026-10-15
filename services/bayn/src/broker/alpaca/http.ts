@@ -31,6 +31,7 @@ import {
   decodeExternalClientOrderId,
   decodeFillActivities,
   decodeFeeActivities,
+  decodeFeeActivitiesQuery,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
   decodeMarketCalendarQuery,
@@ -44,6 +45,7 @@ import {
   type BrokerReadShape,
   type Decoder,
   type FillActivitiesQuery,
+  type FeeActivitiesQuery,
   type MarketCalendarQuery,
   type OrdersQuery,
   type ProxyDispatcherDependencies,
@@ -478,8 +480,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
-    const feeActivities = (query: FillActivitiesQuery = {}) =>
-      decodeInput('fee-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
+    const feeActivities = (query: FeeActivitiesQuery = {}) =>
+      decodeInput('fee-activities', decodeFeeActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
         Effect.flatMap((decoded) => {
           const request = feeActivitiesRequest(connection, decoded)
           return readJson('fee-activities', request.url, decodeFeeActivities).pipe(

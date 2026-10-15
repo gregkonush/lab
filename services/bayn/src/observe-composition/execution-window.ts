@@ -1,6 +1,7 @@
 import { Result } from 'effect'
+import { MarketSchedule, continuousExecutionPolicy } from '../market-hours'
 
-import { utcInstantFromEpochMillisResult } from '../time'
+import { utcInstantFromEpochMillis, utcInstantFromEpochMillisResult } from '../time'
 
 export const everySessionCloseStartLeadMs = 60 * 60_000
 export const everySessionCloseSubmitLeadMs = 15 * 60_000
@@ -12,6 +13,8 @@ export interface ExecutionCycleCloseWindow {
 }
 
 export interface ExecutionCycleCloseWindowFacts {
+  readonly marketSchedule: MarketSchedule
+  readonly observedAt: string
   readonly executionCloseAt: string
   /** Strategy-bound lead from the session close to the start of forced flattening. */
   readonly sessionCloseStartLeadMs?: number
@@ -53,6 +56,7 @@ export const resolveExecutionCycleCloseWindow = (
   Result.gen(function* () {
     const executionCloseAt = yield* decodeInstant(facts.executionCloseAt, 'execution close instant')
 
+    const observedAt = yield* decodeInstant(facts.observedAt, 'close observation instant')
     const closeAt = Date.parse(executionCloseAt)
     const startLeadMs = yield* decodeLead(
       facts.sessionCloseStartLeadMs,
@@ -84,9 +88,32 @@ export const resolveExecutionCycleCloseWindow = (
         reason: 'execution close instant is invalid',
       }),
     )
+    const recovery = facts.marketSchedule === MarketSchedule.Continuous && observedAt >= executionCloseAt
+    if (recovery && submitLeadMs >= continuousExecutionPolicy.closeRecoveryMs)
+      return yield* Result.fail({
+        _tag: 'ExecutionCycleCloseWindowInvalid' as const,
+        reason: 'continuous close recovery must retain a bounded submission window',
+      })
+    const expiresAt = recovery
+      ? yield* decodeInstant(
+          new Date(Date.parse(observedAt) + continuousExecutionPolicy.closeRecoveryMs).toISOString(),
+          'recovery close expiry',
+        )
+      : executionCloseAt
     return {
       startAt: sessionStartAt,
-      submitCutoffAt: sessionSubmitCutoffAt,
-      expiresAt: executionCloseAt,
+      submitCutoffAt: recovery ? new Date(Date.parse(expiresAt) - submitLeadMs).toISOString() : sessionSubmitCutoffAt,
+      expiresAt,
     }
   })
+
+export const boundExecutionCycleCloseWindow = (
+  window: ExecutionCycleCloseWindow,
+  document: { readonly expiresAt: string },
+): ExecutionCycleCloseWindow => ({
+  ...window,
+  expiresAt: document.expiresAt,
+  submitCutoffAt: utcInstantFromEpochMillis(
+    Date.parse(document.expiresAt) - (Date.parse(window.expiresAt) - Date.parse(window.submitCutoffAt)),
+  ),
+})

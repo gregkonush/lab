@@ -30,7 +30,6 @@ import {
   type Valuation,
 } from '../execution/contracts'
 import {
-  legacyAccountingStateSchemaVersion,
   legacyAuthorityStateSchemaVersion,
   legacyReconciliationIdSchemaVersion,
   legacyReconciliationSchemaVersion,
@@ -48,6 +47,8 @@ import {
 } from '../reconciliation'
 import { strictParseOptions, type IsoDate } from '../schemas'
 import { Pipeable } from '../pipeable'
+import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
+import type { FeeAccrual } from '../accounting/fee-accrual'
 
 export interface IntentProjectionRow {
   readonly intent_id: string
@@ -80,6 +81,7 @@ export interface OpeningCashRow {
 
 export interface ReconciliationSnapshotMaterial {
   readonly account: AccountSnapshot
+  readonly cashReportingQuantumMicros: CashReportingQuantum
   readonly positions: readonly Position[]
   readonly positionsObservedAt: string
   readonly orders: readonly Order[]
@@ -415,6 +417,9 @@ export const compareOpeningCash = (input: {
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
   readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
+  readonly brokerFeeAccruals: readonly FeeAccrual[]
+  readonly cashReportingOffsetMicros: string
+  readonly brokerFeeCashDeltaMicros: string
   readonly receipts: readonly AccountingReceipt[]
   readonly ledgerExact: boolean
   readonly snapshot: ReconciliationSnapshotMaterial
@@ -448,15 +453,23 @@ export const compareOpeningCash = (input: {
           feeDate: fee.date,
           openingObservedAt: input.openingCash.observed_at,
         })
-      expectedCash += yield* parseAccountingAmount('transaction-cash-delta', fee.netAmountMicros, fee.activityId)
     }
-    const expectedCashMicros = expectedCash.toString()
+    expectedCash += yield* parseAccountingAmount('transaction-cash-delta', input.brokerFeeCashDeltaMicros)
+    const reportingOffset = yield* parseAccountingAmount('transaction-cash-delta', input.cashReportingOffsetMicros)
+    const expectedCashMicros = reportedCashMicros(
+      (expectedCash + reportingOffset).toString(),
+      input.snapshot.cashReportingQuantumMicros,
+    )
     const accountingHashValue = yield* accountingHash({
-      schemaVersion: legacyAccountingStateSchemaVersion,
+      schemaVersion: 'bayn.accounting-state.v3',
       accountId: input.accountId,
       openingCash: input.openingCash,
       transactions: input.transactions,
       ...(input.fees === undefined || input.fees.length === 0 ? {} : { brokerFees: input.fees }),
+      brokerFeeAccruals: input.brokerFeeAccruals,
+      brokerFeeCashDeltaMicros: input.brokerFeeCashDeltaMicros,
+      cashReportingQuantumMicros: input.snapshot.cashReportingQuantumMicros,
+      cashReportingOffsetMicros: input.cashReportingOffsetMicros,
       receipts: input.receipts,
       ledgerExact: input.ledgerExact,
     })

@@ -3,7 +3,8 @@ import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
+import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
@@ -16,7 +17,13 @@ import { bindCycleExecutionSession } from '../execution-session'
 import { Authority, KillState, OrderSide, OrderType, TimeInForce, RiskOutcome } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { BrokerMode, decodeState } from '../risk'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import {
+  buildClosingExecutionCycleDecision,
+  loadQuoteBoundExecutionRiskPolicy,
+} from '../observe-composition/decision-builder'
+import { fixtureRuntime } from '../testing/runtime-fixtures'
+import { accountTradingDate } from '../time'
+import { IsoDateSchema } from '../schemas'
 import {
   adverseQuotePrices,
   executionMarketDataBinding,
@@ -40,7 +47,7 @@ import { JevBatchPlanVersion } from './batch'
 import { decideJevEntry, jevPlanningTargetWeights } from './decision'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} produces an approved durable fractional execution decision through the shared planner and risk engine`, async () => {
+  test(`${symbol} uses the shared planner and risk engine for entry and overdue net-position close`, async () => {
     const { cut, query, snapshot, rows } = cryptoMarketFixture(symbol)
     const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol, portfolio, observedAt } = native
@@ -288,5 +295,101 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     })
     expect(document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+
+    const recoveryAt = new Date(Date.parse(cycle.window.executionCloseAt) + 4 * 60 * 60_000).toISOString()
+    const tradingDate = Schema.decodeUnknownSync(IsoDateSchema)(accountTradingDate(recoveryAt))
+    const closeExpiresAt = new Date(Date.parse(recoveryAt) + continuousExecutionPolicy.closeRecoveryMs).toISOString()
+    const recoveredBroker = {
+      ...closeMaterial,
+      account: { ...broker.account, observedAt: recoveryAt },
+      positions: closeMaterial.positions.map((position) => ({ ...position, observedAt: recoveryAt })),
+      positionsObservedAt: recoveryAt,
+      ordersObservedAt: recoveryAt,
+    }
+    const recoveredHash = Result.getOrThrow(reconciledStateHash(recoveredBroker))
+    const {
+      reconciliationId: _reconciliationId,
+      contentHash: _contentHash,
+      ...previousReconciliation
+    } = broker.reconciliation
+    const reconciliationMaterial = {
+      ...previousReconciliation,
+      expectedHash: recoveredHash,
+      observedHash: recoveredHash,
+      reconciledAt: recoveryAt,
+    }
+    const reconciliationId = canonicalHashV1({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material: reconciliationMaterial,
+    })
+    const reconciliation = {
+      ...reconciliationMaterial,
+      reconciliationId,
+      contentHash: canonicalHashV1({ ...reconciliationMaterial, reconciliationId }),
+    }
+    const close = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(recoveryAt))
+        return yield* buildClosingExecutionCycleDecision({
+          input: {
+            accountId: broker.account.accountId,
+            authorityGenerationHash: native.authorityGenerationHash,
+            pollIntervalMs: 30_000,
+            reconciliationIntervalMs: 30_000,
+            reconciliationPassTimeoutMs: 30_000,
+            strategy: fixtureRuntime,
+          },
+          preparation: { executionModel: protocol.executionModel, executionPolicy, strategyProtocolHash },
+          policy,
+          cycle,
+          entryDocument: document,
+          closeExpiresAt,
+          reconcile: Effect.succeed({
+            report: {
+              reconciliation,
+              metrics: {
+                brokerPollAgeMs: 0,
+                oldestUnknownMutationAgeMs: 0,
+                cashDifferenceMicros: '0',
+                positionDifferenceMicros: '0',
+                equityDifferenceMicros: '0',
+                accountingExact: true,
+                discrepancyCount: 0,
+              },
+            },
+            brokerState: { ...recoveredBroker, reconciliation },
+            riskContext: {
+              ...riskContext,
+              tradingDate,
+              authority: {
+                ...authority,
+                effective: Authority.Observe,
+                kill: KillState.Active,
+                reason: 'prior execution failure',
+              },
+              authorityObservedAt: recoveryAt,
+            },
+          }),
+        })
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(close.dispatchable).toBe(true)
+    expect(close.expiresAt).toBe(closeExpiresAt)
+    expect(close.executionSession).toEqual(document.executionSession)
+    expect(close.bindings.executionMarketData).toMatchObject({
+      schemaVersion: 'bayn.reconciled-position-liquidation-binding.v1',
+      positionsObservedAt: recoveryAt,
+    })
+    expect(close.targetPlan.intentTargets).toMatchObject([
+      {
+        symbol,
+        side: OrderSide.Sell,
+        quantityAtoms: heldQuantity,
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.GoodUntilCanceled,
+      },
+    ])
+    expect(close.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(close))).toBe(true)
   })
 }

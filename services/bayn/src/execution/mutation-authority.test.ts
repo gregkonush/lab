@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { SubmissionDenialReason } from './submission-denial'
 import { brokerAssetFixture, cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
 
 import { Cause, Clock, Effect, Exit, Fiber, Result } from 'effect'
@@ -73,6 +74,7 @@ const readResult = <A>(value: A, observedAt: string = evidence.observedAt): Read
 
 const account = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
   id: accountId,
@@ -454,10 +456,10 @@ describe('final broker mutation authority', () => {
 
   test('denies submission when its observation projection is absent', async () => {
     const raw = submissionProjectionFixture({} as BrokerReadShape).projection!.fresh
-    expect(
-      (await Effect.runPromiseExit(confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent(), raw)))
-        ._tag,
-    ).toBe('Failure')
+    const failure = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent(), raw).pipe(Effect.flip),
+    )
+    expect(failure.denialReason).toBe(SubmissionDenialReason.ProjectionRequired)
   })
 
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(

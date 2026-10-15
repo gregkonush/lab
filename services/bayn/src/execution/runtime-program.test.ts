@@ -149,6 +149,7 @@ const readEvidence: ReadEvidence = {
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
 const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
   cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
   nonMarginableBuyingPowerMicros: null,
 
   id: accountId,

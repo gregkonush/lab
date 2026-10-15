@@ -68,12 +68,11 @@ type RecoveryFirstDecisionBuilder = (
 
 const reconciliationReusableUntil = (
   cached: ReconciliationPassResult,
-  authority: AuthorityState | undefined,
+  authority: AuthorityState,
   now: number,
   maximumAgeMs: number,
 ): number | undefined => {
   if (
-    authority === undefined ||
     cached.riskContext.authority?.generationHash !== authority.generationHash ||
     cached.riskContext.authority.version !== authority.version ||
     cached.report.reconciliation.status !== ReconciliationStatus.Exact ||
@@ -98,7 +97,7 @@ const reconciliationReusableUntil = (
 export const reconciliationForPreparation = <R>(
   initial: ReconciliationPassResult | undefined,
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
-  readAuthority: Effect.Effect<AuthorityState | undefined, ReconciliationPassError, R>,
+  readAuthority: Effect.Effect<AuthorityState, ReconciliationPassError, R>,
   maximumAgeMs: number,
   pricingMaximumAgeMs = maximumAgeMs,
 ) =>
@@ -119,9 +118,8 @@ export const reconciliationForPreparation = <R>(
         if (
           cached !== undefined &&
           firstUse &&
-          (authority === undefined ||
-            (cached.riskContext.authority?.generationHash === authority.generationHash &&
-              cached.riskContext.authority.version === authority.version))
+          cached.riskContext.authority?.generationHash === authority.generationHash &&
+          cached.riskContext.authority.version === authority.version
         )
           return cached
         if (cached !== undefined && now < (reconciliationReusableUntil(cached, authority, now, maximumAgeMs) ?? now))
@@ -536,7 +534,7 @@ const makeRecoveryFirstCycleDriverEffect = (
         } = yield* reconciliationForPreparation(
           preflight,
           reconcile,
-          authorityStore.readAuthorityState ?? Effect.as(Effect.void, undefined),
+          authorityStore.readAuthorityState,
           Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
           policy.maxBrokerStateAgeMs,
         )

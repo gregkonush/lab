@@ -67,7 +67,7 @@ postgresTest(
           Schema.Tuple([Schema.Struct({ statement_timeout: Schema.String, application_name: Schema.String })]),
         )
         const probe = yield* sql`SELECT * FROM migration_timeout_probe`.pipe(Effect.flatMap(decode))
-        expect(probe).toEqual([{ statement_timeout: '295s', application_name: 'bayn-migrations' }])
+        expect(probe).toEqual([{ statement_timeout: '895s', application_name: 'bayn-migrations' }])
         const ordinary = yield* sql`
         SELECT current_setting('statement_timeout') AS statement_timeout,
           current_setting('application_name') AS application_name

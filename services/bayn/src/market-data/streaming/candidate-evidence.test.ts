@@ -1,3 +1,4 @@
+import { snapshotFailureMeasurement } from './telemetry'
 import { jevRequestForSnapshot } from '../../jev/native.test-support'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -275,5 +276,26 @@ describe('candidate executable quote and window trade evidence', () => {
     )
     expect(restored.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
     expect(Result.isSuccess(jevRequestForSnapshot(snapshot, 'AAPL'))).toBe(true)
+  })
+})
+
+test('the production rejection measurement preserves every excluded candidate and exact missing input', () => {
+  const state = {
+    ...fixture.cut.projection,
+    features: new Map([...fixture.cut.projection.features].filter(([symbol]) => symbol === 'SPY')),
+  }
+  const result = constructStreamingSnapshot({ ...fixture.cut, projection: state }, query)
+  if (Result.isSuccess(result)) throw new Error('All candidates without features must fail')
+  const measured = snapshotFailureMeasurement(result.failure, query, state)
+  expect(measured.candidateCoverage).toHaveLength(query.candidateSymbols?.length ?? 0)
+  expect(
+    measured.candidateCoverage?.every(
+      (candidate) => candidate.eligibility.status === 'EXCLUDED' && candidate.matchingFeature === null,
+    ),
+  ).toBe(true)
+  expect(measured.candidateCoverage?.find((candidate) => candidate.symbol === 'AAPL')).toMatchObject({
+    eligibility: { status: 'EXCLUDED', reason: 'not-ready' },
+    window: { requiredBarCount: 30, observedBarCount: 30, missingBarAt: [] },
+    quote: { ageMs: 1000 },
   })
 })

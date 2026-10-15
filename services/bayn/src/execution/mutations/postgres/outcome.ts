@@ -29,6 +29,7 @@ import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
 import { Pipeable } from '../../../pipeable'
+import type { SubmissionDenialReason } from '../../submission-denial'
 
 export interface MutationOutcomePostgres {
   readonly appendOutcome: (
@@ -38,6 +39,7 @@ export interface MutationOutcomePostgres {
     occurredAt: string,
     evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
+    denialReason?: SubmissionDenialReason,
   ) => Effect.Effect<MutationEvent, MutationStoreError | SqlError | WriterFenceError>
 }
 
@@ -272,6 +274,7 @@ const makeMutationOutcomePostgresDataFirst = (
     occurredAt: string,
     evidence?: PartialMutationEvidence,
     brokerOrderId?: string,
+    denialReason?: SubmissionDenialReason,
   ) => {
     const operation = outcomeStoreOperation(definition)
     return fromDecision(() =>
@@ -282,6 +285,7 @@ const makeMutationOutcomePostgresDataFirst = (
           occurredAt,
           ...(evidence === undefined ? {} : { evidence }),
           ...(brokerOrderId === undefined ? {} : { brokerOrderId }),
+          ...(denialReason === undefined ? {} : { denialReason }),
         }),
         (input) => ({ definition, input }),
       ),
