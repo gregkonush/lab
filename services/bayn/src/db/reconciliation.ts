@@ -794,5 +794,8 @@ export const makeReconciliation = (
       }),
     )
 
-  return { bindings, reconcile, recoverFees }
+  const retainCashReporting = (snapshot: Parameters<typeof retainAccountCashReporting>[1]) =>
+    runStore('reconcile', writerFence.transaction(retainAccountCashReporting(sql, snapshot)))
+
+  return { bindings, reconcile, recoverFees, retainCashReporting }
 }

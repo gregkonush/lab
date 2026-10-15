@@ -254,7 +254,7 @@ const fixture = async () => {
 }
 
 describe('closing market-data fallback boundaries', () => {
-  test.each(['cash-discrepancy', 'inexact-accounting'] as const)(
+  test.each(['cash-discrepancy', 'inexact-accounting', 'unknown-mutation', 'unknown-order'] as const)(
     'an inexact reconciliation waits before binding a close and recovers with exact evidence (%s)',
     async (scenario) => {
       const request = await fixture()
@@ -303,11 +303,20 @@ describe('closing market-data fallback boundaries', () => {
           }
           const facts = {
             ...base,
-            brokerState: { ...base.brokerState, reconciliation },
+            brokerState: {
+              ...base.brokerState,
+              reconciliation,
+              unknownOrderCount: scenario === 'unknown-order' ? 1 : 0,
+            },
+            riskContext: { ...base.riskContext, unknownMutationCount: scenario === 'unknown-mutation' ? 1 : 0 },
             report: {
               ...base.report,
               reconciliation,
-              metrics: { ...base.report.metrics, accountingExact: false, discrepancyCount: 1 },
+              metrics: {
+                ...base.report.metrics,
+                accountingExact: scenario !== 'inexact-accounting',
+                discrepancyCount: scenario === 'cash-discrepancy' ? 1 : 0,
+              },
             },
           }
           const failure = yield* Effect.flip(

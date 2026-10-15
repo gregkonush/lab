@@ -28,7 +28,10 @@ export const readOpeningCash = (sql: PgClient.PgClient, accountId: string) =>
 
 export const retainAccountCashReporting = (
   sql: PgClient.PgClient,
-  snapshot: import('./reconciliation').BrokerSnapshot,
+  snapshot: Pick<
+    import('./reconciliation').BrokerSnapshot,
+    'account' | 'accountEventId' | 'cashReportingQuantumMicros'
+  >,
 ) =>
   Effect.gen(function* () {
     yield* sql`INSERT INTO account_cash_reporting(account_event_id,quantum_micros)
@@ -39,7 +42,12 @@ export const retainAccountCashReporting = (
     const [row] = yield* Schema.decodeUnknownEffect(
       Schema.Tuple([Schema.Struct({ quantum_micros: Schema.Int })]),
       strictParseOptions,
-    )(yield* sql`SELECT quantum_micros FROM account_cash_reporting WHERE account_event_id=${snapshot.accountEventId}`)
+    )(
+      yield* sql`SELECT r.quantum_micros FROM account_cash_reporting r
+      JOIN account_snapshots a ON a.event_id=r.account_event_id JOIN broker_events e ON e.event_id=a.event_id
+      WHERE r.account_event_id=${snapshot.accountEventId} AND a.account_id=${snapshot.account.accountId}
+        AND a.cash_micros=${snapshot.account.cashMicros}::numeric AND e.observed_at=${snapshot.account.observedAt}::timestamptz`,
+    )
     if (String(row.quantum_micros) !== snapshot.cashReportingQuantumMicros)
       return yield* new ReconciliationStoreError({
         operation: 'reconcile',

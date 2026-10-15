@@ -484,6 +484,11 @@ describePostgres('PostgreSQL execution persistence', () => {
                 account: { ...originalAccount.account, cashMicros: '699999900', equityMicros: '999999900' },
               }
               const accountReceipt = yield* events.ingest(account)
+              yield* reconciliation.retainCashReporting({
+                account: account.account,
+                accountEventId: accountReceipt.eventId,
+                cashReportingQuantumMicros: '1',
+              })
               const snapshot = yield* events.ingestPositions(positionSnapshot(sourceHash, positions))
               const completed = yield* events.completeHistory([fill])
               expect(completed.has(fill.sourceEventId)).toBeTrue()
@@ -511,6 +516,21 @@ describePostgres('PostgreSQL execution persistence', () => {
           .pipe(Effect.provideService(Tracer.Tracer, tracer))
         const reconciled = yield* reconciliation.reconcile(material).pipe(Effect.provideService(Tracer.Tracer, tracer))
         expect(reconciled.reconciliation.status).toBe(ReconciliationStatus.Exact)
+        const sql = yield* PgClient.PgClient
+        const [reporting] = yield* sql<{ same_transaction: boolean }>`
+          SELECT a.xmin=r.xmin AS same_transaction FROM account_snapshots a
+          JOIN account_cash_reporting r ON r.account_event_id=a.event_id WHERE a.event_id=${material.accountEventId}`
+        expect(reporting?.same_transaction).toBe(true)
+        yield* reconciliation.retainCashReporting(material)
+        for (const changed of [
+          { ...material, cashReportingQuantumMicros: '10000' as const },
+          { ...material, account: { ...material.account, accountId: 'foreign-account' } },
+          { ...material, account: { ...material.account, cashMicros: '1' } },
+          { ...material, account: { ...material.account, observedAt: '2026-08-28T14:30:00.000Z' } },
+        ]) {
+          expect(Exit.isFailure(yield* Effect.exit(reconciliation.retainCashReporting(changed)))).toBe(true)
+        }
+        yield* reconciliation.retainCashReporting(material)
       }),
     )
     expect(spanEvents.filter((name) => name === 'db.transaction.savepoint')).toHaveLength(0)
@@ -522,11 +542,17 @@ describePostgres('PostgreSQL execution persistence', () => {
         Effect.gen(function* () {
           const events = yield* BrokerEventStore
           const valuations = yield* ValuationStore
+          const reconciliation = yield* ReconciliationStore
           const fence = yield* WriterFence
           const exit = yield* fence
             .transaction(
               Effect.gen(function* () {
                 const accountReceipt = yield* events.ingest(flatAccountEvent())
+                yield* reconciliation.retainCashReporting({
+                  account: flatAccountEvent().account,
+                  accountEventId: accountReceipt.eventId,
+                  cashReportingQuantumMicros: '1',
+                })
                 const snapshot = yield* events.ingestPositions(positionSnapshot(hash('rollback-positions'), []))
                 yield* valuations.value({
                   accountEventId: accountReceipt.eventId,
@@ -545,13 +571,14 @@ describePostgres('PostgreSQL execution persistence', () => {
             events: number
             snapshots: number
             valuations: number
-          }>`SELECT (SELECT count(*)::integer FROM broker_events) AS events, (SELECT count(*)::integer FROM position_snapshots) AS snapshots, (SELECT count(*)::integer FROM valuations) AS valuations`
+            reporting: number
+          }>`SELECT (SELECT count(*)::integer FROM broker_events) AS events, (SELECT count(*)::integer FROM position_snapshots) AS snapshots, (SELECT count(*)::integer FROM valuations) AS valuations, (SELECT count(*)::integer FROM account_cash_reporting) AS reporting`
           const recovered = yield* events.ingest(flatAccountEvent())
           return { exit, counts, recovered }
         }),
       )
       expect(Exit.isFailure(result.exit)).toBeTrue()
-      expect(result.counts).toEqual({ events: 0, snapshots: 0, valuations: 0 })
+      expect(result.counts).toEqual({ events: 0, snapshots: 0, valuations: 0, reporting: 0 })
       expect(result.recovered.deduplicated).toBeFalse()
     })
   }
