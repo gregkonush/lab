@@ -7,6 +7,7 @@ import { IsoDateSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { CashReportingQuantumSchema, reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { ReconciliationStoreError, type BrokerSnapshot } from './reconciliation'
 import { OrderSide } from '../execution/contracts'
+import { acknowledgeFeePosting, FeePostingKind, readAcknowledgedFeePostings } from './fee-posting'
 
 const integer = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/))
 export const StoredAccrual = Schema.Struct({
@@ -130,8 +131,9 @@ export const postFeeAccruals = (
 ) =>
   Effect.gen(function* () {
     const rows = yield* readFeeAccruals(sql, accountId, identity)
+    const acknowledged = yield* readAcknowledgedFeePostings(sql, accountId, FeePostingKind.Accrual)
     for (const row of rows) {
-      if (row.posted) continue
+      if (row.posted && acknowledged.has(row.accrualId)) continue
       if (row.plan.transfers.length > 0)
         yield* journal.post(row.plan).pipe(
           Effect.mapError(
@@ -144,7 +146,9 @@ export const postFeeAccruals = (
               }),
           ),
         )
-      yield* sql`UPDATE broker_fee_accruals SET posted_at=${row.data.observedAt}::timestamptz WHERE accrual_id=${row.accrualId}`
+      if (!row.posted)
+        yield* sql`UPDATE broker_fee_accruals SET posted_at=clock_timestamp() WHERE accrual_id=${row.accrualId}`
+      yield* acknowledgeFeePosting(sql, accountId, FeePostingKind.Accrual, row.accrualId, row.ledger_plan_hash)
     }
     return rows
   })

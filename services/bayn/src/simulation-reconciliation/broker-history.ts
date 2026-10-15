@@ -262,6 +262,8 @@ const readFeePages = (
       if (page.value.items.length > fillsPageSize || rows.length + page.value.items.length > maximumRows)
         return yield* paginationFailure('InvalidFeeHistory', 'fee history exceeded its bounded row budget')
       for (const fee of page.value.items) {
+        if (fee.date > page.evidence.observedAt.slice(0, 10))
+          return yield* paginationFailure('InvalidFeeHistory', 'fee history contains a date after its UTC capture cut')
         if (ids.has(fee.activityId))
           return yield* paginationFailure('InvalidFeeHistory', 'fee history repeated an activity identity')
         ids.add(fee.activityId)

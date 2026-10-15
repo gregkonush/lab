@@ -415,6 +415,8 @@ export interface FillActivitiesQuery {
   readonly pageToken?: string
 }
 
+export type FeeActivitiesQuery = Pick<FillActivitiesQuery, 'date' | 'direction' | 'pageSize' | 'pageToken'>
+
 export interface Observed<A> {
   readonly value: A
   readonly evidence: ReadEvidence
@@ -463,7 +465,7 @@ export interface BrokerReadShape {
   readonly orders: (query?: OrdersQuery) => Effect.Effect<ReadResult<readonly Order[]>, BrokerReadError>
   readonly orderById: (orderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
   readonly orderByClientId: (clientOrderId: string) => Effect.Effect<ReadResult<Order>, BrokerReadError>
-  readonly feeActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
+  readonly feeActivities: (query?: FeeActivitiesQuery) => Effect.Effect<ReadResult<FeeActivityPage>, BrokerReadError>
   readonly fillActivities: (query?: FillActivitiesQuery) => Effect.Effect<ReadResult<FillActivityPage>, BrokerReadError>
   readonly marketCalendar: (
     query: MarketCalendarQuery,
@@ -687,6 +689,12 @@ const FillActivitiesQuerySchema = FillActivitiesQueryBase.check(
       : [],
   ),
 )
+const FeeActivitiesQuerySchema = Schema.Struct({
+  date: FillActivitiesQueryBase.fields.date,
+  direction: FillActivitiesQueryBase.fields.direction,
+  pageSize: FillActivitiesQueryBase.fields.pageSize,
+  pageToken: FillActivitiesQueryBase.fields.pageToken,
+})
 
 export const MarketCalendarQueryBase = Schema.Struct({
   start: IsoDate,
@@ -748,6 +756,7 @@ export const decodeOrdersQuery = Pipeable.dual(1, (input: unknown) => decodeOrde
 const decodeFillActivitiesQueryDataFirst = Schema.decodeUnknownResult(FillActivitiesQuerySchema, inputParseOptions)
 
 export const decodeFillActivitiesQuery = Pipeable.dual(1, (input: unknown) => decodeFillActivitiesQueryDataFirst(input))
+export const decodeFeeActivitiesQuery = Schema.decodeUnknownResult(FeeActivitiesQuerySchema, inputParseOptions)
 const decodeMarketCalendarQueryDataFirst = Schema.decodeUnknownResult(MarketCalendarQuerySchema, inputParseOptions)
 
 export const decodeMarketCalendarQuery = Pipeable.dual(1, (input: unknown) => decodeMarketCalendarQueryDataFirst(input))

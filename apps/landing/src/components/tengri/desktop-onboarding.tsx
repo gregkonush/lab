@@ -111,11 +111,23 @@ export default function DesktopOnboarding() {
   }, [pendingDeletionAgentCreatedAt, pendingDeletionAgentId, refresh])
   useEffect(() => {
     if (pendingDeletionAgentId) return
-    const refreshDelay = desktopRefreshDelay(gate, Date.now())
+    const nextRefreshDelay = () => (snapshotError ? 30_000 : desktopRefreshDelay(gate, Date.now()))
+    const refreshDelay = nextRefreshDelay()
     if (refreshDelay === null) return
-    const timer = window.setTimeout(() => void refresh(), refreshDelay)
-    return () => window.clearTimeout(timer)
-  }, [gate, pendingDeletionAgentId, refresh])
+    let cancelled = false
+    let timer: number
+    const poll = async () => {
+      await refresh()
+      if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), nextRefreshDelay() ?? refreshDelay)
+      }
+    }
+    timer = window.setTimeout(() => void poll(), refreshDelay)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [gate, pendingDeletionAgentId, refresh, snapshotError])
 
   if (gate.kind === 'ready' && snapshot?.user) {
     return (

@@ -210,19 +210,27 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
               ledger: (...args) =>
                 readers.ledger(...args).pipe(Effect.map((value) => ({ ...value, openPositionCount: 1 }))),
             })
-            return { postgres, report, disagreement }
+            const unrelatedScope = yield* readForwardPerformancePostgres(sql, accountId, hash('f'))
+            return { postgres, report, disagreement, unrelatedScope }
           }),
         ),
       )
-      expect(result.postgres.openPositionCount).toBe(1)
+      expect(result.unrelatedScope.transactions).toEqual([])
+      expect(result.unrelatedScope.ledgerTransactions).toHaveLength(2)
+      expect(result.unrelatedScope.ledgerReceipts).toHaveLength(2)
+      expect(result.unrelatedScope.accountReconciliation).toEqual(result.postgres.accountReconciliation)
+      expect(result.postgres.openPositionCount).toBe(0)
       expect(result.report.positionEpisodes).toMatchObject({
         status: 'MEASURED',
         completedCount: 1,
         openCount: 0,
         crossScopeCount: 0,
       })
-      expect(result.postgres.accountOpenPositionCount).toBe(0)
-      expect(result.report.receipt.reconciliationProof.openPositionCount).toBe(1)
+      expect(result.postgres.accountReconciliation).toEqual({
+        reconciledAt: '2026-09-18T21:00:00.000Z',
+        performanceExact: true,
+      })
+      expect(result.report.receipt.reconciliationProof.openPositionCount).toBe(0)
       expect(result.report.receipt.evidence.reasonCodes).toContain('BROKER_FEE_SETTLEMENT_PENDING')
       expect(result.report.receipt.profitability).toBe('UNDETERMINED')
       expect(result.disagreement.positionEpisodes).toMatchObject({

@@ -613,12 +613,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         Effect.gen(function* () {
           const current = yield* readState
           const values = current.fees
-            .filter(
-              (fee) =>
-                (query?.date === undefined || fee.date === query.date) &&
-                (query?.after === undefined || fee.date >= query.after.slice(0, 10)) &&
-                (query?.until === undefined || fee.date <= query.until.slice(0, 10)),
-            )
+            .filter((fee) => query?.date === undefined || fee.date === query.date)
             .toSorted(
               (a, b) =>
                 (query?.direction === 'asc' ? 1 : -1) *
