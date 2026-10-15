@@ -193,8 +193,24 @@ test('writes source, digest, and research lineage into the correct field in ever
     )
     const assignments = new Map<string, string>()
     for (const change of update.config.updates) {
-      const match = /^spec\.template\.spec\.containers\.0\.env\.(\d+)\.value$/.exec(change.key)
-      if (match) assignments.set(environment[Number(match[1])].name, change.value)
+      if (!change.key.includes('spec.template.spec.containers.0.env.')) continue
+      const match =
+        /^\$\{\{ 'spec\.template\.spec\.containers\.0\.env\.' \+ string\(outputs\.(\w+)\.(\w+)\) \+ '\.value' \}\}$/.exec(
+          change.key,
+        )
+      if (match === null) throw new Error(`Environment update must resolve its named source field: ${change.key}`)
+      const parse = steps.find(
+        (step: { uses: string; as?: string }) => step.uses === 'yaml-parse' && step.as === match[1],
+      )
+      expect(parse.config.path).toBe(`./src/${path}`)
+      expect(steps.indexOf(parse)).toBeLessThan(steps.indexOf(update))
+      const output = parse.config.outputs.find((candidate: { name: string }) => candidate.name === match[2])
+      const field = /^findIndex\(spec\.template\.spec\.containers\[0\]\.env, \.name == '(\w+)'\)$/.exec(
+        output.fromExpression,
+      )
+      if (field === null) throw new Error(`Environment index must use findIndex by name: ${output.fromExpression}`)
+      expect(environment.filter((entry: { name: string }) => entry.name === field[1])).toHaveLength(1)
+      assignments.set(field[1], change.value)
     }
     expect(assignments.get('BAYN_CODE_REVISION')).toBe(
       "${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}",
