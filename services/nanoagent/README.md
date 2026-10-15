@@ -152,10 +152,13 @@ and Neovim configuration are preserved. The profile exports the fixed Homebrew p
 a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured.
 
 The managed editor lives on the fast guest root at `/opt/tengri/editor`: SHA-256-pinned Neovim 0.12.5,
-Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, and nine baseline parsers.
+Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, Blink's native completion library, and nine baseline parsers.
 The image build installs and verifies these dependencies; opening a fresh editor downloads nothing.
+The build verifies Blink's release checksum and packages its library without downloader state, following
+Blink's [manual-install contract](https://cmp.saghen.dev/configuration/fuzzy).
 The generated manifest points Lazy directly to these local plugin directories. Automatic plugin updates,
-missing-plugin installation, and parser downloads are disabled for the managed baseline. Explicit `:TSInstall`
+missing-plugin installation, completion-library downloads, and parser downloads are disabled for the managed baseline. The offline
+image test loads completion and requires its bundled Rust implementation. Explicit `:TSInstall`
 and user-added plugins can still use persistent user storage. Run `nvim` and `:AstroVersion` to inspect the editor.
 
 Existing user shell profiles and edited Neovim configuration are preserved. On an image update, bootstrap replaces
