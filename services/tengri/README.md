@@ -236,6 +236,15 @@ whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
+Replay admission hashes each nonce into one of 64 independently locked buckets, each capped at 128 unexpired entries.
+An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
+controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
+Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
+both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
+resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
+Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
+Unused slots continue through the normal retirement and preparation path for the promoted controller/guest pair.
 
 Generated slot Pods mount the `tengri-supervisor-db` Secret's `password` and the `ofz-database-ca` Secret's `ca.crt`
 only into the supervisor. Its fixed database authority is `ofz-db-rw.ofz.svc.cluster.local`, database `tengri_control`,
