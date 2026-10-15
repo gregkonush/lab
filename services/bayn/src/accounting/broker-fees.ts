@@ -84,6 +84,16 @@ export const StoredFeeSchema = Schema.Struct({
 
 export type StoredBrokerFee = typeof StoredFeeSchema.Type
 export class BrokerFeeEvidenceError extends Data.TaggedError('BrokerFeeEvidenceError')<{ readonly message: string }> {}
+export const brokerFeeCashDeltaMicros = (record: StoredBrokerFee): string =>
+  (
+    BigInt(record.data.netAmountMicros) +
+    BigInt(record.matched_cash_micros) -
+    record.cash_match_corrections.reduce(
+      (sum, correction) => sum + BigInt(feeMatchCorrectionCashDebitMicros(correction.data)),
+      0n,
+    )
+  ).toString()
+
 export const verifyBrokerFeeRecord = (
   record: StoredBrokerFee,
   accountId: string,
@@ -175,11 +185,7 @@ export const verifyBrokerFeeRecord = (
     return {
       originalPlan: plan,
       corrections,
-      cashDeltaMicros: (
-        BigInt(record.data.netAmountMicros) +
-        BigInt(record.matched_cash_micros) -
-        correctedCash
-      ).toString(),
+      cashDeltaMicros: brokerFeeCashDeltaMicros(record),
     }
   })
 

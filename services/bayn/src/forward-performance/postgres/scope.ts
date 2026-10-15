@@ -263,8 +263,6 @@ export const closingSnapshotBoundary = (
         )
       )`
 
-export const ledgerReplayBoundary = (sql: PgClient.PgClient) => sql`latest_reconciliation.reconciled_at`
-
 export const signedI128 = (value: string): bigint | undefined => {
   if (!INTEGER_PATTERN.test(value)) return undefined
   const parsed = BigInt(value)

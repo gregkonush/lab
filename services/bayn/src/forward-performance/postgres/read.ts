@@ -1,11 +1,12 @@
 import { PgClient } from '@effect/sql-pg'
+import { strictParseOptions } from '../../schemas'
 import { Effect, Schema } from 'effect'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
 import { readStoredFeeAccruals } from '../../db/fee-accruals'
 import { readCashReportingOffsets } from './cash-reporting'
 import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
-import { StoredFeeSchema } from '../../accounting/broker-fees'
+import { StoredFeeSchema, brokerFeeCashDeltaMicros } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
 import { accountingReceiptFromRow, accountingTransactionFromRow } from '../../db/accounting-rows'
 import type {
@@ -17,6 +18,7 @@ import type {
 import { Pipeable } from '../../pipeable'
 import {
   ForwardPerformancePostgresError,
+  ReconciliationRow,
   type ForwardPerformancePostgresEvidence,
   decodeCashYieldSnapshots,
   decodeCount,
@@ -361,6 +363,19 @@ export const readForwardPerformancePostgresDataFirst = (
           CROSS JOIN accounted_cash
         `.pipe(Effect.flatMap(decodeCashYieldSnapshots))
 
+        const accountReconciliationRows = yield* sql<Record<string, unknown>>`
+          SELECT reconciliation_id,content_hash,status,discrepancies,reconciled_at FROM reconciliations
+          WHERE account_id=${accountId} ORDER BY reconciled_at DESC,reconciliation_id COLLATE "C" DESC LIMIT 1
+        `.pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.Array(ReconciliationRow).check(Schema.isMaxLength(1)),
+              strictParseOptions,
+            ),
+          ),
+        )
+        const accountReconciliationRow = accountReconciliationRows[0]
+        const accountReconciledAt = accountReconciliationRow?.reconciled_at
         const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
         )
@@ -406,14 +421,17 @@ export const readForwardPerformancePostgresDataFirst = (
             ),
           ),
         )
+        const generationFeeRows = brokerFeeRows.filter(
+          (row) => row.data.cryptoCashFee !== true || brokerFeeCashDeltaMicros(row) !== '0',
+        )
         const brokerFeeAccrualRecords = yield* readStoredFeeAccruals(sql, accountId)
-        const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, authorityGenerationHash).pipe(
+        const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, accountReconciledAt).pipe(
           Effect.flatMap(decodeTransactions),
         )
         const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeReceipts),
         )
-        const ledgerReceiptRows = yield* ledgerReceiptQuery(sql, accountId, authorityGenerationHash).pipe(
+        const ledgerReceiptRows = yield* ledgerReceiptQuery(sql, accountId, accountReconciledAt).pipe(
           Effect.flatMap(decodeReceipts),
         )
         const receipts = yield* Effect.forEach(receiptRows, (row) =>
@@ -736,29 +754,6 @@ export const readForwardPerformancePostgresDataFirst = (
           ) AS activity
         `.pipe(Effect.flatMap(decodeCount))
 
-        const [openPositions] = yield* sql<Record<string, unknown>>`
-          WITH latest_reconciliation AS (
-            SELECT reconciliation.reconciled_at
-            FROM reconciliations AS reconciliation
-            WHERE reconciliation.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-            LIMIT 1
-          )
-          SELECT count(*)::integer AS count
-          FROM (
-            SELECT transaction.symbol
-            FROM accounting_transactions AS transaction
-            CROSS JOIN latest_reconciliation
-            WHERE transaction.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
-              AND transaction.occurred_at <= latest_reconciliation.reconciled_at
-            GROUP BY transaction.symbol
-            HAVING sum(transaction.quantity_delta_atoms) <> 0
-              OR sum(transaction.cost_basis_delta_micros) <> 0
-          ) AS open_position
-        `.pipe(Effect.flatMap(decodeCount))
-
         const [unaccountedFills] = yield* sql<Record<string, unknown>>`
           WITH latest_reconciliation AS (
             SELECT reconciliation.reconciled_at
@@ -781,26 +776,17 @@ export const readForwardPerformancePostgresDataFirst = (
         `.pipe(Effect.flatMap(decodeCount))
 
         const [accountOpenPositions] = yield* sql<Record<string, unknown>>`
-          WITH latest_reconciliation AS (
-            SELECT reconciliation.reconciled_at
-            FROM reconciliations AS reconciliation
-            WHERE reconciliation.account_id = ${accountId}
-              AND ${generationScope(sql, accountId, authorityGenerationHash, 'reconciliation')}
-            ORDER BY reconciliation.reconciled_at DESC, reconciliation.reconciliation_id COLLATE "C" DESC
-            LIMIT 1
-          ), inventory_deltas AS (
+          WITH inventory_deltas AS (
             SELECT transaction.symbol, transaction.quantity_delta_atoms, transaction.cost_basis_delta_micros
             FROM accounting_transactions AS transaction
-            CROSS JOIN latest_reconciliation
             WHERE transaction.account_id = ${accountId}
-              AND transaction.occurred_at <= latest_reconciliation.reconciled_at
+              AND transaction.occurred_at <= ${accountReconciledAt ?? null}::timestamptz
             UNION ALL
             SELECT fee.symbol, -fee.quantity_atoms, -fee.cost_basis_micros
             FROM broker_inventory_debits AS fee
-            CROSS JOIN latest_reconciliation
             WHERE fee.account_id = ${accountId}
               AND fee.posted
-              AND fee.effective_at <= latest_reconciliation.reconciled_at
+              AND fee.effective_at <= ${accountReconciledAt ?? null}::timestamptz
           )
           SELECT count(*)::integer AS count
           FROM (
@@ -964,6 +950,15 @@ export const readForwardPerformancePostgresDataFirst = (
           transactions,
           ledgerTransactions,
           cashReportingPrecisionKnown: cashYieldRow === undefined || cashYieldEvidence !== undefined,
+          ...(accountReconciliationRow === undefined
+            ? {}
+            : {
+                accountReconciliation: {
+                  reconciledAt: accountReconciliationRow.reconciled_at.toISOString(),
+                  performanceExact:
+                    accountReconciliationRow.status === 'EXACT' && accountReconciliationRow.discrepancies.length === 0,
+                },
+              }),
           brokerFeeAccrualRecords,
           brokerFeeRecords: brokerFeeRows.map(
             ({
@@ -975,10 +970,10 @@ export const readForwardPerformancePostgresDataFirst = (
               ...record
             }) => record,
           ),
-          generationBrokerFeeIds: brokerFeeRows
+          generationBrokerFeeIds: generationFeeRows
             .filter((row) => row.includes_generation && !row.includes_other_generation)
             .map((row) => row.data.activityId),
-          ambiguousBrokerFeeCount: brokerFeeRows.filter(
+          ambiguousBrokerFeeCount: generationFeeRows.filter(
             (row) =>
               (row.includes_generation && row.includes_other_generation) ||
               (!row.includes_generation &&
@@ -1009,8 +1004,7 @@ export const readForwardPerformancePostgresDataFirst = (
           })),
           unclosedCycleCount,
           unresolvedMutationCount: unresolvedMutations.count,
-          openPositionCount: openPositions.count,
-          accountOpenPositionCount: accountOpenPositions.count,
+          openPositionCount: accountOpenPositions.count,
           unaccountedFillCount: unaccountedFills.count,
           // Preserve delayed fees in their economic generation, but do not treat evidence observed or
           // posted after the reconciliation as part of a closed cut. All account fees feed ledger verification.
