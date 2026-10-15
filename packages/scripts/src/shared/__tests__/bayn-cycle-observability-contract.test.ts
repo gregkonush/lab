@@ -110,6 +110,21 @@ describe('Bayn cycle operations alert contract', () => {
     const grafanaConfiguration = YAML.parse(
       readRepoFile('argocd/applications/observability/grafana-values.yaml'),
     ) as Record<string, any>
+    const resources = YAML.parse(readRepoFile('argocd/applications/observability/kustomization.yaml'))
+      .resources as string[]
+    for (const resource of resources.filter(
+      (path) => path.startsWith('bayn-') && path.endsWith('dashboard-configmap.yaml'),
+    )) {
+      const { name } = YAML.parse(readRepoFile(`argocd/applications/observability/${resource}`)).metadata
+      expect(grafanaConfiguration.dashboardsConfigMaps[name]).toBe(name)
+      expect(grafanaConfiguration.dashboardProviders['dashboardproviders.yaml'].providers).toContainEqual(
+        expect.objectContaining({
+          name,
+          type: 'file',
+          options: { path: `/var/lib/grafana/dashboards/${name}` },
+        }),
+      )
+    }
     const deployment = YAML.parse(
       readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml'),
     ) as Record<string, any>

@@ -20,6 +20,9 @@ starts before the cutoff but durable binding happens afterward. Recovery still r
 evidence and cooldown guards before acquiring a successor.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
+up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
+fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
 Alpaca response decoding converts compact crypto pair identifiers such as `ETHUSD` to the canonical `ETH/USD`
 symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
 outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
@@ -170,6 +173,16 @@ There is no refresh-on-miss path for normal submission.
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+
+The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
+the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
+a separate durable write for reporting metadata. Fee plans still commit before ledger posting. A failed ingestion
+rolls back the report and its precision together; replay cannot change the retained precision or its account binding.
+
+Close preparation waits for exact accounting and resolved broker evidence before constructing a liquidation plan,
+including after a fallback obtains a newer cut. Missing settlement evidence keeps the existing position recoverable
+with `CLOSE_RECONCILIATION_PENDING`; it does not bind an empty close plan, terminalize the cycle, clear restrictions
+or authorize an order. The next exact cut can resume the same bounded close path.
 
 `BAYN_BROKER_POLL_INTERVAL_MS` defaults to 10,000 milliseconds; `BAYN_BROKER_CACHE_MAX_AGE_MS` defaults to 60,000.
 Both accept 1,000–60,000 milliseconds and maximum age must exceed the poll interval. The next delayed call accounts

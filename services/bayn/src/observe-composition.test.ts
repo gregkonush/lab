@@ -1045,6 +1045,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
       }),
     hasAccountBaseline: () => Effect.succeed(true),
     recoverFees: () => Effect.void,
+    retainCashReporting: () => Effect.void,
     bindings: () => Effect.succeed([]),
     reconcile: () => Effect.succeed(persisted),
     ensureAuthorityGeneration: () => Effect.succeed(authority),
@@ -3872,7 +3873,10 @@ describe('OBSERVE runtime composition', () => {
     ])
     expect(close.targetPlan.intentTargets).toHaveLength(1)
     expect((await buildClose()).contentHash).toBe(close.contentHash)
-    expect((await buildClose(reconciliationResultAt(observedAt, 1, 0, [position]))).dispatchable).toBeFalse()
+    await expect(buildClose(reconciliationResultAt(observedAt, 1, 0, [position]))).rejects.toMatchObject({
+      _tag: 'ExecutionCloseAwaitingReconciliation',
+      unknownMutationCount: 1,
+    })
 
     const residual = await buildClose(
       reconciliationResultAt(observedAt, 0, 0, [
@@ -5148,6 +5152,7 @@ describe('OBSERVE runtime composition', () => {
       value: () => unused,
       hasAccountBaseline: () => unused,
       recoverFees: () => Effect.void,
+      retainCashReporting: () => Effect.void,
       bindings: () => unused,
       reconcile: () => unused,
       ensureAuthorityGeneration: () => Effect.succeed(authority),
@@ -5389,6 +5394,7 @@ describe('OBSERVE runtime composition', () => {
               }),
             hasAccountBaseline: () => Effect.succeed(true),
             recoverFees: () => Effect.void,
+            retainCashReporting: () => Effect.void,
             bindings: () => Effect.succeed([]),
             reconcile: () =>
               Deferred.succeed(persistenceStarted, undefined).pipe(

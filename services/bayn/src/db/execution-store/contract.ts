@@ -77,6 +77,9 @@ export interface ValuationStoreShape {
 }
 
 export interface ReconciliationStoreShape {
+  readonly retainCashReporting: (
+    snapshot: Pick<BrokerSnapshot, 'account' | 'accountEventId' | 'cashReportingQuantumMicros'>,
+  ) => Effect.Effect<void, ExecutionStoreError>
   readonly recoverFees: (accountId: string) => Effect.Effect<void, ExecutionStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], ExecutionStoreError>
   readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationWriteResult, ExecutionStoreError>

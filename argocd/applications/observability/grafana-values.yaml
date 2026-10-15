@@ -105,6 +105,7 @@ dashboardsConfigMaps:
   torghut-execution-recovery-dashboard: torghut-execution-recovery-dashboard
   arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
   bayn-cycle-operations-dashboard: bayn-cycle-operations-dashboard
+  bayn-cache-performance-dashboard: bayn-cache-performance-dashboard
   bayn-model-performance-dashboard: bayn-model-performance-dashboard
 
 dashboardProviders:
@@ -167,3 +168,11 @@ dashboardProviders:
         editable: true
         options:
           path: /var/lib/grafana/dashboards/bayn-model-performance-dashboard
+      - name: bayn-cache-performance-dashboard
+        orgId: 1
+        folder: Trading
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/bayn-cache-performance-dashboard
