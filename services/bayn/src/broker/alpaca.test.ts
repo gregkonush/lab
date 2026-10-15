@@ -287,6 +287,40 @@ describe('Alpaca paper reads', () => {
     })
   })
 
+  test.each([
+    ['103820.560000493882', '104000.000000693882', '103820560000', '104000000001'],
+    ['-0.000000000001', '-0.000000000001', '-1', '0'],
+    ['-100.000000000001', '-101.000000000001', '-100000001', '-101000000'],
+    ['10.999999999999', '11.999999999999', '10999999', '12000000'],
+    ['10.123456000000', '11.123456000000', '10123456', '11123456'],
+  ])(
+    'bounds account equity marks without understating daily loss: %s / %s',
+    async (equity, lastEquity, current, previous) => {
+      const raw = { ...accountResponse, equity, last_equity: lastEquity }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.account))
+      expect(result.value.equityMicros).toBe(current)
+      expect(result.value.lastEquityMicros).toBe(previous)
+      expect(result.value.cashMicros).toBe('-23140200000')
+      expect(result.value.buyingPowerMicros).toBe('262113632000')
+      expect(result.evidence.contentHash).toBe(canonicalHashV1(raw))
+    },
+  )
+
+  test.each(['cash', 'buying_power', 'non_marginable_buying_power'] as const)(
+    'keeps exact-money precision checks for %s while accepting high-precision marks',
+    async (field) => {
+      const raw = { ...accountResponse, last_equity: '104000.000000693882', [field]: '1.000000000001' }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
+      expect(failure).toMatchObject({
+        operation: 'account',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    },
+  )
+
   test('reads and hashes the current fractional-trading account configuration with GET only', async () => {
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
     let releaseBody: (() => void) | undefined

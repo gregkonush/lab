@@ -20,6 +20,9 @@ starts before the cutoff but durable binding happens afterward. Recovery still r
 evidence and cooldown guards before acquiring a successor.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
+up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
+fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
 Alpaca response decoding converts compact crypto pair identifiers such as `ETHUSD` to the canonical `ETH/USD`
 symbol before positions, assets, orders, fills or fees enter the shared execution path. Internal contracts and
 outgoing order requests accept only canonical pair identifiers. Raw response evidence retains its original hash.
