@@ -70,6 +70,11 @@ spec:
           env:
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn-execution
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
