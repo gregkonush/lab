@@ -118,6 +118,10 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   reason and phase, session timing, economic evidence, accounting coverage, safety freshness, and replica-reduced
   lifecycle history. Running accounting is distinct from immutable terminal profit, cost, and return evidence; missing
   terminal evidence is never displayed as zero profit.
+- `bayn-cache-performance-dashboard`: native cache/replica acknowledgement and PostgreSQL stage latency, hit/miss
+  outcomes, bounded server/replica metrics, payload sizes, and generation-index catalog observations. The API uses
+  its existing scrape and workers use native Effect OTLP metrics. See the
+  [cache observability runbook](../../../docs/runbooks/bayn-cache-observability.md) for collection, alerts and acceptance.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.

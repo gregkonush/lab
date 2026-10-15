@@ -62,6 +62,18 @@ spec:
               kubernetes.io/metadata.name: observability
           podSelector:
             matchLabels:
+              app.kubernetes.io/instance: observability-mimir
+              app.kubernetes.io/name: mimir
+              app.kubernetes.io/component: gateway
+      ports:
+        - port: 8080
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
               app.kubernetes.io/name: tempo
               app.kubernetes.io/component: distributor
       ports:

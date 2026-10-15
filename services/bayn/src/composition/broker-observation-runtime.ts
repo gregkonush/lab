@@ -9,6 +9,7 @@ import {
   Layer,
   Logger,
   ManagedRuntime,
+  Metric,
   Option,
   References,
   Result,
@@ -28,7 +29,7 @@ import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
-import { withObservedSpan } from '../telemetry'
+import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 
@@ -96,6 +97,8 @@ export const acquireBrokerObservationRuntime = (
   Effect.gen(function* () {
     const cache = yield* ValkeyCache
     const telemetry = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
       Layer.succeed(Logger.CurrentLoggers, yield* Logger.CurrentLoggers),
       Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
       Layer.succeed(Clock.Clock, yield* Clock.Clock),
@@ -216,7 +219,7 @@ export const acquireBrokerObservationRuntime = (
                   )
                 })
                 const result = yield* capture.pipe(
-                  withObservedSpan('bayn.broker.observation.capture'),
+                  withObservedStage('bayn.broker.observation.capture', { dependency: 'alpaca' }),
                   Effect.timeoutOrElse({
                     duration: captureTimeoutMs,
                     orElse: () =>
@@ -243,7 +246,10 @@ export const acquireBrokerObservationRuntime = (
                 const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                 const publication = yield* persistence
                   .publish(ticket, result.success, nextPollNotBeforeMs)
-                  .pipe(withObservedSpan('bayn.broker.observation.publish'), Effect.result)
+                  .pipe(
+                    withObservedStage('bayn.broker.observation.publish', { dependency: 'postgresql' }),
+                    Effect.result,
+                  )
                 if (Result.isFailure(publication)) {
                   yield* persistence.failed(ticket, nextPollNotBeforeMs)
                   yield* Effect.logWarning('Broker observation publication failed').pipe(
@@ -273,8 +279,8 @@ export const acquireBrokerObservationRuntime = (
             )
           }).pipe(
             Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate)),
-            withObservedSpan('bayn.broker.observation.poll', {
-              'bayn.source.revision': plan.config.build.sourceRevision,
+            withObservedStage('bayn.broker.observation.poll', {
+              attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
             }),
             Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),
           )
