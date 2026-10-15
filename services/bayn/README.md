@@ -12,7 +12,9 @@ and at most one open position. Crypto uses cash buying power, quantity-based LIM
 MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
-Bound decisions, orders and positions retain recovery priority.
+Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
+three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
+entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
 An unused native admission retains its expiry classification at the equity cutoff, including when decision construction
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
 evidence and cooldown guards before acquiring a successor.
