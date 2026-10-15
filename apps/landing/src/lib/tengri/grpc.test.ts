@@ -332,7 +332,7 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      if (call.request.agentId === 'legacy-model-catalog') {
+      if (call.request.agentId === 'unimplemented-catalog') {
         callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
         return
       }
@@ -751,11 +751,11 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
-  test('identifies unsupported model selection without disguising other catalog failures', async () => {
+  test('treats missing model RPCs and invalid catalogs as failures without negotiating guest capabilities', async () => {
     const { listCodexModels } = await import('./grpc')
-    expect(await rejection(listCodexModels(identity, 'legacy-model-catalog'))).toMatchObject({
-      status: 412,
-      code: 'model_selection_unavailable',
+    expect(await rejection(listCodexModels(identity, 'unimplemented-catalog'))).toMatchObject({
+      status: 503,
+      code: undefined,
     })
     expect(await rejection(listCodexModels(identity, 'broken-catalog'))).toMatchObject({
       status: 503,

@@ -178,7 +178,14 @@ export const nativeJevFixture = (
     decodeJevPortfolio(
       purpose === JevPurpose.Entry
         ? { purpose, brokerState }
-        : { purpose, brokerState, entryDecisionHash: 'f'.repeat(64), entryIntentIds: [intentId], entryFills },
+        : {
+            purpose,
+            brokerState,
+            entryDecisionHash: 'f'.repeat(64),
+            entryIntentIds: [intentId],
+            entryFills,
+            entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },
+          },
     ),
   )
   const session = exchangeSessions(snapshot.manifest.calendar)[0]
@@ -193,7 +200,7 @@ export const nativeJevFixture = (
         strategyProtocolHash: Result.getOrThrow(
           makeStrategyProtocolHashResult({
             name: 'jev',
-            behaviorHash: protocol.schemaVersion === 'bayn.jev.protocol.v3' ? jevBehaviorHash : jevBehaviorHash,
+            behaviorHash: jevBehaviorHash,
             parameterHash: canonicalHashV1(protocol),
             parameterSchemaVersion: protocol.schemaVersion,
           }),

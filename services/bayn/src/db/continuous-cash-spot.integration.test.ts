@@ -124,6 +124,96 @@ const retainFill = (side: OrderSide, previous: { quantityAtoms: string; costMicr
   })
 
 integration(
+  'cutover migrates retained quantity and notional orders without losing their original evidence',
+  async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* beforeCutover
+        const at = '2026-10-11T00:03:00.000Z'
+        const cases = [
+          { version: 'bayn.paper-order.v1', quantity: '1000000', notional: null, type: 'LIMIT', price: '100000000' },
+          { version: 'bayn.paper-order.v2', quantity: '2000000', notional: null, type: 'MARKET', price: null },
+          { version: 'bayn.paper-order.v2', quantity: null, notional: '100000000', type: 'MARKET', price: null },
+        ] as const
+        const expected = []
+        for (const [index, item] of cases.entries()) {
+          const brokerOrderId = `retained-order-${index}`
+          const clientOrderId = `retained-client-${index}`
+          const eventId = canonicalHashV1({ brokerOrderId, at })
+          const originalHash = canonicalHashV1({ brokerOrderId, item })
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
+                VALUES(${eventId},'bayn.paper-broker-event.v1',${originalHash},'ORDER','ALPACA',${accountId},${`order:${brokerOrderId}:${at}`},${index},${at},${at})`
+              yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,symbol,side,order_type,time_in_force,quantity_micros,notional_micros,filled_quantity_micros,limit_price_micros,status)
+                VALUES(${eventId},${accountId},${item.version},${brokerOrderId},${clientOrderId},'AAPL','BUY',${item.type},'DAY',${item.quantity},${item.notional},0,${item.price},'CANCELED')`
+            }),
+          )
+          const quantityAtoms = item.quantity === null ? null : (BigInt(item.quantity) * 1000n).toString()
+          const normalizedHash = canonicalHashV1({
+            schemaVersion: 'bayn.order-source.v3',
+            order: {
+              schemaVersion: 'bayn.order.v3',
+              accountId,
+              brokerOrderId,
+              clientOrderId,
+              symbol: 'AAPL',
+              side: 'BUY',
+              orderType: item.type,
+              timeInForce: 'DAY',
+              ...(quantityAtoms === null ? {} : { quantityAtoms }),
+              ...(item.notional === null ? {} : { notionalMicros: item.notional }),
+              filledQuantityAtoms: '0',
+              ...(item.price === null ? {} : { limitPriceMicros: item.price }),
+              status: 'CANCELED',
+            },
+            brokerUpdatedAt: at,
+          })
+          expected.push({ eventId, originalHash, normalizedHash, quantityAtoms, item })
+        }
+        yield* migrate
+        for (const retained of expected) {
+          const rows = yield* sql<{
+            schema_version: string
+            quantity_atoms: string | null
+            notional_micros: string | null
+            content_hash: string
+            normalized_content_hash: string
+            original_version: string
+            original_quantity: string | null
+            original_notional: string | null
+            archive_valid: boolean
+          }>`SELECT o.schema_version,o.quantity_atoms::text,o.notional_micros::text,e.content_hash,e.normalized_content_hash,
+            a.original_record->>'schema_version' AS original_version,
+            a.original_record->>'quantity_micros' AS original_quantity,
+            a.original_record->>'notional_micros' AS original_notional,
+            a.original_record_hash = encode(sha256(convert_to(a.original_record::text,'UTF8')),'hex') AS archive_valid
+            FROM orders AS o JOIN broker_events AS e USING(event_id)
+            JOIN execution_unit_cutover_archive AS a ON a.table_name='orders' AND a.row_id=o.event_id
+            WHERE o.event_id=${retained.eventId}`
+          expect(rows).toEqual([
+            {
+              schema_version: 'bayn.order.v3',
+              quantity_atoms: retained.quantityAtoms,
+              notional_micros: retained.item.notional,
+              content_hash: retained.originalHash,
+              normalized_content_hash: retained.normalizedHash,
+              original_version: retained.item.version,
+              original_quantity: retained.item.quantity,
+              original_notional: retained.item.notional,
+              archive_valid: true,
+            },
+          ])
+        }
+        expect(yield* migrate).toEqual([])
+      }).pipe(Effect.provide(client), Effect.provide(NodeServices.layer)),
+    )
+  },
+  15_000,
+)
+
+integration(
   'hard cutover preserves original financial evidence, transfer identities and exact replay across restart',
   async () => {
     await Effect.runPromise(

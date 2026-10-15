@@ -34,6 +34,7 @@ import {
   type MutationExecutionAuthority,
 } from './authority'
 import { Pipeable } from '../pipeable'
+import { SubmissionDenialReason } from './submission-denial'
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
@@ -947,7 +948,11 @@ export const confirmExecutionBrokerState = (
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
     if (brokerRead.projection === undefined)
-      return yield* mutationAuthorizationError('broker observation projection is required for submit', undefined)
+      return yield* invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'broker observation projection is required for submit',
+        denialReason: SubmissionDenialReason.ProjectionRequired,
+      })
     const {
       positions,
       openOrders: orders,

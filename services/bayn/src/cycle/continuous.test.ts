@@ -52,17 +52,17 @@ for (const at of ['2026-10-09T23:59:50.000Z', '2026-10-11T00:00:10.000Z']) {
     expect(Date.parse(binding.executionSession.closeAt) - Date.parse(at)).toBe(19 * 60_000)
     const query = Result.getOrThrow(jevObservationQuery(cycle, protocol, continuousMarketHours, observedAt))
     expect(query.feed).toBe('us')
-    expect(query.candidateSymbols).toEqual(['BTC/USD'])
+    expect(query.candidateSymbols).toEqual(['BTC/USD', 'ETH/USD', 'SOL/USD'])
     expect(Date.parse(query.rangeStartAt)).toBeLessThan(Date.parse(cycle.window.executionOpenAt))
   })
 }
 
-test('completed crypto cycles rearm after their old entry deadline and rotate BTC, ETH and SOL', () => {
+test('completed crypto cycles rearm after their old entry deadline with all crypto candidates', () => {
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const policy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
   if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('Expected current policy')
   let prior: ReturnType<typeof makeInitialCycle> | undefined
-  for (const [index, symbol] of ['BTC/USD', 'ETH/USD', 'SOL/USD', 'BTC/USD'].entries()) {
+  for (const index of [0, 1, 2, 3]) {
     const at = new Date(Date.parse('2026-10-10T23:40:00.000Z') + index * 20 * 60_000).toISOString()
     const lease = Result.getOrThrow(
       tradingWindow(continuousMarketHours, at, { ...continuousExecutionPolicy, sessionEntryCutoffMs: 0 }),
@@ -89,7 +89,7 @@ test('completed crypto cycles rearm after their old entry deadline and rotate BT
     const query = Result.getOrThrow(
       jevObservationQuery(cycle, protocol, continuousMarketHours, new Date(Date.parse(at) + 3000).toISOString()),
     )
-    expect(query.candidateSymbols).toEqual([symbol])
+    expect(query.candidateSymbols).toEqual(['BTC/USD', 'ETH/USD', 'SOL/USD'])
     if (prior !== undefined) expect(cycle.identity.cycleId).not.toBe(prior.identity.cycleId)
     prior = { ...cycle, state: CycleState.Completed, terminalAt: new Date(Date.parse(at) + 15 * 60_000).toISOString() }
   }

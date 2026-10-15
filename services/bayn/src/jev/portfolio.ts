@@ -1,3 +1,4 @@
+import { instrumentMarket, MarketKind } from '../instruments'
 import { Context, Effect, Result, Schema } from 'effect'
 
 import type { OperationalError } from '../errors'
@@ -5,6 +6,7 @@ import type { ReconciledBrokerState } from '../reconciliation'
 
 import {
   AccountSnapshotSchema,
+  UnsignedMicrosSchema,
   FillSchema,
   OrderSchema,
   OrderSide,
@@ -33,6 +35,11 @@ const ReconciledStateSchema = Schema.Struct({
   unknownOrderCount: Schema.Literal(0),
 })
 
+export const JevInventoryDebitSchema = Schema.Struct({
+  quantityAtoms: UnsignedMicrosSchema,
+  costBasisMicros: UnsignedMicrosSchema,
+})
+
 const Base = Schema.Union([
   Schema.Struct({ purpose: Schema.Literal(JevPurpose.Entry), brokerState: ReconciledStateSchema }),
   Schema.Struct({
@@ -41,6 +48,7 @@ const Base = Schema.Union([
     entryDecisionHash: Sha256Schema,
     entryIntentIds: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
     entryFills: Schema.Array(FillSchema).check(Schema.isMinLength(1)),
+    entryInventoryDebit: JevInventoryDebitSchema,
   }),
 ])
 
@@ -122,11 +130,16 @@ export const JevPortfolioSchema = Base.check(
               order.side === fill.side,
           ),
       ) ||
-      fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) !== BigInt(position.quantityAtoms)
+      fills.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n) -
+        BigInt(context.entryInventoryDebit.quantityAtoms) !==
+        BigInt(position.quantityAtoms) ||
+      (instrumentMarket(position.symbol) !== MarketKind.Crypto &&
+        (context.entryInventoryDebit.quantityAtoms !== '0' || context.entryInventoryDebit.costBasisMicros !== '0'))
     )
       issues.push({
         path: ['entryFills'],
-        issue: 'complete canonical entry fills must explain the entire held quantity and match the reconciled orders',
+        issue:
+          'complete canonical entry fills minus posted inventory debits must explain the held quantity and match reconciled orders',
       })
     for (const order of state.orders.filter(
       (order) => order.intentId !== undefined && context.entryIntentIds.includes(order.intentId),

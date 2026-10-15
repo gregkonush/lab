@@ -51,7 +51,7 @@ for fixture_file in ca.crt runtime.password resolv.conf; do
     'umask 022; cat > "$1"; chmod 0444 "$1"' sh "/artifacts/$fixture_file"
 done
 guest_digest="$(docker image inspect --format '{{.Id}}' "$TENGRI_KVM_GUEST_IMAGE")"
-docker run --name "$fixture_name" --network "$TENGRI_KVM_NETWORK" --cpus=1 --memory=9g --memory-swap=9g --pids-limit=512 \
+docker run --name "$fixture_name" --network "$TENGRI_KVM_NETWORK" --cpus=4 --memory=9g --memory-swap=9g --pids-limit=512 \
   --read-only --cap-drop ALL --cap-add NET_ADMIN --cap-add SETUID --cap-add SETGID \
   --security-opt no-new-privileges=true --device /dev/kvm --device /dev/net/tun \
   --security-opt "seccomp=${TENGRI_KVM_SECCOMP}" \

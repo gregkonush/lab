@@ -1,18 +1,21 @@
 import { describe, expect, test } from 'bun:test'
 import type { Context, ObjectContext } from '@restatedev/restate-sdk'
-import { Deferred, Effect, Fiber, Redacted } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Redacted } from 'effect'
 import { TestClock } from 'effect/testing'
 import { PublicInformationSource, publicInformationIntervalMs, type PublicInformationRun } from '../public-information'
 import {
   approvePublicInformation,
   makePublicInformationServices,
+  submitPublicInformationActivation,
   submitPublicInformationJobs,
   type PublicInformationRuntime,
 } from './restate-public-information'
-import { RestateInvocationClientError } from './restate-invocation-client'
+import { RestateInvocationClientError, type RestateHttpRequest } from './restate-invocation-client'
 
 const revision = 'a'.repeat(40)
 const key = Redacted.make('b'.repeat(64))
+const isRevisionRequest = (input: Parameters<RestateHttpRequest>[0]) =>
+  (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url).endsWith('/revision')
 const run = (source: PublicInformationSource): PublicInformationRun => ({
   schemaVersion: 'bayn.public-information-run.v1',
   source,
@@ -68,6 +71,55 @@ const harness = (
 }
 
 describe('independent Restate public information jobs', () => {
+  test('does not submit a revision-bound activation to a previously registered worker', async () => {
+    let activationSends = 0
+    const result = await Effect.runPromiseExit(
+      submitPublicInformationActivation(
+        { sourceRevision: revision, approvalKey: key, ingressOrigin: 'http://restate.invalid' },
+        PublicInformationSource.Macro,
+        async (input) => {
+          if (isRevisionRequest(input)) return Response.json('c'.repeat(40))
+          activationSends += 1
+          return Response.json({ invocationId: 'inv_abc123', status: 'Accepted' }, { status: 202 })
+        },
+      ),
+    )
+    expect(Exit.isFailure(result)).toBe(true)
+    expect(activationSends).toBe(0)
+  })
+  test('registration errors stay retryable and a matching revision submits one stable signed activation', async () => {
+    const config = { sourceRevision: revision, approvalKey: key, ingressOrigin: 'http://restate.invalid' }
+    for (const reply of [() => new Response(null, { status: 404 }), () => Response.json({ revision })]) {
+      let sends = 0
+      const result = await Effect.runPromiseExit(
+        submitPublicInformationActivation(config, PublicInformationSource.Filings, async (input) => {
+          if (isRevisionRequest(input)) return reply()
+          sends += 1
+          return Response.json({ invocationId: 'inv_abc123', status: 'Accepted' }, { status: 202 })
+        }),
+      )
+      expect(Exit.isFailure(result)).toBe(true)
+      expect(sends).toBe(0)
+    }
+    const keys: (string | null)[] = []
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(
+        await Effect.runPromise(
+          submitPublicInformationActivation(config, PublicInformationSource.Filings, async (input, init) => {
+            if (isRevisionRequest(input)) return Response.json(revision)
+            keys.push(new Headers(init?.headers).get('idempotency-key'))
+            if (typeof init?.body !== 'string') throw new Error('Missing activation')
+            expect(JSON.parse(init.body)).toEqual({
+              source: PublicInformationSource.Filings,
+              sourceRevision: revision,
+              approval: approvePublicInformation(PublicInformationSource.Filings, revision, key),
+            })
+            return Response.json({ invocationId: 'inv_abc123', status: 'PreviouslyAccepted' }, { status: 202 })
+          }),
+        ),
+      ).toMatchObject({ invocationId: 'inv_abc123' })
+    expect(keys).toEqual(Array(2).fill(`public-information:SEC_FILINGS:${revision}`))
+  })
   test('submits the macro job while filing activation is retrying', async () => {
     await Effect.runPromise(
       Effect.scoped(

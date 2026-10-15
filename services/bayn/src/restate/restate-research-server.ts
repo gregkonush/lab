@@ -25,13 +25,12 @@ import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../
 import { acquireRestateHttp2Server } from './restate-http2-server'
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import {
-  approvePublicInformation,
   makePublicInformationServices,
+  submitPublicInformationActivation,
   submitPublicInformationJobs,
 } from './restate-public-information'
 import { publicInformationEnabled, publicInformationIntervalMs } from '../public-information'
 import { runPublicInformation } from '../public-information-resources'
-import { sendRestateInvocation } from './restate-invocation-client'
 import { makeBaynResearchRun } from './restate-research-run'
 import { acquireRestateTelemetry, currentOpenTelemetryParentSpan } from './restate-telemetry'
 
@@ -143,14 +142,13 @@ export const researchServerProgram = Effect.gen(function* () {
       yield* Metric.update(publicInformationEnabled, enabled ? 1 : 0)
       if (!enabled) return
       yield* submitPublicInformationJobs((source) =>
-        sendRestateInvocation(
-          'http://restate.restate.svc.cluster.local:8080/BaynPublicInformationControl/activate/send',
+        submitPublicInformationActivation(
           {
-            source,
             sourceRevision: config.sourceRevision,
-            approval: approvePublicInformation(source, config.sourceRevision, config.approvalKey),
+            approvalKey: config.approvalKey,
+            ingressOrigin: 'http://restate.restate.svc.cluster.local:8080',
           },
-          { timeoutMs: 5_000, headers: { 'Idempotency-Key': `public-information:${source}:${config.sourceRevision}` } },
+          source,
         ),
       )
     }).pipe(

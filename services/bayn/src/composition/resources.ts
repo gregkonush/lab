@@ -1,6 +1,7 @@
 import { equityMarketProfile, cryptoMarketProfile } from '../jev/markets'
 
 import type { MarketSources } from '../market-data/streaming/raw-events'
+import { ValkeyCacheLive } from '../valkey-cache'
 import { BrokerObservationsLive } from '../db/broker-observations'
 import { brokerSnapshotCacheConfig } from '../broker/alpaca/snapshot-cache'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
@@ -145,7 +146,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 /** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
@@ -162,7 +163,7 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
       Layer.provide(BrokerObservationResourceLive(plan.config)),
       Layer.provide(postgres),
     ),
-  ).pipe(Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
 }
 
 export const AutonomousWorkerApplicationResourcesLive = (
@@ -176,7 +177,7 @@ export const AutonomousWorkerApplicationResourcesLive = (
     postgres,
     journal,
     CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 
 export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
@@ -225,7 +226,7 @@ export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'Autonom
     BrokerSessionResourceLive(plan.config).pipe(Layer.provide(postgres)),
     executionPersistence,
     WriterFencedCycleStoreResourceLive.pipe(Layer.provide(writerFence), Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ApplicationPlatformLive))
+  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 
 export const applicationDependencies: Effect.Effect<

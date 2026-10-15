@@ -1,12 +1,10 @@
+import { jevCycleCandidates } from './markets'
+import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
-import { reconciledStateHash } from '../reconciliation'
-import { nativeJevFixture, nativeJevBatchResult } from './native.test-support'
-import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
-import { decodeJevPortfolio, JevPurpose } from './portfolio'
-import { makeJevObservation } from './observation'
+import { jevObservationForSnapshot, nativeJevBatchResult } from './native.test-support'
 import { makeJevTradingSignalBatch, reproduceJevRequestFromObservation } from './trading-signals'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { decideJevEntry } from './decision'
@@ -15,37 +13,8 @@ import { maximumBuyQuantities, adverseQuotePrices } from '../observe-composition
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test(`${symbol} uses the shared Jev decision path with native signals and fractional precision on Sunday`, () => {
     const { snapshot } = cryptoMarketFixture(symbol)
-    const prior = nativeJevFixture().portfolio.brokerState
-    const observedAt = snapshot.manifest.observedAt
-    const material = {
-      account: { ...prior.account, observedAt },
-      positions: [],
-      orders: [],
-      positionsObservedAt: observedAt,
-      ordersObservedAt: observedAt,
-      accountingHash: prior.accountingHash,
-    }
-    const hash = Result.getOrThrow(reconciledStateHash(material))
-    const portfolio = Result.getOrThrow(
-      decodeJevPortfolio({
-        purpose: JevPurpose.Entry,
-        brokerState: {
-          ...material,
-          unknownOrderCount: 0,
-          reconciliation: { ...prior.reconciliation, expectedHash: hash, observedHash: hash, reconciledAt: observedAt },
-        },
-      }),
-    )
-    const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    const observation = Result.getOrThrow(
-      makeJevObservation({
-        cycleId: 'a'.repeat(64),
-        authorityGenerationHash: 'b'.repeat(64),
-        protocol,
-        portfolio,
-        snapshot,
-      }),
-    ).payload
+    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+    const { protocol, observedAt } = observation
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation,
@@ -74,5 +43,54 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       bidPriceMicros: { [symbol]: '103123456' },
       askPriceMicros: { [symbol]: '103123457' },
     })
+  })
+}
+
+for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
+  test(`one crypto observation retains every candidate with ${missing ?? 'no'} missing feature`, () => {
+    const fixture = cryptoMarketFixture('ETH/USD')
+    const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
+    const features = new Map(fixture.cut.projection.features)
+    if (missing !== null) features.delete(missing)
+    const snapshot = Result.getOrThrow(
+      constructStreamingSnapshot(
+        { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
+        {
+          ...fixture.query,
+          symbols,
+          candidateSymbols: symbols,
+        },
+      ),
+    )
+    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+    const { protocol } = observation
+    const plan = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation,
+        expiresAt: new Date(Date.parse(observation.observedAt) + protocol.inferenceValidityMs).toISOString(),
+        planVersion: JevBatchPlanVersion.V4,
+      }),
+    )
+    expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual(symbols)
+    expect(
+      jevCycleCandidates(
+        { window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' } },
+        protocol.candidateSymbols,
+      ),
+    ).toEqual(symbols)
+    if (missing === 'SOL/USD') {
+      expect(plan.candidates.find((candidate) => candidate.symbol === 'SOL/USD')).toMatchObject({
+        status: 'EXCLUDED',
+        reason: 'not-ready',
+      })
+      expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({ status: 'REQUESTED' })
+    }
+    if (missing === 'BTC/USD') {
+      expect(plan.candidates.every((candidate) => candidate.status === 'EXCLUDED')).toBe(true)
+      expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
+        reason: 'not-ready',
+        message: expect.stringContaining('Required benchmark BTC/USD'),
+      })
+    }
   })
 }

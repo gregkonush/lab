@@ -9,7 +9,7 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
+import { Authority, type AuthorityState } from '../../execution/contracts'
 import {
   executionActivationExpiredRestrictionReason,
   reconciliationDiscrepancyRestrictionPattern,
@@ -32,7 +32,7 @@ import {
   researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
+import type { AuthorityGenerationStoreShape, EnsureAuthorityGenerationInput } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
@@ -124,27 +124,11 @@ export const validateObserveGenerationBrokerIdentityReplay = Pipeable.dual(
   validateObserveGenerationBrokerIdentityReplayDataFirst,
 )
 
-export interface ObserveAuthorityInterpreter {
-  readonly ensureAuthorityGeneration: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readOrInitializeObserveAuthority: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readResearchAuthorityGeneration: (
-    generationHash: string,
-  ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
-  readonly readAuthorityGenerationLineage: (
-    generationHash: string,
-  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
-}
-
 const makeObserveAuthorityInterpreterDataFirst = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   brokerIdentity: BrokerIdentity | undefined,
-): ObserveAuthorityInterpreter => {
+): AuthorityGenerationStoreShape => {
   const requireBrokerIdentity = () =>
     brokerIdentity === undefined
       ? failExecutionStore('authority', 'invariant', 'authority generation requires a configured broker identity')

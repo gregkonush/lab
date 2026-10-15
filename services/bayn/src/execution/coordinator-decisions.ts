@@ -33,6 +33,7 @@ import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'
 import { MutationEventType, type MutationEvent } from './mutations'
 import { Pipeable } from '../pipeable'
+import { submissionDenialReason, type SubmissionDenialReason } from './submission-denial'
 
 // Pure decisions for the effectful coordinator interpreter.
 export type ExecutionDecisionFailure =
@@ -106,6 +107,7 @@ export type SubmitPersistenceDecision =
     }
   | {
       readonly _tag: 'SubmitDenied'
+      readonly denialReason: SubmissionDenialReason
     }
   | {
       readonly _tag: 'SubmitUnknown'
@@ -367,7 +369,7 @@ const decideSubmitFailureDataFirst = (
         error.outcome === MutationOutcome.Known &&
         error.brokerOrderId === undefined &&
         evidence === undefined
-      ? { _tag: 'SubmitDenied' }
+      ? { _tag: 'SubmitDenied', denialReason: error.denialReason ?? submissionDenialReason(error.cause) }
       : {
           _tag: 'SubmitUnknown',
           ...(error.brokerOrderId === undefined ? {} : { brokerOrderId: error.brokerOrderId }),

@@ -1,4 +1,5 @@
 import { Data, Redacted, Result, Schema } from 'effect'
+import { SubmissionDenialReason } from '../../execution/submission-denial'
 
 import { canonicalHashV1OrThrow, canonicalHashV1Result } from '../../hash'
 import { BrokerAccess, type ExecutionAuthority } from '../../execution/authority'
@@ -426,6 +427,7 @@ const submitRequestHash = (body: OrderRequestBody): Result.Result<string, Broker
     invalidRequest({
       operation: MutationOperation.Submit,
       message: 'order request cannot be canonically hashed',
+      denialReason: SubmissionDenialReason.RequestEncoding,
       cause,
     }),
   )
@@ -437,7 +439,12 @@ const prepareSubmitDataFirst = (
   const decoded = decodeIntent(input)
   if (Result.isFailure(decoded)) {
     return Result.fail(
-      invalidRequest({ operation: MutationOperation.Submit, message: 'invalid order intent', cause: decoded.failure }),
+      invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'invalid order intent',
+        cause: decoded.failure,
+        denialReason: SubmissionDenialReason.InvalidIntent,
+      }),
     )
   }
   const intent = decoded.success
@@ -446,6 +453,7 @@ const prepareSubmitDataFirst = (
       invalidRequest({
         operation: MutationOperation.Submit,
         message: 'order intent account does not match the configured Alpaca account',
+        denialReason: SubmissionDenialReason.AccountMismatch,
       }),
     )
   }
@@ -455,6 +463,7 @@ const prepareSubmitDataFirst = (
       invalidRequest({
         operation: MutationOperation.Submit,
         message: 'order intent cannot be submitted',
+        denialReason: SubmissionDenialReason.OrderContract,
         cause: body.failure,
       }),
     )

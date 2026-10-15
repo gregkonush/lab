@@ -51,6 +51,9 @@ export const makeExecutionPersistence = (config: ExecutionStoreRuntimeConfig, cl
       accounting,
       valuation,
       reconciliation: {
+        retainCashReporting: (snapshot) =>
+          runExecutionOperation('reconciliation', reconciliation.retainCashReporting(snapshot)),
+        recoverFees: (accountId) => runExecutionOperation('reconciliation', reconciliation.recoverFees(accountId)),
         bindings: (accountId) => runExecutionOperation('bindings', reconciliation.bindings(accountId)),
         reconcile: (snapshot) => runExecutionOperation('reconciliation', reconciliation.reconcile(snapshot)),
       },

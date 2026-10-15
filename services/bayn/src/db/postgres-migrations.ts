@@ -78,7 +78,7 @@ export const withMigrationDeadline = <R>(
     }),
   )
 
-const migrationTimeoutMs = 300_000
+export const migrationTimeoutMs = 900_000
 
 export const PostgresMigrationsLive = (config: Pick<RuntimeConfig, 'postgres'>) =>
   Layer.effectDiscard(

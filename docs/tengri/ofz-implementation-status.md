@@ -7,7 +7,35 @@ fixture evidence remain in [the implementation trail](ofz-implementation-decisio
 
 ## Current release boundary
 
-The active source frontier is the independent audit exporter and NUC archive on `codex/ofz-audit-export`.
+The active source frontier is encrypted independent recovery on `codex/ofz-recovery-encryption`.
+The dedicated identity source merged in [#15038](https://github.com/proompteng/lab/pull/15038) at
+`7b520e8d8827b9fb4d32e9a9f4503763579a25a1`, after every exact-head check passed and its actionable review was resolved.
+Keycloak and Cloudflare retain their existing workloads, with reconciliation temporarily paused until independent
+backup/restore permits the coordinated identity rollout. Ofz reconciliation is also paused until a successfully
+published image produces its first reviewed `kargo/ofz` commit. Its initial main-source migration hooks attempted the
+inert `unpromoted` reference and did not execute. The control databases exist; the owner schema/bootstrap and serving
+API still require the image release. The retired native key is denied, and both old Tengri native types have zero
+relationships, so installing the new schema does not require retaining old grants.
+The fenced API/exporter and approved owner bootstrap merged in [#15026](https://github.com/proompteng/lab/pull/15026)
+at `971f5874970c7ce5453bff0f11a8cb822c03740f`. Its exact-head validation and both image builds pass; main image
+publication and the Kargo/Argo rollout are pending. The live registry is stopped during a filesystem check of its
+detached RBD volume. Preserve that recovery hold until its owner completes the check.
+The Keycloak configuration now has one active GitOps source, with the obsolete prepared overlay removed. Its dedicated
+realm credentials, verified issuer certificate and tunnel route, two serving replicas and three host-spread database
+instances pass the real API-server dry run. The exact database toleration admits the third host without removing
+Ryzen's compute-local taint. Five rendered targets and thirty-one rejected regressions pass. The real Keycloak 26.7.4,
+Chromium, BFF, controller, Ofz and SQL fixture passes all eighty-one assertions in 81.84 seconds. This is isolated
+evidence; independent backup/restore, live deployment, the real OAuth callback switch and passkeys remain pending.
+
+The NUC encryption preflight reproduces a failed encrypted upload because the earlier server has no wrapping key.
+The correction persists and fingerprints one key, supplies it through a private file, enables bucket encryption,
+and requires encrypted version readback before SQL acknowledgement. The prior exporter fails the new unencrypted
+version regression; the corrected full archive/bootstrap fixture passes three tests in 22.644 seconds. It proves
+eight-MiB multipart encryption, absence of the plaintext marker in the backing files, crash/restart readback,
+immutable retention and key-loss/corruption rejection. This change is locally qualified and not deployed. NUC SSH
+currently refuses the existing agent signature; the owner has been asked to unlock that agent again.
+The independent archive merged in [#15020](https://github.com/proompteng/lab/pull/15020) at
+`1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6`. Its main image is published and its NUC service is deployed and verified.
 The owner-only bootstrap/activation commands merged in [#15014](https://github.com/proompteng/lab/pull/15014) at
 `3b78559173e6a5dd25b514f28a12b08bacfe0a9f`. Automatic review found that expected relationship checks permitted surplus
 native authority. The correction merged in [#15016](https://github.com/proompteng/lab/pull/15016) at
@@ -32,35 +60,42 @@ That fixture stopped before the destructive disk probe, cleaned its resources an
 
 The 2026-10-13 live readback uses `galactic-tailscale`. Ofz has three SpiceDB replicas and two Playground replicas,
 with three PostgreSQL Pods. There is no Ofz API Deployment and there are no Tengri MicroVMs. The
-`tengri-ofz-cutover` admission binding remains active. The repository release variable
+`tengri-ofz-cutover` admission binding remains active. The obsolete controller has been stopped, and its Argo
+Application is temporarily paused with `argocd.argoproj.io/skip-reconcile=true`. Resume reconciliation only against
+the replacement Kargo commit. The six old unclaimed slot Pods, home PVCs and Leases are verified absent. The repository release variable
 `TENGRI_PREPARED_SLOT_CUTOVER_READY` remains `false`.
 
 The owner explicitly authorized deletion of the old workspaces and homes. That deletion is complete; retained-data
-import and migration rehearsals are superseded. Retire the old unclaimed prepared pool and journals before activating
-the new VMM/protocol. Fresh workspaces must use the final contract. No legacy authorization fallback is implemented.
+import and migration rehearsals are superseded. The old unclaimed prepared pool and its home journals are retired.
+Activate only the new VMM/protocol. Fresh workspaces must use the final contract. No legacy authorization fallback is implemented.
 
 ## Service delivery
 
-| Service or contract                                                               | Source delivery                                                          | Remaining release boundary                                              |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                                            | Bootstrap, independent exporter, delivery enrollment and API activation |
-| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                                 | Coordinated activation and fresh-workspace browser proof                |
-| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                                            | Live host loss and three-node CNPG qualification                        |
-| Physical database promotion                                                       | #14910 merged                                                            | Native CNPG and independent restore                                     |
-| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727`              | Coordinated runtime/guest activation                                    |
-| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda`              | Warehouse/Stage enrollment and API deployment                           |
-| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b`              | Native performance, independent execution fencing and activation        |
-| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2`              | Bounded observers and coordinated activation                            |
-| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c`              | Deployed UI acceptance                                                  |
-| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0`              | Fifty-sample qualification and coordinated activation                   |
-| Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                                 | Protected inputs, independent archive and production activation         |
-| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), under validation | CI/review, image publication, NUC and Kubernetes rollout                |
-| Bounded file observers                                                            | Local implementation, unpublished                                        | Finish controller/BFF wiring and full scoped acceptance                 |
+| Service or contract                                                               | Source delivery                                                | Remaining release boundary                                              |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Ofz lifecycle, quotas, durable policy commands, audit and admission               | #14908 merged                                                  | Bootstrap, independent exporter, delivery enrollment and API activation |
+| Tengri controller, runner and supervisor; Landing lifecycle and desktop authority | #14915 and #14916 merged                                       | Coordinated activation and fresh-workspace browser proof                |
+| Replicated Ofz, Keycloak and application configuration                            | #14909 merged                                                  | Live host loss and three-node CNPG qualification                        |
+| Physical database promotion                                                       | #14910 merged                                                  | Native CNPG and independent restore                                     |
+| Allocation/runtime epoch and preview binding                                      | #14911 merged at `fe2acf427ab4ec53733a4960fc9af1d5f67e8727`    | Coordinated runtime/guest activation                                    |
+| API image factory                                                                 | #14985 merged at `844d149ff29dc884290e19241645926d8cee3bda`    | Warehouse/Stage enrollment and API deployment                           |
+| Signed guest and preview admission                                                | #14913 merged at `9bb95305b8dc72e7465fba35de6998714168a37b`    | Native performance, independent execution fencing and activation        |
+| Explicit Viewer scopes                                                            | #14920 merged at `70b513e03287b33af582520bb21671f4a99e92c2`    | Bounded observers and coordinated activation                            |
+| Viewer administration UI                                                          | #14921 merged at `936489dd651c5896ba35abc47ab1065eb479d49c`    | Deployed UI acceptance                                                  |
+| Exact-target protocol 4                                                           | #14923 merged at `3825ddf2e933bade9a9fb16641ac77c7ccf14fe0`    | Fifty-sample qualification and coordinated activation                   |
+| Initial administrator bootstrap and activation                                    | #15014 and #15016 merged                                       | Protected inputs, independent archive and production activation         |
+| Independent immutable audit archive                                               | [#15020](https://github.com/proompteng/lab/pull/15020), merged | Kubernetes exporter adoption and full recovery qualification            |
+| Bounded file observers                                                            | Local implementation, unpublished                              | Finish controller/BFF wiring and full scoped acceptance                 |
 
-The latest verified API factory receipt is main run `38509363935`. Its two-platform index is
-`registry.ide-newton.ts.net/lab/ofz@sha256:0a78811e79504c645c3a5f39f8a1da4ffeae050adf724bd6d4c5c8874f396a3b`,
-with immutable alias `kargo-sha-300b190c4e131dd37864c7c8fdece5aed4a8709c-run-38509363935`.
-That receipt proves publication of the factory revision, not deployment or completion of later source changes.
+The latest verified API factory receipt is main run `38521111594`. Its two-platform index is
+`registry.ide-newton.ts.net/lab/ofz@sha256:23168c8fc76893a4bd9313d221045a4fe8b39b316dd0a5d7338ec143d28a2d03`,
+with immutable alias `kargo-sha-1d2b782014a4f76d3dc3bd25095d4b0e163b6cd6-run-38521111594`.
+The exact reviewed source archive and this image initialized the NUC service. Local S3 proof rejects writer/root
+version deletion and retention shortening. A separate Mac tailnet peer verifies native TLS 1.3, exact certificate
+identity, version-specific object readback and denied writer deletion. The same immutable version, SHA-256 and
+retention survive an actual server SIGKILL/restart. The existing six unrelated NUC containers remain running;
+Serve ports 443, 8090 and 8100 retain their original routes. This proves independent archive storage and TLS,
+not Kubernetes exporter adoption, independent database/home restore or the final Tengri cutover.
 
 ## Current isolated evidence
 
@@ -71,7 +106,7 @@ That receipt proves publication of the factory revision, not deployment or compl
   same disks and client endpoint. Corrupt payloads, short retention, weak defaults and archive loss immediately invalidate health without acknowledging pending rows.
   Receipt timestamps newer than the clock snapshot retain a full ninety days; oversized aggregate batches split
   without dropping or acknowledging omitted receipts. Both defects reproduce before their corrections.
-  These are isolated proofs; the NUC service and Kubernetes exporter have not been activated.
+  The NUC service now has the live storage/TLS/crash evidence above. Kubernetes exporter adoption remains pending.
 
 - The surplus-platform-authority regression fails before the correction. The corrected real bootstrap fixture rejects
   an unapproved administrator, a cross-role workload binding, a retired platform and authority added during the final
@@ -158,3 +193,12 @@ That receipt proves publication of the factory revision, not deployment or compl
 - [ ] Verify exact commits, images, schema and configuration; remove the creation fence only after cutover gates pass.
 - [ ] Prove fresh-workspace product behavior, every service's allow/deny/revocation/failure matrix, independent restore,
       both native performance targets and the required mixed-workload soak.
+
+## Creation failure found during cutover
+
+The live frontend/controller still report image revision `26bfce8ec1221e6df85c6f45fb525ab98277bf50`.
+Their creation shape requests 2000 CPU millis and 4096 MiB, while the installed CRD accepts only 4000 and 8192.
+A server-side dry run reproduces both rejected resource values without creating a MicroVM. A second dry run using
+the new resource shape is denied by `tengri-ofz-cutover`. The deployed BFF maps both Kubernetes 422 failures to
+“Tengri request is invalid.” The corrected four-core/eight-GiB labels are prepared for the coordinated frontend release;
+the controller, guest, schema and identity dependencies still require the coordinated release before creation resumes.

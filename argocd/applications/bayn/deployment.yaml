@@ -62,7 +62,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: bayn-valkey-connection
-                optional: true
           env:
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
@@ -160,7 +159,15 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
-                  optional: true
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"6147e517664a294c04cb20dfe03f09c99d30db3f14d3ef4c525ab0ead81abfcf","authoredActivation":{"sourceRevision":"930a4f0d5da423c397aad0c1d2d222d66da9abe2","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5ad8979af365c86e639877e5c3f7f63245d576e85e4c1ffab387f5c93b386acd"},"activation":{"sourceRevision":"930a4f0d5da423c397aad0c1d2d222d66da9abe2","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5ad8979af365c86e639877e5c3f7f63245d576e85e4c1ffab387f5c93b386acd"}}'
           startupProbe:
             httpGet:
               path: /livez
@@ -211,7 +218,6 @@ spec:
         - name: valkey-client-tls
           secret:
             secretName: bayn-valkey-client-tls
-            optional: true
             defaultMode: 0440
         - name: tmp
           emptyDir:

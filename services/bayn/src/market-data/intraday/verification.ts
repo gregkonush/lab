@@ -325,12 +325,9 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
       canonicalCandidates.length === 0 ||
       canonicalCandidates.length !== request.candidateSymbols.length ||
       canonicalCandidates.some((symbol, index) => symbol !== request.candidateSymbols?.[index]) ||
-      canonicalCandidates.some((symbol) => !requestedSymbols.includes(symbol)) ||
-      requestedSymbols.length - canonicalCandidates.length !== 1
+      canonicalCandidates.some((symbol) => !requestedSymbols.includes(symbol))
     ) {
-      return Result.fail(
-        failure('request', 'independent candidates require a canonical decision subset and one mandatory benchmark'),
-      )
+      return Result.fail(failure('request', 'independent candidates require a canonical decision subset'))
     }
   }
   if (request.universeId.length === 0 || request.universeId.trim() !== request.universeId) {

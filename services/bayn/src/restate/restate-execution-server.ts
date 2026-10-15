@@ -1,5 +1,6 @@
 import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { acquireBrokerObservationRuntime } from '../composition/broker-observation-runtime'
+import { ValkeyCacheLive } from '../valkey-cache'
 import { makeBaynBrokerObservations, type BrokerObservationRuntime } from './restate-broker-observations'
 import { createServer } from 'node:http2'
 
@@ -19,7 +20,11 @@ import {
 } from './restate-execution-controller'
 import { acquireRestateTelemetry } from './restate-telemetry'
 import { GitSourceRevisionSchema, Sha256Schema } from '../schemas'
-import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
+import {
+  makeConfiguredMetricsRuntimeLayer,
+  makeConfiguredTelemetryRuntimeLayer,
+  telemetryRuntimeConfig,
+} from '../telemetry'
 import { startInferenceExpenseProjection } from '../inference-expense-runtime'
 
 export class RestateExecutionServerError extends Data.TaggedError('RestateExecutionServerError')<{
@@ -126,6 +131,15 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Layer.effectDiscard(
       restateExecutionServerProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-controller' })),
-    ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')), Layer.launch),
+    ).pipe(
+      Layer.provide(ValkeyCacheLive),
+      Layer.provide(
+        Layer.mergeAll(
+          makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller'),
+          makeConfiguredMetricsRuntimeLayer('bayn-execution-controller'),
+        ),
+      ),
+      Layer.launch,
+    ),
   )
 }
