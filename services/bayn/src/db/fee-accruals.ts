@@ -68,10 +68,10 @@ export const feeAccrualCohortSettled = (
 
 export const cashAccrualReportingOffsetMicros = (records: readonly (typeof StoredAccrual.Type)[]): string => {
   const latest = records
-    .filter((record) => record.posted && record.data.kind === 'CASH')
+    .filter((record) => record.posted && record.data.kind === 'CASH' && !feeAccrualCohortSettled(record, records))
     .toSorted((a, b) => a.data.observedAt.localeCompare(b.data.observedAt) || a.accrual_id.localeCompare(b.accrual_id))
     .at(-1)
-  if (latest === undefined || latest.data.kind !== 'CASH' || feeAccrualCohortSettled(latest, records)) return '0'
+  if (latest === undefined || latest.data.kind !== 'CASH') return '0'
   return (
     BigInt(reportedCashMicros(latest.data.projectedCashMicros, latest.data.cashReportingQuantumMicros)) -
     BigInt(latest.data.projectedCashMicros)

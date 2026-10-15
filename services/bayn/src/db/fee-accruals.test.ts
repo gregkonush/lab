@@ -126,15 +126,18 @@ test('an unsettled cash observation carries its exact sub-cent reporting residua
   expect(cashAccrualReportingOffsetMicros([stored(data, '100000')])).toBe('3024')
   expect(cashAccrualReportingOffsetMicros([stored(data, '210000')])).toBe('0')
   expect(cashAccrualReportingOffsetMicros([stored(data, '0', false)])).toBe('0')
-  const later = stored({
+  const laterData = {
     ...data,
     cycleId: 'c'.repeat(64),
-    date: '2026-10-15',
+    date: '2026-10-15' as const,
     observedAt: '2026-10-15T01:00:00.000Z',
     sourceTrades: [{ ...data.sourceTrades[0], transactionId: 'c'.repeat(64) }],
     projectedCashMicros: '99900000123',
     observedCashMicros: '99899800000',
-  })
+  }
+  const later = stored(laterData)
+  expect(cashAccrualReportingOffsetMicros([row, stored(laterData, '200000')])).toBe('3024')
+  expect(cashAccrualReportingOffsetMicros([stored(data, '210000'), stored(laterData, '200000')])).toBe('0')
   expect(cashAccrualReportingOffsetMicros([row, later])).toBe('-123')
   expect(cashAccrualReportingOffsetMicros([later, row])).toBe('-123')
   expect(cashAccrualReportingOffsetMicros([row, accrual('COIN', 'd', 100, 0)])).toBe('3024')
