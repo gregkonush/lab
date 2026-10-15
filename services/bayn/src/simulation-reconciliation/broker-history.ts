@@ -248,7 +248,6 @@ const readFillPages = (
 
 const readFeePages = (
   read: BrokerReadShape,
-  until: string,
 ): Effect.Effect<readonly Observed<FeeActivity>[], BrokerReadError | ReconciliationError> =>
   Effect.gen(function* () {
     const rows: Observed<FeeActivity>[] = []
@@ -256,7 +255,6 @@ const readFeePages = (
     let cursor: string | undefined
     while (true) {
       const page = yield* read.feeActivities({
-        until,
         direction: SortDirection.Ascending,
         pageSize: fillsPageSize,
         ...(cursor === undefined ? {} : { pageToken: cursor }),
@@ -285,7 +283,7 @@ const readHistory = (
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
       fills: readFillPages(read, until, initialFillPaginationState()),
-      fees: readFeePages(read, until),
+      fees: readFeePages(read),
     },
     { concurrency: 3 },
   )
