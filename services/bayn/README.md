@@ -1588,6 +1588,11 @@ accrual metadata and hashes remain immutable. Migration 105 adds verified, immut
 receipts previously matched to crypto accruals. The native reconciliation path posts the compensating ledger debit
 with a deterministic identifier, then matches the actual crypto receipt. Retries verify every original and correction
 plan. Pending corrections and corrections posted after a report cut prevent complete accounting evidence.
+Cash receipts release only the amount actually covered, including partial settlement of a pooled UTC cohort.
+Migration 106 prevents reporting precision from authorizing a larger release. An already posted overrelease receives
+a deterministic v2 compensating debit for the excess alone; its original match, provider hash, and ledger plan stay
+immutable. The original v1 regulatory correction evidence remains verifiable. Outstanding accruals and the cash
+reporting residual remain until the entire cohort settles.
 Replay checkpoint v3 retains the same crypto cash-fee kind; earlier checkpoint versions are rejected.
 
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting

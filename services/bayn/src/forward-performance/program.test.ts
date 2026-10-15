@@ -9,7 +9,9 @@ import { ClickhouseClient } from '@effect/sql-clickhouse'
 import { PgClient } from '@effect/sql-pg'
 import { DateTime, Effect, Redacted, Result } from 'effect'
 
-import { prepareAccounting } from '../accounting/domain'
+import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { prepareFeeMatchCorrection, type StoredBrokerFee } from '../accounting/broker-fees'
+import { hashLedgerPlanResult } from '../ledger-plan'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { ForwardPerformanceConfig } from './config'
 import type { HistoricalSignalSnapshotConfig } from '../config/historical-signal'
@@ -805,11 +807,59 @@ describe('forward performance read program', () => {
     })
   })
 
-  test('uses verified cumulative coin fees for episodes independently of the selected financial scope', async () => {
+  test.each([false, true])('cumulative fee evidence with cash correction=%s', async (includeCashCorrection) => {
     const sql = makeReadOnlySql({ statements: [] })
     const accountId = identityResult.success.accountId
     const { fills, accrual, accounting } = coinRoundTrip(0, accountId)
     const fee = coinActivity('82625', accountId)
+    const feeRecords: StoredBrokerFee[] = [fee]
+    const generationBrokerFeeIds: string[] = []
+    if (includeCashCorrection) {
+      const data = {
+        accountId,
+        activityId: 'cash-overrelease',
+        date: fee.data.date,
+        cryptoCashFee: true as const,
+        netAmountMicros: '-200000',
+      }
+      const contentHash = canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...data })
+      const originalPlan = brokerFeeLedgerPlan(accountId, data.activityId, '10000', 7001)
+      const correction = success(
+        prepareFeeMatchCorrection(
+          {
+            schemaVersion: 'bayn.fee-match-correction.v2',
+            accountId,
+            activityId: data.activityId,
+            accrualId: hash('e'),
+            feeContentHash: contentHash,
+            activityCashMicros: '200000',
+            accrualCashMicros: '210000',
+            readEvidence: fee.read_evidence,
+          },
+          7001,
+        ),
+      )
+      feeRecords.push({
+        ...fee,
+        data,
+        content_hash: contentHash,
+        matched_cash_micros: '210000',
+        coin_cost_basis_micros: null,
+        ledger_plan_hash: success(hashLedgerPlanResult(originalPlan)),
+        cash_match_corrections: [
+          {
+            correction_id: correction.correctionId,
+            data: correction.data,
+            content_hash: correction.contentHash,
+            ledger_plan_hash: success(hashLedgerPlanResult(correction.plan)),
+            tigerbeetle_cluster_id: '2001',
+            tigerbeetle_ledger: 7001,
+            posted: true,
+          },
+        ],
+      })
+      generationBrokerFeeIds.push(data.activityId)
+    }
     const receipts = accounting.map((prepared) => ({
       ...success(planAccountingReceipt(prepared, '2001', 7001)),
       recordedAt: '2026-09-18T16:00:00.000Z',
@@ -837,8 +887,8 @@ describe('forward performance read program', () => {
           ledgerReceipts: receipts,
           transactionEvidence: fills.slice(1).map((transaction) => ({ ...transaction, cycleId: hash('f') })),
           brokerFeeAccrualRecords: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
-          brokerFeeRecords: [fee],
-          generationBrokerFeeIds: [],
+          brokerFeeRecords: feeRecords,
+          generationBrokerFeeIds,
           executionEvidence: [],
           marketVolumeRequests: [],
           unclosedCycleCount: 0,
@@ -874,6 +924,7 @@ describe('forward performance read program', () => {
       openCount: 0,
     })
     expect(report.receipt.totals.brokerExecutionFeesMicros).toBe('0')
+    expect(report.receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
     expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 

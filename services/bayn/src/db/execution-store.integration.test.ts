@@ -874,17 +874,19 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  test.each(['crypto', 'regulatory', 'retained'] as const)('crypto fee settlement: %s', async (scenario) => {
+  const settlementScenarios = ['crypto', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
+    const overreleased = scenario === 'overreleased'
     const hasRegulatory = scenario !== 'crypto'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        if (historical) {
+        if (historical || overreleased) {
           yield* sql`DROP SCHEMA public CASCADE`
           yield* sql`CREATE SCHEMA public`
           yield* PgMigrator.run({
-            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 105))),
+            loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < (overreleased ? 106 : 105)))),
             table: 'schema_migrations',
           }).pipe(Effect.provide(NodeServices.layer))
         }
@@ -1207,6 +1209,120 @@ describePostgres('PostgreSQL execution persistence', () => {
             FROM broker_fee_accruals WHERE kind='CASH'`)
           .pipe(Effect.flip)
         expect(yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).toHaveLength(2)
+        if (scenario === 'partial' || overreleased) {
+          if (cashAccrual === undefined) throw new Error('Missing cash accrual')
+          const partial: Observed<FeeActivity> = {
+            value: {
+              accountId,
+              activityId: 'partial-cash-fee',
+              date: sellAt.slice(0, 10),
+              cryptoCashFee: true,
+              netAmountMicros: '-190000',
+            },
+            evidence: {
+              requestId: 'partial-fee-read',
+              status: 200,
+              contentHash: hash('partial-fee-read'),
+              observedAt: sellAt,
+            },
+          }
+          const originalPlan = brokerFeeLedgerPlan(
+            accountId,
+            partial.value.activityId,
+            '10000',
+            config.tigerBeetle.ledger,
+          )
+          const originalPlanHash = Result.getOrThrow(hashLedgerPlanResult(originalPlan))
+          if (overreleased) {
+            yield* fence.transaction(
+              Effect.gen(function* () {
+                yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
+                VALUES(${accountId},${partial.value.activityId},${partial.value.date},${partial.value.netAmountMicros},${sql.json(partial.value)},${sql.json(partial.evidence)},
+                  ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value })},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
+                VALUES(${cashAccrual.accrualId},${accountId},${partial.value.activityId},190000,200000)`
+              }),
+            )
+            yield* journal(journalControl).post(originalPlan)
+            yield* sql`UPDATE broker_fee_accounting SET posted_at=${sellAt} WHERE activity_id=${partial.value.activityId}`
+            yield* PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' }).pipe(
+              Effect.provide(NodeServices.layer),
+            )
+          } else {
+            expect(
+              yield* fence
+                .transaction(
+                  Effect.gen(function* () {
+                    yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
+                VALUES(${accountId},${partial.value.activityId},${partial.value.date},${partial.value.netAmountMicros},${sql.json(partial.value)},${sql.json(partial.evidence)},
+                  ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value })},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                    yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
+                VALUES(${cashAccrual.accrualId},${accountId},${partial.value.activityId},190000,200000)`
+                  }),
+                )
+                .pipe(Effect.flip),
+            ).toMatchObject({ _tag: 'WriterFenceError' })
+          }
+          const settle = (items: readonly Observed<FeeActivity>[]) =>
+            Effect.gen(function* () {
+              yield* fence.transaction(prepareFeeActivities(sql, accountId, items, config.tigerBeetle))
+              return yield* fence.transaction(
+                postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle),
+              )
+            })
+          if (overreleased) {
+            yield* fence.transaction(prepareFeeActivities(sql, accountId, [partial], config.tigerBeetle))
+            journalControl.failPosts = true
+            expect(yield* settle([partial]).pipe(Effect.flip)).toMatchObject({ failure: 'ledger' })
+            expect(
+              yield* sql`SELECT cash_debit_micros::text,posted_at IS NULL AS pending FROM broker_fee_match_corrections`,
+            ).toEqual([{ cash_debit_micros: '10000', pending: true }])
+            journalControl.failPosts = false
+          }
+          const partialResult = yield* settle([partial])
+          expect(partialResult.cashDeltaMicros).toBe('0')
+          const posts = journalControl.postCount
+          expect(yield* settle([partial])).toEqual(partialResult)
+          expect(journalControl.postCount).toBe(posts)
+          const partialAccruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
+          expect(partialAccruals.find((row) => row.data.kind === 'CASH')?.matched_cash_micros).toBe('190000')
+          expect(cashAccrualReportingOffsetMicros(partialAccruals)).toBe('-1942')
+          const [projection] = yield* sql<{
+            cash: string
+          }>`SELECT ((SELECT a.cash_micros FROM account_snapshots a JOIN broker_events e USING(event_id) WHERE a.account_id=${accountId} ORDER BY e.source_sequence LIMIT 1)
+            +(SELECT sum(cash_delta_micros) FROM accounting_transactions WHERE account_id=${accountId})
+            +(SELECT sum(cash_delta_micros) FROM broker_cash_fee_deltas WHERE account_id=${accountId}))::text AS cash`
+          if (projection === undefined) throw new Error('Missing cash projection')
+          const reported = reportedCashMicros(
+            (BigInt(projection.cash) + BigInt(cashAccrualReportingOffsetMicros(partialAccruals))).toString(),
+            '10000',
+          )
+          expect(reported).toBe(cashAccount.cashMicros)
+          expect(reported).not.toBe((BigInt(cashAccount.cashMicros) + 10000n).toString())
+          expect(
+            yield* sql`SELECT activity_cash_micros::text,accrual_cash_micros::text FROM broker_fee_accrual_matches WHERE activity_id=${partial.value.activityId}`,
+          ).toEqual([{ activity_cash_micros: '190000', accrual_cash_micros: overreleased ? '200000' : '190000' }])
+          if (overreleased)
+            expect(
+              yield* sql`SELECT ledger_plan_hash FROM broker_fee_accounting WHERE activity_id=${partial.value.activityId}`,
+            ).toEqual([{ ledger_plan_hash: originalPlanHash }])
+          const rest: Observed<FeeActivity> = {
+            ...partial,
+            value: { ...partial.value, activityId: 'remaining-cash-fee', netAmountMicros: '-16046' },
+          }
+          const final = yield* settle([partial, rest])
+          expect(final.cashDeltaMicros).toBe('-6046')
+          const finalAccruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
+          expect(finalAccruals.find((row) => row.data.kind === 'CASH')?.matched_cash_micros).toBe('200000')
+          expect(cashAccrualReportingOffsetMicros(finalAccruals)).toBe('0')
+          expect(yield* sql`SELECT count(*)::integer AS count FROM broker_fee_match_corrections`).toEqual([
+            { count: overreleased ? 1 : 0 },
+          ])
+          const finalPosts = journalControl.postCount
+          expect(yield* settle([partial, rest])).toEqual(final)
+          expect(journalControl.postCount).toBe(finalPosts)
+          return
+        }
         const fees: Observed<FeeActivity>[] = [
           {
             value: {

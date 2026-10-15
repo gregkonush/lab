@@ -123,3 +123,52 @@ test('crypto fee dates use UTC at the baseline boundary', () => {
   expect(brokerFeePredatesOpeningCash({ ...data, coinDebit: {} }, '2026-09-11T00:01:00.000Z')).toBe(true)
   expect(brokerFeePredatesOpeningCash(data, '2026-09-11T00:01:00.000Z')).toBe(false)
 })
+
+test('a rounded crypto overrelease is debited without reversing the actual receipt match', () => {
+  const fee = { ...data, cryptoCashFee: true as const, netAmountMicros: '-200000' }
+  const originalPlan = brokerFeeLedgerPlan(fee.accountId, fee.activityId, '10000', identity.ledger)
+  const original: StoredBrokerFee = {
+    ...record,
+    data: fee,
+    matched_cash_micros: '210000',
+    content_hash: canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...fee }),
+    ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(originalPlan)),
+  }
+  const source = {
+    schemaVersion: 'bayn.fee-match-correction.v2',
+    accountId: fee.accountId,
+    activityId: fee.activityId,
+    accrualId: 'b'.repeat(64),
+    feeContentHash: original.content_hash,
+    activityCashMicros: '200000',
+    accrualCashMicros: '210000',
+    readEvidence: { ...record.read_evidence, observedAt: '2026-09-12T08:00:00.000Z' },
+  }
+  const prepared = Result.getOrThrow(prepareFeeMatchCorrection(source, identity.ledger))
+  const correction = {
+    correction_id: prepared.correctionId,
+    data: prepared.data,
+    content_hash: prepared.contentHash,
+    ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(prepared.plan)),
+    tigerbeetle_cluster_id: identity.clusterId.toString(),
+    tigerbeetle_ledger: identity.ledger,
+    posted: true,
+  }
+  const verified = Result.getOrThrow(
+    verifyBrokerFeeRecord({ ...original, cash_match_corrections: [correction] }, fee.accountId, identity),
+  )
+  expect(verified.originalPlan).toEqual(originalPlan)
+  expect(verified.cashDeltaMicros).toBe('0')
+  expect(verified.corrections[0]?.plan.transfers.map((transfer) => transfer.amount)).toEqual([10000n])
+  expect(original.matched_cash_micros).toBe('210000')
+  for (const invalid of [
+    { ...source, activityCashMicros: '210000' },
+    { ...source, activityCashMicros: '220000' },
+  ])
+    expect(Result.isFailure(prepareFeeMatchCorrection(invalid, identity.ledger))).toBe(true)
+  expect(
+    Result.isFailure(
+      verifyBrokerFeeRecord({ ...original, cash_match_corrections: [correction, correction] }, fee.accountId, identity),
+    ),
+  ).toBe(true)
+})
