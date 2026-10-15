@@ -275,22 +275,25 @@ export interface ForwardPerformanceLedgerTotals {
 }
 
 export interface ForwardPerformanceCashYieldEvidence {
-  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v2'
+  readonly schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3'
   readonly reconciliationId: string
   readonly reconciliationContentHash: string
   readonly reconciledAt: string
   readonly baselineAccountEventId: string
   readonly baselineObservedAt: string
   readonly baselineCashMicros: string
+  readonly baselineCashReportingOffsetMicros: string
   readonly openingAccountEventId: string
   readonly openingObservedAt: string
   readonly openingCashMicros: string
+  readonly openingCashReportingOffsetMicros: string
   readonly openingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly preWindowAccountedCashDeltaMicros: string
   readonly preWindowCashResidualMicros: string
   readonly closingAccountEventId: string
   readonly closingObservedAt: string
   readonly closingCashMicros: string
+  readonly closingCashReportingOffsetMicros: string
   readonly closingCashReportingQuantumMicros: import('../broker/alpaca/cash-reporting').CashReportingQuantum
   readonly accountedCashDeltaMicros: string
   readonly cashYieldMicros: string
@@ -344,7 +347,12 @@ export interface ForwardPerformanceEvidenceInput {
   readonly accountFeeAccruals?: readonly (typeof import('../db/fee-accruals').StoredAccrual.Type)[]
   readonly accountBrokerFees?: readonly import('../accounting/broker-fees').StoredBrokerFee[]
   /** Cumulative account inventory, independently projected by PostgreSQL and read from the ledger. */
-  readonly accountPositionCounts?: { readonly postgres: number; readonly ledger: number }
+  readonly accountPositionCounts?: {
+    readonly postgres: number
+    readonly ledger: number
+    readonly reconciledAt: string
+    readonly exact: boolean
+  }
   readonly brokerFeeAccruals?: readonly {
     readonly accrualId: string
     readonly accountId: string

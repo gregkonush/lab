@@ -1339,6 +1339,26 @@ describe('Alpaca paper reads', () => {
     expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(canonicalHashV1([raw]))
   })
 
+  test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, []))
+    })
+    for (const query of [
+      { pageSize: 1, until: '2026-10-15T09:56:00.000Z' },
+      { pageSize: 1, after: '2026-10-15T00:00:00.000Z' },
+    ]) {
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.feeActivities(query))))
+      expect(failure).toMatchObject({
+        operation: 'fee-activities',
+        kind: BrokerReadErrorKind.InvalidRequest,
+        retryable: false,
+      })
+    }
+    expect(calls).toBe(0)
+  })
+
   test('reads a bounded fill page and derives the documented page token', async () => {
     let requestedUrl: URL | undefined
     const client = HttpClient.make((request, url) => {

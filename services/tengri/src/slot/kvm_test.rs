@@ -799,8 +799,9 @@ async fn uring_workers() -> anyhow::Result<usize> {
 
 async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
     let mut terminal = TerminalProbe::open(rpc, "fixture-disk-error").await?;
+    // Quiesce home writers so an outstanding write cannot extend the truncated fixture disk.
     terminal
-        .input(b"printf '\\036TENGRI_DISK_READY\\037'\n")
+        .input(b"cd / && sudo -n fsfreeze -f /workspace && printf '\\036TENGRI_DISK_READY\\037'\n")
         .await?;
     terminal.marker(b"\x1eTENGRI_DISK_READY\x1f").await?;
     // Fault only the disposable fixture disk, after continuity and browser acceptance.
