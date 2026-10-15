@@ -69,7 +69,7 @@ test('status exposes missing feature evidence without publishing free-form readi
     eventAt: observedAt,
     availableAt: '2026-09-17T14:31:00.000Z',
     requiredFeature: {
-      definitionId: MarketFeatureDefinition.RollingPrice30m,
+      definitionId: MarketFeatureDefinition.ObservedPriceWindow,
       definitionHash: 'b'.repeat(64),
       windowStartAt: '2026-09-17T14:00:00.000Z',
       windowEndAt: observedAt,

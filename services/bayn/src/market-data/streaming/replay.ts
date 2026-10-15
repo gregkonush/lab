@@ -1,4 +1,3 @@
-import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../../hash'
@@ -75,8 +74,6 @@ export const reproduceStreamingSnapshot = (
       manifest.streaming,
       strictParseOptions,
     ).pipe(Result.mapError((cause) => fail('Invalid recorded streaming evidence', cause)))
-    if (evidence.barPublications !== undefined && evidence.barPublicationPolicy === undefined)
-      return yield* Result.fail(fail('Publication witnesses require an explicit timing policy'))
     const bounds = yield* Result.try({
       try: () =>
         bootstrapKafkaPartitions(
@@ -146,7 +143,6 @@ export const reproduceStreamingSnapshot = (
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
       query,
-      evidence.barPublicationPolicy ?? BarPublicationPolicy.LegacyQuoteAge,
     )
     if (
       (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(
@@ -254,8 +250,6 @@ export const reproduceSimulatedSnapshot = (
       SimulatedSnapshotEvidenceSchema,
       strictParseOptions,
     )(manifest.streaming).pipe(Result.mapError((cause) => fail('Invalid simulated input cut', cause)))
-    if (evidence.barPublications !== undefined && evidence.barPublicationPolicy === undefined)
-      return yield* Result.fail(fail('Publication witnesses require an explicit timing policy'))
     if (canonicalPositions(evidence.positions).some((position, index) => position !== evidence.positions[index]))
       return yield* Result.fail(fail('Simulated source positions are not canonical'))
     const {
@@ -361,7 +355,6 @@ export const reproduceSimulatedSnapshot = (
       },
       source,
       query,
-      evidence.barPublicationPolicy ?? BarPublicationPolicy.LegacyQuoteAge,
     )
     if (
       (yield* canonicalHashV1Result(reproduced.manifest.streaming).pipe(

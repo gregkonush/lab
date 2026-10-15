@@ -1,7 +1,6 @@
 import { snapshotMarketCloseAt } from '../../market-hours'
 import { nativeFeatureMatchesBars, rollingWindowStartMs } from '../features/native-feature'
 import { isCryptoMarketFeature } from '../features/crypto-contract'
-import { BarPublicationPolicy } from '../intraday/bar-publication'
 import { Result } from 'effect'
 
 import {
@@ -55,11 +54,7 @@ export const missingMinuteBars = (bars: readonly IntradayBar[], startAt: string,
 }
 
 /** Shared input policy only. This does not issue live snapshot or broker authority. */
-export const selectStreamingInputs = (
-  state: StreamingProjection,
-  query: IntradaySnapshotQuery,
-  publicationPolicy = BarPublicationPolicy.TimelyEquivalentRevision,
-) =>
+export const selectStreamingInputs = (state: StreamingProjection, query: IntradaySnapshotQuery) =>
   Result.gen(function* () {
     const request = yield* verifyIntradaySnapshotQuery(query)
     const observedAtMs = Date.parse(request.observedAt)
@@ -121,8 +116,7 @@ export const selectStreamingInputs = (
       if (request.purpose === undefined) {
         entries.push(...bars)
         for (const bar of bars) {
-          const publication =
-            publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision ? bar.firstPublication : undefined
+          const publication = bar.firstPublication
           publicationBars.push((publication ?? bar).value)
           if (publication !== undefined) {
             if (publication.availableAtMs > observedAtMs || publication.sequence >= bar.sequence)
@@ -210,7 +204,7 @@ export const selectStreamingInputs = (
               symbol,
               eventAt: request.rangeEndAt,
               requiredFeature: {
-                definitionId: MarketFeatureDefinition.RollingPrice30m,
+                definitionId: MarketFeatureDefinition.ObservedPriceWindow,
                 definitionHash: rollingFeatureDefinitionHash,
                 windowStartAt: request.rangeStartAt,
                 windowEndAt: request.rangeEndAt,
@@ -257,7 +251,6 @@ export const selectStreamingInputs = (
       quotes,
       trades,
       marketFeatureClockSkewAllowanceMs,
-      publicationPolicy,
     )
     const exclusions = new Map(availability.exclusions.map((exclusion) => [exclusion.symbol, exclusion]))
     for (const exclusion of featureExclusions) {

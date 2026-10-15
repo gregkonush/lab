@@ -202,7 +202,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v3',
+        schemaVersion: 'bayn.jev-trading-signal-state.v4',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })

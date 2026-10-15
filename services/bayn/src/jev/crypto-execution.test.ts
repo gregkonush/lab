@@ -47,8 +47,9 @@ import { JevBatchPlanVersion } from './batch'
 import { decideJevEntry, jevPlanningTargetWeights } from './decision'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} uses the shared planner and risk engine for entry and overdue net-position close`, async () => {
-    const { cut, query, snapshot, rows } = cryptoMarketFixture(symbol)
+  test.each([false, true])(`${symbol} shared lifecycle with first-minute history=%s`, async (firstMinute) => {
+    const { cut, query, snapshot, rows } = cryptoMarketFixture(symbol, { firstMinute })
+    expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 30)
     const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol, portfolio, observedAt } = native
     const broker = portfolio.brokerState
