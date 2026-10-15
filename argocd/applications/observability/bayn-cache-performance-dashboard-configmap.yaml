@@ -76,7 +76,7 @@ data:
             "w": 8,
             "h": 4
           },
-          "description": "Both Valkey servers must be up. Expected 2. Missing telemetry is unknown. The required replica must be connected. Every cache publication also waits for its acknowledgement.",
+          "description": "Both Valkey servers must be up. Expected 2. Missing telemetry is unknown. Replica connectivity requires a healthy replica link and at least one replica observed by the primary, with healthy scrapes. Cache writes also wait for the replica acknowledgement.",
           "fieldConfig": {
             "defaults": {
               "unit": "short",
@@ -179,7 +179,7 @@ data:
                 "type": "prometheus",
                 "uid": "prom"
               },
-              "expr": "min(redis_master_link_up{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"})",
+              "expr": "min(redis_master_link_up{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"}) * clamp_max(max(redis_connected_slaves{job=\"bayn-valkey\",namespace=\"bayn\"} * on(pod) up{job=\"bayn-valkey\",namespace=\"bayn\"}), 1)",
               "legendFormat": "Replica link",
               "range": false,
               "instant": true,
@@ -1860,7 +1860,7 @@ data:
               "id": 21,
               "title": "Database I/O and lock waits",
               "type": "timeseries",
-              "description": "Sampled backends waiting for I/O, locks or inter-process coordination. Idle clients and normal background loops are excluded. A wait shorter than five seconds can be missed.",
+              "description": "Sampled backends waiting for I/O, locks, buffer pins or inter-process coordination. Idle clients and normal background loops are excluded. A wait shorter than five seconds can be missed.",
               "datasource": {
                 "type": "prometheus",
                 "uid": "prom"
@@ -1874,7 +1874,7 @@ data:
               "targets": [
                 {
                   "refId": "A",
-                  "expr": "cnpg_bayn_waits_backends{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\",wait_event_type=~\"IO|Lock|LWLock|IPC\"}",
+                  "expr": "cnpg_bayn_waits_backends{namespace=\"bayn\",cluster=\"bayn-db\",role=\"primary\",wait_event_type=~\"IO|Lock|LWLock|IPC|BufferPin\"}",
                   "legendFormat": "{{wait_event_type}} · {{wait_event}}",
                   "range": true
                 }
