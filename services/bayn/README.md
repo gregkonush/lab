@@ -76,6 +76,14 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
+## Reproducible image dependencies
+
+The Bayn Nix dependency build normalizes the two CLI symlinks in the
+`browserslist` / `update-browserslist-db` dependency cycle before verifying its fixed-output hash.
+Bun's isolated installer can omit these links in otherwise identical locked installs. Normalization preserves
+package contents, rejects unexpected links or missing targets, and is idempotent. The dependency-input CI check
+exercises all four link-presence combinations; both native image builds still verify their exact dependency hashes.
+
 ## Required Valkey broker materializations
 
 Bayn uses Effect's native `@effect/platform-node/NodeRedis` binding for authenticated
@@ -177,6 +185,9 @@ still agree, and pagination budgets, duplicate detection, response hashes and fe
 Opening cash and fee baselines read the first retained account snapshot in broker source order. Their queries bind
 the event's account and `ACCOUNT` kind explicitly so the existing ordered account-event index can find that snapshot
 without scanning historical payloads. Events without a retained snapshot cannot define the baseline.
+Observed cash-fee preparation uses that same indexed baseline reader before adding the retained fill and fee cash
+deltas. Its regression checks the executed PostgreSQL plans against a populated account history, including foreign
+accounts and account events without retained snapshots; this does not change fee bounds or ledger posting order.
 
 The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
 the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
