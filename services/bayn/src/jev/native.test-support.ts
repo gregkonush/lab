@@ -37,6 +37,7 @@ import {
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
+import { jevHistoryStartMs } from './observation-query'
 
 export const nativeJevFixture = (
   purpose: JevPurpose = JevPurpose.Entry,
@@ -57,7 +58,9 @@ export const nativeJevFixture = (
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
-    rangeStartAt: new Date(end - protocol.lookbackMinutes * 60_000).toISOString(),
+    rangeStartAt: new Date(
+      jevHistoryStartMs(base.query.calendar, base.query.sessionDate, end, protocol.lookbackMinutes),
+    ).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
   }
   const query =

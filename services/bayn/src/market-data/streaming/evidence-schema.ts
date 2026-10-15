@@ -52,7 +52,7 @@ const StreamingRecordReceiptSchema = Schema.Struct({
   contentHash: Sha256Schema,
 })
 const CutFields = {
-  barPublicationPolicy: Schema.optionalKey(Schema.Literal(BarPublicationPolicy.TimelyEquivalentRevision)),
+  barPublicationPolicy: Schema.Literal(BarPublicationPolicy.ObservedHistory),
   technical: Schema.optionalKey(TechnicalSnapshotEvidenceSchema),
   positions: Schema.Array(Schema.Struct({ ...PositionFields, offset: UnsignedMicrosSchema })).check(
     Schema.isMinLength(1),

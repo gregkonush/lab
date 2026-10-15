@@ -144,8 +144,11 @@ existing `bayn-control-study` command. It requires mechanical management and a v
 assigns the training-only weighted target mean to every admissible candidate. It does not use the full model
 intercept. Strictly positive scores beat cash; exact ties choose ascending symbol order.
 
-Both policies retain the native 30-minute warmup and two-second delay, with session-open anchored polls. Six
-completed bars determine the feature window, not earlier entry eligibility. They use independent portfolios with
+Both policies poll from the first completed session minute plus the native two-second delay. The first poll is
+rounded up to the configured session-open cadence. During the first five completed minutes they retain evidenced
+cash decisions with `six-completed-session-minutes-required`; no six-bar score exists yet. After that, six actual
+contiguous bars and the required quote and trade evidence determine feature availability. Missing inputs remain
+explicit and make the study incomplete. They use independent portfolios with
 identical initial capital and rules. Different entries can change subsequent cash, risk and opportunity
 availability. This is a policy-level comparison, not exposure-matched alpha.
 

@@ -78,7 +78,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (protocol.lookbackMinutes !== intradayLookbackMinutes)
-    issues.push({ path: ['lookbackMinutes'], issue: 'rolling-price-30m requires exactly 30 completed minutes' })
+    issues.push({ path: ['lookbackMinutes'], issue: 'observed-price-window retains at most 30 minutes of context' })
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
   const canonicalCandidates = [...new Set(protocol.candidateSymbols)].sort()
   if (

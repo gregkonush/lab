@@ -84,7 +84,7 @@ class CryptoMarketFeatureClickhouseIntegrationTest {
               assertEquals(payload, response.getString(11))
               assertEquals(
                 "0.00000000370370367384",
-                feature.material.rolling30m.values
+                feature.material.priceWindow
                   ?.totalVolume,
               )
               assertFalse(response.next())

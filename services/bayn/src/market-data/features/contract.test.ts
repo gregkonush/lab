@@ -12,7 +12,9 @@ import {
   type RollingMarketFeature,
 } from './contract'
 
-const fixture: unknown = JSON.parse(readFileSync(new URL('./fixtures/rolling-price-v1.json', import.meta.url), 'utf8'))
+const fixture: unknown = JSON.parse(
+  readFileSync(new URL('./fixtures/observed-price-window-v1.json', import.meta.url), 'utf8'),
+)
 const feature = () => Result.getOrThrow(decodeRollingMarketFeature(fixture))
 const start = Date.parse('2026-09-11T13:30:00Z')
 const bars = (): readonly IntradayBar[] =>
@@ -166,12 +168,12 @@ describe('Dorvud rolling feature wire contract', () => {
     ).toBe(true)
   })
 
-  test('rejects incomplete windows and future input availability even with a matching hash', () => {
+  test('rejects absent range-completion input and future availability even with a matching hash', () => {
     const value = feature()
     expect(
       Result.isFailure(
         decodeRollingMarketFeature(
-          rehash({ ...value, material: { ...value.material, inputs: value.material.inputs.slice(1) } }),
+          rehash({ ...value, material: { ...value.material, inputs: value.material.inputs.slice(0, -1) } }),
         ),
       ),
     ).toBe(true)

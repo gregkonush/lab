@@ -28,6 +28,26 @@ ENDPOINT = "nuc.ide-newton.ts.net:9444"
 MAX_BATCH_BYTES = 4 * 1024 * 1024
 RETENTION_DAYS = 90
 EXPORT_LOCK = 726635522919
+PENDING_AUDIT_QUERY = """
+    WITH candidates AS MATERIALIZED (
+        (SELECT sequence FROM ofz.audit
+         WHERE sequence>%s ORDER BY sequence LIMIT 64)
+        UNION
+        (SELECT audit_sequence FROM ofz.audit_outbox
+         WHERE acknowledged_at_ms IS NULL ORDER BY audit_sequence LIMIT 64)
+        UNION
+        (SELECT a.sequence FROM ofz.audit a
+         WHERE NOT EXISTS (
+             SELECT 1 FROM ofz.audit_outbox o WHERE o.audit_sequence=a.sequence
+         ) ORDER BY a.sequence LIMIT 64)
+        ORDER BY sequence LIMIT 64
+    )
+    SELECT a.sequence,a.receipt,encode(a.target_hash,'hex') AS target_hash,
+           a.created_at_ms,o.audit_sequence IS NOT NULL AS has_outbox
+    FROM candidates c JOIN ofz.audit a ON a.sequence=c.sequence
+    LEFT JOIN ofz.audit_outbox o ON o.audit_sequence=a.sequence
+    ORDER BY a.sequence
+"""
 
 
 class ArchiveError(Exception):
@@ -217,11 +237,7 @@ class Exporter:
             "SELECT acknowledged_sequence,ofz.now_ms() AS now_ms FROM ofz.archive_state"
         ).fetchone()
         rows = self.database.execute(
-            "SELECT a.sequence,a.receipt,encode(a.target_hash,'hex') AS target_hash,"
-            "a.created_at_ms,o.audit_sequence IS NOT NULL AS has_outbox "
-            "FROM ofz.audit a LEFT JOIN ofz.audit_outbox o ON o.audit_sequence=a.sequence "
-            "WHERE a.sequence>%s OR o.acknowledged_at_ms IS NULL "
-            "ORDER BY a.sequence LIMIT 64",
+            PENDING_AUDIT_QUERY,
             (state["acknowledged_sequence"],),
         ).fetchall()
         if not rows:
