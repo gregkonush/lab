@@ -1,3 +1,8 @@
+local patched = vim.system({
+  "git", "-C", "/opt/tengri/editor/plugins/blink.cmp", "apply", "--whitespace=error-all",
+  "/usr/share/nanoagent/blink-manual-library.patch",
+}):wait()
+assert(patched.code == 0, patched.stderr)
 require("lazy").load({ plugins = { "blink.cmp", "nvim-treesitter" } })
 assert(vim.wait(300000, function()
   return require("blink.cmp.fuzzy").implementation_type == "rust"
