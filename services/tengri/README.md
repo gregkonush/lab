@@ -400,8 +400,6 @@ container exit also requires a nonempty `result.json`; an empty test selection c
 
 The native terminal probe answers foreground/background color queries and the device-status barrier used by the
 pinned Neovim startup. Query parsing retains split sequences; readiness markers and performance limits remain unchanged.
-Frontend-only commits use the desktop browser and BFF pipelines. Runtime, protocol and runtime configuration changes
-still trigger paired native image qualification.
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
