@@ -195,9 +195,10 @@ export const researchServerProgram = Effect.gen(function* () {
 if (import.meta.main) {
   initializeErrorTracking('bayn-research')
   NodeRuntime.runMain(
-    Layer.effectDiscard(researchServerProgram.pipe(reportTerminalFailure('bayn-research'))).pipe(
+    Layer.effectDiscard(researchServerProgram).pipe(
       Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-research')),
       Layer.launch,
+      reportTerminalFailure('bayn-research'),
     ),
   )
 }
