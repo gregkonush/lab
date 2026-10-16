@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: execution-controller
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:4f2fc190726d49ae4e4f696cae26029600fcbed5db1f184d5d385926a1c0e417
           imagePullPolicy: IfNotPresent
           command:
             - node
@@ -69,7 +69,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: 4025e68a26460f2fe598d9a88624a7289dc4b564
+              value: 8633b783fbec9f8a1514ced1bbfb0974c3fc7786
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -78,7 +78,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2
+              value: sha256:4f2fc190726d49ae4e4f696cae26029600fcbed5db1f184d5d385926a1c0e417
             # Bind the replacement to the exact immutable execution generation
             # currently owned by the active controller. The deployment stays
             # read-only; only the sealed, validated research mandate can
@@ -188,6 +188,15 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:4f2fc190726d49ae4e4f696cae26029600fcbed5db1f184d5d385926a1c0e417\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"8633b783fbec9f8a1514ced1bbfb0974c3fc7786\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"4025e68a26460f2fe598d9a88624a7289dc4b564\"\n  },\n  \"requestHash\": \"7caada18849daefc276def94d001d85f2f5993fa7ba961d3e9b88001d96ce6bf\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
               value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
           startupProbe:

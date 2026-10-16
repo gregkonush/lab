@@ -64,7 +64,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: 4025e68a26460f2fe598d9a88624a7289dc4b564
+              value: 8633b783fbec9f8a1514ced1bbfb0974c3fc7786
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: BAYN_GLITCHTIP_DSN
@@ -84,7 +84,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2
+              value: sha256:4f2fc190726d49ae4e4f696cae26029600fcbed5db1f184d5d385926a1c0e417
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "fce490405dee0d07d00b8be04c9085c4984eae574513d9b58166efb8c082667e"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -164,6 +164,15 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:4f2fc190726d49ae4e4f696cae26029600fcbed5db1f184d5d385926a1c0e417\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"8633b783fbec9f8a1514ced1bbfb0974c3fc7786\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"4025e68a26460f2fe598d9a88624a7289dc4b564\"\n  },\n  \"requestHash\": \"7caada18849daefc276def94d001d85f2f5993fa7ba961d3e9b88001d96ce6bf\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
           startupProbe:
             httpGet:
               path: /livez
