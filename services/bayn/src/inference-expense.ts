@@ -61,6 +61,16 @@ export const InferenceExpenseQuoteSchema = Schema.Struct({
 })
 export type InferenceExpenseQuote = typeof InferenceExpenseQuoteSchema.Type
 
+export interface InferenceExpenseRecord {
+  readonly quote: InferenceExpenseQuote
+  readonly verifiedAt: string | null
+}
+
+export interface InferenceExpenseSnapshot {
+  readonly evidence: Pick<InferenceCostEvidence, 'accountBindingHash' | 'sessionDate' | 'asOf'>
+  readonly quotes: readonly InferenceExpenseRecord[]
+}
+
 export enum InferenceExpenseCoverageIssue {
   MissingQuote = 'MISSING_FROZEN_QUOTE',
   UnverifiedLedger = 'UNVERIFIED_LEDGER',
@@ -152,6 +162,20 @@ export const decodeInferenceExpenseQuote = (input: unknown): Result.Result<Infer
       )
         return yield* Result.fail(
           new InferenceCostError({ message: 'Unknown inference usage cannot carry a priced expense' }),
+        )
+    } else if (line.usageStatus === InferenceUsageStatus.NotDispatched) {
+      if (
+        line.receiptHash === null ||
+        line.inputTokens !== '0' ||
+        line.outputTokens !== '0' ||
+        line.estimatedCostPicoUsd !== '0' ||
+        line.rateHash !== null ||
+        quote.rate !== null
+      )
+        return yield* Result.fail(
+          new InferenceCostError({
+            message: 'Undispatched inference expense requires a receipt, zero usage and cost, and no tariff',
+          }),
         )
     } else {
       if (line.receiptHash === null || line.inputTokens === null || line.outputTokens === null)

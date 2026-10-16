@@ -32,6 +32,7 @@ interface ParsedTotals {
   readonly brokerExecutionFees: bigint
   readonly otherChargedCosts: bigint | null
   readonly cashYield: bigint
+  readonly cashSettlementRounding: bigint
   readonly grossRealizedPnl: bigint
   readonly netRealizedPnlAfterCosts: bigint | null
 }
@@ -114,6 +115,7 @@ const parseTotals = (
     ledger.otherChargedCostsMicros === null ? null : parseSignedMicros(ledger.otherChargedCostsMicros)
   if (otherChargedCosts === null) reasons.add('OPERATING_COST_EVIDENCE_GAP')
   const cashYield = parseSignedMicros(ledger.cashYieldMicros)
+  const cashSettlementRounding = parseSignedMicros(ledger.cashSettlementRoundingMicros)
   if (
     startingCapital === undefined ||
     startingCapital <= 0n ||
@@ -126,7 +128,8 @@ const parseTotals = (
     otherChargedCosts === undefined ||
     (otherChargedCosts !== null && otherChargedCosts < 0n) ||
     cashYield === undefined ||
-    cashYield < 0n
+    cashYield < 0n ||
+    cashSettlementRounding === undefined
   ) {
     reasons.add('INVALID_MICROS')
     return undefined
@@ -135,8 +138,14 @@ const parseTotals = (
   const afterFees = grossRealizedPnl === undefined ? undefined : checkedAdd(grossRealizedPnl, -brokerExecutionFees)
   const afterOtherCosts =
     otherChargedCosts === null ? null : afterFees === undefined ? undefined : checkedAdd(afterFees, -otherChargedCosts)
-  const netRealizedPnlAfterCosts =
+  const afterCashYield =
     afterOtherCosts === null ? null : afterOtherCosts === undefined ? undefined : checkedAdd(afterOtherCosts, cashYield)
+  const netRealizedPnlAfterCosts =
+    afterCashYield === null
+      ? null
+      : afterCashYield === undefined
+        ? undefined
+        : checkedAdd(afterCashYield, cashSettlementRounding)
   if (grossRealizedPnl === undefined || afterFees === undefined || netRealizedPnlAfterCosts === undefined) {
     reasons.add('INVALID_MICROS')
     return undefined
@@ -148,6 +157,7 @@ const parseTotals = (
     brokerExecutionFees,
     otherChargedCosts,
     cashYield,
+    cashSettlementRounding,
     grossRealizedPnl,
     netRealizedPnlAfterCosts,
   }
@@ -181,16 +191,36 @@ const transactionTotalsMatch = (
   }
   for (const fee of input.brokerFees ?? []) {
     const net = parseSignedMicros(fee.netAmountMicros)
-    if (net === undefined) {
+    const inventoryCost =
+      fee.coinDebit === undefined
+        ? 0n
+        : fee.inventoryCostMicros === undefined
+          ? undefined
+          : parseSignedMicros(fee.inventoryCostMicros)
+    if (net === undefined || inventoryCost === undefined || inventoryCost < 0n) {
       reasons.add('INVALID_MICROS')
       return
     }
-    const nextFees = checkedAdd(fees, -net)
+    const nextFees = checkedAdd(fees, -net + inventoryCost)
     if (nextFees === undefined) {
       reasons.add('INVALID_MICROS')
       return
     }
     fees = nextFees
+  }
+  for (const accrual of input.brokerFeeAccruals ?? []) {
+    const expense = parseSignedMicros(accrual.expenseMicros)
+    if (expense === undefined || expense < 0n || accrual.accountId !== input.account.accountId) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    const nextFees = checkedAdd(fees, expense)
+    if (nextFees === undefined) {
+      reasons.add('INVALID_MICROS')
+      return
+    }
+    fees = nextFees
+    if (!accrual.settled) reasons.add('BROKER_FEE_SETTLEMENT_PENDING')
   }
   if (gains !== totals.realizedGains || losses !== totals.realizedLosses || fees !== totals.brokerExecutionFees) {
     reasons.add('LEDGER_MISMATCH')
@@ -353,6 +383,7 @@ const makeMaterial = (
       brokerExecutionFeesMicros: totals?.brokerExecutionFees.toString() ?? null,
       otherChargedCostsMicros: totals?.otherChargedCosts?.toString() ?? null,
       cashYieldMicros: totals?.cashYield.toString() ?? null,
+      cashSettlementRoundingMicros: totals?.cashSettlementRounding.toString() ?? null,
       grossRealizedPnlMicros: totals?.grossRealizedPnl.toString() ?? null,
       netRealizedPnlAfterCostsMicros: totals?.netRealizedPnlAfterCosts?.toString() ?? null,
       netRealizedReturn:

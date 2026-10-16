@@ -6,12 +6,12 @@ import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { decodeDefaultIntradayMomentumProtocol } from './intraday-momentum/protocol'
 
 describe('shared intraday market contract', () => {
-  test('preserves the active and retained protocol identities', () => {
+  test('binds active and research protocols to observed-history features', () => {
     const jev = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
     const momentum = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
 
-    expect(canonicalHashV1OrThrow(jev)).toBe('86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd')
-    expect(canonicalHashV1OrThrow(momentum)).toBe('cd004b8b43e50dde70ba70fb43deff19c5c65d60f4455e84a2e8df9991c0335f')
+    expect(canonicalHashV1OrThrow(jev)).toBe('3415063fdf85aa4dc66af288042d52a41a180a33b1f812d3963e8b8e7244ce6d')
+    expect(canonicalHashV1OrThrow(momentum)).toBe('425f0e735349cae83a89c1903e6b8b578775087cc81b3bfc1705bb8f5d2330d5')
     expect(jev.lookbackMinutes).toBe(30)
     expect(jev.decisionDelaySeconds).toBe(2)
     expect(momentum.lookbackMinutes).toBe(jev.lookbackMinutes)

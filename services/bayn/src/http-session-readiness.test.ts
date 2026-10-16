@@ -1,3 +1,4 @@
+import { isCryptoMarketFeature } from './market-data/features/crypto-contract'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -42,6 +43,7 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
         accountId,
         signalSessionDate: '2026-10-01',
         executionSessionDate: '2026-10-01',
+        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
         phase: CycleState.Active,
         snapshotId: null,
         publicationDeadlineAt: null,
@@ -118,8 +120,8 @@ const expectSession = (state: RuntimeState, condition: string, ready: boolean) =
         ready,
         executionSessionDate: '2026-10-01',
         controllerPlanHash: 'f'.repeat(64),
-        firstObservationAt: '2026-10-01T14:00:02.000Z',
-        decisionDeadlineAt: '2026-10-01T14:01:02.000Z',
+        firstObservationAt: '2026-10-01T13:31:02.000Z',
+        decisionDeadlineAt: '2026-10-01T13:32:02.000Z',
       },
     },
   })
@@ -132,16 +134,16 @@ test('pre-open execution prerequisites are ready before a snapshot or decision e
   expect(metrics).toContain('bayn_execution_session_preflight_ready 1\n')
   expect(metrics).toContain('bayn_cycle_decision_bound 0\n')
   expect(metrics).toContain(
-    `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T14:01:02Z') / 1000}\n`,
+    `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T13:32:02Z') / 1000}\n`,
   )
 })
 
 test.each([
   ['2026-10-01T13:30:00.000Z', 'WARMUP', true],
-  ['2026-10-01T14:00:01.999Z', 'WARMUP', true],
-  ['2026-10-01T14:00:02.000Z', 'AWAITING_DECISION', true],
-  ['2026-10-01T14:01:01.999Z', 'AWAITING_DECISION', true],
-  ['2026-10-01T14:01:02.000Z', 'DECISION_LAGGING', false],
+  ['2026-10-01T13:31:01.999Z', 'WARMUP', true],
+  ['2026-10-01T13:31:02.000Z', 'AWAITING_DECISION', true],
+  ['2026-10-01T13:32:01.999Z', 'AWAITING_DECISION', true],
+  ['2026-10-01T13:32:02.000Z', 'DECISION_LAGGING', false],
   ['2026-10-01T19:55:00.000Z', 'CLOSED', false],
 ] as const)('classifies the unbound session at %s as %s', (checkedAt, condition, ready) => {
   expectSession(sessionState(checkedAt), condition, ready)
@@ -250,13 +252,16 @@ test.each([
   if (scenario === 'mismatched feature')
     features.set(
       symbol,
-      (features.get(symbol) ?? []).map((receipt) => ({
-        ...receipt,
-        value: {
-          ...receipt.value,
-          material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
-        },
-      })),
+      (features.get(symbol) ?? []).map((receipt) => {
+        if (isCryptoMarketFeature(receipt.value)) throw new Error('expected equity fixture')
+        return {
+          ...receipt,
+          value: {
+            ...receipt.value,
+            material: { ...receipt.value.material, windowStartMs: receipt.value.material.windowStartMs + 60_000 },
+          },
+        }
+      }),
     )
   if (scenario === 'late feature')
     features.set(
@@ -444,4 +449,94 @@ test('no eligible candidate remains ordinary abstention after the decision deadl
   const metrics = renderPrometheusMetrics(abstaining, config, provenance, config.build.verification)
   expect(metrics).toContain('bayn_execution_session_ready 1\n')
   expect(metrics).toContain('bayn_execution_session_condition{condition="decision_lagging"} 0\n')
+})
+
+test('an unused entry expiry reports rearming during the market rotation cooldown', () => {
+  const state = sessionState('2026-10-01T14:00:30.000Z')
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  expectSession(
+    {
+      ...state,
+      cycle: {
+        ...state.cycle,
+        current: null,
+        last: { ...current, phase: CycleState.Blocked, terminalReason: CycleTerminalReason.UnusedEntryExpired },
+      },
+    },
+    'REARMING',
+    true,
+  )
+})
+
+test.each([
+  [null, 'AWAITING_DECISION', true],
+  [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
+  [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
+] as const)(
+  'continuous admission immediately reports %s evidence without an equity warmup',
+  (reason, condition, ready) => {
+    const state = sessionState('2026-10-01T13:30:00.000Z')
+    const current = state.cycle.current
+    if (current === null) throw new Error('fixture cycle missing')
+    const continuous: RuntimeState = {
+      ...state,
+      cycle: {
+        ...state.cycle,
+        current: {
+          ...current,
+          executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1',
+          createdAt: current.submissionOpenAt,
+          updatedAt: current.submissionOpenAt,
+          submissionCutoffAt: '2026-10-01T13:31:00.000Z',
+          executionCloseAt: '2026-10-01T13:49:00.000Z',
+        },
+      },
+      autonomousCycleLoop: {
+        ...state.autonomousCycleLoop,
+        lastPass:
+          reason === null
+            ? null
+            : {
+                result: 'SUCCESS',
+                outcome: 'RECOVERED',
+                recoveryAction: 'WAITING',
+                observedAt: state.health.checkedAt ?? '',
+                readiness: { reason, message: 'fixture unavailable' },
+              },
+      },
+    }
+    expect(statusResponseDecision(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
+      body: {
+        executionSession: {
+          condition,
+          ready,
+          firstObservationAt: current.submissionOpenAt,
+          decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
+        },
+      },
+    })
+  },
+)
+
+test('equity admission uses the later of the first completed minute and submission opening', () => {
+  const state = sessionState('2026-10-01T13:45:00.000Z')
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  const result = statusResponseDecision(
+    { ...state, cycle: { ...state.cycle, current: { ...current, submissionOpenAt: '2026-10-01T13:45:00.000Z' } } },
+    config.execution,
+    provenance,
+    config.build.verification,
+  )
+  expect(result).toMatchObject({
+    body: {
+      executionSession: {
+        condition: 'AWAITING_DECISION',
+        ready: true,
+        firstObservationAt: '2026-10-01T13:45:00.000Z',
+        decisionDeadlineAt: '2026-10-01T13:46:00.000Z',
+      },
+    },
+  })
 })

@@ -40,11 +40,45 @@ grant's database-clock deadline in Ofz. Re-enabling caching requires a fresh exp
 
 The Rust API uses exact SPIFFE mTLS caller identities and contract version 1. `ofz migrate` creates the checksum-bound
 control schema as its separate owner; `ofz serve` verifies it and reconciles unfinished commands before listening.
-`ofz migrate-runtime` initializes `tengri_control` as `tengri_migrator`, with the packaged Tengri migration and its
-SHA-256 checksum committed in one transaction. It serializes concurrent attempts and rejects a different owner,
-database or existing checksum. The BFF and controller only verify the result; they cannot initialize their own schema.
+The control DDL and its non-null checksum commit in one transaction. Interrupted initialization leaves neither visible;
+an existing missing, null or different checksum is rejected and never filled from the current binary.
+`ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
+SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
+transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
+checksum. The BFF, controller and supervisor require both migrations through `0002_replay_buckets.sql`; they cannot
+initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
+
+Initial platform setup uses `ofz bootstrap /var/run/ofz/bootstrap/manifest.json`, followed by
+`ofz activate /var/run/ofz/bootstrap/manifest.json`. Both commands require the `ofz_migrator` schema owner in
+`ofz_control`. The protected manifest supplies two distinct canonical numeric GitHub IDs in `administratorGithubIds`
+and distinct canonical UUIDs in `operationId` and `activationOperationId`. Use the approved, independently verified
+account IDs. Keep the same manifest for every uncertain retry; usernames and email addresses are not authority.
+
+Bootstrap requires a fresh, fenced control database. It durably records the approved intent before installing the
+compiled SpiceDB schema and the two Member/Administrator assignments, plus the four exact application workload
+relationships. It commits the SQL identities, immutable audit and original receipt while retaining the fence.
+The existing per-member defaults remain two workspaces, one active workspace and 64 GiB, within the fleet budget.
+The native schema read/write calls follow the [Authzed schema API](https://github.com/authzed/api/blob/main/authzed/api/v1/schema_service.proto).
+The journal records the server's installed schema hash and rejects a changed schema during initialization or activation.
+
+Activation requires acknowledgement of the bootstrap and all prior audit receipts, a healthy archive checkpoint,
+unchanged initial administrator/workload authority and the installed schema. A fully consistent bounded read must
+match exactly the eight approved platform relationships; surplus principals, cross-role assignments and retired
+platform objects keep activation fenced. The final authority check repeats that comparison after the audit insertion.
+It rechecks archive health after its own
+audit insertion before removing the platform fence. Completed retries return their original receipt and report current
+fence, version, recovery generation and archive health. They cannot re-add an offboarded administrator or undo a later
+recovery fence. Bootstrap markers use a separate namespace from ordinary policy-command UUIDs. Audit identifies the
+actual PostgreSQL owner authority rather than claiming an API SPIFFE caller.
+
+Before running these commands in production, verify old-writer fencing, the reviewed native credential rotation and
+the selected image and target. Keep the Kubernetes workspace-creation fence until the complete coordinated runtime
+and identity cutover passes. Run `bash services/ofz/test-control.sh bootstrap` from the repository root for the real
+CLI/PostgreSQL/SpiceDB qualification. Its explicit synthetic archive acknowledgement is only a fixture; production
+requires the independent exporter and durability proof. Physical promotion fingerprints enumerate all control tables,
+including the bootstrap journal, from a consistent snapshot.
 
 Commands serialize under a dedicated PostgreSQL connection and advisory lock. Durable SQL intent precedes the atomic
 native version/command-marker write; SQL effects, immutable audit, outbox and receipt commit before acknowledgement.
@@ -71,8 +105,12 @@ commands. Human roster and audit reads also require the exact BFF identity. Priv
 verified MFA without requiring a fresh control step-up or renewing idle activity. An approved emergency grant is projected
 into the durable workspace roster with its expiry; offboarding deletes that native relationship and quarantines any
 workspace exposed to emergency root access. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
-activity advances the session's idle deadline without exceeding its absolute expiry; observations, denied requests and
-stream rechecks do not. Logout binds its operation ID and original receipt to the opaque session credential and origin,
+activity advances the session's idle deadline at thirty-second resolution without exceeding its absolute expiry.
+Concurrent activity validates the current SQL session without rewriting a freshly extended deadline. When another
+transaction holds the session row, the optional idle refresh skips that row and current session validation still runs.
+Activity cannot queue an entire browser asset burst behind one durable refresh. The idle limit
+can therefore expire up to thirty seconds before thirty minutes from the final control request. Observations, denied
+requests and stream rechecks do not renew it. Logout binds its operation ID and original receipt to the opaque session credential and origin,
 so a lost response can be retried without producing another effect or revoking another session.
 
 The BFF supplies a fresh 256-bit credential when establishing a session and reuses the exact request for uncertain
@@ -90,9 +128,43 @@ against both the outbox and the durable sequence checkpoint. A live exporter hea
 permission response, including a failure that occurs while the request is in flight. Controller enrollment checks a
 fresh state after workload authorization and cannot install new access during archive loss; stop/release remain available.
 
-Controller runtime reads compare workspace authority and global policy/fence state from one SQL snapshot immediately
-before disclosure. Restrictive intent can quarantine a workspace before native policy finalization advances the global
-version; an in-flight read must abort if that workspace authority changes, even when the policy version stays the same.
+The image also packages `/bin/ofz-audit-export`, which exports bounded batches from the durable outbox to the
+[independent NUC archive](../../devices/nuc/ofz-recovery/README.md). It requires the separate `ofz_archiver` SQL role
+and verifies database TLS and the native S3 certificate. Configure `OFZ_DATABASE_DSN`,
+`OFZ_DATABASE_PASSWORD_FILE`, `OFZ_DATABASE_CA_FILE`, `OFZ_ARCHIVE_ACCESS_KEY_FILE` and
+`OFZ_ARCHIVE_SECRET_KEY_FILE` with mounted files. The destination is the approved private NUC endpoint on port 9444.
+
+The exporter holds a PostgreSQL session lease. Standbys wait for that lease; keepalives and a fifteen-second database
+idle-session limit bound abandoned connections. Every batch records ordered sequences, original receipts, target
+hashes and database timestamps. Its immutable key includes the complete payload hash. SQL acknowledges a batch only
+after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
+late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
+heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
+
+Run `bash services/ofz/test-control.sh archive` for the real owner CLI, PostgreSQL and S3 qualification. It uses the
+production credential generator, writer policy and synchronized SQLite/object configuration. It proves initial
+archive-gated activation, deletion/retention denial, uncertain uploads, out-of-order commits, archive loss and
+crash/restart readback at the unchanged endpoint. This isolated fixture does not establish the deployed NUC TLS route,
+Kubernetes exporter adoption, independent database/home backups or a completed restore.
+
+Controller runtime reads repeat native workload authorization after the audit, then compare workspace authority and
+global policy/fence state from one SQL snapshot before disclosure. Their final two-second window starts before the
+native recheck, and the response identifies the revision in its durable access receipt. Restrictive intent can quarantine
+a workspace before native policy finalization advances the global version; an in-flight read must abort if that workspace
+authority changes, even when the policy version stays the same.
+
+Initial audited calls may wait up to five seconds for durable commit. Ofz rechecks authority after that commit before
+issuing a decision valid for at most two seconds on both the API and database clocks, still capped by the request
+deadline and session or grant expiry. A clock difference that leaves no valid window fails closed.
+Only the audit transaction receives a five-second SQL statement timeout; ordinary connections retain their two-second
+statement and one-second lock limits after it commits.
+Receipt renewals keep their two-second request budget and recheck current authority. A compound guest operation
+authorizes its child, refreshes the parent through its original receipt, then intersects both decision deadlines.
+Redeemed terminal and preview capabilities regenerate that same request budget. Preview redemption starts the budget
+after its transaction commits; capability expiry and session/runtime bindings remain unchanged.
+Access responses and renewals keep their receipt's audited native revision while rechecking current permission, scope,
+policy version and recovery state. Advancing native read tokens alone do not invalidate unchanged authority. Receipts
+without a recorded native revision cannot renew; callers must open a fresh audited access.
 
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
@@ -123,8 +195,9 @@ A native Viewer relationship cannot authorize content without its committed SQL 
 scope clears content access in the durable intent transaction, before native finalization advances the policy version.
 The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
 stream-receipt lookup; changed authority returns a denial and records it. The real control fixture reproduces both
-pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 174 immutable
-receipts afterward.
+pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 186 immutable
+receipts afterward. The audit-timing cases also verify that a slow commit cannot return an expired permit or extend
+the original request deadline.
 
 The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
 requires fresh MFA for changes, shows quota usage and audit receipts, and retries an uncertain command with its original
@@ -178,8 +251,8 @@ They are excluded from the active application until coordinated release, identit
 
 `nix build .#ofz-image` builds the API for the native Linux architecture from the locked Cargo dependencies, canonical
 authorization protobuf, policy catalog, and both database migrations. The runtime contains the API and certificate
-roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`, and
-`migrate-runtime`.
+roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`,
+`migrate-runtime`, `bootstrap` and `activate`.
 
 The Ofz workflow first qualifies policy, durable control state, synchronous physical promotion, and real browser
 identity. Its existing Nix image workflow then checks both native architectures. A successful main build publishes the
@@ -190,3 +263,9 @@ image does not admit users or activate runtime clients.
 Ofz image-packaging and documentation changes do not rebuild native Tengri guests. Ofz implementation, Cargo dependencies,
 build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
 shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
+
+
+Production error reporting and trace propagation use the existing GlitchTip and Tempo services. See
+[Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
+contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
+database connection or changing authorization state. Confirm the returned IDs in both collectors.

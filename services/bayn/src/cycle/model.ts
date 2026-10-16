@@ -1,6 +1,6 @@
+import { continuousExecutionPolicy } from '../market-hours'
 import { Result, Schema } from 'effect'
 
-import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca'
 import { canonicalHashV1Result } from '../hash'
 import {
   IsoDateSchema,
@@ -40,6 +40,7 @@ export type CycleCompletionState = CycleState.Completed | CycleState.NoTrade
 export enum CycleTerminalReason {
   MissedPublication = 'BLOCKED_MISSED_PUBLICATION_DEADLINE',
   MissedSubmission = 'BLOCKED_MISSED_SUBMISSION_DEADLINE',
+  UnusedEntryExpired = 'BLOCKED_UNUSED_ENTRY_EXPIRED',
   DataUnavailable = 'BLOCKED_DATA_UNAVAILABLE',
   DataStale = 'BLOCKED_DATA_STALE',
   DataInvalid = 'BLOCKED_DATA_INVALID',
@@ -54,8 +55,11 @@ export enum CycleTerminalReason {
 }
 
 const ExecutionCalendarObservationMaterialBase = Schema.Struct({
-  executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
-  executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
+  executionCalendarSchemaVersion: Schema.Literals([
+    'bayn.alpaca-market-calendar-observation.v1',
+    'bayn.continuous-market-hours.v1',
+  ]),
+  executionCalendarSource: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
   executionSessionDate: IsoDateSchema,
   executionOpenAt: UtcInstantSchema,
   executionCloseAt: UtcInstantSchema,
@@ -69,11 +73,26 @@ const executionCalendarMaterialIssues = (
     issues.push({ path: ['executionCloseAt'], issue: 'must follow the execution session open' })
   }
   if (
-    !observation.executionOpenAt.startsWith(observation.executionSessionDate) ||
-    !observation.executionCloseAt.startsWith(observation.executionSessionDate)
+    observation.executionCalendarSchemaVersion !== 'bayn.continuous-market-hours.v1' &&
+    (!observation.executionOpenAt.startsWith(observation.executionSessionDate) ||
+      !observation.executionCloseAt.startsWith(observation.executionSessionDate))
   ) {
     issues.push({ path: ['executionSessionDate'], issue: 'must match the UTC execution session instants' })
   }
+  if (
+    (observation.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1') !==
+      (observation.executionCalendarSource === 'alpaca-crypto-us') ||
+    !observation.executionOpenAt.startsWith(observation.executionSessionDate)
+  )
+    issues.push({ path: ['executionCalendarSource'], issue: 'market source and window accounting date must agree' })
+  if (
+    observation.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' &&
+    Date.parse(observation.executionCloseAt) - Date.parse(observation.executionOpenAt) !==
+      continuousExecutionPolicy.entryValidityMs +
+        continuousExecutionPolicy.maximumHoldingMs +
+        continuousExecutionPolicy.closeRecoveryMs
+  )
+    issues.push({ path: ['executionCloseAt'], issue: 'continuous lease must have the reviewed finite duration' })
   return issues
 }
 
@@ -111,8 +130,7 @@ export const ExecutionCalendarObservationSchema = ExecutionCalendarObservationBa
   Schema.makeFilter(executionCalendarObservationIssues),
 )
 export type ExecutionCalendarObservation = typeof ExecutionCalendarObservationSchema.Type
-export type SelectedExecutionCalendarSession = Pick<MarketCalendarObservation, 'schemaVersion' | 'source'> &
-  MarketCalendarSession
+export type SelectedExecutionCalendarSession = typeof SelectedExecutionCalendarSessionSchema.Type
 
 const CycleExecutionPolicyV1MaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v1'),
@@ -179,8 +197,11 @@ const CycleIdentityExecutionMaterial = {
   strategyProtocolHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
   executionSessionDate: IsoDateSchema,
-  executionCalendarSchemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
-  executionCalendarSource: Schema.Literal('alpaca-v2-calendar'),
+  executionCalendarSchemaVersion: Schema.Literals([
+    'bayn.alpaca-market-calendar-observation.v1',
+    'bayn.continuous-market-hours.v1',
+  ]),
+  executionCalendarSource: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
   executionCalendarHash: Sha256Schema,
 } as const
 
@@ -435,8 +456,12 @@ const cycleDraftIssues = (draft: typeof CycleDraftBase.Type): readonly Schema.Fi
   }
   const policy = draft.identity.executionPolicy
   if (policy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3') {
-    const expectedSubmissionOpenAt = Date.parse(draft.window.executionOpenAt) + policy.warmupAfterOpenMs
-    const expectedSubmissionCutoffAt = Date.parse(draft.window.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
+    const continuous = draft.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+    const expectedSubmissionOpenAt =
+      Date.parse(draft.window.executionOpenAt) + (continuous ? 0 : policy.warmupAfterOpenMs)
+    const expectedSubmissionCutoffAt = continuous
+      ? Date.parse(draft.window.executionOpenAt) + continuousExecutionPolicy.entryValidityMs
+      : Date.parse(draft.window.executionCloseAt) - policy.submissionCutoffBeforeCloseMs
     if (Date.parse(draft.window.submissionOpenAt) !== expectedSubmissionOpenAt) {
       issues.push({
         path: ['window', 'submissionOpenAt'],
@@ -713,8 +738,8 @@ export const SignalCycleSessionSchema = Schema.Struct({
 })
 
 export const SelectedExecutionCalendarSessionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.alpaca-market-calendar-observation.v1'),
-  source: Schema.Literal('alpaca-v2-calendar'),
+  schemaVersion: Schema.Literals(['bayn.alpaca-market-calendar-observation.v1', 'bayn.continuous-market-hours.v1']),
+  source: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
   date: IsoDateSchema,
   openAt: UtcInstantSchema,
   closeAt: UtcInstantSchema,

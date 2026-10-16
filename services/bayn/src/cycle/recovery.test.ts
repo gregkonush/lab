@@ -14,6 +14,7 @@ import {
   type IntradayAutonomousCycle,
 } from './index'
 import { selectCycleRecovery, type CycleRecoveryState } from './recovery'
+import { decideBlock } from './store/decisions'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 
 const hash = (character: string): string => character.repeat(64)
@@ -84,12 +85,21 @@ const recoveryState = (
 })
 
 describe('intraday cycle recovery', () => {
+  test('retained v3 cycles cannot enter the v4-only unused-entry expiry transition', () => {
+    const cycle = activeCycle()
+    expect(cycle.schemaVersion).toBe('bayn.autonomous-cycle.v3')
+    expect(value(selectCycleRecovery(recoveryState(cycle)))).toEqual({ action: 'BUILD_DECISION', cycle })
+    expect(
+      Result.isFailure(decideBlock(cycle, CycleTerminalReason.UnusedEntryExpired, '2026-02-02T16:00:00.000Z')),
+    ).toBe(true)
+  })
+
   test('discovers work when no unfinished cycle exists', () => {
     expect(value(selectCycleRecovery(recoveryState(undefined)))).toEqual({ action: 'DISCOVER' })
   })
 
   test('activates a pending cycle and delegates signal readiness during the open session', () => {
-    const pending = pendingCycle()
+    const pending = { ...pendingCycle(), createdAt: '2026-02-02T14:44:30.000Z', updatedAt: '2026-02-02T14:44:30.000Z' }
     expect(
       value(
         selectCycleRecovery(
@@ -104,7 +114,7 @@ describe('intraday cycle recovery', () => {
       observedAt: '2026-02-02T14:45:00.000Z',
     })
 
-    const active = activeCycle()
+    const active = { ...activeCycle(), createdAt: '2026-02-02T14:59:30.000Z', updatedAt: '2026-02-02T14:59:30.000Z' }
     expect(
       value(
         selectCycleRecovery(
@@ -115,7 +125,10 @@ describe('intraday cycle recovery', () => {
       ),
     ).toEqual({ action: 'BUILD_DECISION', cycle: active })
 
-    expect(value(selectCycleRecovery(recoveryState(active)))).toEqual({ action: 'BUILD_DECISION', cycle: active })
+    expect(value(selectCycleRecovery(recoveryState(active, { observedAt: '2026-02-02T15:00:15.000Z' })))).toEqual({
+      action: 'BUILD_DECISION',
+      cycle: active,
+    })
   })
 
   test('reads a durable decision for a decision-bound cycle', () => {

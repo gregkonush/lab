@@ -2,6 +2,7 @@ import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib
 import { readCodexHistory } from '@/lib/tengri/codex-history'
 import { tengriCreateAgentSchema } from '@/lib/tengri/schemas'
 import { z } from 'zod'
+import { reportBrowserFailure } from '@/lib/observability/client'
 
 export class TengriRequestError extends Error {
   readonly status: number
@@ -16,7 +17,13 @@ export class TengriRequestError extends Error {
 }
 
 export async function getDesktopSnapshot(signal?: AbortSignal): Promise<TengriDesktopSnapshot> {
-  const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal })
+  const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal }).catch(
+    (error: unknown) => {
+      if (!signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError'))
+        reportBrowserFailure('tengri.snapshot')
+      throw error
+    },
+  )
   return decodeResponse<TengriDesktopSnapshot>(response)
 }
 
@@ -108,12 +115,17 @@ async function postTengriAction<Result>(
     headers: { 'Content-Type': 'application/json' },
     keepalive: options?.keepalive,
     signal: options?.signal,
+  }).catch((error: unknown) => {
+    if (!options?.signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError'))
+      reportBrowserFailure('tengri.request')
+    throw error
   })
   if (action.action === 'resume-thread' && response.ok) {
     return (await readCodexHistory(response, action.threadId, options?.signal, (record) =>
       requestFailure(
         record,
         typeof record.status === 'number' && record.status >= 400 && record.status <= 599 ? record.status : 503,
+        response.headers.get('x-trace-id'),
       ),
     )) as Result
   }
@@ -247,13 +259,14 @@ function deleteUnusedGuestOperationScope(agentId: string, scope: GuestOperationS
 async function decodeResponse<Result>(response: Response): Promise<Result> {
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    throw requestFailure(payload, response.status)
+    throw requestFailure(payload, response.status, response.headers.get('x-trace-id'))
   }
   if (!payload) throw new Error('Tengri returned an empty response')
   return payload as Result
 }
 
-function requestFailure(payload: unknown, status: number) {
+function requestFailure(payload: unknown, status: number, traceId?: string | null) {
+  if (status >= 500) reportBrowserFailure('tengri.request', status, traceId)
   const record = typeof payload === 'object' && payload !== null ? payload : {}
   const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
   const code =
@@ -261,7 +274,6 @@ function requestFailure(payload: unknown, status: number) {
     ((status === 404 && record.code === 'conversation_not_found') ||
       (status === 409 && record.code === 'file_conflict') ||
       (status === 409 && record.code === 'lifecycle_superseded') ||
-      (status === 412 && record.code === 'model_selection_unavailable') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined

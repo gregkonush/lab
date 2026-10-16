@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test'
+import * as Sentry from '@sentry/node'
 
 void mock.module('server-only', () => ({}))
 const { getTengriIdentity, handleTengriAuth } = await import('./auth')
@@ -30,6 +31,25 @@ afterAll(() => {
 })
 
 describe('Ofz-backed browser authentication boundary', () => {
+  test('reports a caught authentication outage while preserving its 503 response', async () => {
+    const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
+    process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = path.join(directory, 'missing-secret')
+    try {
+      const response = await handleTengriAuth(
+        new Request('https://proompteng.ai/api/auth/login', {
+          method: 'POST',
+          headers: { host: 'proompteng.ai', origin: 'https://proompteng.ai', 'sec-fetch-site': 'same-origin' },
+        }),
+      )
+      expect(response.status).toBe(503)
+      expect(capture).toHaveBeenCalledTimes(1)
+      expect(capture.mock.calls[0]?.[0]).toMatchObject({ code: 'ENOENT' })
+      expect(await response.text()).not.toContain('missing-secret')
+    } finally {
+      process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = settings.TENGRI_OIDC_CLIENT_SECRET_FILE
+      capture.mockRestore()
+    }
+  })
   test('absent, malformed, duplicate and legacy cookies never authenticate', async () => {
     for (const value of [
       '',
@@ -44,7 +64,7 @@ describe('Ofz-backed browser authentication boundary', () => {
     const response = await handleTengriAuth(
       new Request('https://proompteng.ai/api/auth/login', {
         method: 'POST',
-        headers: { origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
+        headers: { host: 'proompteng.ai', origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
       }),
     )
     expect(response.status).toBe(403)
@@ -53,7 +73,9 @@ describe('Ofz-backed browser authentication boundary', () => {
   })
   test('callback requires a full random state and code', async () => {
     const response = await handleTengriAuth(
-      new Request('https://proompteng.ai/api/auth/callback?state=guess&code=code'),
+      new Request('https://proompteng.ai/api/auth/callback?state=guess&code=code', {
+        headers: { host: 'proompteng.ai' },
+      }),
     )
     expect(response.status).toBe(400)
     expect(response.headers.get('cache-control')).toContain('no-store')
@@ -61,7 +83,7 @@ describe('Ofz-backed browser authentication boundary', () => {
   test('cancelled OIDC callbacks clear the attempt cookie without requiring an authorization code', async () => {
     const response = await handleTengriAuth(
       new Request(`https://proompteng.ai/api/auth/callback?error=access_denied&state=${'a'.repeat(43)}`, {
-        headers: { cookie: `__Host-tengri-oauth=${'b'.repeat(43)}` },
+        headers: { host: 'proompteng.ai', cookie: `__Host-tengri-oauth=${'b'.repeat(43)}` },
       }),
     )
     expect(response.status).toBe(401)
@@ -70,11 +92,43 @@ describe('Ofz-backed browser authentication boundary', () => {
     )
     expect(response.headers.get('cache-control')).toContain('no-store')
   })
+  test.each(['http://0.0.0.0:3000', 'https://0.0.0.0:3000'])(
+    'accepts the public Host behind Next internal URL %s',
+    async (internalOrigin) => {
+      const response = await handleTengriAuth(
+        new Request(`${internalOrigin}/api/auth/callback?error=access_denied`, {
+          headers: { host: 'proompteng.ai' },
+        }),
+      )
+      expect(response.status).toBe(401)
+      expect(response.headers.getSetCookie()).toContain(
+        '__Host-tengri-oauth=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0',
+      )
+    },
+  )
+  test.each(['untrusted.invalid', 'proompteng.ai.evil.invalid', 'proompteng.ai:3000', ''])(
+    'rejects the wrong public Host %s even with a forged forwarded host',
+    async (host) => {
+      const response = await handleTengriAuth(
+        new Request('http://0.0.0.0:3000/api/auth/login', {
+          method: 'POST',
+          headers: {
+            host,
+            origin: 'https://proompteng.ai',
+            'x-forwarded-host': 'proompteng.ai',
+            'sec-fetch-site': 'same-origin',
+          },
+        }),
+      )
+      expect(response.status).toBe(403)
+      expect(response.headers.getSetCookie()).toEqual([])
+    },
+  )
   test('old direct-provider and stateless-session endpoints have been removed', async () => {
     const response = await handleTengriAuth(
       new Request('https://proompteng.ai/api/auth/sign-in/social', {
         method: 'POST',
-        headers: { origin: 'https://proompteng.ai' },
+        headers: { host: 'proompteng.ai', origin: 'https://proompteng.ai' },
       }),
     )
     expect(response.status).toBe(404)

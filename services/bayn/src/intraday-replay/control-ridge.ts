@@ -1,3 +1,8 @@
+import { equityMarketProfile } from '../jev/markets'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
+import { brokerCalendarResponseHash } from '../market-hours'
+
+import { exchangeSessions } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import {
@@ -31,6 +36,7 @@ import {
 } from './six-bar-ridge'
 import type { BacktestSourceManifest } from './source'
 import { signalStudyDefinition } from './signal-study'
+import { jevHistoryStartMs } from '../jev/observation-query'
 
 export enum RidgeControlPolicy {
   Ridge = 'SIX_BAR_RIDGE_V1',
@@ -60,7 +66,7 @@ export interface RidgeExecutionContext {
 }
 
 export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, allocationBudgetMicros: string) => ({
-  schemaVersion: 'bayn.six-bar-ridge-execution-label.v1',
+  schemaVersion: 'bayn.six-bar-ridge-execution-label.v2',
   allocationBudgetMicros,
   target: '10000 * net-execution-pnl / fixed-allocation-budget',
   allocation: 'Whole shares bounded by fixed adverse-limit principal, current cash including fees, and native risk.',
@@ -72,6 +78,7 @@ export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, al
   executionModel: context.protocol.executionModel,
   executionLimitSlippageBps: signalStudyDefinition.limitSlippageBps,
   eligibility: {
+    minimumCompletedHistoryMs: intradayMinimumCompletedHistoryMs,
     lookbackMinutes: context.protocol.lookbackMinutes,
     decisionDelaySeconds: context.protocol.decisionDelaySeconds,
     entryCutoffMinutesBeforeClose: context.protocol.entryCutoffMinutesBeforeClose,
@@ -127,7 +134,7 @@ export const prepareBoundRidge = (
       (yield* canonicalHashV1Result(context.source)) !== input.evaluationSourceManifestHash ||
       context.protocol.lookbackMinutes !== 30 ||
       context.protocol.decisionDelaySeconds !== 2 ||
-      context.protocol.benchmarkSymbol !== sixBarResearchDefinition.benchmarkSymbol ||
+      'SPY' !== sixBarResearchDefinition.benchmarkSymbol ||
       !Number.isSafeInteger(context.pollIntervalMs) ||
       context.pollIntervalMs <= 0 ||
       context.pollIntervalMs > 60_000 ||
@@ -151,8 +158,8 @@ export const prepareBoundRidge = (
       lastIndex < firstIndex ||
       calendar.sessions[lastIndex + 1] === undefined ||
       context.sessions.length !== lastIndex - firstIndex + 1 ||
-      context.calendar.sessions.length !== executionCalendar.length ||
-      context.calendar.sessions.some((session, index) => {
+      exchangeSessions(context.calendar).length !== executionCalendar.length ||
+      exchangeSessions(context.calendar).some((session, index) => {
         const expected = executionCalendar[index]
         return expected === undefined || !sameSession(session, expected)
       })
@@ -164,8 +171,7 @@ export const prepareBoundRidge = (
       const firstPoll =
         Date.parse(session.openAt) +
         Math.ceil(
-          (context.protocol.lookbackMinutes * 60_000 + context.protocol.decisionDelaySeconds * 1000) /
-            context.pollIntervalMs,
+          (intradayMinimumCompletedHistoryMs + context.protocol.decisionDelaySeconds * 1000) / context.pollIntervalMs,
         ) *
           context.pollIntervalMs
       if (
@@ -177,7 +183,7 @@ export const prepareBoundRidge = (
       )
         return yield* Result.fail(fail('Ridge execution session, partition or first eligible poll differs'))
     }
-    return { ...input, calendar, candidateSymbols: context.protocol.candidateSymbols }
+    return { ...input, calendar, candidateSymbols: equityMarketProfile.candidateSymbols }
   }).pipe(Result.mapError((cause) => fail('Cannot bind offline Ridge controls', cause)))
 
 export type BoundRidge = Result.Result.Success<ReturnType<typeof prepareBoundRidge>>
@@ -239,7 +245,7 @@ export const scorePinnedRidgeCandidates = (
       actual.some((hash) => !expected.has(hash)) ||
       candidates.some(
         (candidate) =>
-          !bound.candidateSymbols.includes(candidate.symbol) ||
+          !bound.candidateSymbols.some((symbol) => symbol === candidate.symbol) ||
           candidate.sessionDate !== query.sessionDate ||
           candidate.decisionAt !== query.observedAt ||
           candidate.availableAt < session.openAt ||
@@ -290,7 +296,9 @@ export const selectBoundRidge = (
       const observation = yield* extractSixBarResearchObservation(cursor, {
         ...query,
         calendar: bound.calendar,
-        rangeStartAt: utcInstantFromEpochMillis(Date.parse(query.rangeEndAt) - 6 * 60_000),
+        rangeStartAt: utcInstantFromEpochMillis(
+          jevHistoryStartMs(bound.calendar, query.sessionDate, Date.parse(query.rangeEndAt), 6),
+        ),
         symbols: [symbol, sixBarResearchDefinition.benchmarkSymbol].sort(),
         candidateSymbols: [symbol],
         candidateEvidencePolicy: sixBarResearchDefinition.candidateEvidencePolicy,
@@ -299,7 +307,7 @@ export const selectBoundRidge = (
       })
       if (
         observation.source.sourceManifestHash !== bound.evaluationSourceManifestHash ||
-        observation.query.calendar.normalizedResponseHash !== bound.expectedCalendarHash ||
+        brokerCalendarResponseHash(observation.query.calendar) !== bound.expectedCalendarHash ||
         observation.definitionHash !== bound.artifact.featureDefinitionHash
       )
         return yield* Result.fail(fail('Ridge feature observation differs from the bound evaluation'))
@@ -309,7 +317,10 @@ export const selectBoundRidge = (
     }
     if (
       observations.some(
-        (observation) => observation.status !== SixBarResearchStatus.Available && !isCandidateExclusion(observation),
+        (observation) =>
+          observation.status !== SixBarResearchStatus.Available &&
+          observation.reason !== SixBarUnavailableReason.SessionHistory &&
+          !isCandidateExclusion(observation),
       )
     )
       return { status: 'UNAVAILABLE' as const, observations }

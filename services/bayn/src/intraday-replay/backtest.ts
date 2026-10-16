@@ -1,3 +1,7 @@
+import { ReplayInstrumentsSchema } from './execution-core'
+import { equityMarketProfile } from '../jev/markets'
+import { defaultJevProtocolDocument } from '../jev/protocol'
+
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
 import { utcInstantFromEpochMillis } from '../time'
 import { PgClient } from '@effect/sql-pg'
@@ -101,7 +105,7 @@ export const BacktestInputSchema = Schema.Struct({
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
     model: Schema.Literal(jevModel),
-    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v2'),
+    inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
     costs: ReplayJevCostModelSchema,
   }),
   allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,
@@ -116,6 +120,7 @@ export const BacktestInputSchema = Schema.Struct({
   assetObservationPolicy: Schema.Literals(['retained-as-of-session', 'counterfactual-current-asset-eligibility']),
   build: Schema.Struct({ ...EmbeddedBuildMetadataSchema.fields, imageDigest: ImageDigestSchema }),
   assumptions: Schema.Struct({
+    instruments: ReplayInstrumentsSchema,
     latencyMs: NonNegativeIntegerSchema,
     slippageBps: NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
     availableLiquidityPpm: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
@@ -165,12 +170,12 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const protocol = baselineProtocol
     const parameterHash = baselineParameterHash
     const universe = {
-      universeId: protocol.universeId,
-      universeSymbolHash: protocol.universeSymbolHash,
-      symbols: protocol.universe,
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      symbols: equityMarketProfile.universe,
       topics: {
-        ...protocol.sourceTopics,
-        features: protocol.streamingInput.featureTopic,
+        ...equityMarketProfile.sourceTopics,
+        features: equityMarketProfile.streamingInput.featureTopic,
         ...(decoded.source.universe.topics.technicalFeatures === undefined
           ? {}
           : { technicalFeatures: decoded.source.universe.topics.technicalFeatures }),
@@ -237,8 +242,8 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const assetSymbols = decoded.assets.map((asset) => asset.symbol)
     if (
       new Set(assetSymbols).size !== assetSymbols.length ||
-      assetSymbols.length !== protocol.universe.length ||
-      protocol.universe.some((symbol) => !assetSymbols.includes(symbol))
+      assetSymbols.length !== equityMarketProfile.universe.length ||
+      equityMarketProfile.universe.some((symbol) => !assetSymbols.includes(symbol))
     )
       return yield* Result.fail(
         new ReplayBrokerFailure({ message: 'Replay asset metadata is duplicated or misses source symbols' }),
@@ -246,6 +251,18 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     const assets = yield* Result.all(
       decoded.assets.map((asset) => normalizeAssetResult(asset, asset.symbol, decoded.assetObservationAt)),
     )
+    for (const asset of assets) {
+      const instrument = decoded.assumptions.instruments[asset.symbol]
+      if (
+        instrument === undefined ||
+        instrument.minimumQuantityAtoms !== asset.minimumQuantityAtoms ||
+        instrument.quantityIncrementAtoms !== asset.quantityIncrementAtoms ||
+        instrument.priceIncrementAtoms !== asset.priceIncrementAtoms
+      )
+        return yield* Result.fail(
+          new ReplayBrokerFailure({ message: 'Frozen instrument terms differ from retained broker assets' }),
+        )
+    }
     const runId = yield* canonicalHashV1Result({ ...decoded, assets, sourceReceiptHash: sourceReceipt.contentHash })
     const identity = yield* makeBrokerIdentity({
       schemaVersion: 'bayn.broker-identity.v2',
@@ -267,7 +284,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       input: decoded,
       sourceReceipt,
       runId,
-      protocol,
+      protocol: { ...protocol, ...equityMarketProfile },
       assets,
       identity,
       sessions,

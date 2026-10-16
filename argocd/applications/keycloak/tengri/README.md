@@ -1,7 +1,7 @@
 # Dedicated Tengri identity realm
 
-This prepared directory is excluded from the active Keycloak kustomization until the coordinated Ofz migration.
-It creates a separate realm and preserves the master realm, Headlamp and Agents Shell clients.
+The active Keycloak kustomization includes this dedicated realm and its sealed credentials.
+It preserves the master realm, Headlamp and Agents Shell clients.
 
 `bootstrap.py` imports only a new, initially disabled realm. It locks managed profile attributes, verifies the GitHub
 provider, exact client callbacks, protocol mappers, required actions and authentication flows before enabling it.
@@ -10,19 +10,26 @@ client secrets through the administrator API and verify the BFF secret readback.
 broker links. The isolated browser fixture rotates both secrets after passkey enrollment, rejects the old BFF secret
 and completes a fresh login using the rotated GitHub and BFF credentials.
 
+The dedicated `tengri` login theme extends Keycloak's built-in theme. Its registration module uses Keycloak 26.7.4's
+WebAuthn implementation and default authenticator label without calling `window.prompt()`, which embedded browsers
+reject after creating the credential. Bootstrap reconciles only this presentation setting after verifying the
+security configuration. The real browser fixture disables prompts, enrolls passkeys and verifies that theme migration
+preserves existing credentials while security drift still fails.
+The upstream module retains its [Apache 2.0 license](theme/LICENSE.txt).
+
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note
 is included in the ID token. The account clients, direct grants, implicit flow and refresh tokens are disabled.
 The BFF requires PKCE S256; the realm and client both require authentication level two. The post-broker flow requires
 a new user-verified passkey authentication, with passkey enrollment required on first login.
 
-Before activation, seal the existing GitHub OAuth client's ID/secret into `keycloak-tengri-broker`, register the exact
-broker callback `https://auth.proompteng.ai/realms/tengri/broker/github/endpoint`, and seal the same newly generated
-confidential BFF client secret into the Keycloak and BFF mounts. The issuer must have a valid HTTPS certificate.
+The existing GitHub OAuth client's ID/secret are sealed into `keycloak-tengri-broker`. Before enabling the BFF,
+replace the OAuth app's callbacks with `https://auth.proompteng.ai/realms/tengri/broker/github/endpoint`, and mount
+the same confidential BFF client secret in both services. The issuer must have a valid HTTPS certificate.
 The hard cutover removes the direct GitHub/Better Auth path; there is no fallback login mode.
 
 The client includes Keycloak's `basic` scope for the signed authentication time and `acr` scope for achieved assurance.
-Ofz independently requires both. The configuration was checked against Keycloak 26.7.3 source and tested through its
+Ofz independently requires both. The configuration was checked against Keycloak 26.7.4 source and tested through its
 real administrator API, including repeat verification. The isolated Chromium fixture completed GitHub brokerage,
 passkey enrollment, fresh verification, numeric identity separation, admission/assurance denial and Ofz session revocation.
 Real custodian enrollment, HA and deployed identity readback remain separate migration gates.

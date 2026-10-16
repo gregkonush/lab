@@ -66,14 +66,31 @@ export interface LedgerQueryFilter {
   readonly flags: number
 }
 
+export enum LedgerAccountFilterFlag {
+  Debits = 1,
+  Credits = 2,
+  Reversed = 4,
+}
+
+export interface LedgerAccountFilter extends Omit<LedgerQueryFilter, 'ledger'> {
+  readonly account_id: bigint
+}
+
+export type LedgerAccountBalance = Pick<
+  LedgerAccountRecord,
+  'debits_pending' | 'debits_posted' | 'credits_pending' | 'credits_posted' | 'timestamp'
+>
+
 export const AccountCode = {
   cash: 110,
   inventory: 120,
   equity: 310,
   realizedGain: 410,
   cashYieldIncome: 420,
+  cashRoundingIncome: 430,
   feeExpense: 510,
   realizedLoss: 520,
+  cashRoundingExpense: 530,
 } as const
 
 export const TransferCode = {
@@ -84,6 +101,8 @@ export const TransferCode = {
   realizedLoss: 5,
   fee: 6,
   cashYield: 7,
+  cashRoundingIncome: 8,
+  cashRoundingExpense: 9,
 } as const
 
 export interface LedgerInput {

@@ -1,10 +1,13 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { jevRequestForSnapshot } from '../jev/native.test-support'
+import { equityMarketProfile } from '../jev/markets'
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1 } from '../hash'
 import { OrderSide } from '../execution/contracts'
 import { nativeJevFixture } from '../jev/native.test-support'
-import { makeJevTradingSignalRequest } from '../jev/trading-signals'
 import { featureBarContentHash } from '../market-data/features/contract'
 import technicalFixture from '../market-data/features/fixtures/technical-indicators-v1.json'
 import { decodeTechnicalMarketFeature, TechnicalReadiness } from '../market-data/features/technical-contract'
@@ -29,10 +32,10 @@ import {
 
 // Independently valid snapshots, identical prices, different optional model inputs.
 const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs = 0) => {
-  const { snapshot, cut, query, protocol } = streamingFixture()
+  const { snapshot, cut, query } = streamingFixture()
   const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === 'AAPL')
   const first = snapshot.bars.find((bar) => bar.symbol === 'AAPL')
-  const session = snapshot.manifest.calendar.sessions[0]
+  const session = exchangeSessions(snapshot.manifest.calendar)[0]
   if (rolling === undefined || first === undefined || session === undefined) throw new Error('Missing fixture')
   const open = Date.parse(session.openAt)
   const older = Array.from({ length: 30 }, (_, index) => {
@@ -54,8 +57,8 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
   })
   const material = {
     ...technicalFixture.material,
-    universeId: protocol.universeId,
-    universeSymbolHash: protocol.universeSymbolHash,
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
     sessionDate: query.sessionDate,
     windowStartMs: open,
     windowEndMs: Date.parse(query.rangeEndAt),
@@ -79,10 +82,10 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
     { ...cut.projection, technicalTopic: topic },
     { topic, partition: 0, offset, value: JSON.stringify(feature) },
     {
-      universeId: protocol.universeId,
-      universeSymbolHash: protocol.universeSymbolHash,
-      symbols: protocol.universe,
-      topics: { ...protocol.sourceTopics, features: rolling.topic, technicalFeatures: topic },
+      universeId: equityMarketProfile.universeId,
+      universeSymbolHash: equityMarketProfile.universeSymbolHash,
+      symbols: equityMarketProfile.universe,
+      topics: { ...equityMarketProfile.sourceTopics, features: rolling.topic, technicalFeatures: topic },
     },
     Date.parse(query.observedAt) + availabilityDelayMs,
   )
@@ -109,8 +112,8 @@ const technicalSnapshots = (ema = '123450000', offset = '0', availabilityDelayMs
 
 test('matched reproduction distinguishes technical input presence that changes the actual Jev request', () => {
   const { withTechnical, withoutTechnical } = technicalSnapshots()
-  const actual = Result.getOrThrow(makeJevTradingSignalRequest(withTechnical, 'AAPL', 'SPY'))
-  const missing = Result.getOrThrow(makeJevTradingSignalRequest(withoutTechnical, 'AAPL', 'SPY'))
+  const actual = Result.getOrThrow(jevRequestForSnapshot(withTechnical, 'AAPL'))
+  const missing = Result.getOrThrow(jevRequestForSnapshot(withoutTechnical, 'AAPL'))
   expect(actual.requestHash).not.toBe(missing.requestHash)
   expect(canonicalHashV1(matchedObservationMaterial(withTechnical))).not.toBe(
     canonicalHashV1(matchedObservationMaterial(withoutTechnical)),
@@ -121,8 +124,7 @@ test('matched reproduction binds changed technical values and their exact source
   const original = technicalSnapshots().withTechnical
   const differentValue = technicalSnapshots('99900000').withTechnical
   const differentSource = technicalSnapshots('123450000', '1').withTechnical
-  const request = (snapshot: typeof original) =>
-    Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).requestHash
+  const request = (snapshot: typeof original) => Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).requestHash
   expect(request(original)).not.toBe(request(differentValue))
   expect(request(original)).toBe(request(differentSource))
   for (const changed of [differentValue, differentSource])
@@ -134,8 +136,8 @@ test('matched reproduction binds changed technical values and their exact source
 test('future technical availability is excluded by real snapshot construction before model input', () => {
   const { withTechnical: future, withoutTechnical } = technicalSnapshots('123450000', '0', 1)
   expect(future.manifest.streaming.technical?.features).toHaveLength(0)
-  const request = Result.getOrThrow(makeJevTradingSignalRequest(future, 'AAPL', 'SPY'))
-  const absent = Result.getOrThrow(makeJevTradingSignalRequest(withoutTechnical, 'AAPL', 'SPY'))
+  const request = Result.getOrThrow(jevRequestForSnapshot(future, 'AAPL'))
+  const absent = Result.getOrThrow(jevRequestForSnapshot(withoutTechnical, 'AAPL'))
   expect(request.requestHash).toBe(absent.requestHash)
 })
 
@@ -147,8 +149,8 @@ test('matched reproduction binds the context that determines model quote ages an
       observedAt: new Date(Date.parse(query.observedAt) + 1000).toISOString(),
     }),
   )
-  expect(Result.getOrThrow(makeJevTradingSignalRequest(snapshot, 'AAPL', 'SPY')).requestHash).not.toBe(
-    Result.getOrThrow(makeJevTradingSignalRequest(later, 'AAPL', 'SPY')).requestHash,
+  expect(Result.getOrThrow(jevRequestForSnapshot(snapshot, 'AAPL')).requestHash).not.toBe(
+    Result.getOrThrow(jevRequestForSnapshot(later, 'AAPL')).requestHash,
   )
   expect(canonicalHashV1(matchedObservationMaterial(snapshot))).not.toBe(
     canonicalHashV1(matchedObservationMaterial(later)),
@@ -159,7 +161,13 @@ const fixture = nativeJevFixture()
 const observedAt = Date.parse(fixture.observation.payload.observedAt)
 const baseQuote = fixture.snapshot.latestQuotes['AAPL']
 if (baseQuote === undefined) throw new Error('Missing lifecycle quote')
-const assumptions = { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 0,
+  availableLiquidityPpm: 1000000,
+  feeMultiplierPpm: 1000000,
+}
 const modelDelayMs = 5000
 
 const quoteAt = (symbol: string, atMs: number) => {
@@ -291,7 +299,7 @@ test('an earlier abstention changes the next opportunity through each portfolio 
   const buy = (symbol: string, decisionAtMs: number) => ({
     symbol,
     side: OrderSide.Buy,
-    quantityMicros: 10_000_000n,
+    quantityAtoms: 10000000000n,
     protocol: fixture.protocol,
     assumptions,
     decisionAtMs,

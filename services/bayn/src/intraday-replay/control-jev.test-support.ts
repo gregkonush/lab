@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { Result } from 'effect'
 import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
@@ -30,9 +31,15 @@ export const controlJevFixture = (observedAt?: string, holdingAgeMs = 180_000) =
     entryOrder: {
       symbol: 'AAPL',
       side: OrderSide.Buy,
-      quantityMicros: 10_000_000n,
+      quantityAtoms: 10000000000n,
       protocol: fixture.protocol,
-      assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
+      assumptions: {
+        instruments: replayTestInstruments,
+        latencyMs: 100,
+        slippageBps: 0,
+        availableLiquidityPpm: 1_000_000,
+        feeMultiplierPpm: 1_000_000,
+      },
       decisionAtMs: atMs - holdingAgeMs - 100,
       arrivalAtMs: atMs - holdingAgeMs,
       decisionQuote: quote(atMs - holdingAgeMs - 100),

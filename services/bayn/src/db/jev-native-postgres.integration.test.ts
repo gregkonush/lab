@@ -55,12 +55,8 @@ import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgr
 import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
 import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
 import { JevExitReason } from '../jev/exit'
-import {
-  decodeJevProtocol,
-  jevBehaviorHash,
-  momentumFirstJevProtocolDocument,
-  momentumFirstJevBehaviorHash,
-} from '../jev/protocol'
+import { equityMarketProfile } from '../jev/markets'
+import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore, recordJevObservation } from '../observe-composition/candidate-observation'
@@ -85,8 +81,9 @@ import { postgresMigrations } from './postgres-migrations'
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const replayAccountId = `replay-${'e'.repeat(64)}`
+const premiums = Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, 0.02]))
 const nativeJevFixture = (purpose: JevPurpose = JevPurpose.Entry, observedAt?: string) =>
-  fixtureForAccount(purpose, observedAt, replayAccountId)
+  fixtureForAccount(purpose, observedAt, replayAccountId, defaultJevProtocolDocument, 'a'.repeat(64), premiums)
 const fixture = nativeJevFixture()
 // Persist and recover retained v1 cycles with their original identity even after active composition changes.
 const retainedRuntime = {
@@ -134,8 +131,16 @@ const nativeInput = {
   snapshot: fixture.snapshot,
 }
 
+const acquireEntryCycle = (at = fixture.observation.payload.observedAt) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient
+    yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${at} WHERE account_id = ${replayAccountId}`
+    return yield* (yield* CycleStore).acquire(fixture.draft, at)
+  })
+
 const seedManagedPosition = (
   options: {
+    readonly symbol?: string
     readonly omitReceipt?: boolean
     readonly receiptAt?: string
     readonly observedAt?: string
@@ -147,6 +152,22 @@ const seedManagedPosition = (
     const managed = nativeJevFixture(JevPurpose.Manage, options.observedAt)
     let portfolio = managed.portfolio
     if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected management fixture')
+    if (options.symbol !== undefined) {
+      const state = {
+        ...portfolio.brokerState,
+        positions: portfolio.brokerState.positions.map((position) => ({
+          ...position,
+          symbol: options.symbol ?? position.symbol,
+        })),
+        orders: portfolio.brokerState.orders.map((order) => ({ ...order, symbol: options.symbol ?? order.symbol })),
+      }
+      const hash = Result.getOrThrow(reconciledStateHash(state))
+      portfolio = {
+        ...portfolio,
+        brokerState: { ...state, reconciliation: { ...state.reconciliation, expectedHash: hash, observedHash: hash } },
+        entryFills: portfolio.entryFills.map((fill) => ({ ...fill, symbol: options.symbol ?? fill.symbol })),
+      }
+    }
     const heldMinutes = options.heldMinutes
     if (heldMinutes !== undefined)
       portfolio = {
@@ -199,6 +220,7 @@ const seedManagedPosition = (
       strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v1' },
       orderedIntentIds: portfolio.entryIntentIds,
     }
+    yield* acquireEntryCycle(entryAt)
     if (options.entryDocument === undefined) yield* (yield* CycleStore).activate(nativeInput.cycleId, entryAt)
     yield* sql.withTransaction(
       Effect.gen(function* () {
@@ -219,31 +241,31 @@ const seedManagedPosition = (
       ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
     for (const intentId of portfolio.entryIntentIds) {
       yield* sql`INSERT INTO intents (intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
-        time_in_force, quantity_micros, notional_limit_micros, state, created_at, updated_at, cycle_id,
+        time_in_force, quantity_atoms, notional_limit_micros, state, created_at, updated_at, cycle_id,
         strategy_name, decision_hash, policy_hash, authority_generation_hash)
-        VALUES (${intentId}, 'bayn.paper-intent.v3', ${r.accountId}, ${portfolio.entryFills[0]?.clientOrderId ?? 'entry-client'}, 'AAPL', 'BUY', 'LIMIT', 'IOC',
-        '10000000', '1000000000', 'PLANNED', ${entryAt}, ${entryAt}, ${nativeInput.cycleId}, 'jev',
+        VALUES (${intentId}, 'bayn.paper-intent.v3', ${r.accountId}, ${portfolio.entryFills[0]?.clientOrderId ?? 'entry-client'}, ${options.symbol ?? 'AAPL'}, 'BUY', 'LIMIT', 'IOC',
+        '10000000000', '1000000000', 'PLANNED', ${entryAt}, ${entryAt}, ${nativeInput.cycleId}, 'jev',
         ${document.bindings.strategyDecisionHash}, ${'3'.repeat(64)}, ${nativeInput.authorityGenerationHash})`
     }
     yield* sql.withTransaction(
       Effect.gen(function* () {
         for (const [index, fill] of portfolio.entryFills.entries()) {
           const eventId = canonicalHashV1({ fillId: fill.fillId })
-          const notional = ((BigInt(fill.quantityMicros) * BigInt(fill.priceMicros)) / 1_000_000n).toString()
+          const notional = ((BigInt(fill.quantityAtoms) * BigInt(fill.priceAtoms)) / 1_000_000_000_000n).toString()
           yield* sql`INSERT INTO broker_events (event_id, schema_version, content_hash, event_kind, broker, account_id,
         source_event_id, source_sequence, occurred_at, observed_at) VALUES (${eventId}, 'bayn.paper-broker-event.v1',
         ${eventId}, 'FILL', 'ALPACA', ${r.accountId}, ${fill.fillId}, ${index + 1}, ${fill.occurredAt}, ${fill.occurredAt})`
           yield* sql`INSERT INTO fills (event_id, account_id, schema_version, fill_id, broker_order_id, client_order_id,
-        intent_id, symbol, side, quantity_micros, price_micros, fee_micros, source_timestamp)
+        intent_id, symbol, side, quantity_atoms, price_atoms, fee_micros, source_timestamp)
         VALUES (${eventId}, ${r.accountId}, ${fill.schemaVersion}, ${fill.fillId}, ${fill.brokerOrderId},
-        ${fill.clientOrderId}, ${fill.intentId ?? null}, ${fill.symbol}, ${fill.side}, ${fill.quantityMicros},
-        ${fill.priceMicros}, ${fill.feeMicros}, ${fill.occurredAt.replace('Z', '000000Z')})`
+        ${fill.clientOrderId}, ${fill.intentId ?? null}, ${fill.symbol}, ${fill.side}, ${fill.quantityAtoms},
+        ${fill.priceAtoms}, ${fill.feeMicros}, ${fill.occurredAt.replace('Z', '000000Z')})`
           yield* sql`INSERT INTO accounting_transactions (transaction_id, schema_version, broker_event_id, intent_id, account_id,
-        symbol, side, quantity_micros, price_micros, notional_micros, fee_micros, cost_basis_micros, realized_pnl_micros,
-        quantity_delta_micros, cost_basis_delta_micros, cash_delta_micros, ledger_plan_hash, content_hash, occurred_at)
-        VALUES (${eventId}, 'bayn.paper-accounting-transaction.v1', ${eventId}, ${fill.intentId ?? null}, ${r.accountId},
-        ${fill.symbol}, ${fill.side}, ${fill.quantityMicros}, ${fill.priceMicros}, ${notional}, '0', ${notional}, '0',
-        ${fill.quantityMicros}, ${notional}, ${'-' + notional}, ${eventId}, ${eventId}, ${fill.occurredAt})`
+        symbol, side, quantity_atoms, price_atoms, notional_micros, fee_micros, cost_basis_micros, realized_pnl_micros,
+        quantity_delta_atoms, cost_basis_delta_micros, cash_delta_micros, ledger_plan_hash, content_hash, occurred_at)
+        VALUES (${eventId}, 'bayn.accounting-transaction.v2', ${eventId}, ${fill.intentId ?? null}, ${r.accountId},
+        ${fill.symbol}, ${fill.side}, ${fill.quantityAtoms}, ${fill.priceAtoms}, ${notional}, '0', ${notional}, '0',
+        ${fill.quantityAtoms}, ${notional}, ${'-' + notional}, ${eventId}, ${eventId}, ${fill.occurredAt})`
           if (!options.omitReceipt || index !== 0)
             yield* sql`INSERT INTO accounting_receipts (receipt_id, schema_version, intent_id, broker_event_id,
           tigerbeetle_cluster_id, tigerbeetle_ledger, account_ids, transfer_ids, debit_micros, credit_micros,
@@ -253,6 +275,8 @@ const seedManagedPosition = (
         }
       }),
     )
+    yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${managed.observation.payload.observedAt}
+      WHERE account_id = ${replayAccountId}`
     return { managed, portfolio: { ...portfolio, brokerState } }
   })
 
@@ -267,7 +291,7 @@ const prepareManagementBatch = Effect.gen(function* () {
     makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const candidate = plan.candidates[0]
@@ -293,10 +317,13 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       JevPurpose.Entry,
       undefined,
       replayAccountId,
-      momentumFirstJevProtocolDocument,
+      { ...defaultJevProtocolDocument, maximumSymbolWeight: 0.19 },
       '4'.repeat(64),
     )
-    yield* (yield* CycleStore).acquire(entry.draft, entry.draft.window.executionOpenAt)
+    const sql = yield* PgClient.PgClient
+    yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${entry.observation.payload.observedAt}
+      WHERE account_id = ${replayAccountId}`
+    yield* (yield* CycleStore).acquire(entry.draft, entry.observation.payload.observedAt)
     const snapshot = streamingFixtureFromRaw(
       makeIntradayMomentumTestSnapshot(
         entry.protocol,
@@ -394,8 +421,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* sql`CREATE SCHEMA public`
         yield* postgresMigrations
         yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
-          VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.observation.payload.observedAt})`
-        yield* (yield* CycleStore).acquire(fixture.draft, fixture.draft.window.executionOpenAt)
+          VALUES (${replayAccountId}, ${'e'.repeat(64)}, ${fixture.draft.window.executionOpenAt})`
         yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
         VALUES (${nativeInput.authorityGenerationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${fixture.observation.payload.observedAt})`
         const r = fixture.portfolio.brokerState.reconciliation
@@ -406,6 +432,37 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('close intent classification is restricted to the persisted intent and its owning cycle', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = yield* ExecutionCycleClosureStore
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`CREATE TEMP TABLE intents (intent_id text PRIMARY KEY, cycle_id text NOT NULL) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_closures
+              (cycle_id text PRIMARY KEY, document jsonb NOT NULL) ON COMMIT DROP`
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_paper_close_replans
+              (cycle_id text NOT NULL, document jsonb NOT NULL) ON COMMIT DROP`
+            yield* sql`INSERT INTO intents (intent_id, cycle_id) VALUES
+              ('entry', 'active'), ('close', 'active'), ('replan', 'active'), ('unrelated', 'other')`
+            yield* sql`INSERT INTO autonomous_cycle_paper_closures (cycle_id, document) VALUES
+              ('active', '{"document":{"orderedIntentIds":["close"]}}'),
+              ('retained', '{"document":{"orderedIntentIds":["entry","unrelated","unpersisted"]}}')`
+            yield* sql`INSERT INTO autonomous_cycle_paper_close_replans (cycle_id, document) VALUES
+              ('active', '{"document":{"orderedIntentIds":["replan"]}}')`
+
+            expect(yield* store.containsIntent('entry')).toBe(false)
+            expect(yield* store.containsIntent('close')).toBe(true)
+            expect(yield* store.containsIntent('replan')).toBe(true)
+            expect(yield* store.containsIntent('unrelated')).toBe(false)
+            expect(yield* store.containsIntent('unpersisted')).toBe(false)
+          }),
+        )
+      }),
+    )
   })
 
   for (const purpose of [JevPurpose.Manage, JevPurpose.Entry]) {
@@ -793,24 +850,27 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
-  test('inactive momentum-first v2 persists native v4 evidence without evaluating non-signals', async () => {
+  test('current momentum-first policy requires its own cycle and persists only signal candidates', async () => {
     const candidate = fixtureForAccount(
       JevPurpose.Entry,
       undefined,
       replayAccountId,
-      momentumFirstJevProtocolDocument,
+      { ...defaultJevProtocolDocument, maximumSymbolWeight: 0.19 },
       '4'.repeat(64),
     )
     const { protocol } = candidate
     const calls: string[] = []
     await runtime.runPromise(
       Effect.gen(function* () {
-        // The legacy cycle cannot inherit a changed policy. A separately bound cycle is required.
+        // A changed policy must acquire its own bound cycle.
         expect(Result.isFailure(yield* evaluateJevObservation({ ...nativeInput, protocol }).pipe(Effect.result))).toBe(
           true,
         )
         expect(calls).toEqual([])
-        yield* (yield* CycleStore).acquire(candidate.draft, candidate.draft.window.executionOpenAt)
+        const sql = yield* PgClient.PgClient
+        yield* sql`UPDATE simulated_execution_clocks SET observed_at = ${candidate.observation.payload.observedAt}
+          WHERE account_id = ${replayAccountId}`
+        yield* (yield* CycleStore).acquire(candidate.draft, candidate.observation.payload.observedAt)
         const result = yield* evaluateJevObservation({
           cycleId: candidate.draft.identity.cycleId,
           authorityGenerationHash: candidate.observation.payload.authorityGenerationHash,
@@ -821,12 +881,11 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
         expect(calls.toSorted()).toEqual(['AAPL', 'AMZN'])
         expect(result.batchPlan.candidates.filter((candidate) => candidate.status === 'EXCLUDED')).toHaveLength(
-          protocol.candidateSymbols.length - 2,
+          equityMarketProfile.candidateSymbols.length - 2,
         )
         expect(Result.getOrThrow(decideJevEntry(result)).selectedSymbols).toEqual(['AAPL'])
         const store = yield* JevBatchStore
         expect((yield* store.read(result.batchPlan.batchId))?.plan).toEqual(result.batchPlan)
-        const sql = yield* PgClient.PgClient
         const [row] =
           yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${result.batchPlan.observationHash}`
         expect(row?.['payload']).toEqual(result.observation)
@@ -860,16 +919,16 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
-  test('v2 authority history preserves strategy pairing and append-only constraints', async () => {
+  test('v3 authority history preserves strategy pairing and append-only constraints', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const protocol = Result.getOrThrow(decodeJevProtocol(momentumFirstJevProtocolDocument))
+        const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
         const parameterHash = canonicalHashV1(protocol)
         const strategyProtocolHash = Result.getOrThrow(
           makeStrategyProtocolHashResult({
             name: 'jev',
-            behaviorHash: momentumFirstJevBehaviorHash,
+            behaviorHash: jevBehaviorHash,
             parameterHash,
             parameterSchemaVersion: protocol.schemaVersion,
           }),
@@ -887,7 +946,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         ) VALUES (
           ${generationHash}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${nativeInput.authorityGenerationHash}, ${Authority.Execution}, ${version}, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
-          ${`sha256:${'4'.repeat(64)}`}, ${strategy}, ${momentumFirstJevBehaviorHash}, ${parameterHash},
+          ${`sha256:${'4'.repeat(64)}`}, ${strategy}, ${jevBehaviorHash}, ${parameterHash},
           ${protocol.schemaVersion}, ${strategyProtocolHash}, ${replayAccountId},
           'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${'9'.repeat(64)},
           ${'9'.repeat(64)}, ${r.reconciliationId}, ${r.contentHash}, ${'b'.repeat(64)}, ${fixture.observation.payload.observedAt}
@@ -896,7 +955,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v2' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v6' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -919,6 +978,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           const at = utcInstantFromEpochMillis(atMs)
           yield* TestClock.setTime(atMs)
           const fresh = nativeJevFixture(JevPurpose.Entry, at)
+          if (purpose === JevPurpose.Entry) yield* acquireEntryCycle(at)
           const selected =
             purpose === JevPurpose.Manage
               ? yield* seedManagedPosition({ observedAt: at })
@@ -933,7 +993,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
               ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
           }
           const query = selected.managed.snapshot.manifest
-          const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] })
+          const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] }, premiums)
           const snapshot = streamingFixtureFromRaw(
             {
               ...raw,
@@ -987,7 +1047,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
           expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
-          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
+          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
           expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
         }).pipe(
           Effect.provideService(JevClient, {
@@ -1017,6 +1077,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const at = utcInstantFromEpochMillis(atMs)
         yield* TestClock.setTime(atMs)
         const fresh = nativeJevFixture(JevPurpose.Entry, at)
+        yield* acquireEntryCycle(at)
         const reconciliation = {
           ...fresh.portfolio.brokerState.reconciliation,
           reconciliationId: '9'.repeat(64),
@@ -1032,7 +1093,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           ${reconciliation.observedHash}, ${reconciliation.contentHash}, ${reconciliation.status}, '[]'::jsonb,
           ${reconciliation.reconciledAt})`
         const query = fresh.snapshot.manifest
-        const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] })
+        const raw = makeIntradayMomentumTestSnapshot(fixture.protocol, { ...query, archiveWatermarks: [] }, premiums)
         const staleAt = utcInstantFromEpochMillis(atMs - fixture.protocol.maximumQuoteAgeMs - 1)
         const staleEvidence = {
           ...raw,
@@ -1052,14 +1113,14 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
-        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
         )
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AAPL', status: 'EXCLUDED', reason: JevEntryExclusion.Spread }),
         )
-        expect(calls).toBe(fixture.protocol.candidateSymbols.length - 2)
+        expect(calls).toBe(equityMarketProfile.candidateSymbols.length - 2)
       }).pipe(
         Effect.provideService(JevClient, {
           evaluate: (request) =>
@@ -1129,7 +1190,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           referenceScope: 'IEX_EXCHANGE_ONLY_NOT_NBBO',
           feed: 'iex',
           pairedFeedComparisonAvailable: false,
-          entrySpreadLimitBps: fixture.protocol.maximumSpreadBps,
+          entrySpreadLimitBps: fixture.protocol.marketProfiles[0]?.maximumEntrySpreadBps,
         })
         expect(diagnostics[0]).not.toHaveProperty('bidPrice')
         expect(diagnostics[0]).not.toHaveProperty('askPrice')
@@ -1237,6 +1298,53 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     )
   })
 
+  test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
+    'loads the exact net %s position only with posted inventory debit evidence',
+    async (symbol) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const { portfolio } = yield* seedManagedPosition({ symbol, heldMinutes: 20 })
+          const sql = yield* PgClient.PgClient
+          const at = portfolio.brokerState.reconciliation.reconciledAt
+          const state = {
+            ...portfolio.brokerState,
+            positions: portfolio.brokerState.positions.map((position) => ({
+              ...position,
+              quantityAtoms: '4987500000',
+              costBasisMicros: '498750000',
+            })),
+          }
+          const hash = Result.getOrThrow(reconciledStateHash(state))
+          const r = {
+            ...state.reconciliation,
+            reconciliationId: '8'.repeat(64),
+            expectedHash: hash,
+            observedHash: hash,
+          }
+          yield* sql`INSERT INTO reconciliations (reconciliation_id,schema_version,account_id,expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+        VALUES (${r.reconciliationId},${r.schemaVersion},${r.accountId},${hash},${hash},${r.contentHash},'EXACT','[]'::jsonb,${at})`
+          const brokerState = { ...state, reconciliation: r }
+          const store = yield* JevPositionStore
+          const input = { cycleId: nativeInput.cycleId, entryDecisionHash: portfolio.entryDecisionHash, brokerState }
+          expect(Result.isFailure(yield* store.read(input).pipe(Effect.result))).toBeTrue()
+          const fee = {
+            accountId: r.accountId,
+            activityId: 'native-coin-fee',
+            date: at.slice(0, 10),
+            netAmountMicros: '0',
+            coinDebit: { symbol, quantityAtoms: '12500000', priceAtoms: '100000000000' },
+          }
+          yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at,posted_at,coin_cost_basis_micros)
+        VALUES (${r.accountId},${fee.activityId},${fee.date},0,${sql.json(fee)},'{}'::jsonb,${'9'.repeat(64)},${'9'.repeat(64)},1,1,${at},${at},1250000)`
+          const actual = yield* store.read(input)
+          expect(actual.entryFills).toEqual(portfolio.entryFills)
+          expect(actual.entryInventoryDebit).toEqual({ quantityAtoms: '12500000', costBasisMicros: '1250000' })
+          expect(actual.brokerState.positions[0]?.quantityAtoms).toBe('4987500000')
+        }),
+      )
+    },
+  )
+
   test.each([{ omitReceipt: true }, { receiptAt: '2026-09-04T14:31:00.000Z' }])(
     'rejects management when accounting was incomplete at reconciliation (%j)',
     async (options) => {
@@ -1301,6 +1409,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       await runtime.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
+            yield* acquireEntryCycle()
             const providerClock = yield* TestClock.make()
             yield* providerClock.setTime(Date.parse('2026-09-21T12:00:00.000Z'))
             const calls: ReplayJevCall[] = []
@@ -1358,6 +1467,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     let calls = 0
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* acquireEntryCycle()
         const evidence = yield* evaluateJevObservation(nativeInput)
         const target = Result.getOrThrow(decideJevEntry(evidence))
         expect(target.selectedSymbols).toEqual(['AAPL'])
@@ -1388,6 +1498,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       Effect.gen(function* () {
         const at = utcInstantFromEpochMillis(observed + elapsedMs)
         const next = nativeJevFixture(JevPurpose.Entry, at)
+        yield* acquireEntryCycle(at)
         const reconciliation = {
           ...next.portfolio.brokerState.reconciliation,
           reconciliationId: canonicalHashV1({ cadenceReconciliationAt: at }),
@@ -1446,6 +1557,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   test('rejects unstored reconciliation, a substituted cycle and an uncommitted observation', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* acquireEntryCycle()
         const store = yield* CandidateObservationStore
         const sql = yield* PgClient.PgClient
         const payload = fixture.observation.payload
@@ -1484,6 +1596,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     let calls = 0
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* acquireEntryCycle()
         const result = yield* evaluateJevObservation(nativeInput).pipe(Effect.result)
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isSuccess(result)) throw new Error('A partial batch authorized a decision')
@@ -1519,12 +1632,13 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   test('discovers an abandoned batch after restart and seals it at expiry without inference', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* acquireEntryCycle()
         yield* (yield* CandidateObservationStore).record(fixture.observation)
         const plan = Result.getOrThrow(
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
             expiresAt: new Date(observed + fixture.protocol.inferenceValidityMs).toISOString(),
-            planVersion: JevBatchPlanVersion.V1,
+            planVersion: JevBatchPlanVersion.V4,
           }),
         )
         const store = yield* JevBatchStore
@@ -1541,6 +1655,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
   test('interrupting measured work freezes the database clock and retains elapsed market time', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* acquireEntryCycle()
         const sql = yield* PgClient.PgClient
         const providerClock = yield* TestClock.withLive(Clock.clockWith(Effect.succeed))
         const clock = yield* makeSimulatedExecutionClock('e'.repeat(64), 'e'.repeat(64), providerClock)
@@ -1622,6 +1737,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     }
     await runtime.runPromise(
       Effect.gen(function* () {
+        yield* acquireEntryCycle(at)
         const active = yield* (yield* CycleStore).activate(nativeInput.cycleId, at)
         const document = yield* buildMutationShadowCycleDecision({
           authorityGenerationHash: nativeInput.authorityGenerationHash,
@@ -1668,7 +1784,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         )
         if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v1')
           throw new Error('Expected native Jev entry target')
-        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V3)
+        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
         expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(
           Date.parse(document.strategyDecision.evidence.batchPlan.expiresAt),
         )
@@ -1774,8 +1890,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(close.document.dispatchable).toBe(true)
         expect(close.document.strategyDecision).toEqual(exitTarget)
         expect(
-          close.document.targetPlan.intentTargets.map(({ side, quantityMicros }) => ({ side, quantityMicros })),
-        ).toEqual([{ side: OrderSide.Sell, quantityMicros: '5000000' }])
+          close.document.targetPlan.intentTargets.map(({ side, quantityAtoms }) => ({ side, quantityAtoms })),
+        ).toEqual([{ side: OrderSide.Sell, quantityAtoms: '5000000000' }])
         const closure = Result.getOrThrow(
           makeExecutionCycleClosure({
             schemaVersion: 'bayn.paper-cycle-closure.v1',
@@ -1912,7 +2028,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           account: { ...portfolio.brokerState.account, observedAt: remainingAt },
           positions: portfolio.brokerState.positions.map((position) => ({
             ...position,
-            quantityMicros: '3000000',
+            quantityAtoms: '3000000000',
             costBasisMicros: '300000000',
             marketValueMicros: '306000000',
             unrealizedPnlMicros: '6000000',
@@ -1946,8 +2062,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           reconcile: Effect.succeed(remainingFacts),
           replanGenerationHash: saved.contentHash,
         })
-        expect(residual.document.targetPlan.intentTargets.map(({ quantityMicros }) => quantityMicros)).toEqual([
-          '3000000',
+        expect(residual.document.targetPlan.intentTargets.map(({ quantityAtoms }) => quantityAtoms)).toEqual([
+          '3000000000',
         ])
         expect(residual.document.strategyDecision).toEqual(exitTarget)
         const replan = Result.getOrThrow(

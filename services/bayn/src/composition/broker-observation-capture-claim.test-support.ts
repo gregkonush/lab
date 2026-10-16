@@ -1,3 +1,5 @@
+import { ValkeyCache } from '../valkey-cache'
+import { valkeyFixture } from '../testing/valkey-fixture'
 import { mock } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Layer, Logger, References } from 'effect'
@@ -127,6 +129,10 @@ const result = await Effect.runPromise(
         claims: claims.size,
       }
     }),
-  ).pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])), Effect.provideService(Clock.Clock, clock)),
+  ).pipe(
+    Effect.provideService(ValkeyCache, valkeyFixture().cache),
+    Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+    Effect.provideService(Clock.Clock, clock),
+  ),
 )
 process.stdout.write(`CAPTURE_CLAIM_RESULT=${JSON.stringify({ ...result, logs })}\n`)

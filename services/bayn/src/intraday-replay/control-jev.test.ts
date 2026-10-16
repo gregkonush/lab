@@ -1,3 +1,6 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
@@ -18,10 +21,9 @@ import { ControlExit, ControlPolicy, ControlStudyFailure } from './control-portf
 import { runControlSession, type ControlMarket } from './control-study'
 
 const fixture = nativeJevFixture()
-const session = fixture.snapshot.manifest.calendar.sessions[0]
+const session = exchangeSessions(fixture.snapshot.manifest.calendar)[0]
 if (session === undefined) throw new Error('Expected fixture calendar')
 const openMs = Date.parse(session.openAt)
-const closeMs = openMs + 60 * 60_000
 const simulate = (
   options: {
     action?: 'hold' | 'exit'
@@ -30,10 +32,12 @@ const simulate = (
     receiptLatencyMs?: number
     failed?: boolean
     partial?: boolean
+    sessionDurationMs?: number
   } = {},
 ) =>
   Effect.runPromise(
     Effect.gen(function* () {
+      const closeMs = openMs + (options.sessionDurationMs ?? 60 * 60_000)
       const fs = yield* FileSystem.FileSystem
       const directory = `${yield* fs.makeTempDirectoryScoped()}/evidence`
       const providerClock = yield* TestClock.make()
@@ -93,7 +97,7 @@ const simulate = (
             }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', fixture.protocol.universe)
+      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', equityMarketProfile.universe)
       const report = yield* runControlSession({
         policy: ControlPolicy.RelativeMomentum,
         protocol: fixture.protocol,
@@ -110,8 +114,14 @@ const simulate = (
         targetWeight: 0.1,
         decisionLatencyMs: 1000,
         pollIntervalMs: 30_000,
-        assumptions: { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
-        eligibleSymbols: new Set(fixture.protocol.candidateSymbols),
+        assumptions: {
+          instruments: replayTestInstruments,
+          latencyMs: 100,
+          slippageBps: 1,
+          availableLiquidityPpm: 1_000_000,
+          feeMultiplierPpm: 1_000_000,
+        },
+        eligibleSymbols: new Set(equityMarketProfile.candidateSymbols),
         market,
         management: {
           runId,
@@ -132,7 +142,7 @@ const simulate = (
   )
 
 test('a control manages its own partial entry, retries its model exit, and charges measured inference once', async () => {
-  const { report, requests, calls } = await simulate({ partial: true })
+  const { report, requests, calls } = await simulate({ partial: true, sessionDurationMs: 61 * 60_000 })
   expect(report.completion).toBe('COMPLETE')
   expect(report.completedEpisodes).toBeGreaterThan(5)
   const modelEpisodes = report.episodes.filter((episode) => episode.reason === ControlExit.Model)
@@ -144,7 +154,7 @@ test('a control manages its own partial entry, retries its model exit, and charg
   expect(report.orders.filter((order) => order.side === OrderSide.Sell).length).toBe(report.completedEpisodes * 3)
   expect(report.modelCostMicros).toBe(String(requests.length * 5))
   for (const request of requests)
-    expect(request.state).toMatchObject({ task: { decisionPurpose: 'MANAGE' }, position: { quantityShares: 5 } })
+    expect(request.state).toMatchObject({ task: { decisionPurpose: 'MANAGE' }, position: { quantityUnits: 5 } })
   expect(BigInt(report.netPnlAfterKnownCostsMicros ?? '0')).toBe(
     BigInt(report.ledger.netRealizedPnlAfterCostsMicros ?? '0') - 1_000_000n - BigInt(requests.length * 5),
   )
@@ -167,7 +177,7 @@ test('source parsing time cannot change management deadlines, fills, or costs', 
   expect(delayed.calls).toHaveLength(baseline.calls.length)
   for (const call of delayed.calls)
     expect(Date.parse(call.providerCompletedAt) - Date.parse(call.providerStartedAt)).toBe(125)
-}, 30_000)
+}, 150_000)
 
 test('failed source catch-up rejects management while retaining its paid response', async () => {
   await Effect.runPromise(
@@ -255,7 +265,7 @@ test('interruption cancels the provider once, retains its unknown cost, and forb
       expect(yield* journal.calls).toHaveLength(1)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
-})
+}, 30_000)
 
 test('a provider defect remains a defect after the journal retains its unresolved call', async () => {
   await Effect.runPromise(

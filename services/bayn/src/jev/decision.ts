@@ -1,6 +1,6 @@
+import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
-import { makeExecutionCalendarObservation } from '../cycle/construction'
 import { canonicalHashV1Result } from '../hash'
 import {
   IsoDateSchema,
@@ -11,7 +11,7 @@ import {
   strictParseOptions,
 } from '../schemas'
 import type { StrategyDefinition } from '../strategy/core'
-import { JevBatchPlanSchema, JevBatchPlanVersion, JevBatchResultSchema, usableJevBatchInferences } from './batch'
+import { JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from './batch'
 import { JevContractError } from './contract'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
@@ -38,20 +38,18 @@ const reproduceDecisionEvidence = (input: unknown) =>
     if (observation.schemaVersion !== 'bayn.jev-observation.v1')
       return yield* unavailable('Native Jev decisions require native observations')
     const inferences = yield* usableJevBatchInferences(plan, evidence.batchResult, Date.parse(evidence.decidedAt))
-    const session = observation.snapshot.manifest.calendar.sessions.find(
-      (value) => value.date === observation.snapshot.manifest.sessionDate,
-    )
+    const hours = observation.snapshot.manifest.calendar
+    const session = isContinuousMarket(hours)
+      ? undefined
+      : hours.sessions.find((value) => value.date === observation.snapshot.manifest.sessionDate)
     if (
-      session === undefined ||
-      Date.parse(evidence.decidedAt) >=
-        Date.parse(session.closeAt) - observation.protocol.entryCutoffMinutesBeforeClose * 60_000
+      !isContinuousMarket(hours) &&
+      (session === undefined ||
+        Date.parse(evidence.decidedAt) >=
+          Date.parse(session.closeAt) - observation.protocol.entryCutoffMinutesBeforeClose * 60_000)
     )
-      return yield* unavailable('Jev decision is beyond its session decision cutoff')
-    const calendar = yield* makeExecutionCalendarObservation({
-      schemaVersion: observation.snapshot.manifest.calendar.schemaVersion,
-      source: observation.snapshot.manifest.calendar.source,
-      ...session,
-    })
+      return yield* unavailable('Jev decision is beyond its market decision cutoff')
+    const calendar = { executionCalendarHash: yield* canonicalHashV1Result(hours) }
     return { evidence, observation, inferences, calendar }
   }).pipe(
     Result.mapError((cause) => new JevContractError({ message: 'Jev decision evidence does not reproduce', cause })),
@@ -70,9 +68,8 @@ export const decideJevEntry = (input: unknown) =>
         return yield* unavailable('Jev entry has no typed action or verified quote')
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
-      const quoteEligible = (yield* jevEntryQuoteExclusion(quote, observation.protocol.maximumSpreadBps)) === null
-      if (answer.choice === 'enter' && probability >= observation.protocol.minimumEntryProbability && quoteEligible)
-        eligible.push({ symbol, probability })
+      const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
+      if (answer.choice === 'enter' && quoteEligible) eligible.push({ symbol, probability })
     }
     eligible.sort(
       (left, right) =>
@@ -130,14 +127,10 @@ export const jevPlanningTargetWeights = (target: JevEntryTarget): Readonly<Recor
   Object.fromEntries(Object.entries(target.targetWeights).filter(([, weight]) => weight > 0))
 
 export const jevEntryQuoteMaximumAgeMs = (
-  target: JevEntryTarget,
-  quoteEventAt: string,
+  _target: JevEntryTarget,
+  _quoteEventAt: string,
   quoteAgeLimitMs: number,
-): number =>
-  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V3 ||
-  target.evidence.batchPlan.schemaVersion === JevBatchPlanVersion.V4
-    ? quoteAgeLimitMs
-    : Math.min(quoteAgeLimitMs, Date.parse(target.evidence.batchPlan.expiresAt) - Date.parse(quoteEventAt))
+): number => quoteAgeLimitMs
 
 export enum JevManagementAction {
   Hold = 'HOLD',

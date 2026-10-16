@@ -9,8 +9,9 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
+import { Authority, type AuthorityState } from '../../execution/contracts'
 import {
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
@@ -32,7 +33,7 @@ import {
   researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
+import type { AuthorityGenerationStoreShape, EnsureAuthorityGenerationInput } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
@@ -124,27 +125,11 @@ export const validateObserveGenerationBrokerIdentityReplay = Pipeable.dual(
   validateObserveGenerationBrokerIdentityReplayDataFirst,
 )
 
-export interface ObserveAuthorityInterpreter {
-  readonly ensureAuthorityGeneration: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readOrInitializeObserveAuthority: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readResearchAuthorityGeneration: (
-    generationHash: string,
-  ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
-  readonly readAuthorityGenerationLineage: (
-    generationHash: string,
-  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
-}
-
 const makeObserveAuthorityInterpreterDataFirst = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   brokerIdentity: BrokerIdentity | undefined,
-): ObserveAuthorityInterpreter => {
+): AuthorityGenerationStoreShape => {
   const requireBrokerIdentity = () =>
     brokerIdentity === undefined
       ? failExecutionStore('authority', 'invariant', 'authority generation requires a configured broker identity')
@@ -209,7 +194,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       return current
     })
 
-  const terminalizeUnusedPreSubmissionResearchCycles = (
+  const terminalizeUnusedResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
     activatedAt: string,
@@ -248,6 +233,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason = ${strategyProtocolCutoverRestrictionReason}
               OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
@@ -282,7 +268,18 @@ const makeObserveAuthorityInterpreterDataFirst = (
         AND cycle.state IN ('PENDING', 'ACTIVE')
         AND cycle.decision_hash IS NULL
         AND cycle.updated_at <= ${activatedAt}
-        AND ${activatedAt} < cycle.submission_open_at
+        AND (
+          ${activatedAt} < cycle.submission_open_at
+          OR (
+            state.reason = ${strategyProtocolCutoverRestrictionReason}
+            AND cycle.snapshot_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycle_shadow_decisions AS decision
+              WHERE decision.cycle_id = cycle.cycle_id
+            )
+          )
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM intents AS intent
@@ -314,7 +311,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ${activatedAt}
         )
       `
-      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, request, activatedAt)
+      yield* terminalizeUnusedResearchCycles(decision, request, activatedAt)
       const rotated = yield* sql<Record<string, unknown>>`
         WITH latest_reconciliation AS (
           SELECT
@@ -379,6 +376,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason = ${strategyProtocolCutoverRestrictionReason}
                   OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (

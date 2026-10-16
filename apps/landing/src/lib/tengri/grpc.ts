@@ -853,6 +853,8 @@ async function metadata(identity: TengriIdentity, methodName: string, request: R
     throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri signing failed', 503)
   }
   const value = new grpc.Metadata()
+  const { injectTrace } = await import('@/lib/observability/server')
+  injectTrace((key, header) => value.set(key, header))
   value.set('x-tengri-context-bin', Buffer.from(signed.context))
   value.set('x-tengri-recovery-generation', signed.recoveryGeneration)
   value.set('x-tengri-nonce', signed.nonce)
@@ -881,13 +883,6 @@ function callOptions(deadlineMs: number): grpc.CallOptions {
 function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   switch (error.code) {
     case grpc.status.UNIMPLEMENTED:
-      if (methodName === 'listCodexModels') {
-        return new TengriUnavailableError(
-          'Model selection is unavailable for this workspace. Chat continues with existing Codex settings.',
-          412,
-          'model_selection_unavailable',
-        )
-      }
       return new TengriUnavailableError('Tengri control plane is unavailable', 503)
     case grpc.status.INVALID_ARGUMENT:
       return new TengriUnavailableError('Tengri request is invalid', 400)

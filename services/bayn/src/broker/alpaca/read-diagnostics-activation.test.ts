@@ -63,7 +63,7 @@ test('normal broker polling emits diagnostics while native deployment activation
             accrued_fees: '0',
             pending_reg_taf_fees: '0.01',
           }
-        : url.pathname === '/v2/account/activities/FEE'
+        : url.pathname === '/v2/account/activities'
           ? [
               {
                 activity_type: 'FEE',
@@ -183,6 +183,7 @@ test('normal broker polling emits diagnostics while native deployment activation
           attemptCompletedSignal: new AbortController().signal,
         }),
         objectClient: () => ({
+          prepareActivation: async () => null,
           status: async () => (executionActivated ? waitingState : null),
           activate: async () => {
             executionActivated = true
@@ -203,7 +204,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       const blocked = yield* Effect.promise(() =>
         execution
           .activateDeployment(context, {
-            schemaVersion: 'bayn.execution-deployment-activation.v1',
+            schemaVersion: 'bayn.execution-deployment-activation.v2',
             controllerKey,
             planHash,
             sourceRevision,
@@ -225,7 +226,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       expect(ticks).toHaveLength(1)
       expect(requests.every((request) => request.method === 'GET')).toBe(true)
       expect(requests.filter((request) => request.path === '/v2/account')).toHaveLength(3)
-      expect(requests.filter((request) => request.path === '/v2/account/activities/FEE')).toHaveLength(6)
+      expect(requests.filter((request) => request.path === '/v2/account/activities')).toHaveLength(6)
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, client),
       Effect.provide(TestClock.layer()),

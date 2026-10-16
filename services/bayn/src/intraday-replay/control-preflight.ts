@@ -1,3 +1,5 @@
+import { equityMarketProfile } from '../jev/markets'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
@@ -52,7 +54,7 @@ export const scanControlInputs = (input: {
       pollIntervalMs > 60_000
     )
       return yield* new ControlStudyFailure({ message: 'Preflight requires a valid session and bounded poll cadence' })
-    const warmupMs = openMs + protocol.lookbackMinutes * 60_000 + protocol.decisionDelaySeconds * 1000
+    const warmupMs = openMs + intradayMinimumCompletedHistoryMs + protocol.decisionDelaySeconds * 1000
     const cutoffMs = closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
     const scheduledPollCount = Math.ceil((closeMs - openMs) / pollIntervalMs)
     let warmupPollCount = 0
@@ -60,7 +62,7 @@ export const scanControlInputs = (input: {
     let availableSnapshotCount = 0
     let unavailableSnapshotCount = 0
     const failures = new Map<string, { reason: string; count: number; firstObservedAt: string; firstMessage: string }>()
-    const candidates = protocol.candidateSymbols.map((symbol) => ({
+    const candidates = equityMarketProfile.candidateSymbols.map((symbol) => ({
       symbol,
       availableCount: 0,
       excludedCount: 0,
@@ -83,7 +85,7 @@ export const scanControlInputs = (input: {
         sessionDate,
         calendar: input.calendar,
         observedAtMs: atMs,
-        candidates: protocol.candidateSymbols,
+        candidates: equityMarketProfile.candidateSymbols,
       })
       const observation = yield* market.snapshot(query)
       if (observation.status === 'UNAVAILABLE') {

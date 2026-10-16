@@ -27,7 +27,7 @@ const testDatabase = (sql: PgClient.PgClient) =>
 const hash = 'a'.repeat(64)
 
 const receiptMaterial = {
-  schemaVersion: 'bayn.forward-performance-receipt.v3' as const,
+  schemaVersion: 'bayn.forward-performance-receipt.v4' as const,
   bindings: {
     runtime: {
       sourceRevision: 'b'.repeat(40),
@@ -51,6 +51,7 @@ const receiptMaterial = {
   totals: {
     startingCapitalMicros: null,
     realizedGainsMicros: null,
+    cashSettlementRoundingMicros: null,
     realizedLossesMicros: null,
     brokerExecutionFeesMicros: null,
     otherChargedCostsMicros: null,
@@ -103,6 +104,19 @@ const envelopeMaterial = {
 }
 
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
+
+test('financial receipt hard cutover rejects rehashed v3 receipts and absent cash settlement totals', () => {
+  const { cashSettlementRoundingMicros: _rounding, ...withoutRounding } = receiptMaterial.totals
+  for (const material of [
+    { ...receiptMaterial, schemaVersion: 'bayn.forward-performance-receipt.v3' },
+    { ...receiptMaterial, totals: withoutRounding },
+  ]) {
+    const oldReceipt = { ...material, receiptHash: canonicalHashV1(material) }
+    const oldEnvelope = { ...envelopeMaterial, receipt: oldReceipt, receiptHash: oldReceipt.receiptHash }
+    const incoming = { ...oldEnvelope, contentHash: canonicalHashV1(oldEnvelope) }
+    expect(Result.isFailure(decodeForwardPerformanceReceiptEnvelopeResult(incoming))).toBe(true)
+  }
+})
 
 const fencedPersistenceHarness = () => {
   const events: string[] = []
@@ -301,6 +315,7 @@ describe('forward-performance receipt persistence contract', () => {
       {
         ledgerTotals: {
           realizedGainMicros: '100',
+          cashSettlementRoundingMicros: '0',
           realizedLossMicros: '0',
           brokerExecutionFeesMicros: '20',
           otherChargedCostsMicros: null,
@@ -504,11 +519,11 @@ test('round trips native archive provenance and rejects a rehashed nested source
           symbol: request.symbol,
           windowOpenedAt: request.windowOpenedAt,
           windowClosedAt: request.windowClosedAt,
-          filledQuantityMicros: '18000000',
-          marketVolumeQuantityMicros: evidence.quantityMicros,
+          filledQuantityAtoms: '18000000000',
+          marketVolumeQuantityAtoms: evidence.quantityAtoms,
           participationRate: {
-            numeratorQuantityMicros: '18000000',
-            denominatorQuantityMicros: evidence.quantityMicros,
+            numeratorQuantityAtoms: '18000000000',
+            denominatorQuantityAtoms: evidence.quantityAtoms,
             decimal: '0.000461538461',
           },
           intradaySource: {
@@ -526,6 +541,28 @@ test('round trips native archive provenance and rejects a rehashed nested source
     decodeForwardPerformanceReceiptEnvelopeResult({ ...outer, contentHash: canonicalHashV1(outer) }),
   )
   expect(decoded.receipt.observedCapacity.intradaySources).toEqual([evidence])
+  const mismatchedFeedMaterial = {
+    ...material,
+    observedCapacity: {
+      ...material.observedCapacity,
+      observations: material.observedCapacity.observations.map((observation) => ({
+        ...observation,
+        intradaySource: { ...observation.intradaySource, feed: 'us' as const },
+      })),
+    },
+  }
+  const mismatchedFeedReceipt = { ...mismatchedFeedMaterial, receiptHash: canonicalHashV1(mismatchedFeedMaterial) }
+  const mismatchedFeedEnvelope = {
+    ...envelopeMaterial,
+    receipt: mismatchedFeedReceipt,
+    receiptHash: mismatchedFeedReceipt.receiptHash,
+  }
+  expect(
+    decodeForwardPerformanceReceiptEnvelopeResult({
+      ...mismatchedFeedEnvelope,
+      contentHash: canonicalHashV1(mismatchedFeedEnvelope),
+    })._tag,
+  ).toBe('Failure')
   const altered = { ...evidence, decisionSnapshotId: '0'.repeat(64) }
   const { contentHash: _hash, ...alteredMaterial } = altered
   material.observedCapacity.intradaySources[0] = {

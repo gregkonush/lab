@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod catalog;
 pub mod commands;
 pub mod decision;
@@ -6,6 +7,7 @@ pub mod policy;
 pub mod service;
 pub mod sessions;
 pub mod store;
+pub mod telemetry;
 pub mod transport;
 
 #[cfg(test)]

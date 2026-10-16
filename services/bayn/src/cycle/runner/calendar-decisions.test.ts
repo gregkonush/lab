@@ -46,8 +46,8 @@ const observation: MarketCalendarObservation = {
 
 describe('intraday calendar decisions', () => {
   test.each([
-    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_000, eligible: false },
-    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_001, eligible: true },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_001, eligible: true },
     { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_000, eligible: false },
     { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_001, eligible: true },
   ])('requires a nonempty completed-feature window: %j', ({ warmupMinutes, durationMs, eligible }) => {
@@ -123,8 +123,8 @@ describe('intraday calendar decisions', () => {
 
     expect(secondDraft.identity.cycleId).not.toBe(firstDraft.identity.cycleId)
     expect(secondDraft.identity).toMatchObject({ entryAttemptOrdinal: 2 })
-    expect(nextIntradayEntryAttemptOrdinal(first, beforeRearm)).toBeUndefined()
-    expect(nextIntradayEntryAttemptOrdinal(first, atRearm)).toBe(2)
+    expect(nextIntradayEntryAttemptOrdinal(first, beforeRearm, first.window.submissionCutoffAt)).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(first, atRearm, first.window.submissionCutoffAt)).toBe(2)
 
     const second = Effect.runSync(
       decodeAutonomousCycle({
@@ -138,16 +138,37 @@ describe('intraday calendar decisions', () => {
       }),
     )
     expect(
-      nextIntradayEntryAttemptOrdinal(second, new Date(Date.parse(atRearm) + intradayEntryRearmDelayMs).toISOString()),
+      nextIntradayEntryAttemptOrdinal(
+        second,
+        new Date(Date.parse(atRearm) + intradayEntryRearmDelayMs).toISOString(),
+        second.window.submissionCutoffAt,
+      ),
     ).toBe(3)
     const thirdDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 3))
     expect(thirdDraft.identity.cycleId).not.toBe(secondDraft.identity.cycleId)
-    expect(nextIntradayEntryAttemptOrdinal(second, second.window.submissionCutoffAt)).toBeUndefined()
-    expect(nextIntradayEntryAttemptOrdinal({ ...second, state: CycleState.Active }, atRearm)).toBeUndefined()
+    expect(
+      nextIntradayEntryAttemptOrdinal(second, second.window.submissionCutoffAt, second.window.submissionCutoffAt),
+    ).toBeUndefined()
+    expect(
+      nextIntradayEntryAttemptOrdinal(
+        { ...second, state: CycleState.Active },
+        atRearm,
+        second.window.submissionCutoffAt,
+      ),
+    ).toBeUndefined()
     const blocked = { ...first, state: CycleState.Blocked }
-    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm)).toBeUndefined()
-    expect(nextIntradayEntryAttemptOrdinal(blocked, beforeRearm, true)).toBeUndefined()
-    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm, true)).toBe(2)
-    expect(nextIntradayEntryAttemptOrdinal({ ...first, state: CycleState.Active }, atRearm, true)).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm, blocked.window.submissionCutoffAt)).toBeUndefined()
+    expect(
+      nextIntradayEntryAttemptOrdinal(blocked, beforeRearm, blocked.window.submissionCutoffAt, true),
+    ).toBeUndefined()
+    expect(nextIntradayEntryAttemptOrdinal(blocked, atRearm, blocked.window.submissionCutoffAt, true)).toBe(2)
+    expect(
+      nextIntradayEntryAttemptOrdinal(
+        { ...first, state: CycleState.Active },
+        atRearm,
+        first.window.submissionCutoffAt,
+        true,
+      ),
+    ).toBeUndefined()
   })
 })

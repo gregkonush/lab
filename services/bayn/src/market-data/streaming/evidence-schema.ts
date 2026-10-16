@@ -10,7 +10,7 @@ import {
   UnsignedMicrosSchema,
 } from '../../schemas'
 import { TechnicalMarketFeatureSchema } from '../features/technical-contract'
-import { RollingMarketFeatureSchema } from '../features/contract'
+import { NativeMarketFeatureSchema } from '../features/native-feature'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 
 const PositionFields = { topic: StrictNonEmptyStringSchema, partition: NonNegativeIntegerSchema }
@@ -52,7 +52,7 @@ const StreamingRecordReceiptSchema = Schema.Struct({
   contentHash: Sha256Schema,
 })
 const CutFields = {
-  barPublicationPolicy: Schema.optionalKey(Schema.Literal(BarPublicationPolicy.TimelyEquivalentRevision)),
+  barPublicationPolicy: Schema.Literal(BarPublicationPolicy.ObservedHistory),
   technical: Schema.optionalKey(TechnicalSnapshotEvidenceSchema),
   positions: Schema.Array(Schema.Struct({ ...PositionFields, offset: UnsignedMicrosSchema })).check(
     Schema.isMinLength(1),
@@ -73,7 +73,7 @@ const CutFields = {
       offset: UnsignedMicrosSchema,
       availableAtMs: Timestamp,
       sequence: PositiveIntegerSchema,
-      value: RollingMarketFeatureSchema,
+      value: NativeMarketFeatureSchema,
     }),
   ),
 } as const

@@ -97,10 +97,14 @@ overwrite that branch or its managed deployment metadata. If an Application is r
 Freight so Kargo reconstructs the branch and Argo follows it; do not recreate a digest bump pull request. An explicitly
 authorized break-glass direct deployment is an incident action, not a normal release path.
 
-Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Stage updates the public service,
-execution worker, and activation hook to the same source and digest, and carries the existing authored research
+Bayn follows this same path through `lab-delivery/bayn` and `kargo/bayn`. Its Warehouse selects the newest eligible
+main-published immutable image. The selected image owns the exact source revision used for checkout, runtime bindings
+and activation lineage, so a newer unpublished main commit cannot hold a completed release. Its Stage updates the
+public service, execution worker, and activation hook to the same source and digest, and carries the existing authored research
 request into the new build lineage. The separate `bayn-release` workflow and promotion holds have been removed.
 The native hook and trading runtime enforce account, strategy, capital grant, reconciliation, and order-risk contracts.
+Bayn resolves environment positions by name and converts each `findIndex` result to a string in `yaml-parse`.
+Kargo v1.11.4 returns a Go `int` for a bare index, which its promotion-state deep copy rejects before persistence.
 
 ## Application enrollment
 

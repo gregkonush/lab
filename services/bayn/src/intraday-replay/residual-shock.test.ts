@@ -1,3 +1,4 @@
+import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
@@ -186,7 +187,7 @@ test('property: candidate order and raw bar order cannot change the selected sym
     'residual-shock-selection-order',
     fc.property(fc.integer({ min: 0, max: 14 }), (shift) => {
       const source = snapshot()
-      const candidates = fixture.protocol.candidateSymbols
+      const candidates = equityMarketProfile.candidateSymbols
       const rotated = [...candidates.slice(shift), ...candidates.slice(0, shift)]
       const result = Result.getOrThrow(
         selectResidualShock(

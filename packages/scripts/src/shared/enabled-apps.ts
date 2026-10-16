@@ -116,6 +116,7 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['bayn-model', ['.github/workflows/bayn-model-images.yml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
@@ -158,6 +159,16 @@ type KargoImageContract = {
 } & ({ kind: 'pinned' } | { kind: 'promotion-template'; bootstrapReferences: string[] })
 
 const kargoImageApps = new Map<string, KargoImageContract>([
+  [
+    'ofz',
+    {
+      kind: 'promotion-template',
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/ofz:unpromoted'],
+      reason: 'The Ofz API and audit exporter share one verified CI image promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/ofz'],
+      workflowPaths: ['.github/workflows/ofz.yaml', 'argocd/applications/kargo'],
+    },
+  ],
   [
     'bayn-model',
     {

@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'services/ofz/**'
+      - 'devices/nuc/ofz-recovery/**'
+      - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
@@ -32,6 +34,8 @@ on:
     branches: [main]
     paths:
       - 'services/ofz/**'
+      - 'devices/nuc/ofz-recovery/**'
+      - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
       - 'services/tengri/**'
       - 'services/nanoagent/**'
@@ -104,6 +108,14 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
           bash test-policy.sh
+      - name: Verify initial bootstrap and archive-gated activation
+        run: bash services/ofz/test-control.sh bootstrap
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.9.15'
+          enable-cache: false
+      - name: Verify independent immutable audit export
+        run: bash services/ofz/test-control.sh archive
       - name: Verify control state and synchronous physical database promotion
         run: bash services/tengri/test-database-failover.sh
       - uses: oven-sh/setup-bun@v2

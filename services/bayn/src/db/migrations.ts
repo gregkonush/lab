@@ -1,4 +1,10 @@
+import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
+import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
+import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
+import submissionDenialReason from '../../migrations/0099_submission_denial_reason'
+import valkeyBrokerMaterializations from '../../migrations/0098_valkey_broker_materializations'
 import brokerObservationQuota from '../../migrations/0096_broker_observation_quota'
+import continuousCashSpot from '../../migrations/0097_continuous_cash_spot'
 import completionEvidenceIndexes from '../../migrations/0095_completion_evidence_indexes'
 import brokerObservationCaptures from '../../migrations/0094_broker_observation_captures'
 import researchInference from '../../migrations/0093_research_inference'
@@ -95,10 +101,36 @@ import materializedCompletionCutoff from '../../migrations/0060_materialized_com
 import latestRearmPosition from '../../migrations/0061_latest_rearm_position'
 import discrepancyMandateRotation from '../../migrations/0062_discrepancy_mandate_rotation'
 import brokerFeeAccounting from '../../migrations/0063_broker_fee_accounting'
+import observedFeeAccruals from '../../migrations/0102_observed_fee_accruals'
+import cashFeeOpeningPrecision from '../../migrations/0103_cash_fee_opening_precision'
+import cryptoCashFeeSettlement from '../../migrations/0105_crypto_cash_fee_settlement'
+import cashFeeOverrelease from '../../migrations/0106_cash_fee_overrelease'
+import feePostingAcknowledgements from '../../migrations/0107_fee_posting_acknowledgements'
+import availableHistoryProtocol from '../../migrations/0108_available_history_protocol'
+import capitalSizingProtocol from '../../migrations/0109_capital_sizing_protocol'
+import capitalSizingRecovery from '../../migrations/0110_capital_sizing_recovery'
+import modelActionProtocol from '../../migrations/0111_model_action_protocol'
+import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '112_broker_cash_settlements': brokerCashSettlements,
+  '111_model_action_protocol': modelActionProtocol,
+  '109_capital_sizing_protocol': capitalSizingProtocol,
+  '110_capital_sizing_recovery': capitalSizingRecovery,
+  '107_fee_posting_acknowledgements': feePostingAcknowledgements,
+  '108_available_history_protocol': availableHistoryProtocol,
+  '106_cash_fee_overrelease': cashFeeOverrelease,
+  '104_shadow_decision_generation_index': shadowDecisionGenerationIndex,
+  '105_crypto_cash_fee_settlement': cryptoCashFeeSettlement,
+  '103_cash_fee_opening_precision': cashFeeOpeningPrecision,
+  '102_observed_fee_accruals': observedFeeAccruals,
+  '101_reclassify_expired_native_entry': reclassifyExpiredNativeEntry,
+  '100_unused_entry_admission': unusedEntryAdmission,
+  '99_submission_denial_reason': submissionDenialReason,
+  '98_valkey_broker_materializations': valkeyBrokerMaterializations,
   '96_broker_observation_quota': brokerObservationQuota,
+  '97_continuous_cash_spot': continuousCashSpot,
   '95_completion_evidence_indexes': completionEvidenceIndexes,
   '94_broker_observation_captures': brokerObservationCaptures,
   '93_research_inference': researchInference,

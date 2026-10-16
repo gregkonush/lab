@@ -1,3 +1,7 @@
+import { makeJevTradingSignalRequest } from './trading-signals'
+import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import { equityMarketProfile } from './markets'
+import { exchangeSessions } from '../market-hours'
 import { Result } from 'effect'
 
 import {
@@ -21,7 +25,7 @@ import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { jevBehaviorHash, momentumFirstJevBehaviorHash } from './protocol'
+import { jevBehaviorHash } from './protocol'
 import { prepareJevRequest, decodeJevResponse, type JevResponse } from './contract'
 import {
   JevBatchPlanVersion,
@@ -33,6 +37,7 @@ import {
 import { JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevResolutionStatus, makeJevResolution } from './resolution'
 import { makeJevTradingSignalBatch } from './trading-signals'
+import { jevHistoryStartMs } from './observation-query'
 
 export const nativeJevFixture = (
   purpose: JevPurpose = JevPurpose.Entry,
@@ -40,6 +45,7 @@ export const nativeJevFixture = (
   accountId = 'jev-native-test',
   protocolDocument: unknown = defaultJevProtocolDocument,
   cycleBindingId = 'a'.repeat(64),
+  returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
 ) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -52,15 +58,24 @@ export const nativeJevFixture = (
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
-    rangeStartAt: new Date(end - protocol.lookbackMinutes * 60_000).toISOString(),
+    rangeStartAt: new Date(
+      jevHistoryStartMs(base.query.calendar, base.query.sessionDate, end, protocol.lookbackMinutes),
+    ).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
   }
   const query =
     purpose === JevPurpose.Entry
       ? {
           ...timedQuery,
-          symbols: [...protocol.candidateSymbols, 'SPY'].sort(),
-          candidateSymbols: protocol.candidateSymbols,
+          symbols: [
+            ...protocol.candidateSymbols.filter((symbol) =>
+              equityMarketProfile.candidateSymbols.some((candidate) => candidate === symbol),
+            ),
+            'SPY',
+          ].sort(),
+          candidateSymbols: protocol.candidateSymbols.filter((symbol) =>
+            equityMarketProfile.candidateSymbols.some((candidate) => candidate === symbol),
+          ),
         }
       : { ...timedQuery, symbols: ['AAPL', 'SPY'], candidateSymbols: ['AAPL'] }
   const {
@@ -71,7 +86,7 @@ export const nativeJevFixture = (
     makeIntradayMomentumTestSnapshot(
       protocol,
       { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
-      { AAPL: 0.02, AMZN: 0.01 },
+      returns,
     ),
     query,
   )
@@ -85,7 +100,7 @@ export const nativeJevFixture = (
             schemaVersion: 'bayn.position.v2',
             accountId,
             symbol: 'AAPL',
-            quantityMicros: '5000000',
+            quantityAtoms: '5000000000',
             averageEntryPriceMicros: '100000000',
             costBasisMicros: '500000000',
             marketPriceMicros: '102000000',
@@ -99,7 +114,7 @@ export const nativeJevFixture = (
       ? []
       : [
           {
-            schemaVersion: 'bayn.paper-order.v1',
+            schemaVersion: 'bayn.order.v3',
             accountId,
             brokerOrderId: 'entry-order',
             clientOrderId: 'entry-client',
@@ -108,15 +123,15 @@ export const nativeJevFixture = (
             side: OrderSide.Buy,
             orderType: OrderType.Limit,
             timeInForce: TimeInForce.ImmediateOrCancel,
-            quantityMicros: '10000000',
-            filledQuantityMicros: '5000000',
+            quantityAtoms: '10000000000',
+            filledQuantityAtoms: '5000000000',
             limitPriceMicros: '100000000',
             status: OrderStatus.Canceled,
             observedAt: at,
           },
         ]
   const entryFills: Fill[] = [3, 2].map((quantity, index) => ({
-    schemaVersion: 'bayn.paper-fill.v1',
+    schemaVersion: 'bayn.fill.v2',
     accountId,
     fillId: `fill-${index}`,
     brokerOrderId: 'entry-order',
@@ -124,8 +139,8 @@ export const nativeJevFixture = (
     intentId,
     symbol: 'AAPL',
     side: OrderSide.Buy,
-    quantityMicros: String(quantity * 1_000_000),
-    priceMicros: '100000000',
+    quantityAtoms: String(quantity * 1_000_000_000),
+    priceAtoms: '100000000000',
     feeMicros: '0',
     occurredAt: new Date(Date.parse(at) - 3 * 60_000).toISOString(),
   }))
@@ -166,10 +181,17 @@ export const nativeJevFixture = (
     decodeJevPortfolio(
       purpose === JevPurpose.Entry
         ? { purpose, brokerState }
-        : { purpose, brokerState, entryDecisionHash: 'f'.repeat(64), entryIntentIds: [intentId], entryFills },
+        : {
+            purpose,
+            brokerState,
+            entryDecisionHash: 'f'.repeat(64),
+            entryIntentIds: [intentId],
+            entryFills,
+            entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },
+          },
     ),
   )
-  const session = snapshot.manifest.calendar.sessions[0]
+  const session = exchangeSessions(snapshot.manifest.calendar)[0]
   const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
   if (session === undefined || executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
     throw new Error('Native fixture requires an intraday session')
@@ -181,8 +203,7 @@ export const nativeJevFixture = (
         strategyProtocolHash: Result.getOrThrow(
           makeStrategyProtocolHashResult({
             name: 'jev',
-            behaviorHash:
-              protocol.schemaVersion === 'bayn.jev.protocol.v2' ? momentumFirstJevBehaviorHash : jevBehaviorHash,
+            behaviorHash: jevBehaviorHash,
             parameterHash: canonicalHashV1(protocol),
             parameterSchemaVersion: protocol.schemaVersion,
           }),
@@ -194,16 +215,16 @@ export const nativeJevFixture = (
       session,
     ),
   )
-  const observation = Result.getOrThrow(
-    makeJevObservation({
-      cycleId: draft.identity.cycleId,
-      authorityGenerationHash: 'b'.repeat(64),
-      protocol,
-      portfolio,
-      snapshot,
-    }),
-  )
-  return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft }
+  const input = {
+    cycleId: draft.identity.cycleId,
+    authorityGenerationHash: 'b'.repeat(64),
+    protocol,
+    portfolio,
+    snapshot,
+  }
+  const observation = Result.getOrThrow(makeJevObservation(input))
+
+  return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft, input }
 }
 
 export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
@@ -242,14 +263,20 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
   return { requestHash, responseHash: canonicalHashV1(response), startedAt: at, completedAt: at, response }
 }
 
-export const nativeJevDecisionEvidence = (fixture = nativeJevFixture(), action = 'enter', probability = 0.8) => {
+export const nativeJevDecisionEvidence = (
+  fixture: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {
+    readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
+  } = nativeJevFixture(),
+  action = 'enter',
+  probability = 0.8,
+) => {
   const observation = fixture.observation.payload
   const at = new Date(Date.parse(observation.observedAt) + 100).toISOString()
   const batchPlan = Result.getOrThrow(
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V1,
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)
@@ -299,4 +326,47 @@ export const nativeJevBatchResult = (
         }
       }),
     }),
+  )
+
+export const jevObservationForSnapshot = (snapshot: VerifiedStrategyMarketSnapshot) =>
+  Result.gen(function* () {
+    const prior = nativeJevFixture().portfolio.brokerState
+    const observedAt = snapshot.manifest.observedAt
+    const material = {
+      account: { ...prior.account, observedAt },
+      positions: [],
+      orders: [],
+      positionsObservedAt: observedAt,
+      ordersObservedAt: observedAt,
+      accountingHash: prior.accountingHash,
+    }
+    const hash = yield* reconciledStateHash(material)
+    const portfolio = yield* decodeJevPortfolio({
+      purpose: JevPurpose.Entry,
+      brokerState: {
+        ...material,
+        unknownOrderCount: 0,
+        reconciliation: { ...prior.reconciliation, reconciledAt: observedAt, expectedHash: hash, observedHash: hash },
+      },
+    })
+    const { candidateEvidencePolicy: _policy, ...parameters } = defaultJevProtocolDocument
+    const protocol = yield* decodeJevProtocol({
+      ...parameters,
+      maximumQuoteAgeMs: snapshot.manifest.maximumQuoteAgeMs,
+      ...(snapshot.manifest.candidateEvidencePolicy === undefined
+        ? {}
+        : { candidateEvidencePolicy: snapshot.manifest.candidateEvidencePolicy }),
+    })
+    return yield* makeJevObservation({
+      cycleId: 'a'.repeat(64),
+      authorityGenerationHash: 'b'.repeat(64),
+      protocol,
+      portfolio,
+      snapshot,
+    })
+  })
+
+export const jevRequestForSnapshot = (snapshot: VerifiedStrategyMarketSnapshot, symbol: string) =>
+  jevObservationForSnapshot(snapshot).pipe(
+    Result.flatMap((observation) => makeJevTradingSignalRequest(observation.payload, symbol)),
   )

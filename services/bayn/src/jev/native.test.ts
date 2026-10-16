@@ -1,3 +1,4 @@
+import { equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -13,7 +14,7 @@ import {
 } from './decision'
 import { entryQuoteExpiresAtMillis } from '../risk'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { canonicalHashV1, sha256 } from '../hash'
+import { canonicalHashV1 } from '../hash'
 import { reconciledStateHash } from '../reconciliation'
 import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { makeJevObservation, reproduceJevCandidateObservation } from './observation'
@@ -29,7 +30,7 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
       expiresAt: new Date(
         Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
       ).toISOString(),
-      planVersion: JevBatchPlanVersion.V1,
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
 
@@ -51,8 +52,14 @@ describe('native Jev entry and position observations', () => {
       expect(Result.isFailure(Schema.decodeUnknownResult(JevEntryTargetSchema)({ ...target, ...change }))).toBe(true)
     expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'wait'))).selectedSymbols).toEqual([])
     expect(
-      Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'enter', 0.64))).selectedSymbols,
-    ).toEqual([])
+      Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'enter', 0.42))).selectedSymbols,
+    ).toEqual(['AAPL'])
+  })
+
+  test.each(['wait', 'avoid'])('a chosen %s action remains an abstention', (action) => {
+    const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, action, 0.42)))
+    expect(target.selectedSymbols).toEqual([])
+    expect(Object.values(target.targetWeights).every((weight) => weight === 0)).toBe(true)
   })
 
   test('entry cannot reuse expired, partial, or another portfolio decision evidence', () => {
@@ -79,7 +86,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(observed + 10_000).toISOString(),
-        planVersion: JevBatchPlanVersion.V3,
+        planVersion: JevBatchPlanVersion.V4,
       }),
     )
     const decidedAt = new Date(observed + 7_000).toISOString()
@@ -104,51 +111,26 @@ describe('native Jev entry and position observations', () => {
         eventAt: historicalQuoteAt,
         maximumAgeMs: jevEntryQuoteMaximumAgeMs(historical, historicalQuoteAt, fixture.protocol.maximumQuoteAgeMs),
       }),
-    ).toBe(Date.parse(historical.evidence.batchPlan.expiresAt))
+    ).toBe(Date.parse(historicalQuoteAt) + fixture.protocol.maximumQuoteAgeMs)
   })
 
-  test('retained version-two entry decisions keep their original batch-bound quote deadline', () => {
-    const fixture = nativeJevFixture()
-    const observation = fixture.observation.payload
-    const observed = Date.parse(observation.observedAt)
-    const batchPlan = Result.getOrThrow(
-      makeJevTradingSignalBatch({
-        observation,
-        expiresAt: new Date(observed + 10_000).toISOString(),
-        planVersion: JevBatchPlanVersion.V2,
-      }),
+  test('retired Jev protocols cannot be decoded for execution', () => {
+    for (const schemaVersion of [
+      'bayn.jev.protocol.v1',
+      'bayn.jev.protocol.v2',
+      'bayn.jev.protocol.v3',
+      'bayn.jev.protocol.v4',
+      'bayn.jev.protocol.v5',
+    ])
+      expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
+    expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, minimumEntryProbability: 0.65 }))).toBe(
+      true,
     )
-    const decidedAt = new Date(observed + 7_000).toISOString()
-    const target = Result.getOrThrow(
-      decideJevEntry({
-        observation,
-        batchPlan,
-        batchResult: nativeJevBatchResult(batchPlan, decidedAt),
-        decidedAt,
-      }),
-    )
-    expect(
-      Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
-    ).toEqual(target)
-    const quoteEventAt = new Date(observed + 7_100).toISOString()
-    const maximumAgeMs = jevEntryQuoteMaximumAgeMs(target, quoteEventAt, fixture.protocol.maximumQuoteAgeMs)
-    expect(maximumAgeMs).toBe(2_900)
-    expect(entryQuoteExpiresAtMillis({ eventAt: quoteEventAt, maximumAgeMs })).toBe(observed + 10_000)
   })
 
-  test('durable Jev protocol identities select the archived or active behavior by batch version', () => {
-    const { candidateEvidencePolicy: _policy, ...priorProtocol } = defaultJevProtocolDocument
-    const retained = Result.getOrThrow(decodeJevProtocol({ ...priorProtocol, inferenceValidityMs: 5_000 }))
-    const priorIdentity = Result.getOrThrow(
-      makeStrategyProtocolHashResult({
-        name: 'jev',
-        behaviorHash: sha256('bayn.jev.behavior.v1'),
-        parameterHash: canonicalHashV1(retained),
-        parameterSchemaVersion: retained.schemaVersion,
-      }),
-    )
+  test('execution authority requires the exact current protocol and batch identity', () => {
     const active = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    const activeIdentity = Result.getOrThrow(
+    const identity = Result.getOrThrow(
       makeStrategyProtocolHashResult({
         name: 'jev',
         behaviorHash: jevBehaviorHash,
@@ -156,31 +138,10 @@ describe('native Jev entry and position observations', () => {
         parameterSchemaVersion: active.schemaVersion,
       }),
     )
-    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V1)).toBe(true)
-    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V2)).toBe(true)
-    expect(jevProtocolIdentityMatches(retained, priorIdentity)).toBe(true)
-    expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V3)).toBe(true)
-    expect(jevProtocolIdentityMatches(active, activeIdentity)).toBe(true)
-    const priorV3 = Result.getOrThrow(decodeJevProtocol(priorProtocol))
-    const priorV3Identity = Result.getOrThrow(
-      makeStrategyProtocolHashResult({
-        name: 'jev',
-        behaviorHash: sha256('bayn.jev.behavior.v2'),
-        parameterHash: canonicalHashV1(priorV3),
-        parameterSchemaVersion: priorV3.schemaVersion,
-      }),
-    )
-    expect(jevProtocolIdentityMatches(priorV3, priorV3Identity, JevBatchPlanVersion.V3)).toBe(true)
-    expect(jevProtocolIdentityMatches(priorV3, priorV3Identity)).toBe(true)
-    expect(jevProtocolIdentityMatches(priorV3, activeIdentity, JevBatchPlanVersion.V3)).toBe(false)
-    expect(jevProtocolIdentityMatches(active, priorV3Identity, JevBatchPlanVersion.V3)).toBe(false)
-    expect(jevProtocolIdentityMatches(priorV3, priorV3Identity, JevBatchPlanVersion.V2)).toBe(false)
-    expect(jevProtocolIdentityMatches(retained, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
-    expect(jevProtocolIdentityMatches(active, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
-    expect(jevProtocolIdentityMatches(retained, activeIdentity, JevBatchPlanVersion.V2)).toBe(false)
-    expect(jevProtocolIdentityMatches(active, priorIdentity, JevBatchPlanVersion.V3)).toBe(false)
+    expect(jevProtocolIdentityMatches(active, identity)).toBe(true)
+    expect(jevProtocolIdentityMatches(active, '0'.repeat(64))).toBe(false)
     expect(
-      jevProtocolIdentityMatches({ ...retained, maximumSpreadBps: retained.maximumSpreadBps + 1 }, priorIdentity),
+      jevProtocolIdentityMatches({ ...active, maximumSymbolWeight: active.maximumSymbolWeight / 2 }, identity),
     ).toBe(false)
   })
 
@@ -246,13 +207,17 @@ describe('native Jev entry and position observations', () => {
   test('freezes a complete entry universe with explicit flat position context', () => {
     const fixture = nativeJevFixture()
     const batch = batchFor(fixture)
-    expect(batch.candidates.map(({ symbol }) => symbol)).toEqual([...fixture.protocol.candidateSymbols])
+    expect(batch.candidates.map(({ symbol }) => symbol)).toEqual([...equityMarketProfile.candidateSymbols])
     expect(Result.getOrThrow(reproduceJevTradingSignalBatch(fixture.observation.payload, batch))).toEqual(batch)
+    expect(
+      batch.candidates
+        .filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
+        .map((candidate) => candidate.symbol),
+    ).toEqual(['AAPL', 'AMZN'])
     for (const candidate of batch.candidates) {
-      if (candidate.status !== JevCandidatePlanStatus.Requested)
-        throw new Error('Expected a requested fixture candidate')
+      if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v2',
+        schemaVersion: 'bayn.jev-trading-signal-state.v5',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })
@@ -269,7 +234,7 @@ describe('native Jev entry and position observations', () => {
       task: { decisionPurpose: JevPurpose.Manage },
       position: {
         symbol: 'AAPL',
-        quantityShares: 5,
+        quantityUnits: 5,
         costBasisUsd: 500,
         averageEntryPriceUsd: 100,
         heldForMinutes: 3,
@@ -315,7 +280,7 @@ describe('native Jev entry and position observations', () => {
           expiresAt: new Date(
             Date.parse(payload.observedAt) + fixture.protocol.inferenceValidityMs + 1000,
           ).toISOString(),
-          planVersion: JevBatchPlanVersion.V1,
+          planVersion: JevBatchPlanVersion.V4,
         }),
       ),
     ).toBe(true)
@@ -323,7 +288,7 @@ describe('native Jev entry and position observations', () => {
 
   test('the development protocol covers all available non-benchmark symbols without changing broker execution terms', () => {
     const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    expect(protocol.candidateSymbols).toHaveLength(15)
+    expect(protocol.candidateSymbols).toHaveLength(18)
     expect(protocol.maximumPositions).toBe(1)
     expect(protocol.executionModel.order.timeInForce).toBe('ioc')
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, candidateSymbols: ['AAPL', 'AAPL'] }))).toBe(true)
@@ -371,7 +336,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: '2026-09-04T14:30:12.000Z',
-        planVersion: JevBatchPlanVersion.V3,
+        planVersion: JevBatchPlanVersion.V4,
       }),
     )
     expect(batch.candidates.find((entry) => entry.symbol === 'AAPL')?.status).toBe(JevCandidatePlanStatus.Requested)

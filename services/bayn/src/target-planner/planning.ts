@@ -97,7 +97,7 @@ const makeReferenceTargetIntents = (
               side: delta > 0n ? OrderSide.Buy : OrderSide.Sell,
               orderType: executionTerms.orderType,
               timeInForce: executionTerms.timeInForce,
-              quantityMicros: (delta < 0n ? -delta : delta).toString(),
+              quantityAtoms: (delta < 0n ? -delta : delta).toString(),
               createdAt: input.observedAt,
             },
           ],
@@ -186,9 +186,9 @@ const assembleExecutableTargetPlan = (
       (fact) =>
         fact.delta > 0n &&
         !(
-          BigInt(fact.target.currentQuantityMicros) < 0n &&
-          BigInt(fact.target.targetQuantityMicros) === 0n &&
-          fact.delta === -BigInt(fact.target.currentQuantityMicros)
+          BigInt(fact.target.currentQuantityAtoms) < 0n &&
+          BigInt(fact.target.targetQuantityAtoms) === 0n &&
+          fact.delta === -BigInt(fact.target.currentQuantityAtoms)
         ),
     )
     .map((fact) => referenceNotional(fact.delta, fact.referencePrice))

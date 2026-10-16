@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use anyhow::{Context, ensure};
 use k8s_openapi::{
@@ -103,10 +103,11 @@ impl Election {
                     continue;
                 }
             };
-            self.authority.send_replace(Some(Authority {
+            let authority = Authority {
                 fence,
                 deadline: Instant::now() + LEASE_DURATION - RENEW_TIMEOUT,
-            }));
+            };
+            self.authority.send_replace(Some(authority));
             let guard = Guard {
                 authority: self.authority.subscribe(),
                 fence,
@@ -120,20 +121,17 @@ impl Election {
             {
                 let work = crate::controller::run(leader_context);
                 tokio::pin!(work);
-                let mut interval = tokio::time::interval(RENEW_INTERVAL);
-                interval.tick().await;
-                loop {
-                    tokio::select! {
-                        _ = &mut work => break,
-                        _ = interval.tick() => {
-                            if !matches!(timeout(RENEW_TIMEOUT, self.renew(fence)).await, Ok(Ok(true))) { break; }
-                            self.authority.send_replace(Some(Authority { fence, deadline: Instant::now() + LEASE_DURATION - RENEW_TIMEOUT }));
+                tokio::select! {
+                    _ = &mut work => tracing::warn!("controller work ended"),
+                    result = renew_authority(&self.authority, authority, || self.renew(fence)) => {
+                        if let Err(error) = result {
+                            tracing::warn!(error = %error, "controller leadership renewal failed");
                         }
                     }
                 }
                 self.authority.send_replace(None);
             }
-            // A failed renewal closes admission before releasing shared authority. A crashed
+            // Admission closes before releasing shared authority. A crashed
             // process cannot release it; the SQL deadline and Lease observation bound takeover.
             let _ = timeout(RENEW_TIMEOUT, self.database.release(fence)).await;
             tracing::warn!(
@@ -217,9 +215,160 @@ impl Election {
     }
 }
 
+async fn renew_authority<F, R>(
+    sender: &watch::Sender<Option<Authority>>,
+    mut authority: Authority,
+    mut renew: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut() -> R,
+    R: Future<Output = anyhow::Result<bool>>,
+{
+    let mut interval = tokio::time::interval(RENEW_INTERVAL);
+    interval.tick().await;
+    loop {
+        let attempt = async {
+            interval.tick().await;
+            let started = Instant::now();
+            let renewal = renew();
+            tokio::pin!(renewal);
+            let result = match timeout(RENEW_TIMEOUT, &mut renewal).await {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!(
+                        generation = authority.fence.generation,
+                        "controller leadership renewal pending within confirmed lease"
+                    );
+                    renewal.await
+                }
+            };
+            (started, result)
+        };
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(authority.deadline) => {
+                anyhow::bail!("confirmed controller leadership expired");
+            }
+            (started, result) = attempt => match result {
+                Ok(true) => {
+                    ensure!(authority.deadline > Instant::now(), "controller renewal arrived after expiry");
+                    authority.deadline = started + LEASE_DURATION;
+                    sender.send_replace(Some(authority));
+                }
+                Ok(false) => anyhow::bail!("controller leadership ownership changed"),
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_renewal_keeps_the_inflight_attempt_and_conservative_deadline() {
+        let (sender, guard) = Guard::fixture();
+        let original = *sender.borrow().as_ref().unwrap();
+        let begun = Instant::now();
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let renewal = renew_authority(&sender, original, || {
+            attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async {
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                Ok(true)
+            }
+        });
+        tokio::pin!(renewal);
+        tokio::select! {
+            result = &mut renewal => panic!("unexpired leadership was discarded: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_secs(8)) => {}
+        }
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().deadline,
+            original.deadline
+        );
+        assert!(guard.fence().is_ok());
+        tokio::select! {
+            result = &mut renewal => panic!("renewed leadership was discarded: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(1250)) => {}
+        }
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().deadline,
+            begun + RENEW_INTERVAL + LEASE_DURATION
+        );
+        assert!(guard.fence().is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_renewals_end_at_the_confirmed_deadline() {
+        let (sender, guard) = Guard::fixture();
+        let authority = *sender.borrow().as_ref().unwrap();
+        let begun = Instant::now();
+        let result = renew_authority(&sender, authority, || {
+            std::future::pending::<anyhow::Result<bool>>()
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(Instant::now() - begun, LEASE_DURATION);
+        assert!(guard.fence().is_err());
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().deadline,
+            authority.deadline
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_renewal_never_extends_expired_authority() {
+        let (sender, guard) = Guard::fixture();
+        let authority = Authority {
+            deadline: Instant::now() + Duration::from_secs(6),
+            ..*sender.borrow().as_ref().unwrap()
+        };
+        sender.send_replace(Some(authority));
+        let begun = Instant::now();
+        let result = timeout(
+            Duration::from_secs(7),
+            renew_authority(&sender, authority, || async {
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                Ok(true)
+            }),
+        )
+        .await
+        .expect("expired authority kept renewing");
+        assert!(result.is_err());
+        assert_eq!(Instant::now() - begun, Duration::from_secs(6));
+        assert!(guard.fence().is_err());
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().deadline,
+            authority.deadline
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn known_ownership_loss_and_errors_close_without_retry() {
+        for lost in [true, false] {
+            let (sender, _) = Guard::fixture();
+            let authority = *sender.borrow().as_ref().unwrap();
+            let begun = Instant::now();
+            let mut attempts = 0;
+            let result = renew_authority(&sender, authority, || {
+                attempts += 1;
+                async move {
+                    if lost {
+                        Ok(false)
+                    } else {
+                        anyhow::bail!("renewal was denied")
+                    }
+                }
+            })
+            .await;
+            assert!(result.is_err());
+            assert_eq!(attempts, 1);
+            assert_eq!(Instant::now() - begun, RENEW_INTERVAL);
+        }
+    }
 
     #[tokio::test]
     async fn lost_or_replaced_authority_closes_old_guards() {

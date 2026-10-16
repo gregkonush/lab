@@ -527,7 +527,7 @@ describe('intraday momentum strategy', () => {
           trades: 'torghut.trades.experimental.v1',
         },
       }),
-    ).toThrow('identity-or-availability')
+    ).toThrow('Required rolling feature is unavailable')
   })
 
   test('accepts a fresh snapshot at an arbitrary 30-second controller poll phase', () => {
@@ -665,17 +665,16 @@ describe('intraday momentum strategy', () => {
     expect(signal?.rejectionReasons).toContain(expectedReason as IntradayMomentumRejectionReason)
   })
 
-  test('rejects an incomplete required rolling feature before admitting a strategy snapshot', () => {
-    expect(() =>
-      marketContextAt({
-        rangeEndAt: '2026-08-18T18:00:00.000Z',
-        returnBps: qualifyingReturns,
-        omitFirstBarFor: 'AAPL',
-      }),
-    ).toThrow('Required rolling feature is unavailable for AAPL')
+  test('admits an observed window without inventing its missing first minute', () => {
+    const context = marketContextAt({
+      rangeEndAt: '2026-08-18T18:00:00.000Z',
+      returnBps: qualifyingReturns,
+      omitFirstBarFor: 'AAPL',
+    })
+    expect(context.snapshot.bars.filter((bar) => bar.symbol === 'AAPL')).toHaveLength(29)
   })
 
-  test('locally excludes a candidate missing the first rolling bar while preserving a fresh peer', () => {
+  test('evaluates a candidate with a missing historical minute alongside its peer', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     const decision = success(
       decideIntradayMomentum(
@@ -689,15 +688,9 @@ describe('intraday momentum strategy', () => {
       ),
     )
 
-    expect(decision.selectedSymbols).toEqual(['AMZN'])
-    expect(decision.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(false)
-    expect(decision.excludedCandidates).toEqual([
-      {
-        symbol: 'AAPL',
-        reason: 'not-ready',
-        message: 'matching complete rolling feature is unavailable',
-      },
-    ])
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    expect(decision.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(true)
+    expect(decision.excludedCandidates).toEqual([])
   })
 
   test('accepts a complete rolling baseline expressed at equivalent nanosecond precision', () => {

@@ -233,14 +233,9 @@ export const readBoundCapitalActivationGeneration = (
   request: ResearchCapitalActivationRequest,
   buildContinuation: ResearchCapitalBuildContinuation | null,
   buildLineage: ResearchCapitalBuildLineage | null,
-  authorityStore: AuthorityGenerationStoreShape,
+  authorityStore: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
-    if (authorityStore.readAuthorityState === undefined) {
-      return yield* capitalActivationOperationalError(
-        'durable capital recovery requires authority history read capabilities',
-      )
-    }
     const authority = yield* authorityStore.readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('durable capital authority read failed', cause)),
     )
@@ -253,11 +248,6 @@ export const readBoundCapitalActivationGeneration = (
     if (!closeAuthorityIsBound) {
       return yield* capitalActivationOperationalError(
         'durable capital recovery requires clear mutation or active OBSERVE close authority',
-      )
-    }
-    if (authorityStore.readResearchAuthorityGeneration === undefined) {
-      return yield* capitalActivationOperationalError(
-        'durable research capital recovery requires v3 authority history reads',
       )
     }
     const generation = yield* authorityStore
@@ -331,14 +321,9 @@ export const validateActivatedResearchAuthority = (authority: AuthorityState): R
 
 export const readCurrentResearchCapitalGeneration = (
   authority: AuthorityState,
-  authorityStore: AuthorityGenerationStoreShape,
+  authorityStore: Pick<AuthorityGenerationStoreShape, 'readResearchAuthorityGeneration'>,
 ): Effect.Effect<ResearchCapitalGrantGeneration | undefined, OperationalError> => {
   if (authority.maximum !== Authority.Execution) return Effect.as(Effect.void, undefined)
-  if (authorityStore.readResearchAuthorityGeneration === undefined) {
-    return Effect.fail(
-      capitalActivationOperationalError('research capital startup requires v3 authority history reads'),
-    )
-  }
   return authorityStore.readResearchAuthorityGeneration(authority.generationHash).pipe(
     Effect.mapError((cause) => capitalActivationOperationalError('research capital generation read failed', cause)),
     Effect.flatMap((generation) =>
@@ -355,7 +340,7 @@ export const prepareResearchCapitalActivation = (
   buildLineage: ResearchCapitalBuildLineage | null,
   sourceGenerationHash: string,
   account: ReconciledBrokerState,
-  authorityStore: AuthorityGenerationStoreShape,
+  authorityStore: Pick<AuthorityGenerationStoreShape, 'readAuthorityState' | 'readResearchAuthorityGeneration'>,
   lifecycle: CapitalGrantLifecycleStoreShape,
 ): Effect.Effect<ResearchCapitalGrantGeneration, OperationalError> =>
   Effect.gen(function* () {
@@ -448,9 +433,6 @@ export const prepareOrRecoverResearchCapitalActivation = (
       Effect.mapError((message) => capitalActivationOperationalError(message)),
     )
     const readAuthorityState = authorityStore.readAuthorityState
-    if (readAuthorityState === undefined) {
-      return yield* capitalActivationOperationalError('research capital startup requires durable authority state reads')
-    }
     const authority = yield* readAuthorityState.pipe(
       Effect.mapError((cause) => capitalActivationOperationalError('research capital authority read failed', cause)),
     )

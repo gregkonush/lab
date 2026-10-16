@@ -1,9 +1,12 @@
+import { nativeFeatureMatchesBars, rollingWindowStartMs, type NativeMarketFeature } from '../features/native-feature'
+import { diagnoseStreamingInputs } from './inputs'
+import { isCryptoMarketFeature } from '../features/crypto-contract'
 import { Result, Schema } from 'effect'
 import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '@platformatic/kafka'
 import type { TechnicalMarketFeature } from '../features/technical-contract'
-import type { RollingMarketFeature } from '../features/contract'
+
 import type { KafkaPartitionPosition } from './bootstrap'
-import { featureMatchesBars, RequiredMarketFeatureSchema } from '../features/contract'
+import { RequiredMarketFeatureSchema } from '../features/contract'
 import { observedBarsAt, topicPartitionKey, type ObservedFeature, type StreamingProjection } from './projection'
 import type { IntradaySnapshotFailure, IntradaySnapshotQuery } from '../intraday/model'
 import { UtcInstantSchema, UtcOrderTimestampSchema } from '../../schemas'
@@ -70,8 +73,25 @@ export const snapshotFailureMeasurement = (
     const value = facts?.[key]
     if (typeof value === 'number' && Number.isFinite(value) && value >= 0) durations[key] = value
   }
+  const diagnosed = diagnoseStreamingInputs(projection, query)
+  const candidateCoverage = Result.isSuccess(diagnosed)
+    ? diagnosed.success.candidates.map(({ matchingFeature, ...candidate }) => ({
+        ...candidate,
+        matchingFeature:
+          matchingFeature === null
+            ? null
+            : { featureId: matchingFeature.value.featureId, availableAtMs: matchingFeature.availableAtMs },
+      }))
+    : null
   return {
-    schemaVersion: 'bayn.market-snapshot-failure.v1',
+    schemaVersion: 'bayn.market-snapshot-failure.v2',
+    candidateCoverage,
+    inputFailure: Result.isFailure(diagnosed) ? diagnosed.failure.reason : null,
+    projectionCoverage: projectionCoverageMeasurements(
+      projection,
+      query.symbols ?? query.universe,
+      Date.parse(query.observedAt),
+    ),
     failureReason: failure.reason,
     ...(failure.ingestionDelayDirection === undefined
       ? {}
@@ -124,7 +144,7 @@ export const safeKafkaFailureCodes = (cause: unknown): readonly string[] => {
 
 export const featureAvailabilityMeasurement = (
   epoch: string,
-  feature: ObservedFeature<RollingMarketFeature | TechnicalMarketFeature>,
+  feature: ObservedFeature<NativeMarketFeature | TechnicalMarketFeature>,
   bootstrapEndOffset?: string,
 ) => ({
   schemaVersion: 'bayn.feature-availability.v1',
@@ -133,7 +153,7 @@ export const featureAvailabilityMeasurement = (
   featureId: feature.value.featureId,
   definitionHash: feature.value.material.definitionHash,
   symbol: feature.value.material.symbol,
-  sessionDate: feature.value.material.sessionDate,
+  sessionDate: isCryptoMarketFeature(feature.value) ? null : feature.value.material.sessionDate,
   topic: feature.topic,
   partition: feature.partition,
   offset: feature.offset,
@@ -171,11 +191,11 @@ export const projectionCoverageMeasurements = (
       const features = (projection.features.get(symbol) ?? []).filter(
         (entry) =>
           entry.availableAtMs <= observedAtMs &&
-          entry.value.material.windowStartMs === windowStartMs &&
+          rollingWindowStartMs(entry.value) === windowStartMs &&
           entry.value.material.windowEndMs === windowEndMs,
       )
       const matchedFeatures = features.filter((entry) => {
-        const matches = featureMatchesBars(entry.value, bars)
+        const matches = nativeFeatureMatchesBars(entry.value, bars)
         return Result.isSuccess(matches) && matches.success
       }).length
       const quote = projection.quotes.get(symbol)

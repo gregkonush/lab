@@ -2,17 +2,15 @@ import { Option, Result, Schema } from 'effect'
 
 import {
   type BrokerMutationError,
-  type CompatibleOrderRequestBody,
+  type OrderRequestBody,
   MutationEvidenceSchema,
   MutationFailure,
   MutationOperation,
   cancelRequestHash,
-  compatibleOrderRequestBody,
+  recordedOrderRequestBody,
   orderPriceBoundaryMicros,
-  orderRequestNotionalMicros,
   orderRequestBody,
   type MutationEvidence,
-  type OrderRequestBody,
 } from '../broker/alpaca-mutations'
 import { legacySubmitDryRunSchemaVersion } from './legacy-wire'
 import {
@@ -35,6 +33,7 @@ import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'
 import { MutationEventType, type MutationEvent } from './mutations'
 import { Pipeable } from '../pipeable'
+import { submissionDenialReason, type SubmissionDenialReason } from './submission-denial'
 
 // Pure decisions for the effectful coordinator interpreter.
 export type ExecutionDecisionFailure =
@@ -108,6 +107,7 @@ export type SubmitPersistenceDecision =
     }
   | {
       readonly _tag: 'SubmitDenied'
+      readonly denialReason: SubmissionDenialReason
     }
   | {
       readonly _tag: 'SubmitUnknown'
@@ -209,10 +209,9 @@ export const nextInstant = Pipeable.dual(3, nextInstantDataFirst)
 const encodeOrderDataFirst = (
   operation: MutationOperation,
   intent: Intent,
-  closeOnly = false,
   message = 'intent cannot be represented as an Alpaca order',
 ): Result.Result<EncodedOrder, ExecutionDecisionFailure> =>
-  orderRequestBody(intent, closeOnly).pipe(
+  orderRequestBody(intent).pipe(
     Result.mapError(
       (cause): ExecutionDecisionFailure => ({ _tag: 'OrderCanonicalizationFailed', operation, message, cause }),
     ),
@@ -232,11 +231,7 @@ const encodeOrderDataFirst = (
   )
 
 export const encodeOrder = Pipeable.by<
-  (
-    intent: Intent,
-    closeOnly?: boolean,
-    message?: string,
-  ) => (operation: MutationOperation) => ReturnType<typeof encodeOrderDataFirst>,
+  (intent: Intent, message?: string) => (operation: MutationOperation) => ReturnType<typeof encodeOrderDataFirst>,
   typeof encodeOrderDataFirst
 >((arguments_) => typeof arguments_[0] === 'string', encodeOrderDataFirst)
 
@@ -295,12 +290,7 @@ const makeDryRunSubmitDataFirst = (
 ): Result.Result<DryRunSubmitDecision, ExecutionDecisionFailure> =>
   validateActiveSubmitRiskDecision(stored, currentTimeMillis, 'dry-run submission').pipe(
     Result.flatMap(({ intent }) =>
-      encodeOrder(
-        MutationOperation.Submit,
-        intent,
-        false,
-        'approved intent cannot be represented as an Alpaca order',
-      ).pipe(
+      encodeOrder(MutationOperation.Submit, intent, 'approved intent cannot be represented as an Alpaca order').pipe(
         Result.map(({ request, requestHash }) => ({
           schemaVersion: legacySubmitDryRunSchemaVersion,
           intentId: intent.intentId,
@@ -329,13 +319,10 @@ export const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefine
   }
 }
 
-const exactOrderDataFirst = (intent: Intent, request: CompatibleOrderRequestBody, order: Order): boolean => {
+const exactOrderDataFirst = (intent: Intent, request: OrderRequestBody, order: Order): boolean => {
   const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
   if (Result.isFailure(limitPrice)) return false
-  const representationMatches =
-    'notional' in request
-      ? order.notionalMicros === orderRequestNotionalMicros(request) && order.quantityMicros === undefined
-      : order.quantityMicros === intent.quantityMicros && order.notionalMicros === undefined
+  const representationMatches = order.quantityAtoms === intent.quantityAtoms && order.notionalMicros === undefined
   return (
     order.accountId === intent.accountId &&
     order.clientOrderId === intent.clientOrderId &&
@@ -382,7 +369,7 @@ const decideSubmitFailureDataFirst = (
         error.outcome === MutationOutcome.Known &&
         error.brokerOrderId === undefined &&
         evidence === undefined
-      ? { _tag: 'SubmitDenied' }
+      ? { _tag: 'SubmitDenied', denialReason: error.denialReason ?? submissionDenialReason(error.cause) }
       : {
           _tag: 'SubmitUnknown',
           ...(error.brokerOrderId === undefined ? {} : { brokerOrderId: error.brokerOrderId }),
@@ -472,13 +459,13 @@ const recoveryRequestHash = (
   event: MutationEvent,
 ): Result.Result<string | undefined, ExecutionDecisionFailure> =>
   event.operation === MutationOperation.Submit
-    ? compatibleOrderRequestBody(intent, event.requestHash).pipe(
+    ? recordedOrderRequestBody(intent, event.requestHash).pipe(
         Result.map(() => event.requestHash),
         Result.mapError(
           (cause): ExecutionDecisionFailure => ({
             _tag: 'OrderCanonicalizationFailed',
             operation: event.operation,
-            message: 'durable submit request cannot be represented by a compatible Alpaca order',
+            message: 'durable submit request cannot be represented by a current Alpaca order',
             cause,
           }),
         ),
@@ -566,13 +553,13 @@ const decideRecoverySuccessDataFirst = (
   const neutralizedMismatchedOrder =
     operation === MutationOperation.Cancel &&
     interrupted.brokerOrderId === result.value.brokerOrderId &&
-    result.value.filledQuantityMicros === '0' &&
+    result.value.filledQuantityAtoms === '0' &&
     outcome !== undefined &&
     outcome !== TerminalOutcome.Filled
   const exactBrokerOrderId =
     interrupted.brokerOrderId === undefined || interrupted.brokerOrderId === result.value.brokerOrderId
   const requestHash = operation === MutationOperation.Submit ? interrupted.requestHash : submitted?.requestHash
-  const request = requestHash === undefined ? undefined : compatibleOrderRequestBody(intent, requestHash)
+  const request = requestHash === undefined ? undefined : recordedOrderRequestBody(intent, requestHash)
   const matchesIntent =
     request !== undefined && Result.isSuccess(request) && exactOrder(intent, request.success, result.value)
 

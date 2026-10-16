@@ -27,7 +27,7 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V4,
     }),
   )
   const decision = Result.getOrThrow(
@@ -59,7 +59,12 @@ describe('Jev entry execution quote eligibility', () => {
     expect(decision.selectedSymbols).toEqual(['AAPL'])
     const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
     expect(compiled.priceMicros['AAPL']).toBe('100020000')
-    expect(compiled.maximumBuyQuantityMicros['AAPL']).toBe('100000000')
+    expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe(
+      (
+        (BigInt(decision.evidence.observation.portfolio.brokerState.account.equityMicros) / 5n / 100020000n) *
+        1_000_000_000n
+      ).toString(),
+    )
   })
 
   test.each([

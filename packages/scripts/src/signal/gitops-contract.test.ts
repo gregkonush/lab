@@ -172,6 +172,7 @@ describe('Signal publisher GitOps authority contract', () => {
       'GRANT SELECT ON signal.intraday_quotes_v1',
       'GRANT SELECT ON signal.intraday_trades_v1',
       'GRANT SELECT ON signal.intraday_features_v1',
+      'GRANT SELECT ON signal.crypto_market_events_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v1',
       'GRANT SELECT ON signal.snapshot_manifests_v2',
     ])
@@ -280,7 +281,7 @@ describe('Signal publisher GitOps authority contract', () => {
       ARCHIVE_GROUP_ID: 'bayn-market-data-archive-v3',
       ARCHIVE_CRYPTO_TOPIC: 'bayn.market-data.crypto.v1',
       ARCHIVE_CRYPTO_LOCATION: 'us',
-      ARCHIVE_CRYPTO_SYMBOLS: 'BTC/USD,ETH/USD',
+      ARCHIVE_CRYPTO_SYMBOLS: 'BTC/USD,ETH/USD,SOL/USD',
       ARCHIVE_OFFSET_RESET: 'latest',
       ARCHIVE_CORE_FEED: 'iex',
       ARCHIVE_CORE_BARS_TOPIC: 'torghut.bars.1m.v1',

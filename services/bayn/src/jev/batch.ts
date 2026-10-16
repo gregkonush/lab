@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect'
+import { jevBenchmarkSymbol } from './markets'
 
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -35,9 +36,6 @@ export enum JevEntryExclusion {
 }
 
 export enum JevBatchPlanVersion {
-  V1 = 'bayn.jev-batch-plan.v1',
-  V2 = 'bayn.jev-batch-plan.v2',
-  V3 = 'bayn.jev-batch-plan.v3',
   V4 = 'bayn.jev-batch-plan.v4',
 }
 
@@ -111,19 +109,14 @@ export const makeJevBatchPlan = (input: unknown) =>
     const lifetime = Date.parse(material.expiresAt) - Date.parse(material.observedAt)
     if (lifetime <= 0 || lifetime > 10_000 || material.candidates.length === 0)
       return yield* invalid('Jev batch requires candidates and a bounded validity window')
+    const firstCandidate = material.candidates[0]
+    if (firstCandidate === undefined || material.benchmarkSymbol !== jevBenchmarkSymbol(firstCandidate.symbol))
+      return yield* invalid('Jev batch benchmark anchor differs from its first candidate')
     let previous = ''
     for (const candidate of material.candidates) {
-      if (candidate.symbol <= previous || candidate.symbol === material.benchmarkSymbol)
-        return yield* invalid('Jev batch candidates must be unique, sorted and distinct from the benchmark')
+      if (candidate.symbol <= previous) return yield* invalid('Jev batch candidates must be unique and sorted')
       previous = candidate.symbol
       if (candidate.status === JevCandidatePlanStatus.Excluded) {
-        if (candidate.reason === JevEntryExclusion.Momentum && material.schemaVersion !== JevBatchPlanVersion.V4)
-          return yield* invalid('Momentum exclusions require version-four Jev batches')
-        if (
-          material.schemaVersion === JevBatchPlanVersion.V1 &&
-          (candidate.reason === JevEntryExclusion.Spread || candidate.reason === JevEntryExclusion.DisplayedSize)
-        )
-          return yield* invalid('Version-one Jev batches cannot contain entry-quote exclusions')
         continue
       }
       const request = yield* decodeJevEvaluationRequest(candidate.request)

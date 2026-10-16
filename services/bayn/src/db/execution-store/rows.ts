@@ -48,14 +48,14 @@ export const CompletedAccountingRow = Schema.Struct({
   ...AccountingTransactionRowSchema.fields,
   source_event_id: NonEmptyString,
   event_content_hash: Sha256,
-  prior_quantity_micros: Schema.String,
+  prior_quantity_atoms: Schema.String,
   prior_cost_micros: Schema.String,
 })
 export type CompletedAccountingRow = typeof CompletedAccountingRow.Type
 
 export const LastSequenceRow = Schema.Tuple([Schema.Struct({ last_sequence: Schema.String })])
 export const PositionCostRow = Schema.Tuple([
-  Schema.Struct({ quantity_micros: Schema.String, cost_micros: Schema.String }),
+  Schema.Struct({ quantity_atoms: Schema.String, cost_micros: Schema.String }),
 ])
 export const UnresolvedPredecessorRow = Schema.Tuple([Schema.Struct({ unresolved: Schema.Boolean })])
 export const AccountBaselineRow = Schema.Tuple([Schema.Struct({ exists: Schema.Boolean })])
@@ -170,6 +170,10 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.intraday-momentum.protocol.v3',
       'bayn.jev.protocol.v1',
       'bayn.jev.protocol.v2',
+      'bayn.jev.protocol.v3',
+      'bayn.jev.protocol.v4',
+      'bayn.jev.protocol.v5',
+      'bayn.jev.protocol.v6',
     ]),
   ),
   account_id: Schema.NullOr(NonEmptyString),

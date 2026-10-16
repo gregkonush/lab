@@ -107,7 +107,7 @@ const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>
 test('projection cuts preserve current offsets and fresh advancing outputs', async () => {
   await program(
     Effect.gen(function* () {
-      const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => new FakeTransport())
       yield* TestClock.adjust(1000)
       const initial = yield* market.readForLiquidation
       expect(initial.consumerSequence).toBe(0)
@@ -164,7 +164,7 @@ test('projection cuts preserve current offsets and fresh advancing outputs', asy
 test('projection cut offset coercions preserve failure and spread ordering', async () => {
   await program(
     Effect.gen(function* () {
-      const market = yield* makeKafkaMarketProjection(config, universe, () => new FakeTransport())
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => new FakeTransport())
       yield* TestClock.adjust(1000)
       const initial = yield* market.readForLiquidation
       const position = initial.positions.find((row) => row.topic === 'quotes')
@@ -234,7 +234,7 @@ test('projection cuts follow replaced positions and reject an invalidated epoch'
   const transports: FakeTransport[] = []
   await program(
     Effect.gen(function* () {
-      const market = yield* makeKafkaMarketProjection(config, universe, () => {
+      const market = yield* makeKafkaMarketProjection(config, [universe], () => {
         const transport = new FakeTransport()
         transports.push(transport)
         return transport
@@ -344,7 +344,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(bootAtMs)
-        const projection = yield* makeKafkaMarketProjection(config, retainedUniverse, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [retainedUniverse], () => transport)
         yield* TestClock.adjust('1 second')
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         for (const record of delayedTrades) transport.send(record)
@@ -388,7 +388,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       await program(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-          const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+          const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
             const transport = new FakeTransport()
             transport.commit = () => {
               commitAttempts++
@@ -449,7 +449,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       }))
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         yield* TestClock.adjust('2 seconds')
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         const cut = yield* projection.readForLiquidation
@@ -468,7 +468,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         yield* TestClock.adjust('2 seconds')
         transport.offsets = async () => {
           throw new AuthenticationError('private authentication detail')
@@ -501,7 +501,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const market = yield* makeKafkaMarketProjection(config, universe, () => {
+        const market = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -598,7 +598,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const market = yield* makeKafkaMarketProjection(config, universe, () => {
+        const market = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -657,7 +657,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     '%s feature arrival receipts are emitted once after incorporation, excluding transport and semantic retries',
     async (family) => {
       const fixture: unknown = JSON.parse(
-        readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
+        readFileSync(new URL('../features/fixtures/observed-price-window-v1.json', import.meta.url), 'utf8'),
       )
       const feature =
         family === 'technical'
@@ -692,7 +692,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
       await program(
         Effect.gen(function* () {
           yield* TestClock.setTime(feature.computedAtMs + 1000)
-          const projection = yield* makeKafkaMarketProjection(config, featureUniverse, () => transport)
+          const projection = yield* makeKafkaMarketProjection(config, [featureUniverse], () => transport)
           yield* TestClock.adjust('100 millis')
           const record = {
             topic: featureTopic,
@@ -735,7 +735,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         yield* TestClock.adjust('2 seconds')
         const original = yield* projection.read
         transport.offsets = () =>
@@ -778,7 +778,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => transport)
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => transport)
         expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
         yield* TestClock.adjust('2 seconds')
         const cut = yield* projection.read
@@ -795,7 +795,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     await program(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-11T14:00:02Z'))
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -833,7 +833,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -866,7 +866,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const firstCause = new AuthenticationError('private transport credential detail')
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -900,7 +900,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           transports.push(transport)
           return transport
@@ -927,7 +927,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transport = new FakeTransport()
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           attempts++
           if (!recovered) throw new Error('connection unavailable')
           return transport
@@ -956,7 +956,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     }
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           attempts += 1
           if (attempts === 1) return first
           expect(first.closed).toBe(true)
@@ -981,7 +981,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     let attempts = 0
     await program(
       Effect.gen(function* () {
-        yield* makeKafkaMarketProjection(config, universe, () => {
+        yield* makeKafkaMarketProjection(config, [universe], () => {
           attempts += 1
           throw new Error('offline')
         })
@@ -996,7 +996,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
     const transports: FakeTransport[] = []
     await program(
       Effect.gen(function* () {
-        const projection = yield* makeKafkaMarketProjection(config, universe, () => {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
           const transport = new FakeTransport()
           let cancel: ((positions: readonly KafkaPartitionPosition[]) => void) | undefined
           transport.offsets = () =>

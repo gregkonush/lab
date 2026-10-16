@@ -34,6 +34,7 @@ import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { Pipeable } from '../pipeable'
 import { withObservedStage } from '../telemetry'
+import { SubmissionDenialReason } from './submission-denial'
 
 export enum ExecutionFailure {
   IntentNotFound = 'INTENT_NOT_FOUND',
@@ -165,13 +166,18 @@ export const dryRunSubmit = (
     ),
   )
 
-const denyStartedSubmit = (mutations: MutationStore['Service'], started: MutationEvent) =>
+const denyStartedSubmit = (
+  mutations: MutationStore['Service'],
+  started: MutationEvent,
+  denialReason: SubmissionDenialReason,
+) =>
   currentInstant.pipe(
     Effect.flatMap((occurredAt) =>
       mutations.submitDenied(
         started.intentId,
         started.requestHash,
         occurredAt < started.occurredAt ? started.occurredAt : occurredAt,
+        denialReason,
       ),
     ),
   )
@@ -193,7 +199,7 @@ const persistSubmitDecision = (
         ),
       SubmitRejected: ({ evidence }) =>
         services.mutations.submitRejected(started.intentId, started.requestHash, evidence),
-      SubmitDenied: () => denyStartedSubmit(services.mutations, started),
+      SubmitDenied: ({ denialReason }) => denyStartedSubmit(services.mutations, started, denialReason),
       SubmitUnknown: ({ brokerOrderId, evidence }) =>
         (evidence === undefined ? currentInstant : Effect.succeed(evidence.observedAt)).pipe(
           Effect.flatMap((occurredAt) =>
@@ -250,7 +256,7 @@ const continueStartedSubmit = (
               return submitToBroker(services, validation.success, started, request, closeOnly)
             }
             return validation.failure._tag === 'ExpiredRiskDecision'
-              ? denyStartedSubmit(services.mutations, started)
+              ? denyStartedSubmit(services.mutations, started, SubmissionDenialReason.ExpiredRiskDecision)
               : Effect.fail(executionError(validation.failure))
           },
         ),
@@ -294,7 +300,7 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       Effect.flatMap((existing) =>
         readIntent(MutationOperation.Submit, intentId).pipe(
           Effect.flatMap((stored) =>
-            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent, closeOnly)).pipe(
+            liftDecision(encodeOrder(MutationOperation.Submit, stored.intent)).pipe(
               Effect.flatMap(({ request, requestHash }) =>
                 existing === undefined
                   ? startSubmit(services, stored, requestHash, request, consistencyDelayMs, closeOnly)

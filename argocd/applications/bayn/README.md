@@ -1,9 +1,44 @@
+# Exception tracking
+
+Bayn's main API, native Restate execution controller and activation job, and
+independent research worker send **errors only** to dedicated GlitchTip projects
+(`proompteng/bayn`, `proompteng/bayn-execution`, and `proompteng/bayn-research`).
+`argocd/applications/bayn/glitchtip-dsns.yaml` contains public Sentry ingestion
+identifiers (not credentials) using the cluster-local GlitchTip web service.
+Sentry JavaScript requires the 32-character hexadecimal key **without UUID
+hyphens**, even though GlitchTip displays it as a UUID in its database.
+
+- Official `@sentry/node` captures uncaught exceptions and terminal Effect
+  causes; successful/expected Effect operations do not emit issues and normal
+  shutdown interruption is ignored. Terminal Effect failures await a bounded SDK
+  flush before process exit, preserving the original failure if delivery fails.
+- Committed reconciliation discrepancies emit one error per unchanged discrepancy
+  set in each process, including an already blocked account after restart. Exact
+  reconciliation resets that suppression. Events include discrepancy kinds and
+  the reconciliation hash, without account identities, balances or broker payloads.
+- Scrubbing removes request, user, breadcrumbs, contexts, runtime variables,
+  source snippets and exception messages. Stack frames retain grouping fidelity.
+- No Sentry tracing, profiles or request-body collection. Continue to use
+  Effect/OTel to Grafana Tempo for spans, Loki for logs, Mimir for metrics. Runtime
+  diagnostics-channel injection and Sentry's OpenTelemetry setup are disabled.
+- Network policies permit only TCP 8000 to GlitchTip's in-cluster web pods;
+  there is no requirement for Tailscale or external public egress from Bayn.
+- The release is the reviewed source SHA, with service role and an optional
+  active OpenTelemetry trace ID as tags.
+
+Verify the deployed immutable image first, then execute the dedicated
+`dist/glitchtip-smoke-command.js` once per service role with its configured
+`BAYN_GLITCHTIP_DSN`. The smoke must finish without SDK DSN warnings and its
+synthetic exception must appear in the corresponding GlitchTip project. This
+command is **not** run automatically from the trading service at startup.
+
 # Bayn GitOps rollout notes
 
 ## Isolated Alpha-R1 research
 
-`research-worker.yaml` runs only `BaynResearchRun`, with one inference in flight and a separate two-connection
-PostgreSQL pool. It has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
+`research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
+inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
+The worker has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
 existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads. Research rolls
 out after execution activation and the public service, so its initial grants cannot delay their rollout.
 Recovery pauses only the research worker through GitOps; it does not change trading authority.
@@ -138,27 +173,23 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses momentum-first `bayn.jev.protocol.v2` and pinned TypeSafe model `jev-1.13.0`. Its behavior, parameter, and protocol
-hashes require a matching sealed research mandate; image promotion alone cannot update that strategy authority.
-The mandate binds the published multi-architecture Bayn build, while Kargo updates its activation build lineage for
-subsequent reviewed releases. Preserve the existing sandbox broker identity and every limit outside an explicitly reviewed mandate change.
+The active implementation uses `bayn.jev.protocol.v6`, `bayn.jev.model-action-cash-spot.behavior.v1`, batch v4 and the
+pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
+account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev. A valid chosen `enter`
+action selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
+Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
+rotates the previous PAPER generation through native OBSERVE recovery before a new v6 mandate can activate.
+The current strategy protocol hash is `62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b`.
 
-The active entry gate requires exact positive own and SPY-relative 30-minute momentum before Jev. It is bound to
-`bayn.jev.momentum-first.behavior.v1`, protocol v2 and batch v4; Jev's probability ranking, questions, sizing and
-position management remain unchanged. Its build hashes, sealed mandate and all three runtime lineages change together.
-The paired Research mandate selects the approved $1,000,000 sandbox daily gross-turnover budget, with the same account,
-credentials, exposure/loss limits and exits. Account/day turnover is retained across the rotation.
+Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
+then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
+The new mandate retains the reviewed $1,000,000 daily gross-turnover budget and existing exposure/loss limits.
+Account/day turnover survives the rotation. A strategy or mandate mismatch rejects activation.
 
-Verify strategy protocol hash `3b062274793e0a13b97334dbb38858e7322cc045280d0a8ed36b533aa8f38111` and mandate request hash
-`8f85240c1a0f8d54650b0914cbfadf3245311c32c650f2a295cc76dabad7063f` against the runtime and sealed identity annotation.
-The image's build-account policy hash is not the account-bound risk hash in the mandate. Retained v1-v3 evidence remains
-immutable and decodable. Rollback needs a reviewed source/mandate pair through native drain and fresh flat/exact
-preflight; never restore obsolete identity expectations, rewrite evidence or reset turnover to make a binary start.
-
-The Jev mandate preserves the existing published build as its lineage anchor and binds the new strategy explicitly.
-Kargo writes the exact newly published source and image into the activation endpoint of every runtime lineage. The
-previous strategy cannot execute against the Jev mandate. The activation hook still requires compatible durable
-state and exact reconciliation before replacing the account-keyed controller.
+The native activation hook validates the sealed request, all three runtime build lineages, compatible durable state
+and fresh flat/exact reconciliation before replacing the account-keyed controller. Kargo writes each subsequent
+reviewed published source and image into all runtime activation lineages. Retained evidence remains immutable.
+Rollback requires a reviewed source/mandate pair and fresh flat/exact preflight; never rewrite evidence or reset turnover.
 
 Only the execution worker receives `BAYN_JEV_API_KEY` from `bayn-jev-auth`, delivered by the SealedSecrets controller
 before worker rollout. Jev uses a scoped HTTP CONNECT client through the existing egress proxy. The allowlist contains
@@ -214,9 +245,15 @@ account-keyed native controller through its shared `activateDeployment` handler.
 out after that verified native binding. The worker advertises exactly `BaynExecutionController` and
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
+The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
+validates the target against the latest worker before reading durable controller state. A pinned stale coordinator
+cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
+activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
+source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
+
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
-`activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+`activate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
 result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
 `BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
 and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
@@ -320,7 +357,7 @@ Expected:
   `BaynBrokerObservations` object through the existing worker endpoint, with `activateDeployment` as the sole public
   handler;
 - migration 87 is applied before endpoint registration; deployment activation drains the predecessor, publishes a fresh
-  source-bound `broker_observations` projection, then activates the native controller. PostgreSQL reads prove its
+  source-bound Valkey materializations and `broker_observations` references, then activates the native controller. PostgreSQL reads prove its
   timestamp advances across background polls and its source revision matches the promoted image. Unavailable,
   expired or invalidated observations block execution instead of issuing broker GETs from normal submission;
 - delayed native ticks project fresh controller status while the worker's static broker/capital configuration remains
@@ -334,6 +371,41 @@ The expected impact is two ready execution-worker pods plus two read-only status
 and narrowly scoped PostgreSQL, TigerBeetle, ClickHouse, telemetry, DNS, and broker network paths. The workers have no
 service-account token and accept Restate requests only from the `restate` namespace. The activation Job has no broker
 egress and its token-authenticated deployment activation call is made only by the labeled GitOps hook.
+
+### Continuous cash-spot cutover
+
+Equities and `BTC/USD`, `ETH/USD`, `SOL/USD` use one account controller, planner, intent store, mutation coordinator,
+broker adapter and accounting pipeline. Market profiles select the recorded producer contract and instrument rules.
+The crypto profile consumes `bayn.market-data.crypto.v1` and `bayn.market-data.crypto.features.v1` continuously,
+including weekends and UTC midnight. Both crypto candidates and benchmarks require fresh executable quotes and actual trades within the verified lookback window; the retained trade age remains contextual evidence. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
+holding, and three minutes of close recovery. Finished cycles rearm against the next admitted market window;
+the account risk day remains America/New_York for both markets. An unused continuous lease that expires without snapshot or decision evidence can rearm after its deadline and cooldown under the same approved account, strategy and execution policy. Each successor repeats fresh data, reconciliation and risk admission.
+
+Migration 97 changes all current quantities to billionth-unit atoms and executed prices to billionth-dollar atoms.
+USD ledgers remain in millionths of a dollar. It archives the original immutable records and hashes, preserves
+broker event and TigerBeetle transfer identities, and rewrites the current projection atomically. It requires flat
+broker and accounted inventory, settled orders, complete fill accounting and no bound unfinished cycle. An unsafe
+cutover fails without changing the schema. There is no mixed-unit runtime or retired order encoder.
+
+Migration startup has a dedicated fifteen-minute database budget and a twenty-minute worker startup probe. The
+thirty-minute Kargo deployment budget covers that startup and native handoff. These limits accommodate the retained
+immutable history rewrite; readiness and native authority still require completed migrations and verified state.
+
+The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
+no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
+109, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
+containing this migration and the current Jev v5 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 109, the source-bound controller plan v3
+handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
+build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
+PAPER authority only after validating the complete binding.
+
+Acceptance requires actual BTC, ETH and SOL orders and fills through the account controller while equities are
+closed, exact quantity and order-duration readback, ledger receipts and reconciliation, and continued rearm.
+Automated Sunday and midnight tests establish boundary behavior; a short PAPER run does not establish a completed
+24-hour or weekend soak, profitability, or live liquidity capacity. Broker FEE/CFEE activities retain their native
+cash/coin distinction; pending fee publication remains a cost-evidence gap.
 
 ### Research mandate rotation
 
@@ -355,21 +427,24 @@ Invalid static mandate configuration fails preparation with its specific reason 
 
 After sync, require the SealedSecret to be current, the hook to succeed for the committed generation, the controller
 sequence to advance naturally, `/readyz` and `/v1/status` to report the intended effective authority, and reconciliation
-to remain exact with zero unresolved mutations. While the market is closed, also require zero new broker orders or
-fills. If validation fails before activation, revert the complete request/hash/generation change through reviewed GitOps.
+to remain exact with zero unresolved mutations. While equities are closed, equity orders and fills must remain unchanged; eligible crypto cycles may continue. If validation fails before activation, revert the complete request/hash/generation change through reviewed GitOps.
 If activation has succeeded, first deactivate the native controller through reviewed GitOps and prove OBSERVE authority,
 exact reconciliation, and no broker-ledger advance before replacing the mandate. Never roll back only the Secret or
 invoke the activation handler manually.
 
 The reviewed `main` build publishes the multi-architecture image and immutable `kargo-sha-<source>` alias. The
-`lab-delivery/bayn` Warehouse correlates that tag with its exact main commit; the automatic Stage copies that source,
-updates the status, worker, and activation bindings, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also
-updates the activation endpoint of the existing research build lineage while preserving its authored request and
-build. The native hook still verifies the exact controller binding before the status service rolls out.
+`lab-delivery/bayn` Warehouse selects the newest eligible immutable image and validates its source/revision annotations.
+The automatic Stage checks out that image revision, updates the status, worker, and activation bindings from the same
+image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
+research build lineage while preserving its authored request and build. The native hook still verifies the exact
+controller binding before the status service rolls out.
+Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
+that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
-existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
+runtime idempotency key binds that generation, the activation Job UID, source revision, account controller key and
+target plan. The predecessor comes from durable controller state and is not part of the request or retry identity.
 
 For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
 together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
@@ -389,7 +464,7 @@ broker-ledger advance before and after the handoff.
 
 This is a hard route migration from `BaynExecutionBootstrap/start` to
 `BaynExecutionController/<account-key>/activateDeployment`, with the single
-`bayn.execution-deployment-activation.v1` request contract. Worker and activation Job must use the same promoted
+`bayn.execution-deployment-activation.v2` request contract. Worker and activation Job must use the same promoted
 image. Native controller state, tick and mutation contracts, account keys and credentials are unchanged. No legacy
 handler is served by the replacement endpoint.
 
@@ -433,3 +508,47 @@ current with its scheduled tick sequence advancing; and the unrelated `Greeter` 
 The one-sync tombstone is no longer desired state. This cleanup removes its manifest so Argo naturally prunes the
 temporary deny-all `bayn-restate-retirement-hook-gc` NetworkPolicy. Do not recreate the tombstone or the destructive
 retirement hook unless a new independently reviewed recovery procedure explicitly requires it.
+
+
+## Restate public information collection
+
+The existing `bayn-research` RestateDeployment hosts independent SEC filings and macro-calendar virtual objects.
+`BAYN_PUBLIC_INFORMATION_ENABLED=true` starts their signed asynchronous activations after endpoint registration.
+No additional Kubernetes Job or CronJob is involved. The trading worker and its readiness remain independent.
+
+The prepared worker mounts the canonical reflected `bayn-research-captures` OBC credential and generated bucket name.
+This is an additional credential destination and needs approval under the repository scope rule before rollout.
+The existing bucket-owner permissions remain unchanged; application code uploads immutable content-derived keys.
+Only the research worker receives RGW egress. Its public HTTPS requests use the existing proxy with the SEC, BLS and
+Federal Reserve host allowlist; credentials never pass through that client. Its internal Restate egress only submits
+public-job activations. Verify the OBC ownership/private ACL and exact synthetic object SHA-256 readback before live
+collection, then inspect source-keyed Restate status, artifact readback and source metrics. A source failure cannot
+fail the trading endpoint or delay a protective closure.
+
+### Available-history hard cutover
+
+The current protocol removes the 30-minute admission requirement for equities and crypto. Equities first evaluate
+at the first completed minute plus two seconds. Crypto uses its current completed history continuously. Both retain
+up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
+
+Migration 108 requires terminal mutation cycles, fee-net flat inventory, no pending broker orders, fresh exact
+reconciliation and complete fill accounting. It restricts the old mandate to OBSERVE. Deploy the reviewed Bayn and
+Dorvud contracts with explicit read-only configuration, then rotate the existing sandbox mandate against the exact
+published new strategy/image before enabling PAPER through the normal Kargo activation path. Retired feature and
+strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.
+
+The capital-sizing cutover uses migration 109 and one LIMIT/IOC execution path for equities and crypto. Market
+profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. A canceled partial IOC entry can
+complete after an exact flat reconciliation consumes the same timestamped broker cut. Its trusted flat observation
+must remain strictly newer than the entry terminalization, and complete fills and settled orders remain required.
+Entry quantities follow the approved
+capital weight and instrument precision instead of one displayed ask size. The sealed PAPER mandate must bind the
+published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
+Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
+limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.
+
+Migration 110 recognizes the capital-sizing cutover restriction in the native terminal-generation recovery path.
+The same path retires bound, unused cycles left by the previous worker even after their admission window expires;
+cycles with snapshot, decision or intent evidence still block cutover recovery.
+The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
+Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.

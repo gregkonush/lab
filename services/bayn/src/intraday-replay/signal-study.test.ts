@@ -1,7 +1,10 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { OrderSide } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
@@ -13,7 +16,7 @@ import {
   prepareSignalStudyBatch,
   SignalScreenRule,
   signalStudyDefinition,
-  studyIoc,
+  studyOrder,
   studyRoundTrip,
   summarizeSignalFactorOutcomes,
 } from './signal-study'
@@ -24,7 +27,13 @@ const batch = (action = 'enter') => {
   return evidence
 }
 const at = Date.parse(fixture.observation.payload.observedAt)
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const original = fixture.snapshot.latestQuotes['AAPL']
 if (original === undefined) throw new Error('Fixture has no AAPL quote')
 const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
@@ -208,8 +217,8 @@ test.each<{ premium: number; selected: string | null }>([
   const base = streamingFixture()
   const query = {
     ...base.query,
-    symbols: [...fixture.protocol.candidateSymbols, fixture.protocol.benchmarkSymbol].sort(),
-    candidateSymbols: fixture.protocol.candidateSymbols,
+    symbols: [...equityMarketProfile.candidateSymbols, 'SPY'].sort(),
+    candidateSymbols: equityMarketProfile.candidateSymbols,
     ...(fixture.protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: fixture.protocol.candidateEvidencePolicy }),
@@ -269,8 +278,8 @@ test('round trip charges both adverse executions and fees against actual whole-s
     throw new Error('Missing resolved fills')
   expect(BigInt(entry.priceMicros)).toBeGreaterThan(100_020_000n)
   expect(BigInt(exit.priceMicros)).toBeLessThan(101_000_000n)
-  expect(entry.quantityMicros).toBe(exit.quantityMicros)
-  expect(BigInt(entry.quantityMicros) % 1_000_000n).toBe(0n)
+  expect(entry.quantityAtoms).toBe(exit.quantityAtoms)
+  expect(BigInt(entry.quantityAtoms) % 1_000_000n).toBe(0n)
   expect(BigInt(entry.notionalMicros)).toBeLessThanOrEqual(BigInt(signalStudyDefinition.entryBudgetMicros))
   expect(BigInt(result.outcome.netExecutionPnlMicros)).toBeLessThan(
     BigInt(exit.notionalMicros) - BigInt(entry.notionalMicros),
@@ -282,7 +291,7 @@ test('partial entry limits the exit to the actual acquired quantity', () => {
   const input = roundTrip()
   const result = Result.getOrThrow(studyRoundTrip({ ...input, entryArrivalQuote: quote(at + 100, { askSize: 5 }) }))
   expect(result.outcome.status).toBe('RESOLVED')
-  expect(result.fills.map((fill) => fill.quantityMicros)).toEqual(['5000000', '5000000'])
+  expect(result.fills.map((fill) => fill.quantityAtoms)).toEqual(['5000000000', '5000000000'])
 })
 
 test.each([1_000_000, 10_000_000])(
@@ -297,7 +306,7 @@ test.each([1_000_000, 10_000_000])(
       }),
     )
     expect(result.outcome.status).toBe('RESOLVED')
-    expect(result.fills.map((fill) => fill.quantityMicros)).toEqual(['99000000', '99000000'])
+    expect(result.fills.map((fill) => fill.quantityAtoms)).toEqual(['99000000000', '99000000000'])
     expect(result.fills[0]?.priceMicros).toBe('100000000')
   },
 )
@@ -310,7 +319,7 @@ test('a share whose notional fits but fees exceed cash remains an explicit unfil
       entryArrivalQuote: quote(at + 100, { bidPrice: 9998.99, askPrice: 9999 }),
     }),
   )
-  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-one-share' })
+  expect(result.outcome).toEqual({ status: 'NO_ENTRY_FILL', reason: 'budget-below-instrument-minimum' })
   expect(result.fills).toHaveLength(0)
 })
 
@@ -328,7 +337,7 @@ test('partial exit retains unresolved exposure instead of reporting flat profit'
   )
   expect(result.outcome).toEqual({ status: 'UNRESOLVED', reason: 'partial-exit' })
   expect(result.fills).toHaveLength(2)
-  expect(result.fills[1]?.quantityMicros).toBe('2000000')
+  expect(result.fills[1]?.quantityAtoms).toBe('2000000000')
 })
 
 test('a canceled entry is a no-fill result and missing exit evidence is unresolved', () => {
@@ -350,10 +359,11 @@ test.each([
   ['wrong symbol', quote(at + 100, { symbol: 'AMZN' }), 'arrival-quote-identity-mismatch'],
 ] as const)('IOC retains %s as unresolved', (_name, arrivalQuote, reason) => {
   const result = Result.getOrThrow(
-    studyIoc({
+    studyOrder({
+      orderType: OrderType.Limit,
       symbol: 'AAPL',
       side: OrderSide.Buy,
-      quantityMicros: 10_000_000n,
+      quantityAtoms: 10000000000n,
       decisionQuote: quote(at),
       arrivalQuote,
       decisionAtMs: at,
@@ -368,10 +378,11 @@ test.each([
 test('execution cannot silently omit the registered routing latency', () => {
   expect(
     Result.isFailure(
-      studyIoc({
+      studyOrder({
+        orderType: OrderType.Limit,
         symbol: 'AAPL',
         side: OrderSide.Buy,
-        quantityMicros: 10_000_000n,
+        quantityAtoms: 10000000000n,
         decisionQuote: quote(at),
         arrivalQuote: quote(at),
         decisionAtMs: at,

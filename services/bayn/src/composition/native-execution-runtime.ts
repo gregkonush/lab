@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Metric,
   Option,
   Ref,
   Result,
@@ -34,7 +35,6 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  type ExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
@@ -75,7 +75,7 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
  * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
  * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
  */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v2')
+export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
@@ -688,17 +688,21 @@ export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<Kafk
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
-  previousBinding?: ExecutionControllerBinding,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
-    const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
-    const config: ExecutionControllerConfig =
-      previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
+    const config = yield* Effect.fromResult(executionControllerConfig(plan))
+    const metricIdentity = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
+    )
     const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
-    ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
+    ).pipe(
+      Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.provideMerge(metricIdentity),
+    )
     const executionResources = Layer.merge(
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
@@ -709,7 +713,7 @@ export const acquireNativeExecutionRuntime = (
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
 
     const projectionManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
     )
     yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
     const logManaged = yield* ownManagedRuntime(

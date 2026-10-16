@@ -1,3 +1,4 @@
+import { receivedCryptoFee } from '../strategy/execution-model/fees'
 import { Result, Schema } from 'effect'
 import {
   AccountStatus,
@@ -38,14 +39,14 @@ export const applyControlManagementDecision = (input: {
     const { observation, batchPlan, decidedAt } = decision.evidence
     const held = portfolio.ledger.positions[0]
     const observedHeld = observation.portfolio.brokerState.positions.find(
-      (position) => BigInt(position.quantityMicros) > 0n,
+      (position) => BigInt(position.quantityAtoms) > 0n,
     )
     if (
       portfolio.inventory.status !== 'HOLDING' ||
       held === undefined ||
       portfolio.ledger.positions.length !== 1 ||
       observedHeld?.schemaVersion !== 'bayn.position.v2' ||
-      observedHeld.quantityMicros !== held.quantityMicros ||
+      observedHeld.quantityAtoms !== held.quantityAtoms ||
       observedHeld.costBasisMicros !== held.costBasisMicros ||
       observation.portfolio.purpose !== JevPurpose.Manage ||
       batchPlan.batchId !== expectedBatchId ||
@@ -102,14 +103,23 @@ export const makeControlManagementBatch = (input: {
       return yield* invalid('Unfilled or unresolved entry cannot create management context')
     const { portfolio: control, outcome } = executed
     const fill = outcome.fill
+    const receivedFee = receivedCryptoFee(
+      {
+        symbol: fill.symbol,
+        side: fill.side,
+        quantityAtoms: BigInt(fill.quantityAtoms),
+        notionalMicros: BigInt(fill.notionalMicros),
+      },
+      BigInt(order.assumptions.feeMultiplierPpm),
+    )
     const position = control.ledger.positions[0]
     const at = input.snapshot.manifest.observedAt
     const atMs = Date.parse(at)
     if (
       position === undefined ||
       control.ledger.positions.length !== 1 ||
-      position.quantityMicros !== fill.quantityMicros ||
-      position.costBasisMicros !== fill.notionalMicros ||
+      BigInt(position.quantityAtoms) !== BigInt(fill.quantityAtoms) - receivedFee.quantityAtoms ||
+      BigInt(position.costBasisMicros) !== BigInt(fill.notionalMicros) - receivedFee.valueMicros ||
       fill.observedAt > at ||
       fill.observedAt.slice(0, 10) !== input.snapshot.manifest.sessionDate ||
       atMs >= Date.parse(fill.observedAt) + protocol.maximumHoldingMinutes * 60_000
@@ -123,7 +133,7 @@ export const makeControlManagementBatch = (input: {
       quote.bidSize > 0 &&
       jevProtectiveStopCrossed(
         BigInt(position.costBasisMicros),
-        BigInt(position.quantityMicros),
+        BigInt(position.quantityAtoms),
         bid,
         protocol.protectiveStopBps,
       )
@@ -132,10 +142,11 @@ export const makeControlManagementBatch = (input: {
     const decisionQuote = order.decisionQuote
     if (decisionQuote === undefined) return yield* invalid('Filled entry lacks its decision quote')
     const terms = yield* deriveExecutionIntentPricing({
+      symbol: order.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityMicros: order.quantityMicros,
+      quantityAtoms: order.quantityAtoms,
       referencePriceMicros: yield* numberToMicros(decisionQuote.value.askPrice),
       executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
@@ -145,7 +156,7 @@ export const makeControlManagementBatch = (input: {
       runId,
       entryDecisionHash,
       outcome,
-      requestedQuantityMicros: String(order.quantityMicros),
+      requestedQuantityAtoms: String(order.quantityAtoms),
       decisionAt: utcInstantFromEpochMillis(order.decisionAtMs),
       assumptions: order.assumptions,
       beforeLedger: input.beforeEntry.ledger,
@@ -153,7 +164,7 @@ export const makeControlManagementBatch = (input: {
     const intentId = yield* canonicalHashV1Result({ entryIdentity, kind: 'SIMULATED_ENTRY_INTENT' })
     const brokerOrderId = `simulation-${entryIdentity}`
     const clientOrderId = `simulation-${intentId}`
-    const marketValue = (BigInt(position.quantityMicros) * bid) / 1_000_000n
+    const marketValue = (BigInt(position.quantityAtoms) * bid) / 1_000_000_000n
     const fee = BigInt(control.ledger.executionFeesMicros) - BigInt(input.beforeEntry.ledger.executionFeesMicros)
     const material: Parameters<typeof reconciledStateHash>[0] = {
       account: {
@@ -171,10 +182,10 @@ export const makeControlManagementBatch = (input: {
           schemaVersion: 'bayn.position.v2',
           accountId,
           symbol: position.symbol,
-          quantityMicros: position.quantityMicros,
+          quantityAtoms: position.quantityAtoms,
           costBasisMicros: position.costBasisMicros,
           averageEntryPriceMicros: String(
-            (BigInt(position.costBasisMicros) * 1_000_000n) / BigInt(position.quantityMicros),
+            (BigInt(position.costBasisMicros) * 1_000_000n) / BigInt(position.quantityAtoms),
           ),
           marketPriceMicros: String(bid),
           marketValueMicros: String(marketValue),
@@ -185,7 +196,7 @@ export const makeControlManagementBatch = (input: {
       positionsObservedAt: at,
       orders: [
         {
-          schemaVersion: 'bayn.paper-order.v1',
+          schemaVersion: 'bayn.order.v3',
           accountId,
           brokerOrderId,
           clientOrderId,
@@ -194,10 +205,10 @@ export const makeControlManagementBatch = (input: {
           side: OrderSide.Buy,
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: String(order.quantityMicros),
-          filledQuantityMicros: fill.quantityMicros,
+          quantityAtoms: String(order.quantityAtoms),
+          filledQuantityAtoms: fill.quantityAtoms,
           limitPriceMicros: String(terms.expectedExecutionPriceMicros),
-          status: BigInt(fill.quantityMicros) === order.quantityMicros ? OrderStatus.Filled : OrderStatus.Canceled,
+          status: BigInt(fill.quantityAtoms) === order.quantityAtoms ? OrderStatus.Filled : OrderStatus.Canceled,
           observedAt: at,
         },
       ],
@@ -209,9 +220,13 @@ export const makeControlManagementBatch = (input: {
       purpose: JevPurpose.Manage,
       entryDecisionHash,
       entryIntentIds: [intentId],
+      entryInventoryDebit: {
+        quantityAtoms: receivedFee.quantityAtoms.toString(),
+        costBasisMicros: receivedFee.valueMicros.toString(),
+      },
       entryFills: [
         {
-          schemaVersion: 'bayn.paper-fill.v1',
+          schemaVersion: 'bayn.fill.v2',
           accountId,
           brokerOrderId,
           clientOrderId,
@@ -219,8 +234,8 @@ export const makeControlManagementBatch = (input: {
           fillId: `simulation-${yield* canonicalHashV1Result({ entryIdentity, fill })}`,
           symbol: fill.symbol,
           side: OrderSide.Buy,
-          quantityMicros: fill.quantityMicros,
-          priceMicros: fill.priceMicros,
+          quantityAtoms: fill.quantityAtoms,
+          priceAtoms: (BigInt(fill.priceMicros) * 1000n).toString(),
           feeMicros: String(fee),
           occurredAt: fill.observedAt,
         },
@@ -251,7 +266,7 @@ export const makeControlManagementBatch = (input: {
     const batch = yield* makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: utcInstantFromEpochMillis(atMs + protocol.inferenceValidityMs),
-      planVersion: protocol.schemaVersion === 'bayn.jev.protocol.v2' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V3,
+      planVersion: JevBatchPlanVersion.V4,
     })
     return {
       classification: 'SIMULATED_CONTROL_MANAGEMENT_REQUEST_ONLY' as const,

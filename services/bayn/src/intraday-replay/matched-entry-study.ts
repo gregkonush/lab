@@ -1,10 +1,16 @@
+import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
+import { jevMarketForFeed } from '../jev/markets'
+import { isContinuousMarket, observationSession, continuousExecutionPolicy, type MarketHours } from '../market-hours'
+import { exchangeSessions } from '../market-hours'
 import { Effect, FileSystem, Result, Schema } from 'effect'
-import type { MarketCalendarObservation, MarketCalendarSession } from '../broker/alpaca/model'
+import type { MarketCalendarSession } from '../broker/alpaca/model'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { EntryTimingReceiptSchema } from './entry-timing'
 import { ExecutionDecisionDocumentSchema } from '../shadow-decision-contract'
 import { JevPurpose } from '../jev/portfolio'
+import { CycleState } from '../cycle/model'
+import { verifyJevStudyInventory, type JevStudyInventory } from '../jev/study-inventory'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { observedQuoteAt } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot, type StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -41,7 +47,10 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v3',
+  schemaVersion: 'bayn.matched-entry-definition.v5',
+  cryptoFees: cryptoTakerFeeSchedule,
+  inventory:
+    'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results.',
   sourceComparison: 'bayn.matched-model-input-material.v2',
   sessions: 5,
   minimumDifferentSelections: 20,
@@ -49,7 +58,7 @@ export const matchedEntryDefinition = {
   pollIntervalMs: 5000,
   rules: ['JEV_FILTERED', 'DELAYED_MOMENTUM', 'IMMEDIATE_MOMENTUM'],
   lifecycle:
-    'One IOC entry; same whole-share budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute close window and persistent reducing IOC retries. No model management.',
+    'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
   comparison:
     'Immediate momentum starts at witnessed deterministic completion. Delayed momentum and Jev start at witnessed decision commitment. Selection is Jev minus delayed momentum; delay is delayed minus immediate; total is Jev minus immediate. Per-opportunity net micro-USD divided by the fixed budget. Include abstentions and unfilled entries as zero execution P&L; unknown model answers and unresolved lifecycles are missing, never zero.',
   costs:
@@ -123,10 +132,7 @@ export const MatchedStudyInputSchema = Schema.Struct({
 })
 export type MatchedRegistration = typeof MatchedRegistrationSchema.Type
 
-export const matchedCalendarSessions = (
-  registration: MatchedRegistration,
-  calendars: readonly MarketCalendarObservation[],
-) =>
+export const matchedCalendarSessions = (registration: MatchedRegistration, calendars: readonly MarketHours[]) =>
   Result.gen(function* () {
     const dates = registration.sessionDates
     const first = dates[0]
@@ -141,8 +147,32 @@ export const matchedCalendarSessions = (
       return yield* Result.fail(
         new SignalStudyFailure({ message: 'Registered sessions must be five unique ordered dates' }),
       )
+    if (calendars.some(isContinuousMarket)) {
+      if (!calendars.every(isContinuousMarket))
+        return yield* Result.fail(new SignalStudyFailure({ message: 'A frozen study must use one market schedule' }))
+      const hours = calendars[0]
+      if (hours === undefined) return yield* Result.fail(new SignalStudyFailure({ message: 'Missing market hours' }))
+      if (dates.some((date, index) => Date.parse(date) !== Date.parse(first) + index * 86_400_000))
+        return yield* Result.fail(
+          new SignalStudyFailure({
+            message: 'Continuous study requires five consecutive UTC observation days including weekends',
+          }),
+        )
+      if (
+        registration.dataRole === MatchedDataRole.Prospective &&
+        Date.parse(registration.registeredAt) >= Date.parse(first)
+      )
+        return yield* Result.fail(
+          new SignalStudyFailure({ message: 'Prospective registration must precede the first observation day' }),
+        )
+      return dates.flatMap((date) => {
+        const session = observationSession(hours, date)
+        return session === undefined ? [] : [session]
+      })
+    }
+    const exchangeCalendars = calendars.filter((calendar) => !isContinuousMarket(calendar))
     const sessions = new Map<string, MarketCalendarSession>()
-    for (const calendar of calendars) {
+    for (const calendar of exchangeCalendars) {
       for (const session of calendar.sessions) {
         if (session.date < first || session.date > last) continue
         const existing = sessions.get(session.date)
@@ -152,7 +182,7 @@ export const matchedCalendarSessions = (
       }
     }
     const scheduled = [...sessions.values()].sort((a, b) => a.date.localeCompare(b.date))
-    for (const calendar of calendars) {
+    for (const calendar of exchangeCalendars) {
       const present = new Set(calendar.sessions.map((session) => session.date))
       if (
         scheduled.some(
@@ -168,7 +198,7 @@ export const matchedCalendarSessions = (
     }
     // Continuous query coverage proves that intervening dates are closed, rather than unobserved.
     let coveredUntilMs = Date.parse(first)
-    for (const range of calendars
+    for (const range of exchangeCalendars
       .map((calendar) => calendar.requestedRange)
       .sort((a, b) => a.start.localeCompare(b.start))) {
       if (Date.parse(range.start) > coveredUntilMs) break
@@ -326,7 +356,7 @@ export const matchedObservationMaterial = (snapshot: StrategyMarketSnapshot) => 
     maximumQuoteAgeMs: snapshot.manifest.maximumQuoteAgeMs,
     candidateSymbols: snapshot.manifest.candidateSymbols ?? [],
     candidateEvidencePolicy: snapshot.manifest.candidateEvidencePolicy ?? null,
-    session: snapshot.manifest.calendar.sessions
+    session: exchangeSessions(snapshot.manifest.calendar)
       .filter((session) => session.date === snapshot.manifest.sessionDate)
       .map((session) => ({
         date: session.date,
@@ -425,6 +455,9 @@ export const runMatchedEntryStudy = (
     const dates = registration.sessionDates
     const sourceHash = yield* Effect.fromResult(canonicalHashV1Result(input.study.source))
     const batches = yield* Effect.forEach(input.study.batches, (b) => Effect.fromResult(prepareSignalStudyBatch(b)))
+    const batchResultHashes = new Map(
+      input.study.batches.map((batch) => [batch.batchPlan.batchId, batch.batchResult?.resultHash ?? null]),
+    )
     const problems = matchedSourceCompletenessProblems(input.study.source)
     const ids = new Set<string>()
     for (const batch of batches) {
@@ -455,7 +488,20 @@ export const runMatchedEntryStudy = (
       ),
     )
     const inventories = new Set<string>()
+    const verifiedInventories: JevStudyInventory[] = []
     const entries = batches.filter((b) => b.observation.portfolio.purpose === JevPurpose.Entry)
+    const accountBindings = new Set(
+      yield* Effect.forEach(batches, (batch) =>
+        Effect.fromResult(
+          canonicalHashV1Result({
+            schemaVersion: 'bayn.jev-study-account.v1',
+            accountId: batch.observation.portfolio.brokerState.account.accountId,
+          }),
+        ),
+      ),
+    )
+    if (accountBindings.size !== 1)
+      return yield* new SignalStudyFailure({ message: 'Study batches belong to different accounts' })
     for (const inventory of input.inventory) {
       if (
         inventories.has(inventory.sessionDate) ||
@@ -471,6 +517,51 @@ export const runMatchedEntryStudy = (
       if (actual.join(',') !== [...inventory.entryBatchIds].sort().join(','))
         problems.push(`entry-inventory-mismatch:${inventory.sessionDate}`)
       if (inventory.evidenceHash === null) problems.push(`missing-inventory-witness:${inventory.sessionDate}`)
+      else {
+        const bytes = witnessed.get(inventory.evidenceHash)
+        if (bytes === undefined) return yield* new SignalStudyFailure({ message: 'Inventory witness file is missing' })
+        const retained = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Unknown),
+          strictParseOptions,
+        )(new TextDecoder().decode(bytes)).pipe(
+          Effect.flatMap((value) => Effect.fromResult(verifyJevStudyInventory(value))),
+          Effect.mapError((cause) => new SignalStudyFailure({ message: 'Invalid native inventory witness', cause })),
+        )
+        if (
+          retained.receipt.sessionDate !== inventory.sessionDate ||
+          !accountBindings.has(retained.receipt.accountBindingHash) ||
+          retained.batches
+            .filter((batch) => batch.purpose === JevPurpose.Entry)
+            .map((batch) => batch.batchId)
+            .join(',') !== [...inventory.entryBatchIds].sort().join(',')
+        )
+          return yield* new SignalStudyFailure({
+            message: 'Inventory witness differs from its account, session or claimed entries',
+          })
+        verifiedInventories.push(retained)
+        if (retained.cycles.some((cycle) => cycle.protocolHash !== registration.protocolHash))
+          problems.push(`native-inventory-protocol-mismatch:${inventory.sessionDate}`)
+        if (retained.cycles.some((cycle) => cycle.state === CycleState.Pending || cycle.state === CycleState.Active))
+          problems.push(`nonterminal-inventory-cycle:${inventory.sessionDate}`)
+        const actualBatches = batches
+          .filter((batch) => batch.snapshot.manifest.sessionDate === inventory.sessionDate)
+          .map((batch) => ({
+            batchId: batch.plan.batchId,
+            cycleId: batch.plan.cycleId,
+            observationHash: batch.plan.observationHash,
+            purpose: batch.observation.portfolio.purpose,
+            resultHash: batchResultHashes.get(batch.plan.batchId) ?? null,
+          }))
+          .sort((a, b) => a.batchId.localeCompare(b.batchId))
+        if (
+          (yield* Effect.fromResult(canonicalHashV1Result(actualBatches))) !==
+          (yield* Effect.fromResult(canonicalHashV1Result(retained.batches)))
+        )
+          problems.push(`native-inventory-batch-mismatch:${inventory.sessionDate}`)
+        const session = scheduled.find((value) => value.date === inventory.sessionDate)
+        if (session === undefined || Date.parse(retained.receipt.asOf) < Date.parse(session.closeAt))
+          problems.push(`inventory-cut-before-session-close:${inventory.sessionDate}`)
+      }
     }
     for (const session of scheduled) {
       if (!inventories.has(session.date)) problems.push(`missing-session-inventory:${session.date}`)
@@ -576,7 +667,7 @@ export const runMatchedEntryStudy = (
           const reproduced = yield* Effect.fromResult(
             constructSimulatedSnapshot(yield* source.cursor, source.source, {
               ...manifest,
-              universe: batch.observation.protocol.universe,
+              universe: jevMarketForFeed(manifest.feed).universe,
             }),
           )
           const expected = yield* Effect.fromResult(canonicalHashV1Result(matchedObservationMaterial(batch.snapshot)))
@@ -624,8 +715,15 @@ export const runMatchedEntryStudy = (
           assumptions: input.study.assumptions,
           entryBudgetMicros: matchedEntryDefinition.budgetMicros,
           decidedAtMs: Date.parse(at),
-          cutoffMs: Date.parse(session.closeAt) - 5 * 60_000,
-          closeMs: Date.parse(session.closeAt),
+          cutoffMs: isContinuousMarket(manifest.calendar)
+            ? Number.POSITIVE_INFINITY
+            : Date.parse(session.closeAt) - 5 * 60_000,
+          closeMs: isContinuousMarket(manifest.calendar)
+            ? Date.parse(at) +
+              registration.latencyMs +
+              batch.observation.protocol.maximumHoldingMinutes * 60_000 +
+              continuousExecutionPolicy.closeRecoveryMs
+            : Date.parse(session.closeAt),
         }
         const event = (kind: MatchedEvent, atMs: number) =>
           add(
@@ -701,7 +799,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v3',
+      schemaVersion: 'bayn.matched-entry-study.v5',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,
@@ -710,6 +808,7 @@ export const runMatchedEntryStudy = (
       sourceReceiptHash: receipt.contentHash,
       sourceManifestHash: sourceHash,
       sourceRecordCount: input.study.source.recordCount,
+      inventories: verifiedInventories,
       observations: entries.map((b) => ({
         batchId: b.plan.batchId,
         observedAt: b.observation.observedAt,

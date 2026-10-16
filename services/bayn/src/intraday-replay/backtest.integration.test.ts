@@ -1,3 +1,6 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+
 import { expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -60,10 +63,10 @@ durableTest(
         yield* TestClock.setTime(startMs)
         const clock = yield* makeSimulatedExecutionClock(runId, sourceHash, providerClock)
         const universe = {
-          universeId: protocol.universeId,
-          universeSymbolHash: protocol.universeSymbolHash,
-          symbols: protocol.universe,
-          topics: { ...protocol.sourceTopics, features: 'torghut.market-features.v1' },
+          universeId: equityMarketProfile.universeId,
+          universeSymbolHash: equityMarketProfile.universeSymbolHash,
+          symbols: equityMarketProfile.universe,
+          topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
         }
         const quotes = [
           [startMs, 100],
@@ -148,7 +151,7 @@ durableTest(
           side: OrderSide.Buy,
           orderType: OrderType.Limit,
           timeInForce: TimeInForce.ImmediateOrCancel,
-          quantityMicros: '10000000',
+          quantityAtoms: '10000000000',
           notionalLimitMicros: '1000000000',
           state: IntentState.IoStarted,
           createdAt: new Date(startMs).toISOString(),
@@ -184,7 +187,7 @@ durableTest(
         expect(sourceCut).toBe(now)
         expect(consumed).toBe(3)
         expect(current.equityMicros).toBe((BigInt(state.ledger.cashMicros) + 980000000n).toString())
-        expect(state.ledger.positions[0]?.quantityMicros).toBe('10000000')
+        expect(state.ledger.positions[0]?.quantityAtoms).toBe('10000000000')
         expect(state.fills).toHaveLength(1)
         expect(
           yield* sql`SELECT measured_at, measured_observed_at FROM simulated_execution_clocks
@@ -231,7 +234,7 @@ durableTest(
           inference: {
             mode: 'measured-provider',
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v2',
+            inputDefinition: 'bayn.jev-trading-signal-state.v5',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',
@@ -243,7 +246,7 @@ durableTest(
             { date: '2026-09-04', open: '09:30', close: '09:31' },
             { date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
-          assets: retained.input.protocol.universe.map((symbol, index) => ({
+          assets: equityMarketProfile.universe.map((symbol, index) => ({
             id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
             symbol,
             class: 'us_equity',
@@ -255,7 +258,13 @@ durableTest(
           assetObservationAt: '2026-09-04T13:29:00.000Z',
           assetObservationPolicy: 'retained-as-of-session',
           build,
-          assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+          assumptions: {
+            instruments: replayTestInstruments,
+            latencyMs: 100,
+            slippageBps: 0,
+            availableLiquidityPpm: 1000000,
+            feeMultiplierPpm: 1000000,
+          },
           cadence: {
             pollIntervalMs: 30000,
             reconciliationIntervalMs: 30000,

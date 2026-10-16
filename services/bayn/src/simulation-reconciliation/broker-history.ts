@@ -248,7 +248,6 @@ const readFillPages = (
 
 const readFeePages = (
   read: BrokerReadShape,
-  until: string,
 ): Effect.Effect<readonly Observed<FeeActivity>[], BrokerReadError | ReconciliationError> =>
   Effect.gen(function* () {
     const rows: Observed<FeeActivity>[] = []
@@ -256,7 +255,6 @@ const readFeePages = (
     let cursor: string | undefined
     while (true) {
       const page = yield* read.feeActivities({
-        until,
         direction: SortDirection.Ascending,
         pageSize: fillsPageSize,
         ...(cursor === undefined ? {} : { pageToken: cursor }),
@@ -264,6 +262,8 @@ const readFeePages = (
       if (page.value.items.length > fillsPageSize || rows.length + page.value.items.length > maximumRows)
         return yield* paginationFailure('InvalidFeeHistory', 'fee history exceeded its bounded row budget')
       for (const fee of page.value.items) {
+        if (fee.date > page.evidence.observedAt.slice(0, 10))
+          return yield* paginationFailure('InvalidFeeHistory', 'fee history contains a date after its UTC capture cut')
         if (ids.has(fee.activityId))
           return yield* paginationFailure('InvalidFeeHistory', 'fee history repeated an activity identity')
         ids.add(fee.activityId)
@@ -285,7 +285,7 @@ const readHistory = (
     {
       orders: readOrderPages(read, until, initialOrderPaginationState()),
       fills: readFillPages(read, until, initialFillPaginationState()),
-      fees: readFeePages(read, until),
+      fees: readFeePages(read),
     },
     { concurrency: 3 },
   )
@@ -336,11 +336,11 @@ const decideStableHistoryDataFirst = (
     }
     const filledByOrder = new Map<string, bigint>()
     for (const { value: fill } of after.fills) {
-      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityMicros))
+      filledByOrder.set(fill.brokerOrderId, (filledByOrder.get(fill.brokerOrderId) ?? 0n) + BigInt(fill.quantityAtoms))
     }
     if (
       after.orders.rows.some(
-        ({ value: order }) => BigInt(order.filledQuantityMicros) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
+        ({ value: order }) => BigInt(order.filledQuantityAtoms) !== (filledByOrder.get(order.brokerOrderId) ?? 0n),
       )
     ) {
       return yield* Result.fail(

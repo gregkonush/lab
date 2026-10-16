@@ -19,12 +19,16 @@ use crate::{
     proto::{Action, AuditReceipt, RequestContext, actor::Identity},
 };
 
+pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog";
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
     config: Config,
     tls: MakeRustlsConnect,
     command_slots: Arc<Semaphore>,
+    #[cfg(test)]
+    migration_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 pub struct CommandConnection {
@@ -63,7 +67,7 @@ impl Database {
         config
             .application_name("ofz-api")
             .connect_timeout(Duration::from_secs(2));
-        config.options("-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog");
+        config.options(CONNECTION_OPTIONS);
         let mut roots = RootCertStore::empty();
         let bytes = tokio::fs::read(env::var("OFZ_DATABASE_CA_FILE")?).await?;
         for cert in rustls_pemfile::certs(&mut bytes.as_slice()) {
@@ -101,6 +105,8 @@ impl Database {
             config,
             tls,
             command_slots: Arc::new(Semaphore::new(2)),
+            #[cfg(test)]
+            migration_barrier: None,
         })
     }
 
@@ -125,44 +131,68 @@ impl Database {
     }
 
     pub async fn migrate(&self) -> Result<(), Status> {
-        let connection = self.command_connection().await?;
-        let exists: bool = connection
-            .client
+        let mut connection = self.command_connection().await?;
+        let tx = connection.client.transaction().await.map_err(sql_error)?;
+        let exists: bool = tx
             .query_one("SELECT to_regclass('ofz.schema_version') IS NOT NULL", &[])
             .await
             .map_err(sql_error)?
             .get(0);
         if !exists {
-            connection
-                .client
-                .batch_execute(include_str!("../migrations/0001_control.sql"))
+            tx.batch_execute(include_str!("../migrations/0001_control.sql"))
                 .await
                 .map_err(sql_error)?;
-        }
-        let row = connection
-            .client
-            .query_one("SELECT version,checksum FROM ofz.schema_version", &[])
+            #[cfg(test)]
+            if let Some((created, resume)) = &self.migration_barrier {
+                created.notify_one();
+                resume.notified().await;
+            }
+            tx.execute(
+                "INSERT INTO ofz.schema_version(version,checksum) VALUES(1,$1)",
+                &[&migration_checksum()],
+            )
             .await
             .map_err(sql_error)?;
+        }
+        let row = tx
+            .query_opt("SELECT version,checksum FROM ofz.schema_version", &[])
+            .await
+            .map_err(sql_error)?
+            .ok_or_else(|| {
+                Status::failed_precondition("control schema migration checksum missing")
+            })?;
         let checksum: Option<Vec<u8>> = row.get(1);
         if row.get::<_, i32>(0) != 1
             || checksum
                 .as_ref()
-                .is_some_and(|value| *value != migration_checksum())
+                .is_none_or(|value| *value != migration_checksum())
         {
             return Err(Status::failed_precondition(
                 "control schema migration checksum mismatch",
             ));
         }
-        if checksum.is_none() {
-            connection.client.execute("UPDATE ofz.schema_version SET checksum=$1 WHERE version=1 AND checksum IS NULL", &[&migration_checksum()]).await.map_err(sql_error)?;
-        }
+        tx.commit().await.map_err(sql_error)?;
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_migration_barrier(
+        mut self,
+        created: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    ) -> Self {
+        self.migration_barrier = Some((created, resume));
+        self
+    }
+
     pub async fn migrate_runtime(&self) -> Result<(), Status> {
-        const MIGRATION: &str = include_str!("../../tengri/migrations/0001_control.sql");
-        let checksum = Sha256::digest(MIGRATION.as_bytes()).to_vec();
+        const MIGRATIONS: &[(i32, &str)] = &[
+            (1, include_str!("../../tengri/migrations/0001_control.sql")),
+            (
+                2,
+                include_str!("../../tengri/migrations/0002_replay_buckets.sql"),
+            ),
+        ];
         let mut client = self
             .pool
             .get()
@@ -192,7 +222,8 @@ impl Database {
             .map_err(sql_error)?
             .get(0);
         if !exists {
-            let body = MIGRATION
+            let body = MIGRATIONS[0]
+                .1
                 .trim()
                 .strip_prefix("BEGIN;")
                 .and_then(|body| body.strip_suffix("COMMIT;"))
@@ -200,27 +231,52 @@ impl Database {
             tx.batch_execute(body).await.map_err(sql_error)?;
             tx.execute(
                 "INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)",
-                &[&checksum],
+                &[&Sha256::digest(MIGRATIONS[0].1.as_bytes()).to_vec()],
             )
             .await
             .map_err(sql_error)?;
         }
         let rows = tx
-            .query("SELECT version,checksum FROM tengri.schema_version", &[])
+            .query(
+                "SELECT version,checksum FROM tengri.schema_version ORDER BY version",
+                &[],
+            )
             .await
             .map_err(sql_error)?;
-        if rows.len() != 1
-            || rows[0].get::<_, i32>(0) != 1
-            || rows[0].get::<_, Vec<u8>>(1) != checksum
+        if rows.is_empty()
+            || rows.len() > MIGRATIONS.len()
+            || rows
+                .iter()
+                .zip(MIGRATIONS)
+                .any(|(row, (version, migration))| {
+                    row.get::<_, i32>(0) != *version
+                        || row.get::<_, Vec<u8>>(1)
+                            != Sha256::digest(migration.as_bytes()).as_slice()
+                })
         {
             return Err(Status::failed_precondition(
                 "runtime migration checksum mismatch",
             ));
         }
+        for (version, migration) in &MIGRATIONS[rows.len()..] {
+            let body = migration
+                .trim()
+                .strip_prefix("BEGIN;")
+                .and_then(|body| body.strip_suffix("COMMIT;"))
+                .ok_or_else(|| Status::internal("invalid packaged runtime migration"))?;
+            tx.batch_execute(body).await.map_err(sql_error)?;
+            tx.execute(
+                "INSERT INTO tengri.schema_version(version,checksum) VALUES($1,$2)",
+                &[version, &Sha256::digest(migration.as_bytes()).to_vec()],
+            )
+            .await
+            .map_err(sql_error)?;
+        }
         tx.commit().await.map_err(sql_error)?;
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.command_connection", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn command_connection(&self) -> Result<CommandConnection, Status> {
         let permit = self
             .command_slots
@@ -259,6 +315,7 @@ impl Database {
         }
     }
 
+    #[tracing::instrument(name = "db.policy.read", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn state(&self) -> Result<State, Status> {
         let client = self
             .pool
@@ -268,6 +325,7 @@ impl Database {
         state(&**client).await
     }
 
+    #[tracing::instrument(name = "db.audit", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn audit(&self, receipt: &AuditReceipt, target: &str) -> Result<String, Status> {
         let mut client = self
             .pool
@@ -275,6 +333,9 @@ impl Database {
             .await
             .map_err(|_| Status::unavailable("control database pool unavailable"))?;
         let tx = client.transaction().await.map_err(sql_error)?;
+        tx.batch_execute("SET LOCAL statement_timeout = 5000")
+            .await
+            .map_err(sql_error)?;
         record_audit(&*tx, receipt, target).await?;
         if !record_activity(&*tx, receipt).await? {
             return Err(Status::unauthenticated("session expired or revoked"));
@@ -284,6 +345,7 @@ impl Database {
     }
 }
 
+#[tracing::instrument(name = "db.record_activity", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn record_activity<C: GenericClient + Sync>(
     client: &C,
     receipt: &AuditReceipt,
@@ -302,7 +364,40 @@ pub async fn record_activity<C: GenericClient + Sync>(
     }
     let id =
         Uuid::parse_str(&receipt.session_id).map_err(|_| Status::internal("invalid session ID"))?;
-    Ok(client.execute("UPDATE ofz.sessions SET idle_deadline_ms=LEAST(expires_at_ms,GREATEST(idle_deadline_ms,ofz.now_ms()+1800000)) WHERE id=$1 AND human_id=$2 AND NOT revoked AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms() AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)", &[&id,human]).await.map_err(sql_error)? == 1)
+    let touched = client
+        .execute(
+            r#"
+        WITH refresh AS (
+          SELECT id FROM ofz.sessions
+          WHERE id=$1 AND human_id=$2 AND NOT revoked
+            AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms()
+            AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)
+            AND idle_deadline_ms<LEAST(expires_at_ms,ofz.now_ms()+1770000)
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE ofz.sessions SET idle_deadline_ms=LEAST(expires_at_ms,ofz.now_ms()+1800000)
+        WHERE id IN (SELECT id FROM refresh)
+    "#,
+            &[&id, human],
+        )
+        .await
+        .map_err(sql_error)?;
+    if touched == 1 {
+        return Ok(true);
+    }
+    Ok(client
+        .query_one(
+            r#"
+        SELECT EXISTS(SELECT 1 FROM ofz.sessions
+          WHERE id=$1 AND human_id=$2 AND NOT revoked
+            AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms()
+            AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state))
+    "#,
+            &[&id, human],
+        )
+        .await
+        .map_err(sql_error)?
+        .get(0))
 }
 
 #[derive(Clone, Debug)]
@@ -327,6 +422,7 @@ pub(crate) const STATE_QUERY: &str = r#"
         FROM ofz.platform_state p CROSS JOIN ofz.archive_state a
     "#;
 
+#[tracing::instrument(name = "db.state", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status> {
     let row = client
         .query_one(STATE_QUERY, &[])
@@ -341,6 +437,7 @@ pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status>
     })
 }
 
+#[tracing::instrument(name = "db.record_audit", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn record_audit<C: GenericClient + Sync>(
     client: &C,
     receipt: &AuditReceipt,

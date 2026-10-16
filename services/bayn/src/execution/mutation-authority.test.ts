@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
+import { SubmissionDenialReason } from './submission-denial'
+import { brokerAssetFixture, cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
 
-import { Cause, Clock, Effect, Fiber, Result } from 'effect'
+import { Cause, Clock, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import {
@@ -72,6 +73,10 @@ const readResult = <A>(value: A, observedAt: string = evidence.observedAt): Read
 })
 
 const account = (overrides: Partial<Account> = {}): Account => ({
+  cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -93,7 +98,7 @@ const position = (overrides: Partial<Position> = {}): Position => ({
   exchange: AssetExchange.Nasdaq,
   assetClass: AssetClass.UsEquity,
   side: PositionSide.Long,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
@@ -106,7 +111,7 @@ type OmittedOrderField =
   | 'filledAveragePriceMicros'
   | 'limitPriceMicros'
   | 'notionalMicros'
-  | 'quantityMicros'
+  | 'quantityAtoms'
   | 'stopPriceMicros'
 
 const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderField[] = []): Order => {
@@ -119,9 +124,9 @@ const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderFie
     assetId: 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415',
     symbol: 'AMD',
     assetClass: AssetClass.UsEquity,
-    quantityMicros: '1000000',
+    quantityAtoms: '1000000000',
     notionalMicros: '100000000',
-    filledQuantityMicros: '0',
+    filledQuantityAtoms: '0',
     orderClass: OrderClass.Simple,
     orderType: BrokerOrderType.Market,
     side: BrokerOrderSide.Buy,
@@ -150,7 +155,7 @@ const intent = (overrides: Partial<Intent> = {}): Intent => ({
   side: OrderSide.Buy,
   orderType: OrderType.Market,
   timeInForce: TimeInForce.Day,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   notionalLimitMicros: '100000000',
   state: IntentState.Approved,
   createdAt: activeAt,
@@ -233,6 +238,7 @@ interface ScenarioInput {
   readonly ordersObservedAt?: string
   readonly positionsConfirmedAt?: string
   readonly ordersConfirmedAt?: string
+  readonly assetOverrides?: Partial<ReturnType<typeof brokerAssetFixture>>
   readonly brokerAccount?: Account
   readonly brokerAccountAtRead?: (orderReads: number) => Account
   readonly positions?: readonly Position[]
@@ -269,7 +275,8 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
       )
     }),
     accountConfiguration: unusedRead,
-    assetBySymbol: () => unusedRead,
+    assetBySymbol: (symbol) =>
+      Effect.succeed(readResult({ ...brokerAssetFixture(symbol, activeAt), ...input.assetOverrides })),
     positions: Effect.sync(() => {
       trace.push('positions')
       const snapshots = input.positionSnapshots
@@ -339,7 +346,7 @@ const runLiveSubmit = async (input: ScenarioInput = {}) => {
               ordersObservedAt: input.ordersObservedAt ?? cached.state.ordersObservedAt,
             },
           },
-          proposedIntent.intentId,
+          proposedIntent,
           submissionProjectionFixture(brokerRead),
         )
         const persisted = yield* persistedCapitalGrants.read()
@@ -382,6 +389,33 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'])
+    test(`${symbol} uses the common PAPER submission guard with native precision and cash authority`, async () => {
+      const cryptoAccount = account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' })
+      const proposedIntent = intent({
+        symbol,
+        quantityAtoms: '31234567',
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
+        notionalLimitMicros: '3224150',
+      })
+      const common = { environment: BrokerEnvironment.Sandbox, brokerAccount: cryptoAccount, proposedIntent }
+      const submitted = await runLiveSubmit(common)
+      if (Exit.isFailure(submitted.exit)) throw new Error(Cause.pretty(submitted.exit.cause))
+      expect(Exit.isSuccess(submitted.exit)).toBe(true)
+      expect(submitted.submits).toBe(1)
+      for (const changed of [
+        { brokerAccount: { ...cryptoAccount, cryptoStatus: 'INACTIVE' } },
+        { brokerAccount: { ...cryptoAccount, nonMarginableBuyingPowerMicros: '1' } },
+        { assetOverrides: { minimumQuantityAtoms: '40000000' } },
+        { assetOverrides: { quantityIncrementAtoms: '10' } },
+      ]) {
+        const rejected = await runLiveSubmit({ ...common, ...changed })
+        expect(Exit.isFailure(rejected.exit)).toBe(true)
+        expect(rejected.submits).toBe(0)
+      }
+    })
+
   test('uses one coherent submission projection and never its direct reader', async () => {
     const unusedRead = Effect.die('Unexpected broker GET during submission')
     const fresh: BrokerReadShape = {
@@ -389,7 +423,7 @@ describe('final broker mutation authority', () => {
       positions: unusedRead,
       orders: () => unusedRead,
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, activeAt))),
       orderById: () => unusedRead,
       orderByClientId: () => unusedRead,
       fillActivities: () => unusedRead,
@@ -413,7 +447,7 @@ describe('final broker mutation authority', () => {
       },
     }
     const snapshot = await Effect.runPromise(
-      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), intent().intentId, cached),
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account(), [position()]), intent(), cached),
     )
     expect(snapshot.positions).toEqual([position()])
     expect(snapshot.account).toEqual(account())
@@ -422,13 +456,10 @@ describe('final broker mutation authority', () => {
 
   test('denies submission when its observation projection is absent', async () => {
     const raw = submissionProjectionFixture({} as BrokerReadShape).projection!.fresh
-    expect(
-      (
-        await Effect.runPromiseExit(
-          confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent().intentId, raw),
-        )
-      )._tag,
-    ).toBe('Failure')
+    const failure = await Effect.runPromise(
+      confirmExecutionBrokerState(cachedBrokerStateFixture(account()), intent(), raw).pipe(Effect.flip),
+    )
+    expect(failure.denialReason).toBe(SubmissionDenialReason.ProjectionRequired)
   })
 
   test.each([BrokerEnvironment.Sandbox, BrokerEnvironment.Live])(
@@ -456,7 +487,7 @@ describe('final broker mutation authority', () => {
       positions: delayedRead([]),
       orders: () => delayedRead([]),
       accountConfiguration: unused,
-      assetBySymbol: () => unused,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, activeAt))),
       orderById: () => unused,
       orderByClientId: () => unused,
       feeActivities: () => unused,
@@ -468,7 +499,7 @@ describe('final broker mutation authority', () => {
         yield* TestClock.setTime(Date.parse(activeAt))
         const operation = yield* confirmExecutionBrokerState(
           cachedBrokerStateFixture(account()),
-          intent().intentId,
+          intent(),
           submissionProjectionFixture(read),
         ).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust('100 millis')
@@ -616,7 +647,7 @@ describe('final broker mutation authority', () => {
 
   test('keeps a net-exposure-reducing sell eligible while the account remains above the policy cap', async () => {
     const observed = await runLiveSubmit({
-      positions: [position({ quantityMicros: '3000000', marketValueMicros: '300000000' })],
+      positions: [position({ quantityAtoms: '3000000000', marketValueMicros: '300000000' })],
       maxNetExposureMicros: '150000000',
       proposedIntent: intent({ side: OrderSide.Sell }),
     })
@@ -652,7 +683,7 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1000000',
+          quantityAtoms: '-1000000000',
           marketValueMicros: '-100000000',
         }),
       ],
@@ -670,13 +701,13 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1000000',
+          quantityAtoms: '-1000000000',
           marketValueMicros: '-100000000',
         }),
         position({
           assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
           symbol: 'NVDA',
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           marketValueMicros: '100000000',
         }),
       ],
@@ -699,13 +730,13 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1000000',
+          quantityAtoms: '-1000000000',
           marketValueMicros: '-100000000',
         }),
         position({
           assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
           symbol: 'NVDA',
-          quantityMicros: '1000000',
+          quantityAtoms: '1000000000',
           marketValueMicros: '100000000',
         }),
       ],
@@ -727,19 +758,19 @@ describe('final broker mutation authority', () => {
       positions: [
         position({
           side: PositionSide.Short,
-          quantityMicros: '-1500000',
+          quantityAtoms: '-1500000000',
           marketValueMicros: '-150000000',
         }),
         position({
           assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
           symbol: 'NVDA',
-          quantityMicros: '1500000',
+          quantityAtoms: '1500000000',
           marketValueMicros: '150000000',
         }),
       ],
       proposedIntent: intent({
         side: OrderSide.Buy,
-        quantityMicros: '1500000',
+        quantityAtoms: '1500000000',
         notionalLimitMicros: '150000000',
       }),
       maxNetExposureMicros: '100000000',
@@ -933,7 +964,7 @@ describe('final broker mutation authority', () => {
 
   test('fails closed when an open order has no defensible notional', async () => {
     const observed = await runLiveSubmit({
-      openOrders: [order({}, ['notionalMicros', 'quantityMicros'])],
+      openOrders: [order({}, ['notionalMicros', 'quantityAtoms'])],
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderNotionalUnavailable')
@@ -946,7 +977,7 @@ describe('final broker mutation authority', () => {
         order(
           {
             orderType: BrokerOrderType.Stop,
-            quantityMicros: '1000000',
+            quantityAtoms: '1000000000',
             stopPriceMicros: '100000000',
           },
           ['notionalMicros', 'limitPriceMicros', 'filledAveragePriceMicros'],
@@ -963,7 +994,7 @@ describe('final broker mutation authority', () => {
       {
         brokerOrderId: 'c14cb7fb-0890-47dd-bbca-7778cfc61ec6',
         symbol: 'NVDA',
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
       },
       ['notionalMicros', 'limitPriceMicros', 'stopPriceMicros', 'filledAveragePriceMicros'],
     )
@@ -987,10 +1018,10 @@ describe('final broker mutation authority', () => {
     const grant = persistedGrantRecord({ ...defaultLimits, maxGrossNotionalMicros: '100000000' })
     const observed = await runLiveSubmit({
       grant,
-      positions: [position({ quantityMicros: '900000', marketValueMicros: '90000000' })],
+      positions: [position({ quantityAtoms: '900000000', marketValueMicros: '90000000' })],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '200000',
+        quantityAtoms: '200000000',
         notionalLimitMicros: '20000000',
       }),
     })
@@ -1001,10 +1032,10 @@ describe('final broker mutation authority', () => {
 
   test('rejects a sell that would increase exposure through a short position', async () => {
     const observed = await runLiveSubmit({
-      positions: [position({ quantityMicros: '100000', marketValueMicros: '10000000' })],
+      positions: [position({ quantityAtoms: '100000000', marketValueMicros: '10000000' })],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '200000',
+        quantityAtoms: '200000000',
         notionalLimitMicros: '20000000',
       }),
     })
@@ -1018,7 +1049,7 @@ describe('final broker mutation authority', () => {
     const queuedBuy = order({
       brokerOrderId: '5ea242d9-9fa2-423b-908d-d2cccfcd5a5c',
       side: BrokerOrderSide.Buy,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalMicros: '100000000',
     })
     const observed = await runLiveSubmit({
@@ -1027,7 +1058,7 @@ describe('final broker mutation authority', () => {
       openOrders: [queuedBuy],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '1500000',
+        quantityAtoms: '1500000000',
         notionalLimitMicros: '150000000',
       }),
     })
@@ -1042,7 +1073,7 @@ describe('final broker mutation authority', () => {
       brokerOrderId: 'ee49ed03-d957-45f7-b725-a32d9c215cd5',
       symbol: 'NVDA',
       side: BrokerOrderSide.Sell,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalMicros: '100000000',
     })
     const observed = await runLiveSubmit({
@@ -1061,7 +1092,7 @@ describe('final broker mutation authority', () => {
         brokerOrderId: 'c87ed037-a814-4e28-aef4-57f23831a54b',
         symbol: 'NVDA',
         side: BrokerOrderSide.Sell,
-        quantityMicros: '1000000',
+        quantityAtoms: '1000000000',
         limitPriceMicros: '1000000',
       },
       ['notionalMicros'],
@@ -1078,8 +1109,8 @@ describe('final broker mutation authority', () => {
       {
         brokerOrderId: '2a9722db-503f-47ad-82ef-6ba5a444be52',
         side: BrokerOrderSide.Buy,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '500000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '500000000',
         limitPriceMicros: '100000000',
         status: OrderStatus.PartiallyFilled,
       },
@@ -1087,9 +1118,9 @@ describe('final broker mutation authority', () => {
     )
     const observed = await runLiveSubmit({
       grant,
-      positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
+      positions: [position({ quantityAtoms: '500000000', marketValueMicros: '50000000' })],
       openOrders: [partialBuy],
-      proposedIntent: intent({ quantityMicros: '100000', notionalLimitMicros: '10000000' }),
+      proposedIntent: intent({ quantityAtoms: '100000000', notionalLimitMicros: '10000000' }),
     })
 
     expect(observed.exit._tag).toBe('Success')
@@ -1103,8 +1134,8 @@ describe('final broker mutation authority', () => {
         brokerOrderId: 'baf250d8-f7ac-48e8-b54b-1ed2fc870bf0',
         side: BrokerOrderSide.Buy,
         orderType: BrokerOrderType.Market,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '500000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '500000000',
         filledAveragePriceMicros: '100000000',
         status: OrderStatus.PartiallyFilled,
       },
@@ -1112,9 +1143,9 @@ describe('final broker mutation authority', () => {
     )
     const observed = await runLiveSubmit({
       grant,
-      positions: [position({ quantityMicros: '500000', marketValueMicros: '50000000' })],
+      positions: [position({ quantityAtoms: '500000000', marketValueMicros: '50000000' })],
       openOrders: [partialMarketBuy],
-      proposedIntent: intent({ quantityMicros: '50000', notionalLimitMicros: '10000000' }),
+      proposedIntent: intent({ quantityAtoms: '50000000', notionalLimitMicros: '10000000' }),
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
@@ -1126,8 +1157,8 @@ describe('final broker mutation authority', () => {
       {
         brokerOrderId: '318a5a2b-b976-4df3-9fbd-1030ab46e937',
         side: BrokerOrderSide.Sell,
-        quantityMicros: '1000000',
-        filledQuantityMicros: '500000',
+        quantityAtoms: '1000000000',
+        filledQuantityAtoms: '500000000',
         limitPriceMicros: '100000000',
         status: OrderStatus.PartiallyFilled,
       },
@@ -1138,7 +1169,7 @@ describe('final broker mutation authority', () => {
       openOrders: [partialSell],
       proposedIntent: intent({
         side: OrderSide.Sell,
-        quantityMicros: '400000',
+        quantityAtoms: '400000000',
         notionalLimitMicros: '40000000',
       }),
     })

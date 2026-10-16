@@ -82,6 +82,13 @@ export function appendCodexEvent(
   event: CodexBufferedEvent,
   restoredPrefix = '',
 ): CodexBufferedEvent[] {
+  if (codexEventIsRuntimeError(event)) {
+    if (current.some((candidate) => codexEventIsRuntimeError(candidate) && candidate.sequence >= event.sequence))
+      return current
+    current = current.filter((candidate) => !codexEventIsRuntimeError(candidate))
+  } else if (codexEventConfirmsRuntimeReady(event)) {
+    current = current.filter((candidate) => !codexEventIsRuntimeError(candidate) || candidate.sequence > event.sequence)
+  }
   const resolvedApprovalId = codexResolvedApprovalId(event)
   if (resolvedApprovalId) {
     const next = current.filter((candidate) => candidate.approvalId !== resolvedApprovalId)
@@ -126,11 +133,13 @@ export function appendCodexEvent(
     return next
   }
 
-  const itemIdentity = codexEventItemIdentity(event)
-  const itemIndex = itemIdentity
+  const itemIndex = event.itemId
     ? current.findIndex(
         (candidate) =>
-          codexEventItemIdentity(candidate) === itemIdentity &&
+          candidate.threadId === event.threadId &&
+          candidate.turnId === event.turnId &&
+          candidate.itemId === event.itemId &&
+          candidate.kind === event.kind &&
           (isDeltaEvent(candidate) || isDeltaEvent(event) || isItemLifecycleTransition(candidate, event)),
       )
     : -1
@@ -307,6 +316,17 @@ export function codexEventIsIndependentOfThreadSnapshot(event: TengriCodexEvent)
   return event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error' || event.kind === 'usage'
 }
 
+export function codexEventIsRuntimeError(event: TengriCodexEvent) {
+  return event.kind === 'error' && event.method === 'error' && !event.threadId && !event.turnId && !event.itemId
+}
+
+export function codexEventConfirmsRuntimeReady(event: TengriCodexEvent) {
+  return (
+    (event.method === 'turn/started' && Boolean(event.turnId)) ||
+    (event.method === 'thread/started' && Boolean(event.threadId))
+  )
+}
+
 function codexEventRequiresReplayAfterRestore(event: TengriCodexEvent) {
   return codexEventIsIndependentOfThreadSnapshot(event) || Boolean(codexResolvedApprovalId(event))
 }
@@ -388,6 +408,7 @@ export function appendCodexEventAfterRestore(
   snapshotSequence: number,
   itemSequences?: ReadonlyMap<string, number>,
 ) {
+  if (codexEventIsRuntimeError(event) && event.sequence <= snapshotSequence) return current
   const restoredItem = restoredHistory.get(event.itemId)
   const itemSequence = itemSequences?.get(event.itemId) ?? restoredItem?.eventSequence ?? snapshotSequence
   if (event.sequence <= itemSequence && !codexEventRequiresReplayAfterRestore(event)) {
@@ -1004,6 +1025,8 @@ function isCommandExecutionEvent(event: TengriCodexEvent, item: Record<string, u
 }
 
 function truncateEventText(value: string) {
+  // UTF-8 uses at most three bytes per UTF-16 code unit, including lone surrogates.
+  if (value.length * 3 <= MAX_EVENT_TEXT_BYTES) return value
   const encoder = new TextEncoder()
   const encoded = encoder.encode(value)
   if (encoded.byteLength <= MAX_EVENT_TEXT_BYTES) return value
@@ -1027,11 +1050,6 @@ function number(value: unknown) {
 
 function isDeltaEvent(event: TengriCodexEvent) {
   return !codexEventIsIndependentOfThreadSnapshot(event) && event.method.toLowerCase().endsWith('delta')
-}
-
-function codexEventItemIdentity(event: TengriCodexEvent) {
-  if (!event.itemId) return ''
-  return JSON.stringify([event.threadId, event.turnId, event.itemId, event.kind])
 }
 
 function isItemLifecycleTransition(previous: TengriCodexEvent, next: TengriCodexEvent) {

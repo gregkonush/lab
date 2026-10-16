@@ -110,7 +110,10 @@ without rebuilding on every chunk. Following stops when the reader scrolls upwar
 content growth does not leave the viewport behind the response.
 Paste PNG, JPEG, or WebP images into the composer to attach them. Previews have individual remove controls.
 Image-only messages and active-turn steering work too. Limits are four images, 4 MiB per image, and 8 MiB total.
-Failed sends preserve the text and attachments for retry. Images are stored in the retained workspace under
+Messages appear immediately while the request runs. Failed sends restore the text and attachments for retry.
+Open chat windows keep their event streams and model selection when another desktop window takes focus.
+Recovered runtime restart notices disappear after a successful turn start or thread recovery; failed turns remain visible.
+Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
@@ -252,3 +255,10 @@ The local TLS proxy and isolated test certificate exercise secure cookies, WebSo
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
 The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
 an existing installation cache without reusing a test workspace.
+
+Tengri error reporting uses the existing private GlitchTip service, with a bounded same-origin browser error tunnel.
+Next instrumentation initializes manual OTLP request tracing and error-only Sentry SDK reporting. Public runtime
+configuration contains only the ingest DSN and immutable release. See the
+[Tengri observability contract](../../services/tengri/README.md#error-reporting-and-request-traces) for privacy,
+network policy, rollout and actual collector verification. The landing test command includes SDK export, envelope
+validation, stream limits and content-scrubbing checks.

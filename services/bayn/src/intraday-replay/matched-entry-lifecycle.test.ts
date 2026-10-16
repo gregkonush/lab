@@ -1,3 +1,4 @@
+import { replayTestInstruments } from '../testing/replay-instruments'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { canonicalHashV1 } from '../hash'
@@ -31,7 +32,13 @@ const quote = (t: number, overrides: Partial<IntradayQuote> = {}) => {
 const terms = {
   symbol: 'AAPL',
   protocol: fixture.protocol,
-  assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
+  assumptions: {
+    instruments: replayTestInstruments,
+    latencyMs: 100,
+    slippageBps: 0,
+    availableLiquidityPpm: 1000000,
+    feeMultiplierPpm: 1000000,
+  },
   entryBudgetMicros: '10000000000',
   decidedAtMs: at,
   cutoffMs: at + 30 * 60000,
@@ -54,7 +61,7 @@ test('protective trigger survives partial fills and an unchanged quote cannot re
   const stopped = step(entry(), MatchedEvent.Poll, at + 5100, quote(at + 5100, { bidPrice: 99, askPrice: 99.02 }))
   const arrival = quote(at + 5200, { bidPrice: 99, askPrice: 99.02, bidSize: 1 })
   const partial = step(stopped, MatchedEvent.ExitArrival, at + 5200, arrival)
-  expect(partial.portfolio.ledger.positions[0]?.quantityMicros).toBe('98000000')
+  expect(partial.portfolio.ledger.positions[0]?.quantityAtoms).toBe('98000000000')
   expect(finishMatchedLifecycle(partial).status).toBe('UNRESOLVED')
   expect(finishMatchedLifecycle(partial).netExecutionPnlMicros).toBeNull()
   const exhausted = step(
@@ -63,7 +70,7 @@ test('protective trigger survives partial fills and an unchanged quote cannot re
     at + 10200,
     arrival,
   )
-  expect(exhausted.portfolio.ledger.positions[0]?.quantityMicros).toBe('98000000')
+  expect(exhausted.portfolio.ledger.positions[0]?.quantityAtoms).toBe('98000000000')
   expect(finishMatchedLifecycle(exhausted).status).toBe('UNRESOLVED')
   expect(finishMatchedLifecycle(exhausted).netExecutionPnlMicros).toBeNull()
   const flat = step(step(exhausted, MatchedEvent.Poll, at + 15100), MatchedEvent.ExitArrival, at + 15200)
