@@ -991,7 +991,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
     if (
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
-        prepared.protocol.maximumSpreadBps !== residualShockDefinition.maximumSpreadBps ||
+        prepared.protocol.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
         prepared.protocol.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)

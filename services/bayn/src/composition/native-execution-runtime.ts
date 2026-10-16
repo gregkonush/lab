@@ -35,7 +35,6 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  type ExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
@@ -76,7 +75,7 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
  * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
  * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
  */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v2')
+export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
@@ -689,16 +688,13 @@ export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<Kafk
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
-  previousBinding?: ExecutionControllerBinding,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
-    const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
+    const config = yield* Effect.fromResult(executionControllerConfig(plan))
     const metricIdentity = Layer.mergeAll(
       Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
       Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
     )
-    const config: ExecutionControllerConfig =
-      previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
     const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),

@@ -19,6 +19,8 @@ use crate::{
     proto::{Action, AuditReceipt, RequestContext, actor::Identity},
 };
 
+pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog";
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
@@ -65,7 +67,7 @@ impl Database {
         config
             .application_name("ofz-api")
             .connect_timeout(Duration::from_secs(2));
-        config.options("-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog");
+        config.options(CONNECTION_OPTIONS);
         let mut roots = RootCertStore::empty();
         let bytes = tokio::fs::read(env::var("OFZ_DATABASE_CA_FILE")?).await?;
         for cert in rustls_pemfile::certs(&mut bytes.as_slice()) {
@@ -274,6 +276,7 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.command_connection", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn command_connection(&self) -> Result<CommandConnection, Status> {
         let permit = self
             .command_slots
@@ -312,6 +315,7 @@ impl Database {
         }
     }
 
+    #[tracing::instrument(name = "db.policy.read", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn state(&self) -> Result<State, Status> {
         let client = self
             .pool
@@ -321,6 +325,7 @@ impl Database {
         state(&**client).await
     }
 
+    #[tracing::instrument(name = "db.audit", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn audit(&self, receipt: &AuditReceipt, target: &str) -> Result<String, Status> {
         let mut client = self
             .pool
@@ -328,6 +333,9 @@ impl Database {
             .await
             .map_err(|_| Status::unavailable("control database pool unavailable"))?;
         let tx = client.transaction().await.map_err(sql_error)?;
+        tx.batch_execute("SET LOCAL statement_timeout = 5000")
+            .await
+            .map_err(sql_error)?;
         record_audit(&*tx, receipt, target).await?;
         if !record_activity(&*tx, receipt).await? {
             return Err(Status::unauthenticated("session expired or revoked"));
@@ -337,6 +345,7 @@ impl Database {
     }
 }
 
+#[tracing::instrument(name = "db.record_activity", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn record_activity<C: GenericClient + Sync>(
     client: &C,
     receipt: &AuditReceipt,
@@ -358,11 +367,16 @@ pub async fn record_activity<C: GenericClient + Sync>(
     let touched = client
         .execute(
             r#"
+        WITH refresh AS (
+          SELECT id FROM ofz.sessions
+          WHERE id=$1 AND human_id=$2 AND NOT revoked
+            AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms()
+            AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)
+            AND idle_deadline_ms<LEAST(expires_at_ms,ofz.now_ms()+1770000)
+          FOR UPDATE SKIP LOCKED
+        )
         UPDATE ofz.sessions SET idle_deadline_ms=LEAST(expires_at_ms,ofz.now_ms()+1800000)
-        WHERE id=$1 AND human_id=$2 AND NOT revoked
-          AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms()
-          AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)
-          AND idle_deadline_ms<LEAST(expires_at_ms,ofz.now_ms()+1770000)
+        WHERE id IN (SELECT id FROM refresh)
     "#,
             &[&id, human],
         )
@@ -408,6 +422,7 @@ pub(crate) const STATE_QUERY: &str = r#"
         FROM ofz.platform_state p CROSS JOIN ofz.archive_state a
     "#;
 
+#[tracing::instrument(name = "db.state", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status> {
     let row = client
         .query_one(STATE_QUERY, &[])
@@ -422,6 +437,7 @@ pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status>
     })
 }
 
+#[tracing::instrument(name = "db.record_audit", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn record_audit<C: GenericClient + Sync>(
     client: &C,
     receipt: &AuditReceipt,

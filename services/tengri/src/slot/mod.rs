@@ -307,6 +307,7 @@ impl Slot {
         finish_journal_write(&mut pending).await
     }
 
+    #[tracing::instrument(name = "journal.persist", skip_all)]
     async fn transition(&mut self, state: SlotState) -> anyhow::Result<()> {
         let completed = matches!(
             state,
@@ -388,6 +389,7 @@ impl Slot {
         result
     }
 
+    #[tracing::instrument(name = "guest.restore", skip_all)]
     async fn restore_vm(&mut self, snapshot: &Snapshot, claim: &Claim) -> anyhow::Result<()> {
         #[cfg(test)]
         let started = std::time::Instant::now();
@@ -544,6 +546,7 @@ impl Slot {
         Ok(())
     }
 
+    #[tracing::instrument(name = "guest.snapshot.save", skip_all)]
     async fn save_vm(&mut self) -> anyhow::Result<Snapshot> {
         vmm::guest_command(
             &self.config.vsock(),
@@ -582,6 +585,7 @@ impl Slot {
         Ok(Snapshot { generation })
     }
 
+    #[tracing::instrument(name = "guest.snapshot.finalize", skip_all)]
     async fn finish_snapshot(&self, generation: u64) -> anyhow::Result<()> {
         let memory = self.config.snapshot_dir(generation).join("memory.bin");
         #[cfg(not(test))]

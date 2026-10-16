@@ -27,7 +27,7 @@ const testDatabase = (sql: PgClient.PgClient) =>
 const hash = 'a'.repeat(64)
 
 const receiptMaterial = {
-  schemaVersion: 'bayn.forward-performance-receipt.v3' as const,
+  schemaVersion: 'bayn.forward-performance-receipt.v4' as const,
   bindings: {
     runtime: {
       sourceRevision: 'b'.repeat(40),
@@ -51,6 +51,7 @@ const receiptMaterial = {
   totals: {
     startingCapitalMicros: null,
     realizedGainsMicros: null,
+    cashSettlementRoundingMicros: null,
     realizedLossesMicros: null,
     brokerExecutionFeesMicros: null,
     otherChargedCostsMicros: null,
@@ -103,6 +104,19 @@ const envelopeMaterial = {
 }
 
 const envelope = { ...envelopeMaterial, contentHash: canonicalHashV1(envelopeMaterial) }
+
+test('financial receipt hard cutover rejects rehashed v3 receipts and absent cash settlement totals', () => {
+  const { cashSettlementRoundingMicros: _rounding, ...withoutRounding } = receiptMaterial.totals
+  for (const material of [
+    { ...receiptMaterial, schemaVersion: 'bayn.forward-performance-receipt.v3' },
+    { ...receiptMaterial, totals: withoutRounding },
+  ]) {
+    const oldReceipt = { ...material, receiptHash: canonicalHashV1(material) }
+    const oldEnvelope = { ...envelopeMaterial, receipt: oldReceipt, receiptHash: oldReceipt.receiptHash }
+    const incoming = { ...oldEnvelope, contentHash: canonicalHashV1(oldEnvelope) }
+    expect(Result.isFailure(decodeForwardPerformanceReceiptEnvelopeResult(incoming))).toBe(true)
+  }
+})
 
 const fencedPersistenceHarness = () => {
   const events: string[] = []
@@ -301,6 +315,7 @@ describe('forward-performance receipt persistence contract', () => {
       {
         ledgerTotals: {
           realizedGainMicros: '100',
+          cashSettlementRoundingMicros: '0',
           realizedLossMicros: '0',
           brokerExecutionFeesMicros: '20',
           otherChargedCostsMicros: null,

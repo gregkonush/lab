@@ -152,10 +152,13 @@ and Neovim configuration are preserved. The profile exports the fixed Homebrew p
 a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured.
 
 The managed editor lives on the fast guest root at `/opt/tengri/editor`: SHA-256-pinned Neovim 0.12.5,
-Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, and nine baseline parsers.
+Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, Blink's native completion library, and nine baseline parsers.
 The image build installs and verifies these dependencies; opening a fresh editor downloads nothing.
+The build verifies Blink's release checksum and packages its library without downloader state, following
+Blink's [manual-install contract](https://cmp.saghen.dev/configuration/fuzzy).
 The generated manifest points Lazy directly to these local plugin directories. Automatic plugin updates,
-missing-plugin installation, and parser downloads are disabled for the managed baseline. Explicit `:TSInstall`
+missing-plugin installation, completion-library downloads, and parser downloads are disabled for the managed baseline. The offline
+image test loads completion and requires its bundled Rust implementation. Explicit `:TSInstall`
 and user-added plugins can still use persistent user storage. Run `nvim` and `:AstroVersion` to inspect the editor.
 
 Existing user shell profiles and edited Neovim configuration are preserved. On an image update, bootstrap replaces
@@ -283,3 +286,11 @@ the retained home and require free space there.
 Desktop replay replaces tool-result image payloads with `[Image output]` before enforcing its byte limit. The tool's
 identity, completion status, text, and structured result remain available; Codex receives the full original image.
 See [browser architecture and research](../../docs/tengri/browser.md).
+
+
+Nanoagent exports OTLP request spans and sanitized GlitchTip errors when the host supplies telemetry configuration
+through the private boot file. It preserves W3C trace parents and reports gRPC failures as well as HTTP 5xx responses.
+The HTTP wrapper preserves flushing and WebSocket upgrades. Errors retain their class, stack and trace ID; request
+content, credentials, user context and variable values are removed. See
+[Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the collector allowlist and deployment
+verification. A new guest root is required to install this SDK; an existing snapshot retains its original process.

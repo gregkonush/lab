@@ -193,6 +193,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                 Effect.succeed({
                   totals: {
                     realizedGainMicros: '0',
+                    cashSettlementRoundingMicros: '0',
                     realizedLossMicros: '0',
                     brokerExecutionFeesMicros: '8262',
                     otherChargedCostsMicros: null,

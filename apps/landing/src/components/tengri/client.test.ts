@@ -1,9 +1,11 @@
-import { afterAll, beforeEach, afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeEach, afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { createHash } from 'node:crypto'
+import * as Sentry from '@sentry/browser'
 
 import {
   beginTengriLifecycleTransition,
   getTengriGuestOperationSnapshot,
+  getDesktopSnapshot,
   runTengriAction,
   subscribeTengriGuestOperations,
   TengriRequestError,
@@ -61,6 +63,29 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
+test('reports rejected snapshot and action fetches without reporting caller cancellation', async () => {
+  const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
+  const failure = new TypeError('PRIVATE_SENTINEL transport failed')
+  globalThis.fetch = Object.assign(
+    async () => {
+      throw failure
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  try {
+    await expect(getDesktopSnapshot()).rejects.toBe(failure)
+    await expect(runTengriAction({ action: 'list-files', agentId: 'network-fixture', path: '/' })).rejects.toBe(failure)
+    expect(capture).toHaveBeenCalledTimes(2)
+    expect(String(capture.mock.calls)).not.toContain('PRIVATE_SENTINEL')
+    const controller = new AbortController()
+    controller.abort()
+    await expect(getDesktopSnapshot(controller.signal)).rejects.toBe(failure)
+    expect(capture).toHaveBeenCalledTimes(2)
+  } finally {
+    capture.mockRestore()
+  }
+})
+
 test('preserves HTTP status and recognized conversation errors without trusting other payload shapes', async () => {
   for (const [status, body, message, code] of [
     [
@@ -97,6 +122,44 @@ test('preserves HTTP status and recognized conversation errors without trusting 
     }).catch((cause: unknown) => cause)
     expect(error).toBeInstanceOf(TengriRequestError)
     expect(error).toMatchObject({ status, message, code })
+  }
+})
+
+test('reports a failed history record from an HTTP 200 stream with its response trace', async () => {
+  let tags: Record<string, unknown> = {}
+  const capture = spyOn(Sentry, 'captureException').mockImplementation(() => {
+    tags = Sentry.getCurrentScope().getScopeData().tags
+    return 'fixture-event'
+  })
+  const traceId = 'd'.repeat(32)
+  globalThis.fetch = Object.assign(
+    async () =>
+      new Response(
+        [
+          {
+            type: 'page',
+            part: 'thread',
+            eventSequence: 1,
+            rawJson: JSON.stringify({ thread: { id: 'history-fixture', historyMode: 'paginated', turns: [] } }),
+          },
+          { type: 'error', status: 504, error: 'History source unavailable' },
+        ]
+          .map((record) => JSON.stringify(record) + '\n')
+          .join(''),
+        {
+          headers: { 'Content-Type': 'application/x-ndjson', 'x-trace-id': traceId },
+        },
+      ),
+    { preconnect: originalFetch.preconnect },
+  )
+  try {
+    await expect(
+      runTengriAction({ action: 'resume-thread', agentId: 'history-errors', threadId: 'history-fixture' }),
+    ).rejects.toMatchObject({ status: 504 })
+    expect(capture).toHaveBeenCalledTimes(1)
+    expect(tags).toMatchObject({ trace_id: traceId, status: 504 })
+  } finally {
+    capture.mockRestore()
   }
 })
 

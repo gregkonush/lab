@@ -87,8 +87,10 @@ export const AccountCode = {
   equity: 310,
   realizedGain: 410,
   cashYieldIncome: 420,
+  cashRoundingIncome: 430,
   feeExpense: 510,
   realizedLoss: 520,
+  cashRoundingExpense: 530,
 } as const
 
 export const TransferCode = {
@@ -99,6 +101,8 @@ export const TransferCode = {
   realizedLoss: 5,
   fee: 6,
   cashYield: 7,
+  cashRoundingIncome: 8,
+  cashRoundingExpense: 9,
 } as const
 
 export interface LedgerInput {

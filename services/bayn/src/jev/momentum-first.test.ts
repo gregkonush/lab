@@ -125,10 +125,10 @@ describe('momentum-first Jev admission', () => {
     expect(Result.getOrThrow(decideJevEntry(evidence(f, () => action))).selectedSymbols).toEqual([])
   })
 
-  test('preserves the 0.65 acceptance boundary and fixed weight', () => {
+  test('honors chosen enter actions below the retired floor and preserves the fixed weight', () => {
     const f = fixture()
-    expect(Result.getOrThrow(decideJevEntry(evidence(f, () => 'enter', 0.649))).selectedSymbols).toEqual([])
-    const decision = Result.getOrThrow(decideJevEntry(evidence(f, () => 'enter', 0.65)))
+    expect(Result.getOrThrow(decideJevEntry(evidence(f, () => 'enter', 0.649))).selectedSymbols).toEqual(['AAPL'])
+    const decision = Result.getOrThrow(decideJevEntry(evidence(f, () => 'enter', 0.42)))
     expect(decision.selectedSymbols).toEqual(['AAPL'])
     expect(decision.targetWeights['AAPL']).toBe(0.2)
     expect(jevEntryQuoteMaximumAgeMs(decision, f.at, 10_000)).toBe(10_000)

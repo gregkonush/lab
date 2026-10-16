@@ -507,6 +507,45 @@ export const brokerFeeLedgerPlan = (
   }
 }
 
+export const cashSettlementLedgerPlan = (
+  accountId: string,
+  settlementId: string,
+  roundingDeltaMicros: string,
+  ledger: number,
+): LedgerPlan => {
+  const net = BigInt(roundingDeltaMicros)
+  const eventId = `cash-settlement:${settlementId}`
+  const leg: AccountingLeg =
+    net >= 0n
+      ? {
+          leg: 'cash-rounding-income',
+          debitName: 'cash',
+          debitCode: AccountCode.cash,
+          creditName: 'cash-rounding-income',
+          creditCode: AccountCode.cashRoundingIncome,
+          amount: net,
+          code: TransferCode.cashRoundingIncome,
+        }
+      : {
+          leg: 'cash-rounding-expense',
+          debitName: 'cash-rounding-expense',
+          debitCode: AccountCode.cashRoundingExpense,
+          creditName: 'cash',
+          creditCode: AccountCode.cash,
+          amount: -net,
+          code: TransferCode.cashRoundingExpense,
+        }
+  const legs = net === 0n ? [] : [leg]
+  return {
+    runKey: stableU128('bayn-paper-account-v1', accountId),
+    runTag: stableU64('bayn-paper-account-v1', accountId),
+    accounts: uniqueAccountSpecs(legs)
+      .map((spec) => makeAccount(accountId, ledger, spec))
+      .toSorted((a, b) => (a.id < b.id ? -1 : 1)),
+    transfers: legs.map((value) => makeTransfer(eventId, eventId, accountId, ledger, value)),
+  }
+}
+
 export const coinFeeLedgerPlan = (
   accountId: string,
   activityId: string,

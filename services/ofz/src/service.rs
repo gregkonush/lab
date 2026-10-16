@@ -123,7 +123,7 @@ impl Service {
             entered.notify_one();
             resume.notified().await;
         }
-        let valid_until = (before.now_ms + 2000).min(context.deadline_unix_ms);
+        let valid_until = decision::decision_deadline(context.deadline_unix_ms, &before)?;
         if before.version != after.version
             || before.recovery_generation != after.recovery_generation
             || after.now_ms >= valid_until
@@ -172,13 +172,26 @@ impl Service {
         receipt.revision = revision.clone();
         receipt.recovery_generation = after.recovery_generation;
         let audit_receipt_id = self.database.audit(&receipt, target).await?;
+        let recheck = self.database.state().await?;
+        let window = decision::decision_deadline(context.deadline_unix_ms, &recheck);
+        let revalidated = match &window {
+            Ok(_) => decision::workload(&self.native, peer, Action::WorkspaceEnroll).await,
+            Err(error) => Err(error.clone()),
+        };
         let (current, finished) = self.runtime_authority(&uid).await?;
-        if current != authority
+        let validity = window.and_then(|deadline| decision::decision_deadline(deadline, &finished));
+        if revalidated.is_err()
+            || validity.is_err()
+            || current != authority
+            || recheck.version != after.version
+            || recheck.recovery_generation != after.recovery_generation
+            || recheck.fenced != after.fenced
+            || recheck.archive_healthy != after.archive_healthy
             || finished.version != after.version
             || finished.recovery_generation != after.recovery_generation
             || finished.fenced != after.fenced
             || finished.archive_healthy != after.archive_healthy
-            || finished.now_ms >= valid_until
+            || finished.now_ms >= context.deadline_unix_ms
         {
             let mut denial = store::receipt(
                 &context,
@@ -189,17 +202,29 @@ impl Service {
                 "",
                 "runtime authority changed before disclosure",
             );
-            denial.revision = revision;
+            denial.revision = match &revalidated {
+                Ok(revision) => revision.clone(),
+                Err(_) => revision,
+            };
             denial.recovery_generation = finished.recovery_generation;
-            self.database.audit(&denial, target).await?;
-            return Err(Status::aborted(
-                "runtime authority changed before disclosure",
-            ));
+            let receipt = self.database.audit(&denial, target).await?;
+            let mut error = revalidated
+                .err()
+                .or_else(|| validity.err())
+                .unwrap_or_else(|| Status::aborted("runtime authority changed before disclosure"));
+            error.metadata_mut().insert(
+                "x-ofz-audit-receipt",
+                receipt
+                    .parse()
+                    .map_err(|_| Status::internal("invalid audit ID"))?,
+            );
+            return Err(error);
         }
         let runtime_epoch = current
             .runtime_epoch
             .map(|id| id.to_string())
             .unwrap_or_default();
+        let valid_until = validity?;
         let runtime_allowed = (maintenance.is_none() || context.runtime_epoch == runtime_epoch)
             && current.running
             && current.state == "active"
