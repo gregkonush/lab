@@ -86,16 +86,16 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "c9148b8aa29b17c0f940700df39e497d1f9415ec8756e86a561b098a11490f33"
+              value: "319d240bb07d47e8b71f53e37c4d28d62af998f95463ca53c4118fc3563f747b"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "3415063fdf85aa4dc66af288042d52a41a180a33b1f812d3963e8b8e7244ce6d"
+              value: "dfd468be43dda84ccbc3e74d5ca6cb454ed0619dec913785feadf7b952ab3e0a"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b"
+              value: "6596666c7b54d462a630d8ffaf71577b303d8c0b5b0ffe11556c37a9eac7a226"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
-              value: "3374cc844630d2aa17ecff44abe77c8194fa549a06819b71a537fa37508e6a93"
+              value: "3e3748bb0c9f614a82b03076a57cefd51711524639d400f6559d5a8ee954e75d"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
