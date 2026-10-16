@@ -1721,5 +1721,8 @@ quote, trade and feature checks still govern every order.
 Migration 113 retires the prior executable model and requires flat settled inventory, terminal orders and fresh
 exact reconciliation before the v7 cutover. It preserves operator restrictions and clamps prior PAPER authority to
 OBSERVE. Publish and promote the new source, verify OBSERVE recovery, then bind a new same-account PAPER mandate.
+Migration 114 replaces the IOC-only completion predicate with the shared strict DAY/IOC proof and renames the
+partial-fill helper without retaining its old name. Verify both migrations before PAPER activation, including
+databases that have already recorded migration 113.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
