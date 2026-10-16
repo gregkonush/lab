@@ -256,7 +256,6 @@ weakening application policy. To test an existing production build, set `TENGRI_
 The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
 an existing installation cache without reusing a test workspace.
 
-
 Tengri error reporting uses the existing private GlitchTip service, with a bounded same-origin browser error tunnel.
 Next instrumentation initializes manual OTLP request tracing and error-only Sentry SDK reporting. Public runtime
 configuration contains only the ingest DSN and immutable release. See the

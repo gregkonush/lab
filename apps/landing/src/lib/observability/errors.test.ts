@@ -82,6 +82,7 @@ describe('bounded browser error ingestion', () => {
       mock(async (input: RequestInfo | URL, options?: RequestInit) => {
         expect(input).toBe('http://glitchtip-web.glitchtip.svc.cluster.local/api/4/envelope/')
         expect(options?.redirect).toBe('error')
+        expect(new Headers(options?.headers).get('x-sentry-auth')).toBe(`Sentry sentry_version=7, sentry_key=${key}`)
         forwarded = String(options?.body)
         return new Response(null, { status: 202 })
       }),

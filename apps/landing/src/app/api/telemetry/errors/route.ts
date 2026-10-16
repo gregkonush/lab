@@ -102,7 +102,10 @@ export async function POST(request: Request) {
     const body = `${JSON.stringify({ ...header, dsn: dsn.toString() })}\n${JSON.stringify({ type: 'event' })}\n${JSON.stringify(sanitized)}\n`
     const response = await fetch(`${dsn.origin}/api${dsn.pathname}/envelope/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-sentry-envelope' },
+      headers: {
+        'Content-Type': 'application/x-sentry-envelope',
+        'X-Sentry-Auth': `Sentry sentry_version=7, sentry_key=${dsn.username}`,
+      },
       body,
       signal: AbortSignal.timeout(3_000),
       redirect: 'error',
