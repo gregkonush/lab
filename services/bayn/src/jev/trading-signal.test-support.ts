@@ -17,6 +17,12 @@ export const tradingSignalInferenceFixture = (input: unknown, at: string) => {
       },
       continuation: { type: 'noul', noul: 0.8 },
       exhaustion: { type: 'noul', noul: 0.2 },
+      net_economics: {
+        type: 'choice',
+        choice: 'supported',
+        confidence: 0.8,
+        probabilities: { supported: 0.8, not_supported: 0.1, uncertain: 0.1 },
+      },
       setup_quality: {
         type: 'score',
         score: 3,
