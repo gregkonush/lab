@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
 import type { Statement } from 'effect/sql/Statement'
 
 import {
@@ -208,7 +208,8 @@ const positionEvent = (
   marketValueMicros: string,
 ): PositionEventInput => {
   const position = {
-    schemaVersion: 'bayn.paper-position.v1' as const,
+    schemaVersion: 'bayn.position.v2' as const,
+    costBasisMicros: ((BigInt(quantityAtoms) * BigInt('100000000')) / 1_000_000_000n).toString(),
     accountId,
     symbol,
     quantityAtoms,
@@ -792,7 +793,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     })
   }
 
-  test('persists exact broker cost basis beside legacy position history', async () => {
+  test('persists exact broker cost basis and rejects new cost-less position writes', async () => {
     const sourceHash = hash('position-cost-basis-v2')
     const legacy = positionEvent(sourceHash, 'NVDA', '3000000000', '303000000')
     const position = {
@@ -813,6 +814,19 @@ describePostgres('PostgreSQL execution persistence', () => {
         FROM positions p JOIN broker_events e ON e.event_id = p.event_id
         WHERE p.snapshot_id = ${receipt.snapshotId}
       `
+        for (const schema of ['bayn.paper-position.v1', 'bayn.position.v2']) {
+          const rejected = yield* sql`
+            INSERT INTO positions (event_id, account_id, schema_version, symbol, quantity_atoms,
+              average_entry_price_micros, market_price_micros, market_value_micros,
+              unrealized_pnl_micros, snapshot_id, cost_basis_micros)
+            SELECT ${hash(schema)}, account_id, ${schema}, symbol, quantity_atoms,
+              average_entry_price_micros, market_price_micros, market_value_micros,
+              unrealized_pnl_micros, snapshot_id, NULL
+            FROM positions WHERE snapshot_id = ${receipt.snapshotId}
+          `.pipe(Effect.exit)
+          expect(Exit.isFailure(rejected)).toBe(true)
+          if (Exit.isFailure(rejected)) expect(Cause.pretty(rejected.cause)).toContain('positions_schema_version_check')
+        }
         return { receipt, replay, rows }
       }),
     )

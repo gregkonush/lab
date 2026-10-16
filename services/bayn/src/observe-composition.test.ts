@@ -856,6 +856,40 @@ test.each([19_999, 20_000, 29_999])('pricing reserves quote headroom when cached
   )
 })
 
+test.each([20_000, 25_000, 29_999])(
+  'pricing reuses broker-valid facts %sms into the reconciliation cadence',
+  async (ageMs) => {
+    let refreshes = 0
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const now = Date.parse(evaluatedAt)
+        yield* TestClock.setTime(now)
+        const initial = reconciliationResultAt(utcInstantFromEpochMillis(now - ageMs))
+        if (initial.riskContext.authority === null) throw new Error('fixture authority missing')
+        const cache = yield* reconciliationForPreparation(
+          initial,
+          Effect.gen(function* () {
+            refreshes += 1
+            yield* TestClock.adjust(9_642)
+            return reconciliationResultAt(yield* currentUtcInstant)
+          }),
+          Effect.succeed(initial.riskContext.authority),
+          30_000,
+          300_000,
+        )
+        const priced = yield* cache.readForPricing(10_000)
+        expect(priced.reconciliation).toBe(initial)
+        expect(priced.freshUntil).toBe(now - ageMs + 300_000)
+        expect(yield* Clock.currentTimeMillis).toBe(now)
+        expect(refreshes).toBe(0)
+        yield* TestClock.adjust(30_000 - ageMs)
+        yield* cache.read
+        expect(refreshes).toBe(1)
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+  },
+)
+
 test.each([
   'old-observations',
   'commit-latency',
@@ -2444,7 +2478,8 @@ describe('OBSERVE runtime composition', () => {
   test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
     const observedAt = '2026-07-28T13:45:00.000Z'
     const existing: Position = {
-      schemaVersion: 'bayn.paper-position.v1',
+      schemaVersion: 'bayn.position.v2',
+      costBasisMicros: '10000000000',
       accountId,
       symbol: 'AAPL',
       quantityAtoms: '100000000000',
@@ -3523,7 +3558,8 @@ describe('OBSERVE runtime composition', () => {
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.submissionCutoffAt) + 1_000)
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const position: Position = {
-      schemaVersion: 'bayn.paper-position.v1',
+      schemaVersion: 'bayn.position.v2',
+      costBasisMicros: '100000000',
       accountId,
       symbol: fixture.intent.symbol,
       quantityAtoms: '1000000000',
@@ -3806,7 +3842,8 @@ describe('OBSERVE runtime composition', () => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.boundCycle.window.executionCloseAt) - 239_000)
     const position: Position = {
-      schemaVersion: 'bayn.paper-position.v1',
+      schemaVersion: 'bayn.position.v2',
+      costBasisMicros: '3400000000',
       accountId,
       symbol: 'IWM',
       quantityAtoms: '34000000000',
@@ -3958,7 +3995,8 @@ describe('OBSERVE runtime composition', () => {
           const reconciliationAt = (observedAt: string) =>
             reconciliationResultAt(observedAt, 0, 0, [
               {
-                schemaVersion: 'bayn.paper-position.v1',
+                schemaVersion: 'bayn.position.v2',
+                costBasisMicros: '100000000',
                 accountId,
                 symbol: 'IWM',
                 quantityAtoms: '1000000000',
@@ -4161,7 +4199,8 @@ describe('OBSERVE runtime composition', () => {
       { ...fixture.document, submissionCutoffAt: closeExpiresAt, expiresAt: closeExpiresAt },
       [
         {
-          schemaVersion: 'bayn.paper-position.v1',
+          schemaVersion: 'bayn.position.v2',
+          costBasisMicros: '100000000',
           accountId,
           symbol: fixture.intent.symbol,
           quantityAtoms: '1000000000',
@@ -4188,7 +4227,8 @@ describe('OBSERVE runtime composition', () => {
     const closeSubmitCutoffAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 30_000)
     const closeExpiresAt = utcInstantFromEpochMillis(Date.parse(observedAt) + 60_000)
     const positions = ['AMD', fixture.intent.symbol].map((symbol) => ({
-      schemaVersion: 'bayn.paper-position.v1' as const,
+      schemaVersion: 'bayn.position.v2' as const,
+      costBasisMicros: '100000000',
       accountId,
       symbol,
       quantityAtoms: '1000000000',
@@ -4622,7 +4662,7 @@ describe('OBSERVE runtime composition', () => {
     let refreshes = 0
     let refreshed: ReconciliationPassResult | undefined
     const initial = reconciliationResultAt(
-      utcInstantFromEpochMillis(Date.parse(evaluatedAt) - (options.initialAgeMs ?? 25_000)),
+      utcInstantFromEpochMillis(Date.parse(evaluatedAt) - (options.initialAgeMs ?? 30_000)),
     )
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
@@ -4692,8 +4732,7 @@ describe('OBSERVE runtime composition', () => {
         )
         // Intent preparation must reuse the new cut instead of paying for another reconciliation after pricing.
         yield* TestClock.adjust(2_000)
-        if (refreshed === undefined) throw new Error('entry fixture must refresh before pricing')
-        expect(yield* cache.read).toBe(refreshed)
+        expect(yield* cache.read).toBe(refreshed ?? initial)
         return document
       }).pipe(
         (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
@@ -4724,6 +4763,22 @@ describe('OBSERVE runtime composition', () => {
     expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe('2020-05-01T16:45:13.000Z')
   })
 
+  test('Jev binds timely inference without an unnecessary slow reconciliation refresh', async () => {
+    const result = await buildEntryWithHeadroom({
+      initialAgeMs: 22_000,
+      inferenceMs: 3_000,
+      refreshMs: 9_642,
+      brokerMaximumAgeMs: 300_000,
+    })
+    if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
+    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+    expect(result.refreshes).toBe(0)
+    const decision = result.exit.value.strategyDecision
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v1') throw new Error('expected Jev entry')
+    expect(decision.selectedSymbols).toEqual(['NVDA'])
+    expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
+  })
+
   test.each([
     { name: 'refresh exhausts the existing model deadline', inferenceMs: 7_000, refreshMs: 3_000 },
     {
@@ -4746,7 +4801,12 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('Jev rechecks cached headroom at the pricing clock before selecting a quote', async () => {
-    const result = await buildEntryWithHeadroom({ initialAgeMs: 19_999, inferenceMs: 0, pricingReadDelayMs: 1 })
+    const result = await buildEntryWithHeadroom({
+      initialAgeMs: 19_999,
+      inferenceMs: 0,
+      pricingReadDelayMs: 1,
+      brokerMaximumAgeMs: 30_000,
+    })
     expect(Exit.isFailure(result.exit)).toBe(true)
     if (Exit.isSuccess(result.exit)) throw new Error('exhausted cached headroom must not produce a bindable decision')
     expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
@@ -4765,7 +4825,8 @@ describe('OBSERVE runtime composition', () => {
           if (change === 'holding')
             return reconciliationResultAt(facts.brokerState.account.observedAt, 0, 0, [
               {
-                schemaVersion: 'bayn.paper-position.v1',
+                schemaVersion: 'bayn.position.v2',
+                costBasisMicros: '10000000',
                 accountId,
                 symbol: 'NVDA',
                 quantityAtoms: '1000000000',
@@ -4925,7 +4986,8 @@ describe('OBSERVE runtime composition', () => {
   test.each(['AMD', 'TSLA'])('rejects a fresh Jev entry while a reconciled %s holding exists', async (symbol) => {
     const fixture = await executionLifecycleFixture()
     const position: Position = {
-      schemaVersion: 'bayn.paper-position.v1',
+      schemaVersion: 'bayn.position.v2',
+      costBasisMicros: '10000000',
       accountId,
       symbol,
       quantityAtoms: '1000000000',
@@ -4968,7 +5030,8 @@ describe('OBSERVE runtime composition', () => {
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.boundCycle.window.submissionCutoffAt) + 1000)
     const position: Position = {
-      schemaVersion: 'bayn.paper-position.v1',
+      schemaVersion: 'bayn.position.v2',
+      costBasisMicros: '10000000',
       accountId,
       symbol: fixture.intent.symbol,
       quantityAtoms: '1000000000',

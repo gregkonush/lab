@@ -98,7 +98,6 @@ export const JevPortfolioSchema = Base.check(
       held.length !== 1 ||
       position === undefined ||
       BigInt(position.quantityAtoms) <= 0n ||
-      position.schemaVersion !== 'bayn.position.v2' ||
       BigInt(position.costBasisMicros) <= 0n
     ) {
       issues.push({

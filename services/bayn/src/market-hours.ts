@@ -142,3 +142,14 @@ export const observationSession = (hours: MarketHours, date: string): MarketCale
   isContinuousMarket(hours)
     ? { date, openAt: `${date}T00:00:00.000Z`, closeAt: new Date(Date.parse(date) + 86_400_000).toISOString() }
     : hours.sessions.find((session) => session.date === date)
+
+export const executionCloseRecoveryExpiry = (calendar: MarketHours, observedAt: string): string | null => {
+  const now = Date.parse(observedAt)
+  if (!Number.isSafeInteger(now)) return null
+  const deadline = now + continuousExecutionPolicy.closeRecoveryMs
+  if (isContinuousMarket(calendar)) return new Date(deadline).toISOString()
+  const session = calendar.providerSessions.find(
+    (entry) => entry.sessionOpenAt <= observedAt && observedAt < entry.sessionCloseAt,
+  )
+  return session === undefined ? null : new Date(Math.min(deadline, Date.parse(session.sessionCloseAt))).toISOString()
+}
