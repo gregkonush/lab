@@ -145,9 +145,11 @@ archive-gated activation, deletion/retention denial, uncertain uploads, out-of-o
 crash/restart readback at the unchanged endpoint. This isolated fixture does not establish the deployed NUC TLS route,
 Kubernetes exporter adoption, independent database/home backups or a completed restore.
 
-Controller runtime reads compare workspace authority and global policy/fence state from one SQL snapshot immediately
-before disclosure. Restrictive intent can quarantine a workspace before native policy finalization advances the global
-version; an in-flight read must abort if that workspace authority changes, even when the policy version stays the same.
+Controller runtime reads repeat native workload authorization after the audit, then compare workspace authority and
+global policy/fence state from one SQL snapshot before disclosure. Their final two-second window starts before the
+native recheck, and the response uses its revision. Restrictive intent can quarantine a workspace before native policy
+finalization advances the global version; an in-flight read must abort if that workspace authority changes, even when
+the policy version stays the same.
 
 Initial audited calls may wait up to five seconds for durable commit. Ofz rechecks authority after that commit before
 issuing a decision valid for at most two seconds on both the API and database clocks, still capped by the request
@@ -186,7 +188,7 @@ A native Viewer relationship cannot authorize content without its committed SQL 
 scope clears content access in the durable intent transaction, before native finalization advances the policy version.
 The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
 stream-receipt lookup; changed authority returns a denial and records it. The real control fixture reproduces both
-pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 180 immutable
+pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 184 immutable
 receipts afterward. The audit-timing cases also verify that a slow commit cannot return an expired permit or extend
 the original request deadline.
 

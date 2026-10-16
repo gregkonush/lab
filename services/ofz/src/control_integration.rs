@@ -948,6 +948,97 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
             .await
             .unwrap();
     }
+    client.batch_execute("CREATE FUNCTION ofz.fixture_delay_workload_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$;").await.unwrap();
+    for maintenance in [false, true] {
+        acknowledge_fixture_archive(&fixture.admin).await;
+        let mut context = controller_request(
+            &fixture.database,
+            &fixture.identities[0],
+            Command::ReserveWorkspace(ReserveWorkspace::default()),
+        )
+        .await
+        .context
+        .unwrap();
+        context.workspace_uid = uid.to_string();
+        context.runtime_epoch = epoch.to_string();
+        context.deadline_unix_ms = fixture.database.state().await.unwrap().now_ms + 5000;
+        let trace = context.trace_id.clone();
+        client.batch_execute(&format!(
+            "CREATE TRIGGER fixture_delay_workload_audit AFTER INSERT ON ofz.audit FOR EACH ROW WHEN (NEW.receipt->>'trace_id'='{trace}') EXECUTE FUNCTION ofz.fixture_delay_workload_audit();"
+        )).await.unwrap();
+        let service = fixture.service.clone();
+        let workspace_uid = uid.to_string();
+        let in_flight = tokio::spawn(async move {
+            if maintenance {
+                service
+                    .authorize_guest_maintenance(rpc_as(
+                        AuthorizeGuestMaintenanceRequest {
+                            context: Some(context),
+                            workspace_uid,
+                            purpose: GuestMaintenancePurpose::Probe as i32,
+                            terminal_id: String::new(),
+                        },
+                        CONTROLLER_ID,
+                    ))
+                    .await
+                    .map(|_| ())
+            } else {
+                service
+                    .get_workspace_state(rpc_as(
+                        GetWorkspaceStateRequest {
+                            context: Some(context),
+                            workspace_uid,
+                        },
+                        CONTROLLER_ID,
+                    ))
+                    .await
+                    .map(|_| ())
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let writing: bool = client.query_one(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE usename='ofz_api' AND wait_event='PgSleep' AND query LIKE 'INSERT INTO ofz.audit%')", &[],
+                ).await.unwrap().get(0);
+                if writing { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.expect("runtime read must be committing its audit before workload revocation");
+        let relationship = Relationship::new(
+            "platform",
+            "lab",
+            "controller",
+            "workload",
+            &policy::workload_object_id(CONTROLLER_ID),
+        );
+        fixture
+            .native
+            .write_fixture_relationships(&[Update::delete(relationship.clone())])
+            .await
+            .unwrap();
+        let outcome = in_flight.await.unwrap();
+        fixture
+            .native
+            .write_fixture_relationships(&[Update::touch(relationship)])
+            .await
+            .unwrap();
+        client
+            .batch_execute("DROP TRIGGER fixture_delay_workload_audit ON ofz.audit;")
+            .await
+            .unwrap();
+        assert_eq!(outcome.unwrap_err().code(), Code::PermissionDenied);
+        let receipt: AuditReceipt = store::decode(client.query_one(
+            "SELECT receipt FROM ofz.audit WHERE receipt->>'trace_id'=$1 ORDER BY sequence DESC LIMIT 1", &[&trace],
+        ).await.unwrap().get(0)).unwrap();
+        assert!(
+            !receipt.allowed,
+            "revoked workload requires a terminal denial receipt"
+        );
+    }
+    client
+        .batch_execute("DROP FUNCTION ofz.fixture_delay_workload_audit();")
+        .await
+        .unwrap();
     client
         .execute("DELETE FROM ofz.workspaces WHERE uid=$1", &[&uid])
         .await
