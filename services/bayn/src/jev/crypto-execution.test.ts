@@ -1,3 +1,4 @@
+import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { CycleState } from '../cycle/model'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
@@ -24,11 +25,7 @@ import {
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { accountTradingDate } from '../time'
 import { IsoDateSchema } from '../schemas'
-import {
-  adverseQuotePrices,
-  executionMarketDataBinding,
-  maximumBuyQuantities,
-} from '../observe-composition/intraday-market-data'
+import { adverseQuotePrices, executionMarketDataBinding } from '../observe-composition/intraday-market-data'
 import { buildExecutionDecision } from '../shadow-decision'
 import { decodeExecutionDecisionDocument } from '../shadow-decision-contract'
 import {
@@ -42,6 +39,10 @@ import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot, nativeJevBatchResult } from './native.test-support'
 import { makeJevObservation } from './observation'
 import { jevBehaviorHash } from './protocol'
+import {
+  constrainExecutionTargetAllocationCapitalMicros,
+  executionMandateAllocationCapitalMicros,
+} from '../execution/mandate'
 import { makeJevTradingSignalBatch } from './trading-signals'
 import { JevBatchPlanVersion } from './batch'
 import { decideJevEntry, jevPlanningTargetWeights } from './decision'
@@ -104,7 +105,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     )
     const decidedAt = new Date(Date.parse(observedAt) + 100).toISOString()
     const compiledDecision = Result.getOrThrow(
-      decideJevEntry({ observation, batchPlan, batchResult: nativeJevBatchResult(batchPlan, decidedAt), decidedAt }),
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => 'enter', 0.42),
+        decidedAt,
+      }),
     )
     const source = Result.getOrThrow(executionMarketDataBinding(snapshot))
     const { candidateSymbols: _candidates, candidateEvidencePolicy: _evidencePolicy, ...pricingQuery } = query
@@ -119,6 +125,30 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const market = Result.getOrThrow(executionMarketDataBinding(pricingSnapshot))
     const pricingRows = Result.getOrThrow(persistIntradayRecordRows(pricingSnapshot))
     const prices = Result.getOrThrow(adverseQuotePrices(pricingSnapshot, [symbol]))
+    const targetWeights = jevPlanningTargetWeights(compiledDecision)
+    const allocationCapitalMicros = Result.getOrThrow(
+      executionMandateAllocationCapitalMicros({
+        accountEquityMicros: BigInt(broker.account.equityMicros),
+        dailyTradedNotionalMicros: 0n,
+        maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
+        maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
+        maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+        maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
+        targetWeights,
+        positions: broker.positions,
+        referencePriceMicros: prices.askPriceMicros,
+      }).pipe(
+        Result.flatMap((capitalMicros) =>
+          constrainExecutionTargetAllocationCapitalMicros({
+            allocationCapitalMicros: capitalMicros,
+            maxOrderNotionalMicros: BigInt(policy.maxOrderNotionalMicros),
+            maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
+            maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
+            targetWeights,
+          }),
+        ),
+      ),
+    )
     const reference = {
       schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
       signalDate: snapshot.manifest.sessionDate,
@@ -141,7 +171,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       referencePrices: { ...reference, contentHash: canonicalHashV1(reference) },
       brokerState: broker,
       precision: protocol.executionModel.precision,
-      allocationCapitalMicros: '20000000000',
+      allocationCapitalMicros: allocationCapitalMicros.toString(),
       executionTerms: {
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
@@ -149,9 +179,14 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         snapshotId: market.snapshotId,
         snapshotContentHash: market.contentHash,
         maximumBuyQuantityAtoms: Result.getOrThrow(
-          maximumBuyQuantities(pricingSnapshot, jevPlanningTargetWeights(compiledDecision)),
+          maximumAllocatedBuyQuantities({
+            askPriceMicros: prices.askPriceMicros,
+            targetWeights: jevPlanningTargetWeights(compiledDecision),
+            capitalMicros: broker.account.equityMicros,
+            precision: protocol.executionModel.precision,
+          }),
         ),
-        maximumSellQuantityAtoms: { [symbol]: '31234567' },
+        maximumSellQuantityAtoms: { [symbol]: '0' },
       },
       maximumInputAgeMs: 10_000,
       submissionCutoffAt: cycle.window.submissionCutoffAt,
@@ -161,7 +196,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     expect(targetPlan).toMatchObject({ status: TargetPlanStatus.Planned })
     expect(targetPlan.intentTargets).toHaveLength(1)
     // A native coin fee can leave a quantity that is not a multiple of a micro-unit.
-    const heldQuantity = '31234566'
+    const entryQuantity = BigInt(targetPlan.intentTargets[0]?.quantityAtoms ?? '0')
+    const heldQuantity = (entryQuantity - (entryQuantity * 25n + 9999n) / 10000n).toString()
     expect(protocol.executionModel.precision.quantityIncrementAtoms).toBe('1')
     const closeMaterial = {
       ...broker,
@@ -171,11 +207,11 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
           accountId: broker.account.accountId,
           symbol,
           quantityAtoms: heldQuantity,
-          averageEntryPriceMicros: '100000000',
-          costBasisMicros: '3123457',
+          averageEntryPriceMicros: '103123457',
+          costBasisMicros: ((BigInt(heldQuantity) * 103123457n) / 1_000_000_000n).toString(),
           marketPriceMicros: '103123457',
-          marketValueMicros: '3221044',
-          unrealizedPnlMicros: '97587',
+          marketValueMicros: ((BigInt(heldQuantity) * 103123457n) / 1_000_000_000n).toString(),
+          unrealizedPnlMicros: '0',
           observedAt,
         },
       ],
@@ -187,6 +223,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         ...plannerInput,
         allocationCapitalMicros: '0',
         targetWeights: { [symbol]: 0 },
+        executionTerms: { ...plannerInput.executionTerms, maximumSellQuantityAtoms: { [symbol]: heldQuantity } },
         brokerState: {
           ...closeMaterial,
           reconciliation: { ...broker.reconciliation, expectedHash: closeHash, observedHash: closeHash },
@@ -292,8 +329,17 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     expect(document.targetPlan.intentTargets[0]).toMatchObject({
       symbol,
       side: OrderSide.Buy,
-      quantityAtoms: '31234567',
     })
+    const entryNotional =
+      (BigInt(document.targetPlan.intentTargets[0]?.quantityAtoms ?? '0') *
+        BigInt(prices.askPriceMicros[symbol] ?? '0')) /
+      1_000_000_000n
+    const targetNotional = BigInt(broker.account.equityMicros) / 5n
+    expect(entryNotional).toBeGreaterThanOrEqual((targetNotional * 999n) / 1000n)
+    expect(entryNotional).toBeLessThanOrEqual(targetNotional)
+    expect(document.deltaRisk[0]?.evaluation.metrics.orderNotionalMicros).not.toBe(
+      document.deltaRisk[0]?.notionalLimitMicros,
+    )
     expect(document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
 

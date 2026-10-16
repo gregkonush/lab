@@ -91,6 +91,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
 
 FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
 
+ARG SOURCE_REVISION=development
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
+
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \
     rm -rf /var/lib/apt/lists/* && \

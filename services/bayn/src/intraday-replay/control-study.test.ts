@@ -75,6 +75,7 @@ const simulate = (
       const marketClock = yield* TestClock.make()
       let clock = openMs - 1
       let snapshots = 0
+      let providerCalls = 0
       const observations: { atMs: number; rangeEndMs: number }[] = []
       const market: ControlMarket = {
         advanceTo: (atMs) =>
@@ -193,6 +194,7 @@ const simulate = (
                 provider: {
                   evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
                     Effect.gen(function* () {
+                      providerCalls += 1
                       yield* providerClock.adjust(options.managedLatencyMs ?? 0)
                       return nativeJevInference(
                         input,
@@ -244,7 +246,7 @@ const simulate = (
         management: options.nativeEntry === true ? null : management,
         ...(options.nativeEntry === true && management !== null ? { entry: management } : {}),
       }).pipe(Effect.provideService(Clock.Clock, marketClock))
-      return { report, snapshots, observations }
+      return { report, snapshots, observations, providerCalls }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
@@ -291,8 +293,9 @@ test('incomplete expired native entry evidence cannot submit orders', async () =
   const expired = await simulate({
     nativeEntry: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
-    sessionDurationMs: 37 * 60_000,
+    sessionDurationMs: 7 * 60_000,
   })
+  expect(expired.providerCalls).toBeGreaterThan(0)
   expect(expired.report.orders).toEqual([])
   expect(expired.report.completion).toBe('INCOMPLETE')
   expect(expired.report.missingDecisions).toBeGreaterThan(0)
@@ -775,7 +778,7 @@ const frozenControlFixture = () => {
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v4',
+        inputDefinition: 'bayn.jev-trading-signal-state.v5',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',

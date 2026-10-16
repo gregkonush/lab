@@ -286,7 +286,8 @@ export const prepareObservedCashFees = (sql: PgClient.PgClient, snapshot: Broker
         yield* sql`
     SELECT (${openingCash.cash_micros}::numeric
       +COALESCE((SELECT sum(cash_delta_micros) FROM accounting_transactions WHERE account_id=${accountId}),0)
-      +COALESCE((SELECT sum(cash_delta_micros) FROM broker_cash_fee_deltas WHERE account_id=${accountId}),0))::text AS cash
+      +COALESCE((SELECT sum(cash_delta_micros) FROM broker_cash_fee_deltas WHERE account_id=${accountId}),0)
+      +COALESCE((SELECT sum(rounding_delta_micros) FROM broker_cash_settlements WHERE account_id=${accountId}),0))::text AS cash
   `,
       ),
     )

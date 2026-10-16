@@ -321,7 +321,10 @@ pub(super) async fn stage_root_disk(
             "podUid": identity.pod_uid, "token": token,
             "initializeHome": initialize_home,
             "verificationKey": STANDARD.encode(verification_key.public_key()),
-            "recoveryGeneration": recovery_generation
+            "recoveryGeneration": recovery_generation,
+            "errorDsn": env::var("NANOAGENT_SENTRY_DSN").unwrap_or_default(),
+            "traceEndpoint": env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT").unwrap_or_default(),
+            "sourceRevision": env::var("APP_SOURCE_REVISION").unwrap_or_else(|_| "development".into())
         }))?,
     )
     .await?;

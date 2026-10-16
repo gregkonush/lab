@@ -1,5 +1,5 @@
 import { exchangeSessions } from '../market-hours'
-import { jevBenchmarkSymbol } from './markets'
+import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
 import { missingMinuteBars } from '../market-data/streaming/inputs'
@@ -28,14 +28,12 @@ import type { JevProtocol } from './protocol'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
-export const jevEntryQuoteExclusion = (
-  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
-  maximumSpreadBps: number,
-) =>
+export const jevEntryQuoteExclusion = (quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>) =>
   Result.gen(function* () {
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    if ((ask - bid) * 20_000n > BigInt(maximumSpreadBps) * (ask + bid)) return JevEntryExclusion.Spread
+    if ((ask - bid) * 20_000n > BigInt(jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps) * (ask + bid))
+      return JevEntryExclusion.Spread
     if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
     return null
   })
@@ -200,7 +198,7 @@ const commonMomentumPrices = (
   })
 
 /** Candidate and benchmark returns use the same actual observed reference minute. */
-export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
+export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot) =>
   Result.gen(function* () {
     const signals = []
     for (const symbol of snapshot.manifest.candidateSymbols ?? []) {
@@ -217,7 +215,7 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, pro
       const quote = snapshot.latestQuotes[symbol]
       if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
       if (
-        (yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)) === null &&
+        (yield* jevEntryQuoteExclusion(quote)) === null &&
         common.candidate.bid + common.candidate.ask > 2n * common.candidate.reference &&
         excessReturn.numerator > 0n
       )
@@ -363,6 +361,14 @@ const requestFromSnapshot = (
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
         position,
+        execution: {
+          orderType: 'LIMIT',
+          timeInForce: 'IOC',
+          sizingPolicy: native.protocol.entrySizingPolicy,
+          maximumEntrySpreadBps: jevMarketForSymbol(symbol).maximumEntrySpreadBps,
+          estimatedFeeBpsPerSide: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          estimatedRoundTripFeesBps: 2 * jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+        },
         units: {
           prices: 'USD per unit',
           volume: continuous ? 'base asset units on Alpaca crypto US' : 'shares on the IEX feed',
@@ -453,7 +459,7 @@ const batchFromObservation = (
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
     const momentumCandidates =
       observation.portfolio.purpose === JevPurpose.Entry
-        ? new Set((yield* jevMomentumEntryCandidates(snapshot, observation.protocol)).map(({ symbol }) => symbol))
+        ? new Set((yield* jevMomentumEntryCandidates(snapshot)).map(({ symbol }) => symbol))
         : null
     const candidates = []
     for (const symbol of manifest.candidateSymbols) {
@@ -478,7 +484,7 @@ const batchFromObservation = (
       if (observation.portfolio.purpose === JevPurpose.Entry) {
         const quote = snapshot.latestQuotes[symbol]
         if (quote !== undefined) {
-          const entryExclusion = yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)
+          const entryExclusion = yield* jevEntryQuoteExclusion(quote)
           if (entryExclusion !== null) {
             candidates.push({
               symbol,

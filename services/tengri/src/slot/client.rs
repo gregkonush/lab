@@ -71,6 +71,7 @@ impl SlotClient {
         let response = self
             .http
             .get(format!("{}/slot/status", self.url))
+            .headers(crate::telemetry::headers())
             .send()
             .await?;
         self.decode(response).await
@@ -83,6 +84,7 @@ impl SlotClient {
             .post(format!("{}/slot/fence", self.url))
             .timeout(Duration::from_secs(2))
             .json(&fence)
+            .headers(crate::telemetry::headers())
             .send()
             .await?;
         ensure!(
@@ -200,6 +202,7 @@ impl SlotClient {
                 fence.generation.to_string(),
             )
             .json(claim)
+            .headers(crate::telemetry::headers())
             .send()
             .await?;
         let status = self.decode(response).await?;
