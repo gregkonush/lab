@@ -1,3 +1,4 @@
+import costSupportedEntry from '../../migrations/0116_cost_supported_entry'
 import requiredPositionCost from '../../migrations/0115_required_position_cost'
 import limitOrderCompletion from '../../migrations/0114_limit_order_completion'
 import extendedEquityHours from '../../migrations/0113_extended_equity_hours'
@@ -117,6 +118,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '116_cost_supported_entry': costSupportedEntry,
   '115_required_position_cost': requiredPositionCost,
   '114_limit_order_completion': limitOrderCompletion,
   '113_extended_equity_hours': extendedEquityHours,

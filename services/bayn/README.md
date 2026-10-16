@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v7` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v8` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -23,6 +23,19 @@ Current positions require explicit broker cost basis. Migration 115 rejects new 
 retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
 its rounded average price only when both reported price and basis reproduce from the exact native fill cost and
 unchanged quantity. Cash, fills, ledger transfers and unrelated basis differences keep their exact checks.
+
+Entry inference uses an explicit transaction-cost break-even exit bid computed for the capital-weighted target,
+including the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
+coin-denominated buy fees and the existing rounded transaction-fee schedule. Selection requires both an `enter`
+action and a `supported` net-economics assessment; adverse or uncertain economics abstain. The model assessment
+remains uncalibrated. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
+above the inference-bound ceiling is rejected before decision construction and again at the durable boundary.
+
+Protocol v8 and trading-signal input v7 replace their executable predecessors. Migration 116 requires flat,
+settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
+new Jev authority generations to v8. Historical generation rows remain immutable audit evidence. Rebind the
+existing PAPER mandate to a verified v8 image through its sealed GitOps path after cutover; source success alone
+does not establish profitability or actual broker fills.
 
 Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
 net liquidation P&L and the break-even bid. Estimated exit costs remain estimates; delayed final broker fee matching

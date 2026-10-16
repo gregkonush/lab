@@ -20,7 +20,7 @@ fails an entry gate, the batch makes zero model calls and produces zero targets.
 unknown source candidates remains unusable.
 
 Jev receives only admitted signals. It retains the existing `enter`/`wait`/`avoid` question. A valid chosen `enter`
-action is eligible without an additional probability floor. `wait` and `avoid` never authorize entry. Among chosen
+action is eligible only with a `supported` net-economics assessment, without an additional probability floor. `wait` and `avoid` never authorize entry. Among chosen
 enter actions, selection retains descending Jev enter probability, then symbol for ties. The action distribution
 is not a calibrated probability of net profit.
 This is a momentum eligibility gate before Jev, not a new momentum-ranked portfolio. Choosing the highest exact
@@ -31,17 +31,18 @@ unchanged future decisions, timing, orders, fills, or P&L.
 Sizing remains one position and the existing 0.2 gross/symbol target weight, subject to all lower execution/account
 limits. Jev cannot create an ineligible signal or override risk. Management retains the current held-position Jev
 hold/exit evaluation, threshold, 50 bp protective stop, 15-minute maximum hold, and session-close liquidation. Entry
-momentum and spread filters never suppress required management or protective exits. The separate management-horizon
-prompt ambiguity is not changed here.
+momentum and spread filters never suppress required management or protective exits. Management also receives booked entry fees, estimated exit fees and net liquidation P&L. Sunk entry fees
+never justify postponing a protective exit.
 
 ## Bounded runtime and immutable evidence
 
-- The only active protocol is `bayn.jev.protocol.v6`, with `chosen-model-action` entry selection and
-  `capital-weighted-limit-ioc` sizing. Retired protocols and their numeric entry floor are rejected by the runtime
-- The current behavior is `bayn.jev.model-action-cash-spot.behavior.v1`. Protocol, behavior, observation, batch v4,
+- The only active protocol is `bayn.jev.protocol.v8`, with `cost-supported-model-action` entry selection and
+  `capital-weighted-session-limit` sizing. Both an enter action and supported net economics are required. Retired protocols and their numeric entry floor are rejected by the runtime
+- The current behavior is `bayn.jev.cost-supported-cash-spot.behavior.v1`. Protocol, behavior, observation, batch v4,
   cycle and authority identities bind this policy. Retained historical evidence cannot start new active cycles
-- The current trading-signal input remains v5 because the request state and questions have not changed. Entry
-  pricing retains its separate fresh-quote lifetime, with current final spread, displayed-size and risk checks
+- Trading-signal input v7 includes an explicit fee break-even exit bid and a net-economics question. Entry
+  pricing retains its fresh-quote lifetime and must stay within the inference-bound price ceiling, in addition to
+  final spread, displayed-size and risk checks. Migration 116 requires flat settled inventory before this cutover
 - Keep one durable observation per completed signal minute/purpose/cycle, the existing minute-plus-two-second window,
   pending-batch recovery, ten-second original deadline, at most fifteen eligible concurrent requests, and no queued
   historical catch-up. Every requested result must finish validly before selection. No top-K cutoff is introduced
@@ -49,7 +50,7 @@ prompt ambiguity is not changed here.
   polling intervals, add model retries or add quote subscriptions. The paired sandbox mandate activates the separately
   approved $1,000,000 daily turnover limit; all other limits remain unchanged
 
-The exposed workload projection retained 132 of 300 entry requests; 127 belonged to usable batches. These are
+The historical protocol-v6 workload projection retained 132 of 300 entry requests; 127 belonged to usable batches. These are
 same-state workload counts, not a causal forecast of saved money or activity. Smaller batches can change execution
 latency and later portfolio state. Count every attempted, rejected, failed and late call in evaluation costs.
 
