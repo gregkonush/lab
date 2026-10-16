@@ -295,3 +295,8 @@ The HTTP wrapper preserves flushing and WebSocket upgrades. Errors retain their 
 content, credentials, user context and variable values are removed. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the collector allowlist and deployment
 verification. A new guest root is required to install this SDK; an existing snapshot retains its original process.
+The root lifecycle helper and unprivileged API export separate `tengri.component` values. Lifecycle spans join the
+host control trace and time clock synchronization, claim updates, filesystem freeze/thaw, API readiness, workspace
+access and the terminal round trip. Slow or failed lifecycle phases also record their duration in structured logs.
+Readiness failures remain failed spans without creating routine GlitchTip incidents. Platform collector settings are
+excluded from user subprocess environments.
