@@ -779,6 +779,7 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
                 fixture.database.state().await.unwrap().now_ms + request_budget;
             let deadline = context.deadline_unix_ms;
             let trace = context.trace_id.clone();
+            let mut renewal_context = context.clone();
             client.batch_execute(&format!(
                 "CREATE TRIGGER fixture_delay_audit AFTER INSERT ON ofz.audit FOR EACH ROW WHEN (NEW.receipt->>'trace_id'='{trace}') EXECUTE FUNCTION ofz.fixture_delay_audit();"
             )).await.unwrap();
@@ -798,6 +799,7 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
                             response.allowed,
                             response.valid_until_unix_ms,
                             response.audit_receipt_id,
+                            Some(response.revision),
                         )
                     }),
                 Read::Runtime => fixture
@@ -816,6 +818,7 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
                             response.owner_id == fixture.identities[0].0,
                             response.valid_until_unix_ms,
                             response.audit_receipt_id,
+                            None,
                         )
                     }),
             };
@@ -830,8 +833,42 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
                     "audit must not extend the caller's deadline"
                 );
             } else {
-                let (allowed, valid_until, receipt) = outcome.unwrap();
+                let (allowed, valid_until, receipt, revision) = outcome.unwrap();
                 assert!(allowed && !receipt.is_empty());
+                if let Some(revision) = revision {
+                    let audit: AuditReceipt = store::decode(
+                        client
+                            .query_one(
+                                "SELECT receipt FROM ofz.audit WHERE id=$1",
+                                &[&Uuid::parse_str(&receipt).unwrap()],
+                            )
+                            .await
+                            .unwrap()
+                            .get(0),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        revision, audit.revision,
+                        "an allowed response must identify its durable audited revision"
+                    );
+                    renewal_context.deadline_unix_ms =
+                        fixture.database.state().await.unwrap().now_ms + 2000;
+                    let renewed = fixture
+                        .service
+                        .check(rpc(CheckRequest {
+                            context: Some(renewal_context),
+                            resource: Some(policy::workspace(&workspace.uid)),
+                            action: Action::WorkspaceMetadataRead as i32,
+                            stream_receipt_id: receipt.clone(),
+                            ..Default::default()
+                        }))
+                        .await
+                        .unwrap()
+                        .into_inner();
+                    assert!(renewed.allowed);
+                    assert_eq!(renewed.audit_receipt_id, receipt);
+                    assert_eq!(renewed.revision, audit.revision);
+                }
                 assert!(
                     valid_until > finished.now_ms && valid_until <= finished.now_ms + 2000,
                     "audit consumed the authorization window: {valid_until} <= {}",
@@ -845,6 +882,42 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
         .batch_execute("DROP FUNCTION ofz.fixture_delay_audit();")
         .await
         .unwrap();
+    let mut context = request(
+        &fixture.database,
+        &fixture.identities[0],
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = workspace.uid.clone();
+    let resource = policy::workspace(&workspace.uid);
+    let legacy = store::receipt(
+        &context,
+        BFF_ID,
+        resource.clone(),
+        Action::WorkspaceMetadataRead,
+        true,
+        "",
+        "legacy revision fixture",
+    );
+    assert!(legacy.revision.is_empty());
+    let legacy = fixture.database.audit(&legacy, "").await.unwrap();
+    assert_eq!(
+        fixture
+            .service
+            .check(rpc(CheckRequest {
+                context: Some(context),
+                resource: Some(resource),
+                action: Action::WorkspaceMetadataRead as i32,
+                stream_receipt_id: legacy,
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
     let api = fixture.database.pool.get().await.unwrap();
     assert_eq!(
         api.query_one("SHOW statement_timeout", &[])
@@ -949,7 +1022,18 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
             .unwrap();
     }
     client.batch_execute("CREATE FUNCTION ofz.fixture_delay_workload_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$;").await.unwrap();
-    for maintenance in [false, true] {
+    enum NativeChange {
+        RuntimeRevocation,
+        MaintenanceRevocation,
+        UnrelatedWrite,
+    }
+    for change in [
+        NativeChange::RuntimeRevocation,
+        NativeChange::MaintenanceRevocation,
+        NativeChange::UnrelatedWrite,
+    ] {
+        let maintenance = !matches!(change, NativeChange::RuntimeRevocation);
+        let revoke = !matches!(change, NativeChange::UnrelatedWrite);
         acknowledge_fixture_archive(&fixture.admin).await;
         let mut context = controller_request(
             &fixture.database,
@@ -981,7 +1065,13 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
                         CONTROLLER_ID,
                     ))
                     .await
-                    .map(|_| ())
+                    .and_then(|response| {
+                        response
+                            .into_inner()
+                            .decision
+                            .ok_or_else(|| tonic::Status::internal("maintenance decision missing"))
+                    })
+                    .map(Some)
             } else {
                 service
                     .get_workspace_state(rpc_as(
@@ -992,7 +1082,7 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
                         CONTROLLER_ID,
                     ))
                     .await
-                    .map(|_| ())
+                    .map(|_| None)
             }
         });
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -1004,36 +1094,64 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         }).await.expect("runtime read must be committing its audit before workload revocation");
-        let relationship = Relationship::new(
-            "platform",
-            "lab",
-            "controller",
-            "workload",
-            &policy::workload_object_id(CONTROLLER_ID),
-        );
+        let relationship = if revoke {
+            Relationship::new(
+                "platform",
+                "lab",
+                "controller",
+                "workload",
+                &policy::workload_object_id(CONTROLLER_ID),
+            )
+        } else {
+            Relationship::new(
+                "platform",
+                "lab",
+                "auditor",
+                "human",
+                &fixture.identities[2].0,
+            )
+        };
         fixture
             .native
-            .write_fixture_relationships(&[Update::delete(relationship.clone())])
+            .write_fixture_relationships(&[if revoke {
+                Update::delete(relationship.clone())
+            } else {
+                Update::touch(relationship.clone())
+            }])
             .await
             .unwrap();
         let outcome = in_flight.await.unwrap();
         fixture
             .native
-            .write_fixture_relationships(&[Update::touch(relationship)])
+            .write_fixture_relationships(&[if revoke {
+                Update::touch(relationship)
+            } else {
+                Update::delete(relationship)
+            }])
             .await
             .unwrap();
         client
             .batch_execute("DROP TRIGGER fixture_delay_workload_audit ON ofz.audit;")
             .await
             .unwrap();
-        assert_eq!(outcome.unwrap_err().code(), Code::PermissionDenied);
         let receipt: AuditReceipt = store::decode(client.query_one(
             "SELECT receipt FROM ofz.audit WHERE receipt->>'trace_id'=$1 ORDER BY sequence DESC LIMIT 1", &[&trace],
         ).await.unwrap().get(0)).unwrap();
-        assert!(
-            !receipt.allowed,
-            "revoked workload requires a terminal denial receipt"
-        );
+        if revoke {
+            assert_eq!(outcome.unwrap_err().code(), Code::PermissionDenied);
+            assert!(
+                !receipt.allowed,
+                "revoked workload requires a terminal denial receipt"
+            );
+        } else {
+            let decision = outcome.unwrap().unwrap();
+            assert!(decision.allowed && receipt.allowed);
+            assert_eq!(decision.audit_receipt_id, receipt.id);
+            assert_eq!(
+                decision.revision, receipt.revision,
+                "unrelated native writes must not break audit correlation"
+            );
+        }
     }
     client
         .batch_execute("DROP FUNCTION ofz.fixture_delay_workload_audit();")

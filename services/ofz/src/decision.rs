@@ -675,7 +675,7 @@ pub async fn check(
             return Err(error);
         }
     };
-    let audit_receipt_id = if request.stream_receipt_id.is_empty() {
+    let (audit_receipt_id, audited_revision) = if request.stream_receipt_id.is_empty() {
         let mut receipt = store::receipt(
             context,
             peer,
@@ -685,8 +685,8 @@ pub async fn check(
             "",
             "protected access",
         );
-        receipt.revision = revision;
-        database.audit(&receipt, &request.target).await?
+        receipt.revision = revision.clone();
+        (database.audit(&receipt, &request.target).await?, revision)
     } else {
         let id = parse_uuid(&request.stream_receipt_id)?;
         let client = database
@@ -701,7 +701,8 @@ pub async fn check(
         let bound =
             bound.ok_or_else(|| Status::permission_denied("stream receipt binding mismatch"))?;
         let receipt: crate::proto::AuditReceipt = store::decode(bound.get(0))?;
-        if receipt.session_id != context.session_id
+        if receipt.revision.is_empty()
+            || receipt.session_id != context.session_id
             || receipt.grant_id != context.grant_id
             || receipt.workspace_uid != context.workspace_uid
             || receipt.runtime_epoch != context.runtime_epoch
@@ -710,7 +711,7 @@ pub async fn check(
         {
             return Err(Status::permission_denied("stream receipt binding mismatch"));
         }
-        request.stream_receipt_id
+        (request.stream_receipt_id, receipt.revision)
     };
     let finalized = evaluate(
         database,
@@ -725,7 +726,7 @@ pub async fn check(
         false,
     )
     .await;
-    let (_, revision, valid_until, state, effective_scope) = match finalized {
+    let (_, _, valid_until, state, effective_scope) = match finalized {
         Ok(current)
             if current.0 == allowed
                 && current.3.version == state.version
@@ -760,7 +761,7 @@ pub async fn check(
     };
     Ok(CheckResponse {
         allowed,
-        revision,
+        revision: audited_revision,
         audit_receipt_id,
         valid_until_unix_ms: valid_until,
         recovery_generation: state.recovery_generation,

@@ -225,7 +225,6 @@ impl Service {
             .map(|id| id.to_string())
             .unwrap_or_default();
         let valid_until = validity?;
-        let revision = revalidated?;
         let runtime_allowed = (maintenance.is_none() || context.runtime_epoch == runtime_epoch)
             && current.running
             && current.state == "active"

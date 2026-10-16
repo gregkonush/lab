@@ -147,9 +147,9 @@ Kubernetes exporter adoption, independent database/home backups or a completed r
 
 Controller runtime reads repeat native workload authorization after the audit, then compare workspace authority and
 global policy/fence state from one SQL snapshot before disclosure. Their final two-second window starts before the
-native recheck, and the response uses its revision. Restrictive intent can quarantine a workspace before native policy
-finalization advances the global version; an in-flight read must abort if that workspace authority changes, even when
-the policy version stays the same.
+native recheck, and the response identifies the revision in its durable access receipt. Restrictive intent can quarantine
+a workspace before native policy finalization advances the global version; an in-flight read must abort if that workspace
+authority changes, even when the policy version stays the same.
 
 Initial audited calls may wait up to five seconds for durable commit. Ofz rechecks authority after that commit before
 issuing a decision valid for at most two seconds on both the API and database clocks, still capped by the request
@@ -160,6 +160,9 @@ Receipt renewals keep their two-second request budget and recheck current author
 authorizes its child, refreshes the parent through its original receipt, then intersects both decision deadlines.
 Redeemed terminal and preview capabilities regenerate that same request budget. Preview redemption starts the budget
 after its transaction commits; capability expiry and session/runtime bindings remain unchanged.
+Access responses and renewals keep their receipt's audited native revision while rechecking current permission, scope,
+policy version and recovery state. Advancing native read tokens alone do not invalidate unchanged authority. Receipts
+without a recorded native revision cannot renew; callers must open a fresh audited access.
 
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
@@ -190,7 +193,7 @@ A native Viewer relationship cannot authorize content without its committed SQL 
 scope clears content access in the durable intent transaction, before native finalization advances the policy version.
 The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
 stream-receipt lookup; changed authority returns a denial and records it. The real control fixture reproduces both
-pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 184 immutable
+pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 186 immutable
 receipts afterward. The audit-timing cases also verify that a slow commit cannot return an expired permit or extend
 the original request deadline.
 
