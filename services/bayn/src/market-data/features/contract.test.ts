@@ -48,6 +48,39 @@ const rehash = (changed: RollingMarketFeature): RollingMarketFeature => ({
 })
 
 describe('Dorvud rolling feature wire contract', () => {
+  test('accepts only bounded IEX windows contained in one computation segment', () => {
+    const original = feature()
+    for (const [startAt, accepted] of [
+      ['2026-09-11T11:50:00Z', false],
+      ['2026-09-11T12:00:00Z', true],
+      ['2026-09-11T13:00:00Z', true],
+      ['2026-09-11T13:20:00Z', false],
+      ['2026-09-11T13:30:00Z', true],
+      ['2026-09-11T19:30:00Z', true],
+      ['2026-09-11T19:50:00Z', false],
+      ['2026-09-11T20:00:00Z', true],
+      ['2026-09-11T20:50:00Z', false],
+    ] as const) {
+      const shift = Date.parse(startAt) - original.material.windowStartMs
+      const nanos = BigInt(shift) * 1_000_000n
+      const changed = rehash({
+        ...original,
+        computedAtMs: original.computedAtMs + shift,
+        material: {
+          ...original.material,
+          windowStartMs: original.material.windowStartMs + shift,
+          windowEndMs: original.material.windowEndMs + shift,
+          inputs: original.material.inputs.map((input) => ({
+            ...input,
+            eventTimeNanos: String(BigInt(input.eventTimeNanos) + nanos),
+            ingestionTimeNanos: String(BigInt(input.ingestionTimeNanos) + nanos),
+          })),
+        },
+      })
+      expect(Result.isSuccess(decodeRollingMarketFeature(changed))).toBe(accepted)
+    }
+  })
+
   test('decodes the Kotlin-produced fixture with identical definition and content identity', () => {
     const value = feature()
     expect(value.featureId).toBe(canonicalHashV1(value.material))

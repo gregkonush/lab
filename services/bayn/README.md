@@ -1532,6 +1532,12 @@ bun run --filter @proompteng/bayn lint:oxlint
 bun run --filter @proompteng/bayn build
 ```
 
+With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
+`BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
+`bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
+zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
+expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
+
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
 
 The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
@@ -1715,5 +1721,8 @@ quote, trade and feature checks still govern every order.
 Migration 113 retires the prior executable model and requires flat settled inventory, terminal orders and fresh
 exact reconciliation before the v7 cutover. It preserves operator restrictions and clamps prior PAPER authority to
 OBSERVE. Publish and promote the new source, verify OBSERVE recovery, then bind a new same-account PAPER mandate.
+Migration 114 replaces the IOC-only completion predicate with the shared strict DAY/IOC proof and renames the
+partial-fill helper without retaining its old name. Verify both migrations before PAPER activation, including
+databases that have already recorded migration 113.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
