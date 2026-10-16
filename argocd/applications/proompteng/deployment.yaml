@@ -36,7 +36,10 @@ spec:
               topologyKey: kubernetes.io/hostname
       automountServiceAccountToken: false
       containers:
-        - env:
+        - envFrom:
+            - configMapRef:
+                name: proompteng-observability
+          env:
             - name: OFZ_GRPC_ENDPOINT
               value: ofz-api.ofz.svc.cluster.local:9443
             - name: TENGRI_DESKTOP_ORIGIN

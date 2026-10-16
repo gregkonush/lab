@@ -155,10 +155,12 @@ pub fn build_slot_pod(
                 "securityContext": restricted, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "1", "memory": "3Gi"}},
                 "volumeMounts": [{"name": "artifacts", "mountPath": "/artifacts"}]},
             {"name": "tap", "image": runtime_image, "command": ["/usr/local/bin/tengri-network"],
+                "envFrom": [{"configMapRef": {"name": "tengri-observability"}}],
                 "securityContext": network, "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi", "runtime.proompteng.ai/kvm-tun": "1"}}}
         ],
         "containers": [
             {"name": "supervisor", "image": runtime_image, "args": ["slot-supervisor"],
+                "envFrom": [{"configMapRef": {"name": "tengri-observability"}}],
                 "env": [env[0], env[1], env[4], env[5], {"name": "SPIFFE_ENDPOINT_SOCKET", "value": "unix:///spiffe-workload-api/spire-agent.sock"},
                     {"name": "SPIFFE_TRUST_DOMAIN", "value": "proompteng.ai"},
                     {"name": "TENGRI_DATABASE_DSN", "value": "host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_supervisor sslmode=require"},
@@ -175,6 +177,7 @@ pub fn build_slot_pod(
                     {"name": "database-ca", "mountPath": "/var/run/tengri/database-ca", "readOnly": true},
                     {"name": "guest-verification", "mountPath": "/var/run/tengri/guest-verification", "readOnly": true}]},
             {"name": "runner", "image": runtime_image, "args": ["slot-runner"], "env": env,
+                "envFrom": [{"configMapRef": {"name": "tengri-observability"}}],
                 "securityContext": runner,
                 "resources": {"requests": {"cpu": "4", "memory": "9Gi", "ephemeral-storage": "26Gi"},
                     "limits": {"cpu": "4", "memory": "9Gi", "ephemeral-storage": "26Gi", "runtime.proompteng.ai/kvm-tun": "1"}},

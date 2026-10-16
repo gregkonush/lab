@@ -56,6 +56,9 @@ spec:
                   app.kubernetes.io/name: ofz-api
       containers:
         - name: ofz-api
+          envFrom:
+            - configMapRef:
+                name: ofz-observability
           image: registry.ide-newton.ts.net/lab/ofz:unpromoted
           args: [serve]
           ports:

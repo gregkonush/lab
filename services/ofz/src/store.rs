@@ -276,6 +276,7 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.command_connection", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn command_connection(&self) -> Result<CommandConnection, Status> {
         let permit = self
             .command_slots
@@ -314,6 +315,7 @@ impl Database {
         }
     }
 
+    #[tracing::instrument(name = "db.policy.read", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn state(&self) -> Result<State, Status> {
         let client = self
             .pool
@@ -323,6 +325,7 @@ impl Database {
         state(&**client).await
     }
 
+    #[tracing::instrument(name = "db.audit", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn audit(&self, receipt: &AuditReceipt, target: &str) -> Result<String, Status> {
         let mut client = self
             .pool
@@ -342,6 +345,7 @@ impl Database {
     }
 }
 
+#[tracing::instrument(name = "db.record_activity", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn record_activity<C: GenericClient + Sync>(
     client: &C,
     receipt: &AuditReceipt,
@@ -418,6 +422,7 @@ pub(crate) const STATE_QUERY: &str = r#"
         FROM ofz.platform_state p CROSS JOIN ofz.archive_state a
     "#;
 
+#[tracing::instrument(name = "db.state", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status> {
     let row = client
         .query_one(STATE_QUERY, &[])
@@ -432,6 +437,7 @@ pub async fn state<C: GenericClient + Sync>(client: &C) -> Result<State, Status>
     })
 }
 
+#[tracing::instrument(name = "db.record_audit", skip_all, fields(db.system.name = "postgresql"))]
 pub async fn record_audit<C: GenericClient + Sync>(
     client: &C,
     receipt: &AuditReceipt,

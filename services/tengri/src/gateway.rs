@@ -317,6 +317,13 @@ pub fn control_router(state: GatewayState) -> Router {
             get(serve_open_preview_bootstrap_script),
         )
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan),
+        )
 }
 
 pub fn preview_router(state: GatewayState) -> Router {
@@ -328,6 +335,13 @@ pub fn preview_router(state: GatewayState) -> Router {
         .route("/_tengri/editor/open", get(open_editor_bootstrap))
         .fallback(preview_host_proxy)
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan),
+        )
 }
 
 async fn readiness(State(state): State<GatewayState>) -> StatusCode {
@@ -855,7 +869,8 @@ async fn proxy_http(
         .http
         .request(parts.method, target)
         .bearer_auth(guest.token())
-        .headers(proof);
+        .headers(proof)
+        .headers(crate::telemetry::headers());
     for (name, value) in &parts.headers {
         if forward_request_header(name) || (editor_asset && name == header::ACCEPT_ENCODING) {
             if name == header::COOKIE {

@@ -43,7 +43,10 @@ spec:
               topologyKey: kubernetes.io/hostname
       automountServiceAccountToken: true
       containers:
-        - env:
+        - envFrom:
+            - configMapRef:
+                name: tengri-observability
+          env:
             - name: OFZ_GRPC_ENDPOINT
               value: ofz-api.ofz.svc.cluster.local:9443
             - name: TENGRI_INTERNAL_HMAC_KEY_FILE

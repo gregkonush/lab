@@ -2,6 +2,7 @@ import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib
 import { readCodexHistory } from '@/lib/tengri/codex-history'
 import { tengriCreateAgentSchema } from '@/lib/tengri/schemas'
 import { z } from 'zod'
+import { reportBrowserFailure } from '@/lib/observability/client'
 
 export class TengriRequestError extends Error {
   readonly status: number
@@ -247,6 +248,8 @@ function deleteUnusedGuestOperationScope(agentId: string, scope: GuestOperationS
 async function decodeResponse<Result>(response: Response): Promise<Result> {
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
+    if (response.status >= 500)
+      reportBrowserFailure('tengri.request', response.status, response.headers.get('x-trace-id'))
     throw requestFailure(payload, response.status)
   }
   if (!payload) throw new Error('Tengri returned an empty response')

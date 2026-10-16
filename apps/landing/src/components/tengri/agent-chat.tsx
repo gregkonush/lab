@@ -1,5 +1,7 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import {
   Select,
   SelectContent,
@@ -566,7 +568,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       }
     }
     source.onopen = () => setEventStreamState('connected')
-    source.onerror = () => setEventStreamState('reconnecting')
+    source.onerror = () => {
+      reportBrowserFailure('codex.events.reconnect')
+      setEventStreamState('reconnecting')
+    }
     return () => {
       source.close()
       flush()
