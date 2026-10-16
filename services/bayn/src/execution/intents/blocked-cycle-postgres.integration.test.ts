@@ -425,11 +425,17 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
       executionActivationExpiredRestrictionReason,
       legacyExecutionActivationExpiredRestrictionReason,
       capitalSizingCutoverRestrictionReason,
-    ].flatMap((reason) => ['no-cycle', 'unused-preopen-cycle'].map((scenario) => ({ reason, scenario }))),
+    ].flatMap((reason) =>
+      [
+        'no-cycle',
+        'unused-preopen-cycle',
+        ...(reason === capitalSizingCutoverRestrictionReason ? ['expired-unused-cycle'] : []),
+      ].map((scenario) => ({ reason, scenario })),
+    ),
   )(
     'recovers a flat restricted generation through the production coordinator: $scenario / $reason',
     async ({ reason, scenario }) => {
-      const fixture = makeFixture()
+      const fixture = scenario === 'expired-unused-cycle' ? makeExpiredNativeFixture() : makeFixture()
       const generationHash = canonicalHashV1({ generation: 'execution' })
       await runtime.runPromise(
         Effect.gen(function* () {
@@ -438,7 +444,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           const blocked = yield* BlockedCycleIntentStore
           const fence = yield* WriterFence
           yield* seedExecutionAuthority(sql, fixture)
-          if (scenario === 'unused-preopen-cycle') {
+          if (scenario !== 'no-cycle') {
             yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
             yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
           }
@@ -500,7 +506,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             kill: KillState.Clear,
           })
           expect(state.generationHash).not.toBe(generationHash)
-          if (scenario === 'unused-preopen-cycle') {
+          if (scenario !== 'no-cycle') {
             expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId)).state).toBe(CycleState.Blocked)
           }
           expect(yield* recover).toEqual({ _tag: 'NotRequired' })
@@ -512,6 +518,59 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
       )
     },
   )
+
+  test('retains capital-sizing cutover authority when a cycle already has decision evidence', async () => {
+    const fixture = makeFixture(true)
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const cycles = yield* CycleStore
+        yield* seedExecutionAuthority(sql, fixture)
+        yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
+        yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
+        const snapshotId = canonicalHashV1({ snapshot: 'capital-cutover-existing' })
+        const decisionHash = canonicalHashV1({ decision: 'capital-cutover-existing' })
+        const decisionAt = instant(Date.parse(fixture.cycleActivatedAt) + 1000)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id,schema_version,document,created_at)
+  VALUES (${fixture.cycle.identity.cycleId},'bayn.paper-cycle-decision.v1',${sql.json({
+    schemaVersion: 'bayn.paper-cycle-decision.v1',
+    mode: 'PAPER',
+    dispatchable: true,
+    bindings: {
+      cycleId: fixture.cycle.identity.cycleId,
+      authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+    },
+    contentHash: decisionHash,
+    createdAt: decisionAt,
+    orderedIntentIds: [],
+    targetPlan: { status: 'NO_TRADE', intentTargets: [] },
+  })},${decisionAt})`
+            yield* sql`UPDATE autonomous_cycles SET snapshot_id=${snapshotId},decision_hash=${decisionHash},state_version=state_version+1,
+  updated_at=${decisionAt} WHERE cycle_id=${fixture.cycle.identity.cycleId}`
+          }),
+        )
+        yield* sql`UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',
+  reason=${capitalSizingCutoverRestrictionReason},version=version+1,updated_at=${fixture.restrictedAt} WHERE singleton`
+        const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+        const before = yield* authority.readAuthorityState
+        const result = yield* recoverTerminalGenerationToObserve({
+          accountId,
+          blockedIntents: yield* BlockedCycleIntentStore,
+          authorityStore: authority,
+          writerFence: yield* WriterFence,
+          reconcileAfterSettlement: Effect.die('an unsettled cycle cannot reach authority reconciliation'),
+        })
+        expect(result).toEqual({ _tag: 'NotRequired' })
+        expect(yield* authority.readAuthorityState).toEqual(before)
+        expect(Option.getOrThrow(yield* cycles.read(fixture.cycle.identity.cycleId))).toMatchObject({
+          state: CycleState.Active,
+          bindings: { snapshotId, decisionHash },
+        })
+      }).pipe(Effect.provide(WriterFenceLive)),
+    )
+  })
 
   test.each([executionActivationExpiredRestrictionReason, capitalSizingCutoverRestrictionReason])(
     'retains the restriction when fresh recovery reconciliation fails: %s',

@@ -194,7 +194,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       return current
     })
 
-  const terminalizeUnusedPreSubmissionResearchCycles = (
+  const terminalizeUnusedResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
     activatedAt: string,
@@ -268,7 +268,18 @@ const makeObserveAuthorityInterpreterDataFirst = (
         AND cycle.state IN ('PENDING', 'ACTIVE')
         AND cycle.decision_hash IS NULL
         AND cycle.updated_at <= ${activatedAt}
-        AND ${activatedAt} < cycle.submission_open_at
+        AND (
+          ${activatedAt} < cycle.submission_open_at
+          OR (
+            state.reason = ${capitalSizingCutoverRestrictionReason}
+            AND cycle.snapshot_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycle_shadow_decisions AS decision
+              WHERE decision.cycle_id = cycle.cycle_id
+            )
+          )
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM intents AS intent
@@ -300,7 +311,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ${activatedAt}
         )
       `
-      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, request, activatedAt)
+      yield* terminalizeUnusedResearchCycles(decision, request, activatedAt)
       const rotated = yield* sql<Record<string, unknown>>`
         WITH latest_reconciliation AS (
           SELECT

@@ -537,5 +537,7 @@ Neither a wider entry spread nor the removal of the quote-size cap increases the
 limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.
 
 Migration 110 recognizes the capital-sizing cutover restriction in the native terminal-generation recovery path.
+The same path retires bound, unused cycles left by the previous worker even after their admission window expires;
+cycles with snapshot, decision or intent evidence still block cutover recovery.
 The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
 Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.
