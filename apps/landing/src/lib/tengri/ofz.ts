@@ -96,6 +96,8 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
 ): Promise<MessageShape<O>> {
   const connection = await getClient()
   const metadata = new grpc.Metadata()
+  const { injectTrace } = await import('@/lib/observability/server')
+  injectTrace((key, value) => metadata.set(key, value))
   metadata.set('x-ofz-contract-version', '1')
   const request = create(method.input, input)
   const renewal =

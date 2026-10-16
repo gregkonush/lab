@@ -295,7 +295,15 @@ pub(super) async fn serve(
         .route("/slot/sleep", post(sleep))
         .route("/slot/stop", post(stop))
         .fallback(forward)
-        .with_state(supervisor);
+        .with_state(supervisor)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
+        );
     let incoming = crate::identity::tls_incoming(listener, tls);
     tokio::pin!(incoming);
     while let Some(connection) = incoming.next().await {
@@ -575,6 +583,7 @@ async fn forward(
         })?;
     supervisor.require_leadership(Some(leadership)).await?;
     request = forwarded;
+    request.headers_mut().extend(crate::telemetry::headers());
     drop(opening);
     #[cfg(test)]
     eprintln!(

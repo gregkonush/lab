@@ -53,7 +53,7 @@ exact positive own and market-benchmark-relative momentum before Jev, with curre
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
 Entry selection follows the model's chosen `enter` action. There is no additional action-probability floor;
 the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
-`wait` and `avoid` keep zero targets. Protocol v6 rejects v5 and the retired `minimumEntryProbability` field.
+`wait` and `avoid` keep zero targets. Protocol v7 rejects v6 and the retired `minimumEntryProbability` field.
 Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions and
 clamps the prior PAPER authority before native OBSERVE recovery. Activate a newly sealed v6 PAPER mandate
 against its published image. Existing position, turnover, loss, management and submission risk limits remain.
@@ -819,7 +819,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
+The forward-performance command emits `bayn.forward-performance-report.v3`. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
@@ -1155,7 +1155,7 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
+The command emits `bayn.forward-performance-report.v3`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
@@ -1665,7 +1665,23 @@ has been removed; cumulative accounting and ledger verification still accompany 
 
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
 later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
-fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
+fee adjustment. Complete fee-cohort settlement retires it.
+
+Alpaca posts each fill's cash movement at the precision retained with its account snapshot. Migration 112 adds
+append-only `broker_cash_settlements`: each record binds the original fill transaction and accounting receipt to
+that observed precision. Reconciliation prepares the deterministic rounding difference, commits its evidence,
+and posts it through the existing journal before verifying the complete account. Original fills, fees and inventory
+cost remain precise and immutable. Failed posts or acknowledgements resume with the same transfer identities.
+An unexplained cash difference still blocks trading; the settlement calculation accepts no target balance.
+Accounting-state hashes use v4 and bind both the fee reporting residual and every cash settlement. Financial
+receipts use v4 and report `cashSettlementRoundingMicros` separately from gross trade P&L, fees and cash yield;
+net income includes it only for the source transaction's authority generation.
+
+The model-action cutover may migrate an already restricted, flat OBSERVE account while reconciliation is inexact,
+so native recovery can repair its ledger. It preserves that restriction's reason and active kill switch. Only an
+effective PAPER account or recognized predecessor cutover receives `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`; operator
+kills and unknown restrictions never become automatically recoverable. PAPER execution still requires exact
+reconciliation and a fresh protocol-bound capital activation.
 An inexact close reconciliation returns `CLOSE_RECONCILIATION_PENDING` at the regular reconciliation cadence before
 reading archive data or binding a liquidation document; exact evidence resumes the same close path.
 
@@ -1682,3 +1698,22 @@ management observations require `entryInventoryDebit`, verified from posted acco
 Historical observations remain immutable; readers reject records missing this evidence instead of inventing a fee debit.
 The [matched comparison](../../docs/bayn/matched-entry-study.md) retains its five-session, twenty-different-selection,
 original timing, capacity, and complete-cost requirements. Missing evidence cannot qualify Jev.
+
+Equities use Alpaca's full provider calendar intersected with the entitled IEX data interval, 08:00–17:00
+America/New_York. Provider regular and extended bounds remain in the hashed calendar v2 evidence; DST, holidays
+and early closes follow that source. The shared order loop submits stock LIMIT/DAY with `extended_hours=true`
+and crypto LIMIT/IOC with `extended_hours=false`. An acknowledged open order is canceled through the same durable
+mutation coordinator when its original approval or submission window expires. Known partial fills retain their
+original accounting. Whole-share equity liquidation during an archive outage also uses a bounded LIMIT/DAY order.
+
+Dorvud's observed-window and technical definitions v2 isolate the 08:00, 09:30 and 16:00 clock segments. Regular
+indicator math is unchanged, sparse intervals remain missing, and the first completed minute can authorize
+observation without waiting thirty minutes. Extended transport health requires quote delivery while retaining
+per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. Calendar eligibility and candidate
+quote, trade and feature checks still govern every order.
+
+Migration 113 retires the prior executable model and requires flat settled inventory, terminal orders and fresh
+exact reconciliation before the v7 cutover. It preserves operator restrictions and clamps prior PAPER authority to
+OBSERVE. Publish and promote the new source, verify OBSERVE recovery, then bind a new same-account PAPER mandate.
+See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
+current execution limits. This migration grants no live capital authority.

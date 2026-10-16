@@ -34,7 +34,7 @@ export {
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
   ExecutionModelV4Schema,
-  ExecutionModelV5Schema,
+  ExecutionModelV6Schema,
   CycleExecutionModelSchema,
   DailyExecutionModelSchema,
   ExecutionModelSchema,

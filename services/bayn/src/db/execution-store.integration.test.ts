@@ -45,10 +45,12 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
 import { migrationLoader } from './migrations'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import { brokerFeeLedgerPlan } from '../accounting/domain'
 import { hashLedgerPlanResult } from '../ledger-plan'
+import type { LedgerPlan } from '../ledger-plan'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import type { FeeActivity } from '../broker/alpaca'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
@@ -57,6 +59,7 @@ import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca'
 import { verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
+import { postCashSettlements, prepareCashSettlements, readCashSettlements } from './cash-settlements'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -852,6 +855,125 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(journalControl.postCount).toBe(3)
   })
 
+  test.each([
+    { priceMicros: '100004900', rounding: '4900' },
+    { priceMicros: '100005100', rounding: '-4900' },
+  ])(
+    'cash settlement recovers its $rounding posting without rewriting the precise fill',
+    async ({ priceMicros, rounding }) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const events = yield* BrokerEventStore
+          const accounting = yield* FillAccountingStore
+          const base = fillEvent('rounded-crypto-buy', OrderSide.Buy, '1000000000', priceMicros)
+          const fill = { ...base.fill, symbol: 'BTC/USD', feeMicros: '0' }
+          yield* accounting.account({ ...base, fill, contentHash: canonicalHashV1(fill) })
+          const original =
+            yield* sql`SELECT transaction_id,content_hash,cash_delta_micros::text AS cash_delta_micros,ledger_plan_hash
+        FROM accounting_transactions`
+          expect(original[0]?.['cash_delta_micros']).toBe((-BigInt(priceMicros)).toString())
+          const account = flatAccountEvent()
+          const receipt = yield* events.ingest(account)
+          const positions = yield* events.ingestPositions(positionSnapshot(hash('rounded-crypto-flat'), []))
+          const valuation = yield* (yield* ValuationStore).value({
+            accountEventId: receipt.eventId,
+            positionSnapshotId: positions.snapshotId,
+          })
+          const snapshot: BrokerSnapshot = {
+            account: account.account,
+            accountEventId: receipt.eventId,
+            cashReportingQuantumMicros: '10000',
+            positions: [],
+            positionsObservedAt: observedAt,
+            positionSnapshotId: positions.snapshotId,
+            orders: [],
+            ordersObservedAt: observedAt,
+            fills: [fill],
+            fees: [],
+            valuation,
+            reconciledAt: observedAt,
+          }
+          yield* retainAccountCashReporting(sql, snapshot)
+          yield* sql.withTransaction(prepareCashSettlements(sql, snapshot, config.tigerBeetle))
+          yield* sql.withTransaction(prepareCashSettlements(sql, snapshot, config.tigerBeetle))
+          const prepared = yield* readCashSettlements(sql, accountId)
+          expect(prepared).toHaveLength(1)
+          expect(prepared[0]).toMatchObject({ rounding_delta_micros: rounding, posted: false })
+          journalControl.failPosts = true
+          const failed = yield* postCashSettlements(sql, journal(journalControl), accountId, config.tigerBeetle).pipe(
+            Effect.flip,
+          )
+          expect(failed).toMatchObject({ failure: 'ledger', cause: { message: 'injected TigerBeetle failure' } })
+          expect(yield* readCashSettlements(sql, accountId)).toEqual(prepared)
+          journalControl.failPosts = false
+          const completedPlans: LedgerPlan[] = []
+          const controlledJournal = {
+            ...journal(journalControl),
+            post: (plan: LedgerPlan) =>
+              journal(journalControl)
+                .post(plan)
+                .pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      completedPlans.push(plan)
+                    }),
+                  ),
+                ),
+          }
+          const interrupted = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* postCashSettlements(sql, controlledJournal, accountId, config.tigerBeetle)
+                return yield* Effect.fail('database acknowledgement rolled back after ledger posting')
+              }),
+            )
+            .pipe(Effect.result)
+          expect(Result.isFailure(interrupted)).toBe(true)
+          expect(yield* readCashSettlements(sql, accountId)).toEqual(prepared)
+          const recovered = yield* postCashSettlements(sql, controlledJournal, accountId, config.tigerBeetle)
+          const replay = yield* postCashSettlements(sql, controlledJournal, accountId, config.tigerBeetle)
+          expect(replay).toEqual(recovered)
+          expect(recovered.cashDeltaMicros).toBe(rounding)
+          expect(journalControl.postCount).toBe(4)
+          expect(completedPlans).toHaveLength(2)
+          expect(completedPlans[1]).toEqual(completedPlans[0])
+          expect(
+            yield* sql`SELECT transaction_id,content_hash,cash_delta_micros::text AS cash_delta_micros,ledger_plan_hash
+        FROM accounting_transactions`,
+          ).toEqual(original)
+          const immutable = yield* sql
+            .withTransaction(sql`UPDATE broker_cash_settlements SET rounding_delta_micros=1`)
+            .pipe(Effect.result)
+          expect(Result.isFailure(immutable)).toBe(true)
+          const deleted = yield* sql.withTransaction(sql`DELETE FROM broker_cash_settlements`).pipe(Effect.result)
+          expect(Result.isFailure(deleted)).toBe(true)
+          const reposted = yield* sql
+            .withTransaction(sql`UPDATE broker_cash_settlements SET posted_at=clock_timestamp()`)
+            .pipe(Effect.result)
+          expect(Result.isFailure(reposted)).toBe(true)
+        }),
+      )
+    },
+  )
+
+  test('cash settlement keeps a database failure in the query error channel', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const result = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DROP TABLE broker_cash_settlements`
+              yield* readCashSettlements(sql, accountId)
+            }),
+          )
+          .pipe(Effect.flip)
+        expect(result).toMatchObject({ failure: 'query', cause: { _tag: 'SqlError' } })
+      }),
+    )
+  })
+
   test('batches completed broker history while retaining conflicts and incomplete fill recovery', async () => {
     const observedOrder = orderEvent()
     const accountedFill = fillEvent('fill-accounted', OrderSide.Buy, '3000000000', '100000000')
@@ -1103,6 +1225,8 @@ describePostgres('PostgreSQL execution persistence', () => {
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < (overreleased ? 106 : 105)))),
             table: 'schema_migrations',
           }).pipe(Effect.provide(NodeServices.layer))
+          // Keep the historical fee migration under test while satisfying the current cash store contract.
+          yield* sql.withTransaction(cashSettlementMigration)
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>

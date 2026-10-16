@@ -751,7 +751,12 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
             Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
           )
           if (observation._tag === 'StableOpen') {
-            if (drainOpenOrders) {
+            if (
+              drainOpenOrders ||
+              (allowSubmit &&
+                facts.evaluatedAt >=
+                  executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
+            ) {
               return {
                 _tag: 'Execute',
                 action: 'CANCEL',

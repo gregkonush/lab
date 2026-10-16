@@ -1402,13 +1402,15 @@ const executionMaterialIssues = (
     (!isClosePlan ||
       !intradayStrategy ||
       targetExecutionTerms?.orderType !== OrderType.Limit ||
-      targetExecutionTerms.timeInForce !== TimeInForce.ImmediateOrCancel ||
+      !([TimeInForce.Day, TimeInForce.ImmediateOrCancel] as const).some(
+        (duration) => duration === targetExecutionTerms.timeInForce,
+      ) ||
       document.riskPolicy === undefined ||
       document.closeLimitSlippageBps > document.riskPolicy.maxAdverseSlippageBps)
   ) {
     issues.push({
       path: ['closeLimitSlippageBps'],
-      issue: 'close limit allowance must bind a close-only IOC plan within the intraday risk policy',
+      issue: 'close limit allowance must bind a close-only limit plan within the intraday risk policy',
     })
   }
   const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined

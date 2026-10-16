@@ -1,3 +1,4 @@
+import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
 import capitalSizingMigration from '../../migrations/0109_capital_sizing_protocol'
 import modelActionMigration from '../../migrations/0111_model_action_protocol'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -24,6 +25,7 @@ for (const { label, id, protocol, migration } of [
   { label: 'available-history', id: 108, protocol: 'bayn.jev.protocol.v4', migration: availableHistoryMigration },
   { label: 'capital-sizing', id: 109, protocol: 'bayn.jev.protocol.v5', migration: capitalSizingMigration },
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },
+  { label: 'equity-hours', id: 113, protocol: 'bayn.jev.protocol.v7', migration: equityHoursMigration },
 ]) {
   describePostgres(`${label} database cutover`, () => {
     let runtime: ReturnType<typeof makeRuntime>
@@ -102,5 +104,70 @@ for (const { label, id, protocol, migration } of [
         }),
       )
     })
+
+    if (id >= 111) {
+      test.each([
+        { effective: 'PAPER', status: 'DISCREPANCY', reason: null, succeeds: false, changes: false },
+        { effective: 'PAPER', status: 'EXACT', reason: null, succeeds: true, changes: true },
+        {
+          effective: 'OBSERVE',
+          status: 'EXACT',
+          reason: id === 111 ? 'BLOCKED_CAPITAL_SIZING_CUTOVER' : 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+          succeeds: true,
+          changes: true,
+        },
+        ...[
+          `reconciliation discrepancy ${'c'.repeat(64)}`,
+          'operator hold',
+          'unrecognized safety restriction',
+          'reconciliation discrepancy malformed',
+        ].map((reason) => ({ effective: 'OBSERVE', status: 'DISCREPANCY', reason, succeeds: true, changes: false })),
+      ])(
+        'protocol cutover retains non-cutover restrictions: %j',
+        async ({ effective, status, reason, succeeds, changes }) => {
+          await runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              yield* sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`CREATE TEMP TABLE authority_generations (
+                generation_hash text,account_id text,strategy_name text,strategy_parameter_schema_version text,
+                CONSTRAINT authority_generations_strategy_parameter_schema_version_check CHECK(true),
+                CONSTRAINT authority_generations_strategy_contract_check CHECK(true)) ON COMMIT DROP`
+                  yield* sql`CREATE TEMP TABLE authority_state (
+                generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz) ON COMMIT DROP`
+                  yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+                  yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover','jev','bayn.jev.protocol.v5')`
+                  yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${effective},
+                ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},${reason},1,clock_timestamp())`
+                  yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
+                  const result = yield* sql.withTransaction(migration).pipe(Effect.result)
+                  expect(Result.isSuccess(result)).toBe(succeeds)
+                  const [state] =
+                    yield* sql`SELECT maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
+                  expect(state).toEqual(
+                    changes
+                      ? {
+                          maximum: 'PAPER',
+                          effective: 'OBSERVE',
+                          kill_state: 'ACTIVE',
+                          reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+                          version: '2',
+                        }
+                      : {
+                          maximum: 'PAPER',
+                          effective,
+                          kill_state: effective === 'PAPER' ? 'CLEAR' : 'ACTIVE',
+                          reason,
+                          version: '1',
+                        },
+                  )
+                }),
+              )
+            }),
+          )
+        },
+      )
+    }
   })
 }

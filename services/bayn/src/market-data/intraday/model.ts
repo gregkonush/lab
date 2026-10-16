@@ -83,7 +83,7 @@ export interface IntradayRecordIdentity {
   readonly universeId: string
   readonly universeSymbolHash: string
   readonly feed: IntradayFeed
-  readonly marketSession: 'regular' | 'continuous'
+  readonly marketSession: 'pre' | 'regular' | 'post' | 'continuous'
   readonly nativePayload?: string
   readonly delayClass: IntradayDelayClass
   readonly symbol: string

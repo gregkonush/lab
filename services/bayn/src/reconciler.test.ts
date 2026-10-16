@@ -636,7 +636,7 @@ describe('execution reconciliation loop', () => {
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'normalization',
-      message: `execution requires extended hours disabled for ${malformedOrder.brokerOrderId}`,
+      message: `extended hours require a stock LIMIT with DAY or GTC for ${malformedOrder.brokerOrderId}`,
       failure: {
         _tag: 'Normalization',
         stage: 'order',

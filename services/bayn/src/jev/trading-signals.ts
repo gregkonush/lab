@@ -363,7 +363,8 @@ const requestFromSnapshot = (
         position,
         execution: {
           orderType: 'LIMIT',
-          timeInForce: 'IOC',
+          timeInForce: continuous ? 'IOC' : 'DAY',
+          extendedHours: !continuous,
           sizingPolicy: native.protocol.entrySizingPolicy,
           maximumEntrySpreadBps: jevMarketForSymbol(symbol).maximumEntrySpreadBps,
           estimatedFeeBpsPerSide: jevMarketForSymbol(symbol).estimatedTakerFeeBps,

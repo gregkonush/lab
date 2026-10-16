@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Result } from 'effect'
@@ -24,8 +25,8 @@ if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
   throw new Error('calendar decision fixture requires the full-session execution policy')
 }
 
-const observation: MarketCalendarObservation = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+const observation: MarketCalendarObservation = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
   source: 'alpaca-v2-calendar',
   requestedRange: { start: '2026-11-27', end: '2026-11-30' },
   timeZone: 'UTC',
@@ -42,7 +43,7 @@ const observation: MarketCalendarObservation = {
     },
   ],
   normalizedResponseHash: '1'.repeat(64),
-}
+})
 
 describe('intraday calendar decisions', () => {
   test.each([

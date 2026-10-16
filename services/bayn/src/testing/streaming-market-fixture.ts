@@ -57,10 +57,13 @@ const assertEquityFixture: (snapshot: StreamingVerifiedMarketSnapshot) => assert
 const rawPricingRequest: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
   sessionDate: '2026-09-04',
   calendar: Result.getOrThrow(
-    normalizeMarketCalendarResult([{ date: '2026-09-04', open: '09:30', close: '16:00' }], {
-      start: '2026-09-04',
-      end: '2026-09-04',
-    }),
+    normalizeMarketCalendarResult(
+      [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
+      {
+        start: '2026-09-04',
+        end: '2026-09-04',
+      },
+    ),
   ),
   rangeStartAt: '2026-09-04T14:29:00.000Z',
   rangeEndAt: '2026-09-04T14:30:00.000Z',
@@ -148,7 +151,7 @@ export const streamingFixtureFromRaw = (
       universeSymbolHash: equityMarketProfile.universeSymbolHash,
       symbol,
       sessionDate: request.sessionDate,
-      sessionPolicy: MarketFeatureSessionPolicy.RegularNewYork,
+      sessionPolicy: MarketFeatureSessionPolicy.IexClockSegments,
       windowStartMs: Date.parse(request.rangeStartAt),
       windowEndMs: Date.parse(request.rangeEndAt),
       inputs: bars.map((bar) => ({
