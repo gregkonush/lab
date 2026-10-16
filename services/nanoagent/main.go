@@ -50,6 +50,7 @@ func main() {
 		return
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	if len(os.Args) == 2 && os.Args[1] == "guest-init" {
 		if err := runGuestInit(logger); err != nil {
 			logger.Error("guest init stopped", "error", err)
@@ -64,7 +65,7 @@ func main() {
 }
 
 func run(logger *slog.Logger) (runErr error) {
-	closeTelemetry, err := initializeTelemetry()
+	closeTelemetry, err := initializeTelemetry("api")
 	if err != nil {
 		return fmt.Errorf("configure telemetry: %w", err)
 	}

@@ -432,6 +432,9 @@ The browser, BFF, Tengri host, Ofz, and Nanoagent have separate GlitchTip projec
 Ofz, controller, supervisor and guest request boundaries; HTTP failures return `x-trace-id`. Request spans and SQL
 pool, leadership, replay, policy-read and audit spans contain operation names and timings. Trace resource
 `service.version` and GlitchTip release identify the source revision baked into the image.
+Private lifecycle commands propagate W3C `traceparent` to the root guest helper. Host spans separate vsock connection,
+command send and reply wait; joined guest spans separate clock synchronization, filesystem thaw, API and terminal
+readiness. The existing clock-transfer and readiness limits remain enforced.
 
 RPC span names come from the compiled protobuf descriptors. Unknown request paths and dynamic Rust tracing fields
 are excluded from export. Trace attributes retain only operation names, database system, standard HTTP methods,
