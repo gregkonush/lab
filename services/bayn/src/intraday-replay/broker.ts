@@ -51,7 +51,7 @@ import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
-import type { ExecutionModelV5Schema } from '../execution-model-contract'
+import type { ExecutionModelV6Schema } from '../execution-model-contract'
 import type { ReplayQuoteProtocol } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { simulateIntradayReplayExecution, type IntradayReplayIocCoreOutcome } from './execution-core'
@@ -82,7 +82,7 @@ export interface ReplayBrokerConfig {
   /** Commit terminal broker state before publishing it to readers or returning a response. */
   readonly retainSettlement?: (checkpoint: ReplayBrokerCheckpoint) => Effect.Effect<void, ReplayBrokerFailure>
   readonly openingCashMicros: string
-  readonly protocol: ReplayQuoteProtocol & { readonly executionModel: typeof ExecutionModelV5Schema.Type }
+  readonly protocol: ReplayQuoteProtocol & { readonly executionModel: typeof ExecutionModelV6Schema.Type }
   readonly assumptions: IntradayReplayIocAssumptions & { readonly latencyMs: number; readonly feeMultiplierPpm: number }
   readonly fractionalTrading: boolean
   readonly assets: readonly AssetObservation[]
@@ -656,11 +656,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             request.side === OrderSide.Sell
           if (
             !marketClose &&
-            (request.type !== OrderType.Limit || request.time_in_force !== TimeInForce.ImmediateOrCancel)
+            (request.type !== OrderType.Limit ||
+              request.time_in_force !==
+                (instrumentMarket(intent.symbol) === MarketKind.Crypto
+                  ? TimeInForce.ImmediateOrCancel
+                  : TimeInForce.Day))
           )
             return yield* mutationFailure(
               MutationOperation.Submit,
-              'Replay requires LIMIT/IOC or a close-only market sell with the instrument time in force',
+              'Replay requires LIMIT with instrument session duration or a close-only market sell with the instrument time in force',
             )
           const observedAt = yield* config.submissionTime ?? now
           const metadata = asset(intent.symbol)
@@ -691,7 +695,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             timeInForce: request.time_in_force,
             ...(limit === undefined ? {} : { limitPriceMicros: limit }),
             status: OrderStatus.New,
-            extendedHours: false,
+            extendedHours: request.extended_hours,
             observedAt,
           }
           const existing = yield* SynchronizedRef.modify(state, (current) => {

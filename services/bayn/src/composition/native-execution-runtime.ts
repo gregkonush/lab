@@ -246,8 +246,6 @@ const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): Execut
   }
 }
 
-const legacyUnboundControllerPlanHash = '0'.repeat(64)
-
 const persistControllerStatus = (
   statusStore: ExecutionControllerStatusStoreShape,
   status: ExecutionControllerStatus,
@@ -320,11 +318,9 @@ const replayProjectedAdvance = (
   planHash: string,
 ): Result.Result<ExecutionAdvanceStepResult | null, TransientExecutionFailure> => {
   if (status === null || status.epoch < command.epoch) return Result.succeed(null)
-  const legacyPlanCanBind =
-    status.planHash === legacyUnboundControllerPlanHash && status.nextSequence <= command.sequence
   if (
     status.controllerKey !== command.controllerKey ||
-    (status.planHash !== planHash && !legacyPlanCanBind) ||
+    status.planHash !== planHash ||
     status.epoch !== command.epoch
   ) {
     return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))

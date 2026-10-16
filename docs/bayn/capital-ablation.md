@@ -1,6 +1,6 @@
 # Shared-capital Jev entry cost ablation
 
-`services/bayn/tools/capital-study.ts` compares frozen native **v6 algorithm + Jev entry decisions** against the same
+`services/bayn/tools/capital-study.ts` compares frozen native **v7 algorithm + Jev entry decisions** against the same
 entries with an offline cost hurdle. Each arm owns one cash balance and one position slot across the supplied equity
 and crypto sources. It reuses the existing execution simulator, capital allocation constraints, instrument precision,
 fee ledger, and persistent reducing IOC exit lifecycle. It never calls inference or broker APIs and cannot select a
@@ -50,8 +50,8 @@ calibrated edge, held-out performance, or profitability.
 - Each scenario pins `id`, `latencyMs`, `slippageBps`, `availableLiquidityPpm`, and `feeMultiplierPpm`.
 
 Each market group passes the existing matched-study inventory, source reproduction, original witness byte hashes,
-committed native decision, cost allocation and timing checks before comparison. The current unmodified Jev v6
-protocol hash and account must match every opportunity; old v4/v5 evidence and changed current parameters fail.
+committed native decision, cost allocation and timing checks before comparison. The current unmodified Jev v7
+protocol hash and account must match every opportunity; retired protocol evidence and changed current parameters fail.
 Protocol and input-definition report metadata derive from that same native definition. The native crypto source
 profile binds its shared raw channel topic and separate feature topic to three partitions each; generic topic
 aliasing and spoofed crypto identities remain invalid. Distinct
@@ -64,7 +64,7 @@ per-market inventory omits other market batches, its inherited completeness fail
 A self-consistent hash does not establish that an export or allocation is complete; independent review still must.
 
 Capital is a declared scenario: flat opening inventory, no open broker orders or external cash flows, and initially
-zero New York daily turnover. Supply the relevant reviewed risk envelope explicitly. Sizing uses v5 weights and
+zero New York daily turnover. Supply the relevant reviewed risk envelope explicitly. Sizing uses reviewed capital weights and
 shared cash/order/symbol/gross/net limits, with an entry plus expected-exit turnover reserve. Daily turnover, daily
 loss and peak drawdown guards use the existing New York accounting date. Missing held-price marks prevent later
 entries from claiming complete risk evidence. These inputs do not reconstruct an actual live account history.
@@ -111,7 +111,7 @@ producing a positive scenario delta never authorizes trading or deployment.
 
 ## Deterministic accounting result
 
-The native BTC fixture with flat $100 bid / $100.02 ask, $100,000 opening cash, v5 capital weights and the declared
+The native BTC fixture with flat $100 bid / $100.02 ask, $100,000 opening cash, reviewed capital weights and the declared
 base fee schedule closes one episode with $39,946.010798 turnover, $99.870001 execution fees, and **-$103.870202**
 after $0.01 inference and $0.001 operating allocation. Doubling the fee multiplier yields **-$203.480204** after the
 same allocations. Both metrics are asserted in the regression. These are synthetic zero-edge accounting checks,

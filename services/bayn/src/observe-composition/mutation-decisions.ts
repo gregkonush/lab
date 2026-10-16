@@ -1,3 +1,5 @@
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { instrumentMarket } from '../instruments'
 import { Result } from 'effect'
 
 import { MutationOperation, recordedOrderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
@@ -10,7 +12,6 @@ import {
   OrderType,
   ReconciliationStatus,
   TerminalOutcome,
-  TimeInForce,
   type Intent,
   type Order,
   type Position,
@@ -44,7 +45,11 @@ export const executionCycleHasFilledIntent = (input: ExecutionCycleFillInput): b
   )
 }
 
-export type ExecutionIntentTerminalDisposition = 'FILLED' | 'BENIGN_ZERO_FILL_IOC' | 'PARTIAL_FILL_IOC' | 'UNSUCCESSFUL'
+export type ExecutionIntentTerminalDisposition =
+  | 'FILLED'
+  | 'BENIGN_ZERO_FILL_LIMIT'
+  | 'PARTIAL_FILL_LIMIT'
+  | 'UNSUCCESSFUL'
 
 export interface ExecutionIntentTerminalDispositionInput {
   readonly phase: 'ENTRY' | 'CLOSE'
@@ -87,7 +92,7 @@ export const decideExecutionIntentTerminalDisposition = (
     input.phase !== 'ENTRY' ||
     input.intent.terminalOutcome !== TerminalOutcome.Canceled ||
     input.intent.orderType !== OrderType.Limit ||
-    input.intent.timeInForce !== TimeInForce.ImmediateOrCancel ||
+    input.intent.timeInForce !== cashSpotLimitTimeInForce(instrumentMarket(input.intent.symbol)) ||
     input.acceptedBrokerOrderId === undefined
   ) {
     return 'UNSUCCESSFUL'
@@ -107,9 +112,9 @@ export const decideExecutionIntentTerminalDisposition = (
   const order = matchingOrders.length === 1 ? matchingOrders[0] : undefined
   if (order?.status !== OrderStatus.Canceled) return 'UNSUCCESSFUL'
   const filledQuantity = BigInt(order.filledQuantityAtoms)
-  if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_IOC'
+  if (filledQuantity === 0n) return 'BENIGN_ZERO_FILL_LIMIT'
   return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityAtoms)
-    ? 'PARTIAL_FILL_IOC'
+    ? 'PARTIAL_FILL_LIMIT'
     : 'UNSUCCESSFUL'
 }
 
@@ -499,7 +504,8 @@ const decideExecutionPhaseCompletionDataFirst = (
         intent.terminalOutcome !== TerminalOutcome.Filled &&
         !(
           phase === 'ENTRY' &&
-          (intent.terminalDisposition === 'BENIGN_ZERO_FILL_IOC' || intent.terminalDisposition === 'PARTIAL_FILL_IOC')
+          (intent.terminalDisposition === 'BENIGN_ZERO_FILL_LIMIT' ||
+            intent.terminalDisposition === 'PARTIAL_FILL_LIMIT')
         ),
     )
   ) {

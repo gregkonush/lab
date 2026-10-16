@@ -14,7 +14,7 @@ const SubmittedBody = Schema.Struct({
   type: Schema.Literals(['market', 'limit']),
   time_in_force: Schema.Literals(['day', 'gtc', 'ioc', 'fok']),
   client_order_id: Schema.String,
-  extended_hours: Schema.Literal(false),
+  extended_hours: Schema.Boolean,
   limit_price: Schema.optionalKey(Decimal),
 })
 

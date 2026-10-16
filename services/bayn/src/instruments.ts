@@ -97,7 +97,7 @@ export const validateInstrumentOrder = (
   )
     return invalid('order quantity violates broker minimum or increment')
   const validOrder =
-    (order.orderType === 'LIMIT' && order.timeInForce === 'IOC') ||
+    (order.orderType === 'LIMIT' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'IOC' : 'DAY')) ||
     (order.orderType === 'MARKET' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'GTC' : 'DAY'))
   if (!validOrder) return invalid('order type and duration are unsupported for this instrument')
   if (

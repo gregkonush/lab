@@ -115,7 +115,9 @@ durableTest(
           openingCashMicros: '10000000000',
           assumptions: { latencyMs: 0, slippageBps: 0, availableLiquidityPpm: 1000000, feeMultiplierPpm: 1000000 },
           fractionalTrading: false,
-          calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+          calendar: [
+            { session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' },
+          ],
           assets: [
             Result.getOrThrow(
               normalizeAssetResult(
@@ -150,7 +152,7 @@ durableTest(
           symbol: 'AAPL',
           side: OrderSide.Buy,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
+          timeInForce: TimeInForce.Day,
           quantityAtoms: '10000000000',
           notionalLimitMicros: '1000000000',
           state: IntentState.IoStarted,
@@ -234,7 +236,7 @@ durableTest(
           inference: {
             mode: 'measured-provider',
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v5',
+            inputDefinition: 'bayn.jev-trading-signal-state.v6',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',
@@ -243,8 +245,8 @@ durableTest(
           openingCashMicros: '100000000000',
           fractionalTrading: false,
           calendar: [
-            { date: '2026-09-04', open: '09:30', close: '09:31' },
-            { date: '2026-09-08', open: '09:30', close: '16:00' },
+            { session_open: '0930', session_close: '0931', date: '2026-09-04', open: '09:30', close: '09:31' },
+            { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
           assets: equityMarketProfile.universe.map((symbol, index) => ({
             id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,

@@ -440,7 +440,16 @@ durableTest.each(
               scenario === 'missing-calendar'
                 ? []
                 : scenario === 'no-trade-finalization'
-                  ? [...fixture.input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }]
+                  ? [
+                      ...fixture.input.calendar,
+                      {
+                        session_open: '0930',
+                        session_close: '1600',
+                        date: '2026-09-08',
+                        open: '09:30',
+                        close: '16:00',
+                      },
+                    ]
                   : fixture.input.calendar,
             ),
           ),
@@ -902,7 +911,7 @@ durableTest.each(
           expect(state.fills).toEqual([])
           expect(state.ledger.positions).toEqual([])
           expect(
-            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v1'`,
+            yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2'`,
           ).toEqual([{ state: 'BLOCKED', bound: false }])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
@@ -1343,9 +1352,9 @@ durableTest.each(
           expect(reconciliation.brokerState.account.cashMicros).toBe(state.ledger.cashMicros)
           expect(
             yield* sql`SELECT
-              paper_partial_ioc_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+              paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
                 o.filled_quantity_atoms,${yield* currentUtcInstant}::timestamptz) AS complete,
-              paper_partial_ioc_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+              paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
                 o.filled_quantity_atoms,i.updated_at) AS entry_cut_complete
               FROM intents i JOIN LATERAL (
                 SELECT o.* FROM orders o JOIN broker_events e USING(event_id)
@@ -1582,8 +1591,9 @@ durableTest.each(
         const reconciliation = yield* runtime.reconcile
         if (scenario === 'fallback') {
           expect(brokerState.orders.at(-1)?.order).toMatchObject({
-            orderType: BrokerOrderType.Market,
+            orderType: BrokerOrderType.Limit,
             timeInForce: BrokerTimeInForce.Day,
+            extendedHours: true,
           })
         }
         expect(brokerState.ledger.positions).toHaveLength(0)

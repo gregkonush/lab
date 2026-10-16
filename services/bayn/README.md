@@ -53,7 +53,7 @@ exact positive own and market-benchmark-relative momentum before Jev, with curre
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
 Entry selection follows the model's chosen `enter` action. There is no additional action-probability floor;
 the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
-`wait` and `avoid` keep zero targets. Protocol v6 rejects v5 and the retired `minimumEntryProbability` field.
+`wait` and `avoid` keep zero targets. Protocol v7 rejects v6 and the retired `minimumEntryProbability` field.
 Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions and
 clamps the prior PAPER authority before native OBSERVE recovery. Activate a newly sealed v6 PAPER mandate
 against its published image. Existing position, turnover, loss, management and submission risk limits remain.
@@ -1532,6 +1532,12 @@ bun run --filter @proompteng/bayn lint:oxlint
 bun run --filter @proompteng/bayn build
 ```
 
+With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
+`BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
+`bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
+zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
+expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
+
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
 
 The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
@@ -1698,3 +1704,25 @@ management observations require `entryInventoryDebit`, verified from posted acco
 Historical observations remain immutable; readers reject records missing this evidence instead of inventing a fee debit.
 The [matched comparison](../../docs/bayn/matched-entry-study.md) retains its five-session, twenty-different-selection,
 original timing, capacity, and complete-cost requirements. Missing evidence cannot qualify Jev.
+
+Equities use Alpaca's full provider calendar intersected with the entitled IEX data interval, 08:00–17:00
+America/New_York. Provider regular and extended bounds remain in the hashed calendar v2 evidence; DST, holidays
+and early closes follow that source. The shared order loop submits stock LIMIT/DAY with `extended_hours=true`
+and crypto LIMIT/IOC with `extended_hours=false`. An acknowledged open order is canceled through the same durable
+mutation coordinator when its original approval or submission window expires. Known partial fills retain their
+original accounting. Whole-share equity liquidation during an archive outage also uses a bounded LIMIT/DAY order.
+
+Dorvud's observed-window and technical definitions v2 isolate the 08:00, 09:30 and 16:00 clock segments. Regular
+indicator math is unchanged, sparse intervals remain missing, and the first completed minute can authorize
+observation without waiting thirty minutes. Extended transport health requires quote delivery while retaining
+per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. Calendar eligibility and candidate
+quote, trade and feature checks still govern every order.
+
+Migration 113 retires the prior executable model and requires flat settled inventory, terminal orders and fresh
+exact reconciliation before the v7 cutover. It preserves operator restrictions and clamps prior PAPER authority to
+OBSERVE. Publish and promote the new source, verify OBSERVE recovery, then bind a new same-account PAPER mandate.
+Migration 114 replaces the IOC-only completion predicate with the shared strict DAY/IOC proof and renames the
+partial-fill helper without retaining its old name. Verify both migrations before PAPER activation, including
+databases that have already recorded migration 113.
+See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
+current execution limits. This migration grants no live capital authority.
