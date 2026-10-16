@@ -527,7 +527,10 @@ published new strategy/image before enabling PAPER through the normal Kargo acti
 strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.
 
 The capital-sizing cutover uses migration 109 and one LIMIT/IOC execution path for equities and crypto. Market
-profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. Entry quantities follow the approved
+profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. A canceled partial IOC entry can
+complete after an exact flat reconciliation consumes the same timestamped broker cut. Its trusted flat observation
+must remain strictly newer than the entry terminalization, and complete fills and settled orders remain required.
+Entry quantities follow the approved
 capital weight and instrument precision instead of one displayed ask size. The sealed PAPER mandate must bind the
 published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
 Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk

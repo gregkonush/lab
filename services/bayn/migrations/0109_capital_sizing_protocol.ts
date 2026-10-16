@@ -72,4 +72,85 @@ export default Effect.gen(function* () {
       OR (strategy_name = 'intraday-momentum' AND strategy_parameter_schema_version IN ('bayn.intraday-momentum.protocol.v1', 'bayn.intraday-momentum.protocol.v2', 'bayn.intraday-momentum.protocol.v3'))
       OR (strategy_name = 'jev' AND strategy_parameter_schema_version IN ('bayn.jev.protocol.v1', 'bayn.jev.protocol.v2', 'bayn.jev.protocol.v3', 'bayn.jev.protocol.v4', 'bayn.jev.protocol.v5'))
     )`
+
+  // Exact reconciliation may consume the same timestamped broker cut; the post-intent cut remains strictly newer.
+  yield* sql`
+    CREATE OR REPLACE FUNCTION paper_partial_ioc_entry_is_reconciled_flat(
+      bound_intent_id text,
+      accepted_order_id text,
+      filled_quantity numeric,
+      completion_observed_at timestamptz
+    )
+    RETURNS boolean
+    LANGUAGE sql
+    STABLE
+    AS $function$
+      SELECT EXISTS (
+        SELECT 1
+        FROM intents AS intent
+        JOIN LATERAL (
+          SELECT snapshot.*
+          FROM position_snapshots AS snapshot
+          WHERE snapshot.account_id = intent.account_id
+            AND snapshot.observed_at <= completion_observed_at
+          ORDER BY snapshot.ingestion_sequence DESC
+          LIMIT 1
+        ) AS positions ON true
+        JOIN LATERAL (
+          SELECT candidate.*
+          FROM reconciliations AS candidate
+          WHERE candidate.account_id = intent.account_id
+            AND candidate.reconciled_at <= completion_observed_at
+          ORDER BY candidate.reconciled_at DESC
+          LIMIT 1
+        ) AS reconciliation ON true
+        WHERE intent.intent_id = bound_intent_id
+          AND filled_quantity > 0
+          AND filled_quantity < intent.quantity_atoms
+          AND positions.ingestion_order_trusted
+          AND positions.position_count = 0
+          AND positions.observed_at > intent.updated_at
+          AND reconciliation.status = 'EXACT'
+          AND reconciliation.expected_hash = reconciliation.observed_hash
+          AND reconciliation.discrepancies = '[]'::jsonb
+          AND reconciliation.reconciled_at >= positions.observed_at
+          AND reconciliation.reconciled_at >= (
+            SELECT max(event.observed_at)
+            FROM broker_events AS event
+            WHERE event.account_id = intent.account_id
+              AND event.observed_at <= completion_observed_at
+          )
+          AND filled_quantity = (
+            SELECT sum(fill.quantity_atoms)
+            FROM fills AS fill
+            WHERE fill.account_id = intent.account_id
+              AND fill.broker_order_id = accepted_order_id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM fills AS fill
+            WHERE fill.account_id = intent.account_id
+              AND fill.broker_order_id = accepted_order_id
+              AND (
+                fill.intent_id IS DISTINCT FROM intent.intent_id
+                OR fill.client_order_id IS DISTINCT FROM intent.client_order_id
+                OR fill.symbol IS DISTINCT FROM intent.symbol
+                OR fill.side IS DISTINCT FROM intent.side
+                OR fill.quantity_atoms <= 0
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM (
+              SELECT DISTINCT ON (broker_order.broker_order_id) broker_order.status
+              FROM orders AS broker_order
+              JOIN broker_events AS event ON event.event_id = broker_order.event_id
+              WHERE broker_order.account_id = intent.account_id
+              ORDER BY broker_order.broker_order_id, event.source_sequence DESC
+            ) AS latest_order
+            WHERE latest_order.status IN ('NEW', 'PARTIALLY_FILLED', 'PENDING')
+          )
+      )
+    $function$
+  `
 })
