@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 class ErrorTrackingTest {
   private val env =
     mapOf(
-      "DORVUD_GLITCHTIP_DSN" to "http://${"a".repeat(32)}@glitchtip-web.glitchtip.svc.cluster.local:8000/9",
+      "DORVUD_GLITCHTIP_DSN" to "http://${"a".repeat(32)}@glitchtip-web.glitchtip.svc.cluster.local:80/9",
       "DORVUD_ERROR_SERVICE" to "torghut-ws",
       "TORGHUT_WS_COMMIT" to "b".repeat(40),
     )
@@ -27,8 +27,9 @@ class ErrorTrackingTest {
     assertNull(ErrorTracking.options(emptyMap()))
     for (dsn in listOf(
       "https://${"a".repeat(32)}@external.example/9",
-      "http://${"a".repeat(32)}:secret@glitchtip-web.glitchtip.svc.cluster.local:8000/9",
-      "http://${"a".repeat(32)}@glitchtip-web.glitchtip.svc.cluster.local:8000/9?token=secret",
+      "http://${"a".repeat(32)}:secret@glitchtip-web.glitchtip.svc.cluster.local:80/9",
+      "http://${"a".repeat(32)}@glitchtip-web.glitchtip.svc.cluster.local:80/9?token=secret",
+      "http://${"a".repeat(32)}@glitchtip-web.glitchtip.svc.cluster.local:8000/9",
       "http://${"a".repeat(32)}@glitchtip-web.glitchtip.svc.cluster.local:8001/9",
     )) {
       assertFailsWith<IllegalArgumentException> {

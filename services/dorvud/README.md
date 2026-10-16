@@ -22,7 +22,7 @@ configuration and redaction. The forwarder uses its existing Logback logger. Fli
 in both JobManager and TaskManager processes. The image installs the small `dorvud-glitchtip.jar` in Flink's
 global `lib/` directory, separate from the user-job jar, so framework failures reach the same reporting boundary.
 
-`DORVUD_GLITCHTIP_DSN` must name the cluster-local GlitchTip web service on port 8000 with a hexadecimal public
+`DORVUD_GLITCHTIP_DSN` must name the cluster-local GlitchTip web service on port 80 with a hexadecimal public
 ingestion key. `DORVUD_ERROR_SERVICE` binds the forwarder, TA or archive role; release tags use the existing
 Kargo-written commit variables. Requests, user data, extra values, breadcrumbs, contexts, thread dumps, source
 snippets and exception messages are removed before transmission. Exception classes and stack frames remain.

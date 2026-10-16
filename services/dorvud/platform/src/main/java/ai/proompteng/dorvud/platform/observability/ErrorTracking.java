@@ -34,7 +34,7 @@ public final class ErrorTracking {
     }
     if (!"http".equals(endpoint.getScheme())
         || !"glitchtip-web.glitchtip.svc.cluster.local".equals(endpoint.getHost())
-        || endpoint.getPort() != 8000
+        || endpoint.getPort() != 80
         || endpoint.getRawQuery() != null
         || endpoint.getRawFragment() != null
         || endpoint.getUserInfo() == null
