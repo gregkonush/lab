@@ -44,7 +44,6 @@ import {
   legacyExecutionAuthorityToken,
   legacyExecutionIntentSchemaVersion,
   legacyIntentPlanSchemaVersion,
-  legacyPositionSchemaVersion,
   legacyReferenceIntentSchemaVersion,
 } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
@@ -215,7 +214,8 @@ const projectTargetPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: divideAwayFromZero(quantity * averageEntryPrice).toString(),
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityAtoms: target.targetQuantityAtoms,

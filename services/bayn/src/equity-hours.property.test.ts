@@ -6,7 +6,7 @@ import { MarketCalendarResponseSchema } from './broker/alpaca/model'
 import { normalizeMarketCalendarResult } from './broker/alpaca/normalizers'
 import { equityClockSession, equityDataSession, equityFeatureSegmentStartMs } from './equity-hours'
 import { canonicalHashV1 } from './hash'
-import { marketHoursAreCanonical } from './market-hours'
+import { marketHoursAreCanonical, executionCloseRecoveryExpiry } from './market-hours'
 import { IsoDateSchema } from './schemas'
 import { checkProperty } from './testing/property-test-support'
 
@@ -17,6 +17,29 @@ const calendar = (date: string, close = '16:00', sessionClose = '2000') => {
   ])
   return Result.getOrThrow(normalizeMarketCalendarResult(raw, { start: day, end: day }))
 }
+
+test('property: recovery leases stay inside the verified broker session after IEX stops', () => {
+  checkProperty(
+    'equity-close-recovery',
+    fc.property(fc.integer({ min: 0, max: 179 * 60 + 59 }), (seconds) => {
+      const hours = calendar('2026-10-16')
+      const observed = Date.parse('2026-10-16T21:00:00.000Z') + seconds * 1000
+      const expires = executionCloseRecoveryExpiry(hours, new Date(observed).toISOString())
+      expect(expires).not.toBeNull()
+      expect(Date.parse(expires ?? '')).toBeGreaterThan(observed)
+      expect(Date.parse(expires ?? '')).toBeLessThanOrEqual(observed + 180_000)
+      expect(Date.parse(expires ?? '')).toBeLessThanOrEqual(Date.parse('2026-10-17T00:00:00.000Z'))
+      expect(executionCloseRecoveryExpiry(hours, '2026-10-17T00:00:00.000Z')).toBeNull()
+      expect(executionCloseRecoveryExpiry(hours, '2026-10-17T12:00:00.000Z')).toBeNull()
+      expect(
+        executionCloseRecoveryExpiry(calendar('2026-11-27', '13:00', '1700'), '2026-11-27T22:00:00.000Z'),
+      ).toBeNull()
+      expect(executionCloseRecoveryExpiry(calendar('2026-11-02'), '2026-11-03T00:59:59.000Z')).toBe(
+        '2026-11-03T01:00:00.000Z',
+      )
+    }),
+  )
+})
 
 test.each([
   ['2026-10-16', '2026-10-16T12:00:00.000Z', '2026-10-16T21:00:00.000Z'],

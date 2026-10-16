@@ -64,14 +64,13 @@ export const cachedBrokerStateFixture = (
           symbol: position.symbol,
           quantityAtoms: position.quantityAtoms,
           averageEntryPriceMicros: position.averageEntryPriceMicros,
+          costBasisMicros: position.costBasisMicros,
           marketPriceMicros: position.marketPriceMicros,
           marketValueMicros: position.marketValueMicros,
           unrealizedPnlMicros: position.unrealizedPnlMicros,
           observedAt: position.observedAt,
         }
-        return position.costBasisMicros === undefined
-          ? { ...material, schemaVersion: 'bayn.paper-position.v1' as const }
-          : { ...material, schemaVersion: 'bayn.position.v2' as const, costBasisMicros: position.costBasisMicros }
+        return { ...material, schemaVersion: 'bayn.position.v2' as const }
       }),
       positionsObservedAt: account.observedAt,
       orders: [],

@@ -347,7 +347,7 @@ export const evaluateJevPositionManagement = (input: {
       }
       const firstFill = portfolio.entryFills[0]
       const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
-      if (firstFill === undefined || position?.schemaVersion !== 'bayn.position.v2')
+      if (firstFill === undefined || position === undefined)
         return yield* new JevContractError({ message: 'Managed position is missing its validated fill or cost basis' })
       maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, input.protocol.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt
