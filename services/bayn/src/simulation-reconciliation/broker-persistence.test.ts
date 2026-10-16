@@ -7,7 +7,6 @@ import { provideTestLayer } from '../effect-test-support'
 import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca'
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from '../db/reconciliation'
-import type { WriterFenceService } from '../execution/writer-fence'
 import { canonicalHashV1 } from '../hash'
 import { ReconciliationStatus, type Valuation } from '../execution/contracts'
 import { persistStableSnapshot } from './broker-persistence'
@@ -123,25 +122,22 @@ const store: ReconciliationPersistence = {
     hasAccountBaseline: () => Effect.die(new Error('empty successful reconciliation must not read a baseline')),
   },
   reconciliation: {
-    recoverFees: () => Effect.void,
     retainCashReporting: () => Effect.void,
     bindings: (boundAccountId) => {
       expect(boundAccountId).toBe(accountId)
       return Effect.succeed([])
     },
-    reconcile: (persisted) => {
-      expect(persisted.account.accountId).toBe(accountId)
-      return Effect.succeed(writeResult(persisted))
-    },
+    reconcile: (_, snapshot) =>
+      snapshot.pipe(
+        Effect.map((snapshot) => {
+          expect(snapshot.account.accountId).toBe(accountId)
+          return { snapshot, persisted: writeResult(snapshot) }
+        }),
+      ),
   },
   authorityRestriction: {
     restrictAuthority: () => Effect.die(new Error('successful reconciliation must not restrict authority')),
   },
-}
-
-const fence: WriterFenceService = {
-  check: Effect.void,
-  transaction: (effect) => effect,
 }
 
 describe('simulation reconciliation persistence logging', () => {
@@ -160,9 +156,7 @@ describe('simulation reconciliation persistence logging', () => {
     })
 
     const result = await Effect.runPromise(
-      persistStableSnapshot(store, fence, snapshot, Effect.succeed(observedAt)).pipe(
-        provideTestLayer(Logger.layer([logger])),
-      ),
+      persistStableSnapshot(store, snapshot, Effect.succeed(observedAt)).pipe(provideTestLayer(Logger.layer([logger]))),
     )
 
     expect(result.report.reconciliation.accountId).toBe(accountId)
