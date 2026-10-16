@@ -41,7 +41,8 @@ func (server *apiServer) newRPCServer() *grpc.Server {
 	rpc := grpc.NewServer(
 		grpc.ForceServerCodec(guestRPCCodec{}),
 		grpc.MaxRecvMsgSize(maxGuestRPCBytes), grpc.MaxSendMsgSize(maxGuestRPCBytes),
-		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (result any, rpcErr error) {
+			defer func() { recordGuestRPC(ctx, info.FullMethod, rpcErr) }()
 			if err := authenticated(ctx); err != nil {
 				return nil, err
 			}
@@ -49,13 +50,14 @@ func (server *apiServer) newRPCServer() *grpc.Server {
 			if err != nil {
 				return nil, err
 			}
-			result, err := handler(ctx, req)
+			result, err = handler(ctx, req)
 			if changed := server.guestAuthorization.requireClaim(claim); changed != nil {
 				return nil, changed
 			}
 			return result, err
 		}),
-		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (rpcErr error) {
+			defer func() { recordGuestRPC(stream.Context(), info.FullMethod, rpcErr) }()
 			if err := authenticated(stream.Context()); err != nil {
 				return err
 			}

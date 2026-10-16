@@ -364,6 +364,7 @@ fn request<T>(message: T, duration: Duration) -> Request<T> {
         .metadata_mut()
         .insert("x-ofz-contract-version", "1".parse().unwrap());
     request.set_timeout(duration);
+    crate::telemetry::inject(&mut request);
     request
 }
 

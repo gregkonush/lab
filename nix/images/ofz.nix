@@ -59,7 +59,10 @@ pkgs.dockerTools.buildLayeredImage {
   config = {
     Entrypoint = [ "${ofz}/bin/ofz" ];
     Cmd = [ "serve" ];
-    Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
+    Env = [
+      "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+      "APP_SOURCE_REVISION=${repoRevision}"
+    ];
     User = "65532:65532";
     ExposedPorts."9443/tcp" = { };
     Labels = {

@@ -63,7 +63,17 @@ func main() {
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(logger *slog.Logger) (runErr error) {
+	closeTelemetry, err := initializeTelemetry()
+	if err != nil {
+		return fmt.Errorf("configure telemetry: %w", err)
+	}
+	defer closeTelemetry()
+	defer func() {
+		if runErr != nil {
+			reportGuestError(context.Background(), "guest.startup", "failed")
+		}
+	}()
 	guestAuthorization, err := loadGuestRPCAdmission()
 	if err != nil {
 		return err
@@ -150,7 +160,7 @@ func run(logger *slog.Logger) error {
 	defer api.close()
 
 	server := &http.Server{
-		Handler:           newHandler(api),
+		Handler:           observeGuestHTTP(newHandler(api)),
 		Protocols:         guestHTTPProtocols(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,
