@@ -120,6 +120,30 @@ class ErrorTrackingTest {
   }
 
   @Test
+  fun `production named component loggers remain distinct`() {
+    for (logger in listOf(
+      "market-data-archive",
+      "market-feature-archive",
+      "technical-market-features",
+      "rolling-market-features",
+      "crypto-market-features",
+      "crypto-market-feature-archive",
+      "crypto-market-data-archive",
+      "options-ta-clickhouse",
+      "ta-clickhouse",
+      "parse-envelope",
+      "parse-bars1m",
+      "microbars",
+      "ta-signals",
+      "torghut-ta",
+    )) {
+      val scrubbed = ErrorTracking.sanitize(SentryEvent().apply { this.logger = logger }, "torghut-ta")
+      assertEquals(logger, scrubbed.tags?.get("logger"))
+      assertEquals(listOf("{{ default }}", "torghut-ta", logger), scrubbed.fingerprints)
+    }
+  }
+
+  @Test
   fun `untrusted logger names cannot transmit provider values`() {
     for (logger in listOf("private.token.secret", "org.apache.flink token=secret", "org.apache.${"x".repeat(300)}")) {
       val scrubbed = ErrorTracking.sanitize(SentryEvent().apply { this.logger = logger }, "torghut-ta")

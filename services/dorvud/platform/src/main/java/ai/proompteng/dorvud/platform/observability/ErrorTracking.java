@@ -11,6 +11,10 @@ import java.util.Map;
 import java.util.Set;
 
 public final class ErrorTracking {
+  private static final Set<String> COMPONENT_LOGGERS = Set.of(
+      "market-data-archive", "market-feature-archive", "technical-market-features", "rolling-market-features",
+      "crypto-market-features", "crypto-market-feature-archive", "crypto-market-data-archive",
+      "options-ta-clickhouse", "ta-clickhouse", "parse-envelope", "parse-bars1m", "microbars", "ta-signals", "torghut-ta");
   private static boolean initialized;
 
   private ErrorTracking() {}
@@ -77,7 +81,8 @@ public final class ErrorTracking {
   static SentryEvent sanitize(SentryEvent event, String service) {
     String logger = event.getLogger();
     if (logger == null
-        || !logger.matches("(?:ai\\.proompteng\\.dorvud|org\\.apache|com\\.clickhouse|io\\.netty)\\.[A-Za-z_$][A-Za-z0-9_$.]{0,180}")) {
+        || (!COMPONENT_LOGGERS.contains(logger)
+            && !logger.matches("(?:ai\\.proompteng\\.dorvud|org\\.apache|com\\.clickhouse|io\\.netty)\\.[A-Za-z_$][A-Za-z0-9_$.]{0,180}"))) {
       logger = "unknown";
     }
     event.setLogger(logger);
