@@ -955,7 +955,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v4' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v5' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1190,7 +1190,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           referenceScope: 'IEX_EXCHANGE_ONLY_NOT_NBBO',
           feed: 'iex',
           pairedFeedComparisonAvailable: false,
-          entrySpreadLimitBps: fixture.protocol.maximumSpreadBps,
+          entrySpreadLimitBps: fixture.protocol.marketProfiles[0]?.maximumEntrySpreadBps,
         })
         expect(diagnostics[0]).not.toHaveProperty('bidPrice')
         expect(diagnostics[0]).not.toHaveProperty('askPrice')

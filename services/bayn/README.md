@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v4` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v5` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -356,8 +356,8 @@ evidence deadline after persistence. Synchronous commit and standby durability a
 
 The submission window opens with the regular session. Bayn can evaluate after the first completed minute and
 the two-second decision delay, at 09:31:02 New York time on a normal session. It uses up to 30 minutes of actual
-completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
-wider than five basis points. It selects at most one long position, capped at 20% of account equity and reduced when
+completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The development protocol requires an entry probability of at least 0.65. Entry spreads may not exceed five basis
+points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
@@ -382,6 +382,12 @@ version-four batch must finish within its ten-second evidence lifetime. After th
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
 quote deadline for version-three or version-four decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
+
+Entries use capital-weighted quantities at the verified ask, with whole-share equity and native fractional crypto
+precision. A single displayed ask size does not cap an order. The existing allocation, buying power, order, exposure
+and turnover limits still bound the quantity. LIMIT/IOC prices bound execution cost; a partial fill or cancellation
+retains its native recovery and accounting path. The model input states the market spread limit and estimated fees.
+The crypto estimate is 25 bps per side, based on observed sandbox fees, and is not an invoice or a guaranteed fee tier.
 
 After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
 refreshed execution quote. A quote that widened or lost either side's displayed liquidity leaves the entry waiting
