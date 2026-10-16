@@ -4,7 +4,7 @@ import type { IntradaySnapshotManifest, IntradaySnapshotRequest } from '../marke
 import type { StreamingSnapshotManifest } from '../market-data/streaming/snapshot'
 import type { AccountingTransaction } from '../accounting/schema'
 
-export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v3' as const
+export const FORWARD_PERFORMANCE_SCHEMA_VERSION = 'bayn.forward-performance-receipt.v4' as const
 
 export type ForwardPerformanceEvidenceStatus = 'SUFFICIENT' | 'INSUFFICIENT_EVIDENCE'
 export type ForwardPerformanceProfitability = 'PROFITABLE' | 'NOT_PROFITABLE' | 'UNDETERMINED'
@@ -272,6 +272,7 @@ export interface ForwardPerformanceLedgerTotals {
   /** Null when inference and other operating expenses are outside the verified ledger evidence. */
   readonly otherChargedCostsMicros: string | null
   readonly cashYieldMicros: string
+  readonly cashSettlementRoundingMicros: string
 }
 
 export interface ForwardPerformanceCashYieldEvidence {
@@ -399,6 +400,7 @@ export interface ForwardPerformanceReceiptMaterial {
     readonly brokerExecutionFeesMicros: string | null
     readonly otherChargedCostsMicros: string | null
     readonly cashYieldMicros: string | null
+    readonly cashSettlementRoundingMicros: string | null
     readonly grossRealizedPnlMicros: string | null
     readonly netRealizedPnlAfterCostsMicros: string | null
     readonly netRealizedReturn: {

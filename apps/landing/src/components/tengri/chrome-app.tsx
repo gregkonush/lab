@@ -1,5 +1,7 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { TengriPreviewSession } from '@/lib/tengri/types'
@@ -18,6 +20,9 @@ export function ChromeApp({
   const [session, setSession] = useState<TengriPreviewSession | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
+  useEffect(() => {
+    if (error) reportBrowserFailure('chrome.connection')
+  }, [error])
   const [attempt, setAttempt] = useState(0)
   const frame = useRef<HTMLIFrameElement>(null)
   const focus = useRef(onFocus)

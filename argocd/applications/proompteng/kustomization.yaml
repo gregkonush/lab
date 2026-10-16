@@ -1,6 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+- observability.yaml
 - service-account.yaml
 - network-policy.yaml
 - deployment.yaml
@@ -11,4 +12,4 @@ resources:
 - pod-disruption-budget.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/proompteng
-  digest: sha256:9f7e3338c15fa9b99e7bb7e9c6f9fcda7fbf6d0351ab483a26621603eca48ffe
+  digest: sha256:a0316b05e39cc358bc3993e7ec283d2c90b0353d76357ac2360c38730dfdeadc

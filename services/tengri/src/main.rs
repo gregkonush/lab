@@ -15,6 +15,7 @@ mod pod;
 #[cfg(test)]
 mod runtime_state_test;
 mod slot;
+mod telemetry;
 mod tickets;
 
 use std::{env, future::Future, net::SocketAddr, path::PathBuf, time::Duration};
@@ -36,7 +37,6 @@ use tokio::{
 };
 use tonic::transport::Server;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 
 const DEFAULT_NAMESPACE: &str = "tengri";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:50051";
@@ -52,14 +52,18 @@ const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 async fn main() -> anyhow::Result<()> {
     install_rustls_crypto_provider()?;
 
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let role = match env::args().nth(1).as_deref() {
+        Some("slot-runner") => "tengri-slot-runner",
+        Some("slot-supervisor") => "tengri-slot-supervisor",
+        _ => "tengri",
+    };
+    let _telemetry = telemetry::init(role)?;
 
     match env::args().nth(1).as_deref() {
+        Some("telemetry-check") => {
+            println!("{}", _telemetry.verify()?);
+            return Ok(());
+        }
         Some("slot-runner") => return slot::runner::run().await,
         Some("slot-supervisor") => return slot::supervisor::run().await,
         Some(argument) => anyhow::bail!("unknown Tengri command {argument}"),
@@ -211,6 +215,11 @@ async fn main() -> anyhow::Result<()> {
     let grpc_shutdown = shutdown_rx.clone();
     let mut grpc_task = tokio::spawn(async move {
         Server::builder()
+            .layer(
+                tower_http::trace::TraceLayer::new_for_grpc()
+                    .make_span_with(telemetry::RequestSpan)
+                    .on_failure(telemetry::grpc_failure),
+            )
             .add_service(
                 MicroVmControlPlaneServer::new(service)
                     .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)

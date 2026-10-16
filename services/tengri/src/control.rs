@@ -154,6 +154,7 @@ impl Database {
         database
     }
 
+    #[tracing::instrument(name = "db.pool.request.acquire", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn connection(&self) -> Result<deadpool_postgres::Object, Status> {
         self.pool.get().await.map_err(|error| {
             tracing::warn!(error = %error, "shared runtime database connection unavailable");
@@ -161,6 +162,7 @@ impl Database {
         })
     }
 
+    #[tracing::instrument(name = "db.pool.coordination.acquire", skip_all, fields(db.system.name = "postgresql"))]
     async fn coordination_connection(&self) -> Result<deadpool_postgres::Object, Status> {
         self.coordination.get().await.map_err(|error| {
             tracing::warn!(error = %error, "shared runtime coordination database connection unavailable");
@@ -193,6 +195,7 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.consume_nonce", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn consume_nonce(&self, key: &[u8], expires_at_ms: i64) -> Result<(), Status> {
         let client = self.connection().await?;
         let consumed: bool = client
@@ -209,6 +212,7 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.leadership.acquire", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn acquire(&self, owner: Uuid) -> Result<Option<Fence>, Status> {
         let client = self.coordination_connection().await?;
         let generation: Option<i64> = client
@@ -219,6 +223,7 @@ impl Database {
         Ok(generation.map(|generation| Fence { owner, generation }))
     }
 
+    #[tracing::instrument(name = "db.leadership.renew", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn renew(&self, fence: Fence) -> Result<bool, Status> {
         let client = self.coordination_connection().await?;
         Ok(client
@@ -231,6 +236,7 @@ impl Database {
             .get(0))
     }
 
+    #[tracing::instrument(name = "db.leadership.release", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn release(&self, fence: Fence) -> Result<(), Status> {
         let client = self.coordination_connection().await?;
         client
@@ -243,6 +249,7 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.leadership.require", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn require_fence(&self, fence: Fence) -> Result<(), Status> {
         fence
             .validate()
@@ -257,6 +264,7 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.leadership.current", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn current_fence(&self) -> Result<Fence, Status> {
         let client = self.coordination_connection().await?;
         let row = client.query_opt("SELECT owner,generation FROM tengri.runtime_leader WHERE singleton AND owner IS NOT NULL AND generation>0 AND expires_at_ms>tengri.now_ms()", &[]).await.map_err(sql_error)?

@@ -263,3 +263,9 @@ image does not admit users or activate runtime clients.
 Ofz image-packaging and documentation changes do not rebuild native Tengri guests. Ofz implementation, Cargo dependencies,
 build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
 shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
+
+
+Production error reporting and trace propagation use the existing GlitchTip and Tempo services. See
+[Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
+contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
+database connection or changing authorization state. Confirm the returned IDs in both collectors.
