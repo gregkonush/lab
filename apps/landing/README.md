@@ -255,3 +255,10 @@ The local TLS proxy and isolated test certificate exercise secure cookies, WebSo
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
 The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
 an existing installation cache without reusing a test workspace.
+
+Tengri error reporting uses the existing private GlitchTip service, with a bounded same-origin browser error tunnel.
+Next instrumentation initializes manual OTLP request tracing and error-only Sentry SDK reporting. Public runtime
+configuration contains only the ingest DSN and immutable release. See the
+[Tengri observability contract](../../services/tengri/README.md#error-reporting-and-request-traces) for privacy,
+network policy, rollout and actual collector verification. The landing test command includes SDK export, envelope
+validation, stream limits and content-scrubbing checks.

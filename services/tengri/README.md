@@ -424,3 +424,34 @@ fails the request before Codex starts or steers a turn. Attachments remain with 
 conversation references remain valid.
 If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
 Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.
+
+## Error reporting and request traces
+
+Production sends sanitized errors to the existing GlitchTip `proompteng` organization and OTLP traces to Tempo.
+The browser, BFF, Tengri host, Ofz, and Nanoagent have separate GlitchTip projects. W3C trace context crosses the BFF,
+Ofz, controller, supervisor and guest request boundaries; HTTP failures return `x-trace-id`. Request spans and SQL
+pool, leadership, replay, policy-read and audit spans contain operation names and timings. Trace resource
+`service.version` and GlitchTip release identify the source revision baked into the image.
+
+RPC span names come from the compiled protobuf descriptors. Unknown request paths and dynamic Rust tracing fields
+are excluded from export. Trace attributes retain only operation names, database system, standard HTTP methods,
+response status and SQLSTATE; event messages and error descriptions are withheld. GlitchTip captures errors, while
+routine warnings such as graceful shutdown remain in logs.
+
+Telemetry excludes request bodies, cookies, tokens, actor identifiers, prompts, terminal output and file contents.
+GlitchTip messages are withheld; source locations, error classes, SQLSTATE and trace IDs remain. Browser ingestion
+accepts only bounded same-origin error envelopes for the configured project. It rebuilds the event and authoritative
+release before forwarding to the fixed private collector. Attachments, replay, sessions and arbitrary destinations
+are rejected. Repeated browser transport failures are limited to one event per operation/status per minute.
+
+The reviewed ConfigMaps supply the public ingest DSNs and private OTLP endpoint. Network policies allow only
+GlitchTip web TCP 8000 and Tempo distributor TCP 4318. The guest firewall additionally allows only the two resolved
+collector service addresses and ports; other private networks remain denied. Newly prepared slots receive the
+configuration through the private guest boot file, without database credentials or a Kubernetes identity.
+Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
+a supervisor image restart alone does not update the guest root or runner environment.
+
+After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
+Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.
+Verify those exact IDs in GlitchTip and Tempo. Exporter flush alone is not proof of ingestion. Then exercise real
+browser, chat, terminal, editor and Chrome requests and verify joined traces and stable streams.

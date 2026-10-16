@@ -115,10 +115,7 @@ if (import.meta.main) {
   initializeErrorTracking('bayn-execution-controller')
   NodeRuntime.runMain(
     Layer.effectDiscard(
-      restateExecutionServerProgram.pipe(
-        reportTerminalFailure('bayn-execution-controller'),
-        Effect.annotateLogs({ service: 'bayn-execution-controller' }),
-      ),
+      restateExecutionServerProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-controller' })),
     ).pipe(
       Layer.provide(ValkeyCacheLive),
       Layer.provide(
@@ -128,6 +125,7 @@ if (import.meta.main) {
         ),
       ),
       Layer.launch,
+      reportTerminalFailure('bayn-execution-controller'),
     ),
   )
 }

@@ -30,6 +30,9 @@ type guestSlotConfig struct {
 	InitializeHome     bool   `json:"initializeHome"`
 	VerificationKey    []byte `json:"verificationKey"`
 	RecoveryGeneration uint64 `json:"recoveryGeneration"`
+	ErrorDSN           string `json:"errorDsn"`
+	TraceEndpoint      string `json:"traceEndpoint"`
+	SourceRevision     string `json:"sourceRevision"`
 }
 
 type guestClaim struct {
@@ -138,7 +141,9 @@ func runGuestInit(logger *slog.Logger) error {
 	}
 	process := exec.Command("/usr/local/bin/nanoagent")
 	process.Env = append(childEnvironment(),
-		"MICROVM_ID="+config.PodUID, "MICROVM_BOOTSTRAP_TOKEN_FD=3")
+		"MICROVM_ID="+config.PodUID, "MICROVM_BOOTSTRAP_TOKEN_FD=3",
+		"SENTRY_DSN="+config.ErrorDSN, "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="+config.TraceEndpoint,
+		"APP_SOURCE_REVISION="+config.SourceRevision)
 	process.ExtraFiles = []*os.File{reader}
 	process.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000}, Setpgid: true}
 	process.Stdout, process.Stderr = os.Stdout, os.Stderr

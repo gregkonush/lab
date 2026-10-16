@@ -22,8 +22,81 @@ import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { currentUtcInstant } from '../time'
 import { makeReplayBroker } from './broker'
+import { prepareAccounting } from '../accounting/domain'
+import { prepareCashSettlement } from '../accounting/cash-settlement'
+import { readForwardPerformanceLedger } from '../forward-performance/tigerbeetle'
+import { Journal } from '../ledger'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test
+
+durableTest.each(['100004900', '100005100'])(
+  'native cash settlement %s posts exactly once in real TigerBeetle across client restart',
+  async (priceMicros) => {
+    if (baynTestTigerBeetleAddress === undefined || !/^127\.0\.0\.1:\d+$/.test(baynTestTigerBeetleAddress))
+      throw new Error('Cash settlement acceptance requires an isolated loopback TigerBeetle')
+    const runId = Result.getOrThrow(canonicalHashV1Result({ cashSettlementAttempt: randomUUID() }))
+    const accountId = `cash-settlement-${runId}`
+    const config = {
+      operationTimeoutMs: 10_000,
+      tigerBeetle: { clusterId: 20912n, replicaAddresses: [baynTestTigerBeetleAddress], ledger: 70912 },
+    }
+    const fill = Result.getOrThrow(
+      prepareAccounting(
+        runId,
+        {
+          schemaVersion: 'bayn.fill.v2',
+          accountId,
+          fillId: runId,
+          brokerOrderId: runId,
+          clientOrderId: runId,
+          symbol: 'BTC/USD',
+          side: OrderSide.Buy,
+          quantityAtoms: '1000000000',
+          priceAtoms: (BigInt(priceMicros) * 1000n).toString(),
+          feeMicros: '0',
+          occurredAt: '2026-10-16T00:00:00.000Z',
+        },
+        { quantityAtoms: '0', costMicros: '0' },
+        config.tigerBeetle.ledger,
+      ),
+    )
+    const settlement = Result.getOrThrow(
+      prepareCashSettlement(
+        {
+          schemaVersion: 'bayn.broker-cash-settlement.v1',
+          accountId,
+          transactionId: fill.transaction.transactionId,
+          transactionContentHash: fill.transaction.contentHash,
+          brokerEventId: fill.transaction.brokerEventId,
+          cashDeltaMicros: fill.transaction.cashDeltaMicros,
+          occurredAt: fill.transaction.occurredAt,
+          cashReportingQuantumMicros: '10000',
+          precisionAccountEventId: runId,
+          observedAt: '2026-10-16T00:01:00.000Z',
+        },
+        config.tigerBeetle.ledger,
+      ),
+    )
+    const plans = [fill.ledger, settlement.plan]
+    const post = Effect.gen(function* () {
+      const journal = yield* Journal
+      for (const plan of plans) yield* journal.post(plan)
+      return yield* journal.verifyAccount(accountId, plans)
+    }).pipe(Effect.provide(JournalLive(config)))
+    expect(await Effect.runPromise(post)).toBe(true)
+    expect(await Effect.runPromise(post)).toBe(true)
+    const read = await Effect.runPromise(Effect.scoped(readForwardPerformanceLedger(config, accountId, plans)))
+    expect(read.ledgerExact).toBe(true)
+    expect(read.totals.cashSettlementRoundingMicros).toBe(settlement.roundingDeltaMicros)
+    expect(read.totals.cashYieldMicros).toBe('0')
+    expect(read.totals.realizedGainMicros).toBe('0')
+    expect(read.totals.brokerExecutionFeesMicros).toBe('0')
+    expect(BigInt(fill.transaction.cashDeltaMicros) + BigInt(settlement.roundingDeltaMicros)).toBe(
+      -100000000n - (priceMicros === '100005100' ? 10000n : 0n),
+    )
+  },
+  30_000,
+)
 
 durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
   'production %s accounting survives client restart against PostgreSQL and real TigerBeetle',

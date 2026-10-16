@@ -9,6 +9,7 @@ import type { TengriUser } from './types'
 import { controlDatabase, hashOpaque } from './control-db'
 import { AuthorizationService, type Session } from './generated/proompteng/authz/v1/authz_pb'
 import { isOfzConfigured, OfzError, ofzCall } from './ofz'
+import { reportServerError } from '../observability/server'
 
 const SESSION_COOKIE = '__Host-tengri-session'
 const OAUTH_COOKIE = '__Host-tengri-oauth'
@@ -221,6 +222,7 @@ export async function handleTengriAuth(request: Request) {
         : error instanceof z.ZodError
           ? new OfzError(400)
           : new OfzError(exhausted.success ? 429 : 503)
+    if (failure.status >= 500) reportServerError(error, 'tengri.auth', failure.status)
     return Response.json(
       { error: failure.message, auditReceiptId: failure.auditReceiptId },
       { status: failure.status, headers: responseHeaders },
