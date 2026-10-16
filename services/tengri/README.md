@@ -14,6 +14,13 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
+Replay and ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
+verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
+Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
+in total. Promote the Ofz managed-role limits and 220-connection server budget before rolling out the separated pools;
+reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
 then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
