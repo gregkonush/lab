@@ -321,6 +321,7 @@ func (guest *guestLifecycle) handle(connection net.Conn) {
 
 func (guest *guestLifecycle) apply(parent context.Context, request guestLifecycleRequest, started time.Time) (clockApplied time.Time, resultErr error) {
 	var clockStarted time.Time
+	var clockErr error
 	if request.Action == "resume" {
 		if err := guest.validateResume(request.Claim); err != nil {
 			return time.Time{}, err
@@ -330,10 +331,7 @@ func (guest *guestLifecycle) apply(parent context.Context, request guestLifecycl
 		}
 		clockStarted = time.Now()
 		clock := unix.NsecToTimespec(request.UnixTimeNanos)
-		if err := unix.ClockSettime(unix.CLOCK_REALTIME, &clock); err != nil {
-			reportGuestError(parent, "guest.resume.clock", "failed")
-			return time.Time{}, err
-		}
+		clockErr = unix.ClockSettime(unix.CLOCK_REALTIME, &clock)
 		clockApplied = time.Now()
 	}
 	operation := "guest.lifecycle.unknown"
@@ -355,8 +353,9 @@ func (guest *guestLifecycle) apply(parent context.Context, request guestLifecycl
 		span.End()
 	}()
 	if !clockApplied.IsZero() {
-		_, clockSpan := otel.Tracer("nanoagent.lifecycle").Start(ctx, "guest.resume.clock", trace.WithTimestamp(clockApplied.Add(-clockApplied.Sub(clockStarted))))
-		clockSpan.End(trace.WithTimestamp(clockApplied))
+		if err := recordLifecycleClock(ctx, clockStarted, clockApplied, clockErr); err != nil {
+			return time.Time{}, err
+		}
 	}
 	switch request.Action {
 	case "ready":

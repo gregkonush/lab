@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type guestLifecyclePhaseError struct {
@@ -22,6 +23,17 @@ func (failure *guestLifecyclePhaseError) Error() string {
 	return fmt.Sprintf("%s: %v", failure.operation, failure.cause)
 }
 func (failure *guestLifecyclePhaseError) Unwrap() error { return failure.cause }
+
+func recordLifecycleClock(ctx context.Context, started, finished time.Time, err error) error {
+	const operation = "guest.resume.clock"
+	_, span := otel.Tracer("nanoagent.lifecycle").Start(ctx, operation, trace.WithTimestamp(finished.Add(-finished.Sub(started))))
+	defer span.End(trace.WithTimestamp(finished))
+	if err != nil {
+		span.SetStatus(codes.Error, "failed")
+		return &guestLifecyclePhaseError{operation: operation, cause: err}
+	}
+	return nil
+}
 
 func observeLifecyclePhase(ctx context.Context, operation string, run func(context.Context) error) error {
 	child, span := otel.Tracer("nanoagent.lifecycle").Start(ctx, operation)
