@@ -94,7 +94,7 @@ class ErrorTrackingTest {
     assertNull(scrubbed.request)
     assertTrue(scrubbed.extras.isNullOrEmpty())
     assertTrue(scrubbed.contexts.isEmpty())
-    assertEquals(mapOf("service" to "torghut-ta", "namespace" to "torghut"), scrubbed.tags)
+    assertEquals(mapOf("service" to "torghut-ta", "namespace" to "torghut", "logger" to "unknown"), scrubbed.tags)
     assertEquals("Message withheld: potentially sensitive runtime data", scrubbed.exceptions?.single()?.value)
     assertEquals("publish", frame.function)
     assertEquals(31, frame.lineno)
@@ -102,5 +102,54 @@ class ErrorTrackingTest {
     assertNull(frame.contextLine)
     assertNull(frame.preContext)
     assertNull(frame.postContext)
+  }
+
+  @Test
+  fun `log-only errors retain a safe component and separate grouping without runtime values`() {
+    val logger = "org.apache.flink.runtime.rest.handler.job.checkpoints.CheckpointingStatisticsHandler"
+    val event =
+      SentryEvent().apply {
+        this.logger = logger
+        message = Message().apply { formatted = "Job private-identity not found token=secret" }
+      }
+    val scrubbed = ErrorTracking.sanitize(event, "torghut-ta")
+    assertEquals(logger, scrubbed.tags?.get("logger"))
+    assertEquals(listOf("{{ default }}", "torghut-ta", logger), scrubbed.fingerprints)
+    assertEquals("Dorvud application error", scrubbed.message?.formatted)
+    assertTrue(scrubbed.exceptions.isNullOrEmpty())
+  }
+
+  @Test
+  fun `production named component loggers remain distinct`() {
+    for (logger in listOf(
+      "market-data-archive",
+      "market-feature-archive",
+      "technical-market-features",
+      "rolling-market-features",
+      "crypto-market-features",
+      "crypto-market-feature-archive",
+      "crypto-market-data-archive",
+      "options-ta-clickhouse",
+      "ta-clickhouse",
+      "parse-envelope",
+      "parse-bars1m",
+      "microbars",
+      "ta-signals",
+      "torghut-ta",
+    )) {
+      val scrubbed = ErrorTracking.sanitize(SentryEvent().apply { this.logger = logger }, "torghut-ta")
+      assertEquals(logger, scrubbed.tags?.get("logger"))
+      assertEquals(listOf("{{ default }}", "torghut-ta", logger), scrubbed.fingerprints)
+    }
+  }
+
+  @Test
+  fun `untrusted logger names cannot transmit provider values`() {
+    for (logger in listOf("private.token.secret", "org.apache.flink token=secret", "org.apache.${"x".repeat(300)}")) {
+      val scrubbed = ErrorTracking.sanitize(SentryEvent().apply { this.logger = logger }, "torghut-ta")
+      assertEquals("unknown", scrubbed.logger)
+      assertEquals("unknown", scrubbed.tags?.get("logger"))
+      assertEquals(listOf("{{ default }}", "torghut-ta", "unknown"), scrubbed.fingerprints)
+    }
   }
 }
