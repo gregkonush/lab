@@ -54,7 +54,7 @@ export default Effect.gen(function* () {
   yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
     reason = 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER', version = version + 1,
     updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond') WHERE maximum = 'PAPER'
-      AND (effective <> 'OBSERVE' OR kill_state <> 'ACTIVE' OR reason IS DISTINCT FROM 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER')`
+      AND (effective = 'PAPER' OR reason = 'BLOCKED_CAPITAL_SIZING_CUTOVER')`
   yield* sql`ALTER TABLE authority_generations
     DROP CONSTRAINT authority_generations_strategy_parameter_schema_version_check,
     DROP CONSTRAINT authority_generations_strategy_contract_check`

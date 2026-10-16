@@ -104,9 +104,25 @@ for (const { label, id, protocol, migration } of [
     })
 
     if (id === 111) {
-      test.each(['PAPER', 'OBSERVE'] as const)(
-        'inexact %s authority cannot become spendable during cutover',
-        async (effective) => {
+      test.each([
+        { effective: 'PAPER', status: 'DISCREPANCY', reason: null, succeeds: false, changes: false },
+        { effective: 'PAPER', status: 'EXACT', reason: null, succeeds: true, changes: true },
+        {
+          effective: 'OBSERVE',
+          status: 'EXACT',
+          reason: 'BLOCKED_CAPITAL_SIZING_CUTOVER',
+          succeeds: true,
+          changes: true,
+        },
+        ...[
+          `reconciliation discrepancy ${'c'.repeat(64)}`,
+          'operator hold',
+          'unrecognized safety restriction',
+          'reconciliation discrepancy malformed',
+        ].map((reason) => ({ effective: 'OBSERVE', status: 'DISCREPANCY', reason, succeeds: true, changes: false })),
+      ])(
+        'protocol cutover retains non-cutover restrictions: %j',
+        async ({ effective, status, reason, succeeds, changes }) => {
           await runtime.runPromise(
             Effect.gen(function* () {
               const sql = yield* PgClient.PgClient
@@ -121,14 +137,14 @@ for (const { label, id, protocol, migration } of [
                   yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
                   yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover','jev','bayn.jev.protocol.v5')`
                   yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${effective},
-                ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},'reconciliation discrepancy retained',1,clock_timestamp())`
-                  yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','DISCREPANCY',clock_timestamp(),${'b'.repeat(64)})`
+                ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},${reason},1,clock_timestamp())`
+                  yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
                   const result = yield* sql.withTransaction(migration).pipe(Effect.result)
-                  expect(Result.isSuccess(result)).toBe(effective === 'OBSERVE')
+                  expect(Result.isSuccess(result)).toBe(succeeds)
                   const [state] =
                     yield* sql`SELECT maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
                   expect(state).toEqual(
-                    effective === 'OBSERVE'
+                    changes
                       ? {
                           maximum: 'PAPER',
                           effective: 'OBSERVE',
@@ -138,9 +154,9 @@ for (const { label, id, protocol, migration } of [
                         }
                       : {
                           maximum: 'PAPER',
-                          effective: 'PAPER',
-                          kill_state: 'CLEAR',
-                          reason: 'reconciliation discrepancy retained',
+                          effective,
+                          kill_state: effective === 'PAPER' ? 'CLEAR' : 'ACTIVE',
+                          reason,
                           version: '1',
                         },
                   )

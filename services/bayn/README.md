@@ -1678,8 +1678,10 @@ receipts use v4 and report `cashSettlementRoundingMicros` separately from gross 
 net income includes it only for the source transaction's authority generation.
 
 The model-action cutover may migrate an already restricted, flat OBSERVE account while reconciliation is inexact,
-so native recovery can repair its ledger. It retains an active kill switch with `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`.
-PAPER execution still requires exact reconciliation and a fresh protocol-bound capital activation.
+so native recovery can repair its ledger. It preserves that restriction's reason and active kill switch. Only an
+effective PAPER account or recognized predecessor cutover receives `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`; operator
+kills and unknown restrictions never become automatically recoverable. PAPER execution still requires exact
+reconciliation and a fresh protocol-bound capital activation.
 An inexact close reconciliation returns `CLOSE_RECONCILIATION_PENDING` at the regular reconciliation cadence before
 reading archive data or binding a liquidation document; exact evidence resumes the same close path.
 
