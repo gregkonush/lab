@@ -37,7 +37,8 @@ export default Effect.gen(function* () {
           ORDER BY reconciled_at DESC, reconciliation_id DESC LIMIT 1
         ) latest ON true
         WHERE a.maximum = 'PAPER' AND (
-          latest.status IS DISTINCT FROM 'EXACT'
+          (a.effective = 'PAPER' AND latest.status IS DISTINCT FROM 'EXACT')
+          OR latest.reconciled_at IS NULL
           OR latest.reconciled_at > clock_timestamp()
           OR latest.reconciled_at < clock_timestamp() - interval '60 seconds'
           OR latest.reconciled_at < (SELECT max(occurred_at) FROM mutation_events m JOIN intents i USING (intent_id) WHERE i.account_id = g.account_id)
@@ -52,7 +53,8 @@ export default Effect.gen(function* () {
     FROM cutover WHERE state IN ('PENDING', 'ACTIVE') AND snapshot_id IS NULL AND decision_hash IS NULL`
   yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
     reason = 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER', version = version + 1,
-    updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond') WHERE maximum = 'PAPER' AND (effective = 'PAPER' OR reason = 'BLOCKED_CAPITAL_SIZING_CUTOVER')`
+    updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond') WHERE maximum = 'PAPER'
+      AND (effective <> 'OBSERVE' OR kill_state <> 'ACTIVE' OR reason IS DISTINCT FROM 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER')`
   yield* sql`ALTER TABLE authority_generations
     DROP CONSTRAINT authority_generations_strategy_parameter_schema_version_check,
     DROP CONSTRAINT authority_generations_strategy_contract_check`

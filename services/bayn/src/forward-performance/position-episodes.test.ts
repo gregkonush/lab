@@ -177,6 +177,7 @@ describe('position episodes', () => {
         brokerFees: matched === '0' ? [] : [{ ...fee.data, inventoryCostMicros: '0' }],
         ledgerTotals: {
           realizedGainMicros: '0',
+          cashSettlementRoundingMicros: '0',
           realizedLossMicros: '0',
           brokerExecutionFeesMicros: '8262',
           otherChargedCostsMicros: '0',
@@ -568,8 +569,8 @@ describe('position episodes', () => {
   test('keeps the strict v3 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
-    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v3')
+    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)
     expect(

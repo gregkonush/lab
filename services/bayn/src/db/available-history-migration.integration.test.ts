@@ -102,5 +102,54 @@ for (const { label, id, protocol, migration } of [
         }),
       )
     })
+
+    if (id === 111) {
+      test.each(['PAPER', 'OBSERVE'] as const)(
+        'inexact %s authority cannot become spendable during cutover',
+        async (effective) => {
+          await runtime.runPromise(
+            Effect.gen(function* () {
+              const sql = yield* PgClient.PgClient
+              yield* sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`CREATE TEMP TABLE authority_generations (
+                generation_hash text,account_id text,strategy_name text,strategy_parameter_schema_version text,
+                CONSTRAINT authority_generations_strategy_parameter_schema_version_check CHECK(true),
+                CONSTRAINT authority_generations_strategy_contract_check CHECK(true)) ON COMMIT DROP`
+                  yield* sql`CREATE TEMP TABLE authority_state (
+                generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz) ON COMMIT DROP`
+                  yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+                  yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover','jev','bayn.jev.protocol.v5')`
+                  yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${effective},
+                ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},'reconciliation discrepancy retained',1,clock_timestamp())`
+                  yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover','DISCREPANCY',clock_timestamp(),${'b'.repeat(64)})`
+                  const result = yield* sql.withTransaction(migration).pipe(Effect.result)
+                  expect(Result.isSuccess(result)).toBe(effective === 'OBSERVE')
+                  const [state] =
+                    yield* sql`SELECT maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
+                  expect(state).toEqual(
+                    effective === 'OBSERVE'
+                      ? {
+                          maximum: 'PAPER',
+                          effective: 'OBSERVE',
+                          kill_state: 'ACTIVE',
+                          reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+                          version: '2',
+                        }
+                      : {
+                          maximum: 'PAPER',
+                          effective: 'PAPER',
+                          kill_state: 'CLEAR',
+                          reason: 'reconciliation discrepancy retained',
+                          version: '1',
+                        },
+                  )
+                }),
+              )
+            }),
+          )
+        },
+      )
+    }
   })
 }

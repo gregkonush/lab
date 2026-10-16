@@ -11,6 +11,7 @@ import { DateTime, Effect, Redacted, Result } from 'effect'
 
 import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import { prepareFeeMatchCorrection, type StoredBrokerFee } from '../accounting/broker-fees'
+import { prepareCashSettlement } from '../accounting/cash-settlement'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import { makeBrokerIdentity, BrokerEnvironment, BrokerProvider } from '../broker/identity'
 import type { ForwardPerformanceConfig } from './config'
@@ -725,6 +726,7 @@ describe('forward performance read program', () => {
         return Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -749,7 +751,7 @@ describe('forward performance read program', () => {
         ),
       ),
     )
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v2')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v3')
     expect(expenseWriterFence).toBe(writerFence)
     expect(report.receipt).toEqual(receipt)
     expect(report.positionEpisodes.status).toBe('UNDETERMINED')
@@ -833,10 +835,45 @@ describe('forward performance read program', () => {
     })
   })
 
-  test.each([false, true])('cumulative fee evidence with cash correction=%s', async (includeCashCorrection) => {
+  test.each([
+    { includeCashCorrection: false, exactCashSource: true },
+    { includeCashCorrection: true, exactCashSource: true },
+    { includeCashCorrection: false, exactCashSource: false },
+  ])('cumulative fee and cash settlement evidence: %j', async ({ includeCashCorrection, exactCashSource }) => {
     const sql = makeReadOnlySql({ statements: [] })
     const accountId = identityResult.success.accountId
     const { fills, accrual, accounting } = coinRoundTrip(0, accountId)
+    const cashSource = fills[0]
+    if (cashSource === undefined) throw new Error('missing synthetic source fill')
+    const settlement = success(
+      prepareCashSettlement(
+        {
+          schemaVersion: 'bayn.broker-cash-settlement.v1',
+          accountId,
+          transactionId: cashSource.transactionId,
+          transactionContentHash: exactCashSource ? cashSource.contentHash : hash('9'),
+          brokerEventId: cashSource.brokerEventId,
+          cashDeltaMicros: cashSource.cashDeltaMicros,
+          occurredAt: cashSource.occurredAt,
+          observedAt: '2026-09-18T16:00:00.000Z',
+          precisionAccountEventId: hash('8'),
+          cashReportingQuantumMicros: '10000',
+        },
+        config.tigerBeetle.ledger,
+      ),
+    )
+    const cashSettlementRecords = [
+      {
+        settlement_id: settlement.settlementId,
+        data: settlement.data,
+        rounding_delta_micros: settlement.roundingDeltaMicros,
+        content_hash: settlement.contentHash,
+        ledger_plan_hash: success(hashLedgerPlanResult(settlement.plan)),
+        tigerbeetle_cluster_id: config.tigerBeetle.clusterId.toString(),
+        tigerbeetle_ledger: config.tigerBeetle.ledger,
+        posted: true,
+      },
+    ]
     const fee = coinActivity('82625', accountId)
     const feeRecords: StoredBrokerFee[] = [fee]
     const generationBrokerFeeIds: string[] = []
@@ -913,6 +950,8 @@ describe('forward performance read program', () => {
           ledgerReceipts: receipts,
           transactionEvidence: fills.slice(1).map((transaction) => ({ ...transaction, cycleId: hash('f') })),
           brokerFeeAccrualRecords: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+          cashSettlementRecords,
+          unaccountedCashSettlementCount: 0,
           brokerFeeRecords: feeRecords,
           generationBrokerFeeIds,
           executionEvidence: [],
@@ -924,10 +963,13 @@ describe('forward performance read program', () => {
           unaccountedFillCount: 0,
           postReconciliationActivityCount: 0,
         }),
-      ledger: () =>
-        Effect.succeed({
+      ledger: (_config, _accountId, plans, _yield, generationPlans) => {
+        expect(plans).toContainEqual(settlement.plan)
+        expect(generationPlans).not.toContainEqual(settlement.plan)
+        return Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: null,
@@ -937,7 +979,20 @@ describe('forward performance read program', () => {
           missingLedgerAccountCount: 0,
           openPositionCount: 0,
           cashYieldEvidenceRequired: false,
-        }),
+        })
+      },
+    }
+    if (!exactCashSource) {
+      const failed = await Effect.runPromise(
+        Effect.scoped(
+          runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql), Effect.flip),
+        ),
+      )
+      expect(failed).toMatchObject({
+        operation: 'ledger-read',
+        message: 'Cash settlement does not match its retained source transaction',
+      })
+      return
     }
     const report = await Effect.runPromise(
       Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
@@ -998,6 +1053,7 @@ describe('forward performance read program', () => {
         Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: null,
@@ -1119,6 +1175,7 @@ describe('forward performance read program', () => {
         Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1188,6 +1245,8 @@ describe('forward performance read program', () => {
         Effect.succeed({
           cashReportingPrecisionKnown: true,
           brokerFeeAccrualRecords: [],
+          cashSettlementRecords: [],
+          unaccountedCashSettlementCount: 0,
           cycles: [
             {
               cycleId,
@@ -1318,6 +1377,7 @@ describe('forward performance read program', () => {
         return Effect.succeed({
           totals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '100',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1336,7 +1396,7 @@ describe('forward performance read program', () => {
       Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
-    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
+    expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(observedMarketVolumeRequests).toEqual([marketVolumeRequest])
     expect(receipt.evidence).toEqual({
       status: 'SUFFICIENT',
