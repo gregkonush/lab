@@ -69,8 +69,7 @@ export const decideJevEntry = (input: unknown) =>
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
       const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
-      if (answer.choice === 'enter' && probability >= observation.protocol.minimumEntryProbability && quoteEligible)
-        eligible.push({ symbol, probability })
+      if (answer.choice === 'enter' && quoteEligible) eligible.push({ symbol, probability })
     }
     eligible.sort(
       (left, right) =>

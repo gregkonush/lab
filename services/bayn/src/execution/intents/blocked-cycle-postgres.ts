@@ -6,7 +6,7 @@ import { isSqlError } from 'effect/sql/SqlError'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../../schemas'
 import { reconciliationIncompleteRestrictionReason } from '../authority'
 import {
-  capitalSizingCutoverRestrictionReason,
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
   executionMandateFailureRestrictionPrefix,
@@ -205,7 +205,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
               OR state.reason ~ ${legacyExecutionMandateFailureRestrictionPattern}
               OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR state.reason = ${reconciliationIncompleteRestrictionReason}
-              OR state.reason = ${capitalSizingCutoverRestrictionReason}
+              OR state.reason = ${strategyProtocolCutoverRestrictionReason}
               OR (
                 state.reason IN (
                   ${executionMandateCompletedRestrictionReason},
