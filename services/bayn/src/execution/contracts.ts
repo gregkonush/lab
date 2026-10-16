@@ -26,7 +26,6 @@ import {
   legacyExecutionIntentSchemaVersion,
   legacyFillSchemaVersion,
   legacyOrderV2SchemaVersion,
-  legacyPositionSchemaVersion,
   legacyRateLimitSchemaVersion,
   legacyReconciliationSchemaVersion,
   legacyReferenceIntentSchemaVersion,
@@ -189,25 +188,18 @@ const AccountSnapshotBase = Schema.Struct({
 export const AccountSnapshotSchema = AccountSnapshotBase
 export type AccountSnapshot = typeof AccountSnapshotSchema.Type
 
-const LegacyPositionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyPositionSchemaVersion),
+export const PositionSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.position.v2'),
   accountId: NonEmptyString,
   symbol: SymbolName,
   quantityAtoms: SignedMicros,
   averageEntryPriceMicros: UnsignedMicros,
+  costBasisMicros: SignedMicros,
   marketPriceMicros: UnsignedMicros,
   marketValueMicros: SignedMicros,
   unrealizedPnlMicros: SignedMicros,
   observedAt: UtcInstant,
 })
-export const PositionSchema = Schema.Union([
-  LegacyPositionSchema,
-  Schema.Struct({
-    ...LegacyPositionSchema.fields,
-    schemaVersion: Schema.Literal('bayn.position.v2'),
-    costBasisMicros: SignedMicros,
-  }),
-])
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({

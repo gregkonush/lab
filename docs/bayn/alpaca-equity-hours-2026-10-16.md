@@ -18,8 +18,9 @@ The current Basic data plan limits the useful IEX interval to 08:00–17:00 ET, 
 
 The free overnight feed supplies indicative quotes and delayed trades. It cannot substitute for Bayn's current
 contract for executable quotes and observed completed-minute signals. Realtime BOATS requires Algo Trader Plus;
-the inspected account subscription page offered $99 per month. Purchasing that subscription is a separate pending
-approval. A wider release would also need its actual feed and overnight calendar evidence before granting orders.
+the inspected account subscription page offered $99 per month. The user chose to keep Basic and use its available
+hours. No subscription purchase is authorized. The deployed equity interval remains 08:00–17:00 ET, subject to
+the provider calendar and instrument eligibility.
 [Alpaca overnight feed entitlements](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api).
 
 ## Current change

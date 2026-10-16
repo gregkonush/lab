@@ -186,7 +186,8 @@ test('activation consumes the current reconciliation rather than the startup pos
     ...flat,
     positions: [
       {
-        schemaVersion: 'bayn.paper-position.v1',
+        schemaVersion: 'bayn.position.v2',
+        costBasisMicros: '2015820000',
         accountId,
         symbol: 'AAPL',
         quantityAtoms: '6000000000',

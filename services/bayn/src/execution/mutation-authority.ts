@@ -295,7 +295,7 @@ const positionExposureIdentity = (
       symbol: position.symbol,
       quantityAtoms: position.quantityAtoms,
       averageEntryPriceMicros: position.averageEntryPriceMicros,
-      ...(position.costBasisMicros === undefined ? {} : { costBasisMicros: position.costBasisMicros }),
+      costBasisMicros: position.costBasisMicros,
     }))
     .sort((left, right) => left.symbol.localeCompare(right.symbol))
 

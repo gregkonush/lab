@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v6` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v7` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -18,6 +18,21 @@ entries retain their original deadline and all account, authority, quantity and 
 An unused native admission retains its expiry classification at the equity cutoff, including when decision construction
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
 evidence and cooldown guards before acquiring a successor.
+
+Current positions require explicit broker cost basis. Migration 115 rejects new cost-less position records;
+retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
+its rounded average price only when both reported price and basis reproduce from the exact native fill cost and
+unchanged quantity. Cash, fills, ledger transfers and unrelated basis differences keep their exact checks.
+
+Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
+net liquidation P&L and the break-even bid. Estimated exit costs remain estimates; delayed final broker fee matching
+and unknown operating costs retain their existing qualification boundaries. Sunk entry fees never postpone a
+protective stop or holding deadline.
+
+A held position that survives an outage can use the same bounded forced-close lease after its data session ends,
+while the retained broker calendar still permits extended-hours orders. Whole equity positions retain LIMIT/DAY
+execution from fresh exact reconciled broker positions. Recovery does not authorize entries outside entitled data
+hours, extend an unresolved order's immutable lease, or submit after the broker session closes.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
 Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds

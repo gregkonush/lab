@@ -69,6 +69,21 @@ risk reduction, immutable evidence reproduction and document hashing for entry a
 profile. These stages reuse the existing aggregate profile and slow/failure diagnostics; they add no source,
 database or model requests and no healthy completion log.
 
+Pricing reuses a same-pass exact reconciliation while its refresh cadence remains open and its broker-risk
+freshness bound covers the execution quote's lifetime. The cadence determines when to refresh on the next read;
+it does not shorten the risk policy's validity deadline. Requiring the entire quote lifetime inside the cadence
+can trigger a slow database refresh after timely inference and expire an otherwise usable model decision.
+Current authority generation/version, accounting and unresolved-mutation checks still govern reuse.
+
+A position basis discrepancy first requires the exact broker response and accounted fills. Rounded-average
+reporting must reproduce both provider fields from native quantity and cost; do not clear a kill state with a broad
+cash or position tolerance. Current positions require cost basis and reject the retired cost-less encoding.
+
+An equity outage may outlast IEX data hours. Close recovery uses a maximum three-minute lease bounded by the
+verified provider session, fresh exact reconciliation and the existing forced-close LIMIT/DAY flow. It cannot
+open positions or renew unresolved broker orders. A closed broker session leaves recovery pending until a verified
+session permits the close.
+
 A rejected decision emits `Bayn decision evidence rejected` with schema
 `bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
 `RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;

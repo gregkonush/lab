@@ -83,7 +83,7 @@ export const decideJevExit = (input: unknown) =>
     const state = portfolio.brokerState
     const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
     const firstFill = portfolio.entryFills[0]
-    if (position?.schemaVersion !== 'bayn.position.v2' || firstFill === undefined)
+    if (position === undefined || firstFill === undefined)
       return yield* invalid('Exit requires a long position with cost basis and its first fill')
     const market = jevMarketForSymbol(position.symbol)
     const now = Date.parse(evidence.observedAt)
