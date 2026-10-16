@@ -429,6 +429,8 @@ The automatic Stage checks out that image revision, updates the status, worker, 
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact
 controller binding before the status service rolls out.
+Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
+that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
@@ -535,3 +537,9 @@ capital weight and instrument precision instead of one displayed ask size. The s
 published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
 Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
 limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.
+
+Migration 110 recognizes the capital-sizing cutover restriction in the native terminal-generation recovery path.
+The same path retires bound, unused cycles left by the previous worker even after their admission window expires;
+cycles with snapshot, decision or intent evidence still block cutover recovery.
+The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
+Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.
