@@ -216,6 +216,7 @@ pub async fn run() -> anyhow::Result<()> {
             "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
         )?))?,
     )?;
+    let readiness_admission = admission.clone();
     let health = Router::new()
         .route(
             "/metrics",
@@ -234,13 +235,18 @@ pub async fn run() -> anyhow::Result<()> {
             "/readyz",
             get(move || {
                 let database = readiness_database.clone();
+                let admission = readiness_admission.clone();
                 async move {
+                    if !admission.is_ready() {
+                        return StatusCode::SERVICE_UNAVAILABLE;
+                    }
                     readiness(&database, &runner::sockets_directory().join("control.sock")).await
                 }
             }),
         );
     let health_listener = TcpListener::bind("0.0.0.0:8080").await?;
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
+    admission.wait_ready().await;
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
         result = serve(listener, tls, database, admission) => result,
