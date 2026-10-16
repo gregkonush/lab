@@ -9,7 +9,7 @@ import { compileJevEntry } from './runtime'
 import { makeJevTradingSignalBatch } from './trading-signals'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} sizes its LIMIT/IOC entry from capital rather than one displayed quote`, () => {
+  test(`${symbol} honors a chosen enter action and sizes from capital rather than one displayed quote`, () => {
     const { snapshot } = cryptoMarketFixture(symbol, { quoteAskSize: 0.8 })
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const batchPlan = Result.getOrThrow(
@@ -23,7 +23,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     )
     const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
     const decision = Result.getOrThrow(
-      decideJevEntry({ observation, batchPlan, batchResult: nativeJevBatchResult(batchPlan, decidedAt), decidedAt }),
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => 'enter', 0.42),
+        decidedAt,
+      }),
     )
     expect(decision.selectedSymbols).toEqual([symbol])
     const compiled = Result.getOrThrow(compileJevEntry(decision, snapshot, snapshot))

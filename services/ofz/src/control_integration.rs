@@ -3842,6 +3842,39 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
     );
     drop(activity_client);
     let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
+    let mut held = admin.pool.get().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.query_one(
+        "SELECT id FROM ofz.sessions WHERE id=$1 FOR UPDATE",
+        &[&owner_session],
+    )
+    .await
+    .unwrap();
+    let concurrent_activity = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        futures::future::join_all((0..8).map(|_| async {
+            let client = database.pool.get().await.unwrap();
+            store::record_activity(&**client, &activity).await
+        })),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+    assert!(
+        matches!(&concurrent_activity, Ok(results) if results.iter().all(|result| matches!(result, Ok(true)))),
+        "parallel activity must validate without queuing behind an idle refresh: {concurrent_activity:?}"
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+                &[&owner_session],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        short_idle,
+        "a busy session row skips only the optional idle refresh"
+    );
     let mut context = request(
         database,
         owner,
