@@ -123,7 +123,7 @@ impl Service {
             entered.notify_one();
             resume.notified().await;
         }
-        let valid_until = (before.now_ms + 2000).min(context.deadline_unix_ms);
+        let valid_until = decision::decision_deadline(context.deadline_unix_ms, &before)?;
         if before.version != after.version
             || before.recovery_generation != after.recovery_generation
             || after.now_ms >= valid_until
@@ -178,7 +178,7 @@ impl Service {
             || finished.recovery_generation != after.recovery_generation
             || finished.fenced != after.fenced
             || finished.archive_healthy != after.archive_healthy
-            || finished.now_ms >= valid_until
+            || finished.now_ms >= context.deadline_unix_ms
         {
             let mut denial = store::receipt(
                 &context,
@@ -200,6 +200,7 @@ impl Service {
             .runtime_epoch
             .map(|id| id.to_string())
             .unwrap_or_default();
+        let valid_until = decision::decision_deadline(context.deadline_unix_ms, &finished)?;
         let runtime_allowed = (maintenance.is_none() || context.runtime_epoch == runtime_epoch)
             && current.running
             && current.state == "active"

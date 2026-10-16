@@ -149,6 +149,12 @@ Controller runtime reads compare workspace authority and global policy/fence sta
 before disclosure. Restrictive intent can quarantine a workspace before native policy finalization advances the global
 version; an in-flight read must abort if that workspace authority changes, even when the policy version stays the same.
 
+Initial audited calls may wait up to five seconds for durable commit. Ofz rechecks authority after that commit before
+issuing a decision valid for at most two seconds on both the API and database clocks, still capped by the request
+deadline and session or grant expiry. A clock difference that leaves no valid window fails closed.
+Receipt renewals keep their two-second request budget and recheck current authority. A compound guest operation
+authorizes its child, refreshes the parent through its original receipt, then intersects both decision deadlines.
+
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
 stream receipt binding, audit/archive failure and transfer quarantine before receipt recovery. Set
@@ -178,8 +184,9 @@ A native Viewer relationship cannot authorize content without its committed SQL 
 scope clears content access in the durable intent transaction, before native finalization advances the policy version.
 The final decision reads scope, session, runtime and platform authority from one SQL snapshot after its audit write or
 stream-receipt lookup; changed authority returns a denial and records it. The real control fixture reproduces both
-pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 174 immutable
-receipts afterward.
+pending-grant and in-flight narrowing failures before their fixes and passes with 55 commands and 180 immutable
+receipts afterward. The audit-timing cases also verify that a slow commit cannot return an expired permit or extend
+the original request deadline.
 
 The Access UI submits typed, versioned commands through the BFF. It verifies GitHub usernames against numeric IDs,
 requires fresh MFA for changes, shows quota usage and audit receipts, and retries an uncertain command with its original
