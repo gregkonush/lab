@@ -203,12 +203,19 @@ test('writes source, digest, and research lineage into the correct field in ever
     const path = `argocd/applications/bayn/${file}.yaml`
     const manifest = read(path)
     const environment = manifest.spec.template.spec.containers[0].env
-    const update = steps.find(
+    const updates = steps.filter(
       (step: { uses: string; config: { path: string } }) =>
         step.uses === 'yaml-update' && step.config.path === `./out/${path}`,
     )
+    const update = updates.find((step: { if?: string }) => step.if === undefined)
+    expect(update).toBeDefined()
+    const configuredLineage = environment.some(
+      (entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+    )
     const assignments = new Map<string, string>()
-    for (const change of update.config.updates) {
+    for (const change of updates
+      .filter((step: { if?: string }) => step.if === undefined || configuredLineage)
+      .flatMap((step: { config: { updates: { key: string; value: string }[] } }) => step.config.updates)) {
       if (!change.key.includes('spec.template.spec.containers.0.env.')) continue
       const match =
         /^\$\{\{ 'spec\.template\.spec\.containers\.0\.env\.' \+ string\(outputs\.(\w+)\.(\w+)\) \+ '\.value' \}\}$/.exec(
@@ -234,9 +241,6 @@ test('writes source, digest, and research lineage into the correct field in ever
     )
     expect(assignments.get('BAYN_IMAGE_DIGEST')).toBe('${{ imageFrom(vars.imageRepo).Digest }}')
     const lineage = assignments.get('BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')
-    const configuredLineage = environment.some(
-      (entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
-    )
     expect(typeof lineage).toBe(configuredLineage ? 'string' : 'undefined')
     if (lineage) lineageValues.push(lineage)
     expect(assignments.has('BAYN_BROKER_ACCESS')).toBe(false)
@@ -271,14 +275,57 @@ test('writes source, digest, and research lineage into the correct field in ever
   expect(new Set(lineageValues).size).toBe(hasMandate ? 1 : 0)
 })
 
+test('OBSERVE-only source skips mandate lookup and updates while retaining all image bindings', () => {
+  const lineageParse = steps.find((step: { as?: string }) => step.as === 'baynLineage')
+  expect(lineageParse.if).toBe('${{ outputs.baynDeployment.hasLineage }}')
+  for (const [file, owner] of [
+    ['deployment', 'baynDeployment'],
+    ['execution-controller', 'baynController'],
+    ['execution-activation', 'baynActivation'],
+  ]) {
+    const source = read(`argocd/applications/bayn/${file}.yaml`)
+    const environment = source.spec.template.spec.containers[0].env.filter(
+      (entry: { name: string }) =>
+        ![
+          'BAYN_CAPITAL_ACTIVATION_REQUEST',
+          'BAYN_CAPITAL_ACTIVATION_KIND',
+          'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE',
+        ].includes(entry.name),
+    )
+    expect(
+      environment.findIndex((entry: { name: string }) => entry.name === 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE'),
+    ).toBe(-1)
+    const updates = steps.filter(
+      (step: { uses: string; config: { path: string } }) =>
+        step.uses === 'yaml-update' && step.config.path === `./out/argocd/applications/bayn/${file}.yaml`,
+    )
+    const lineageUpdate = updates.find((step: { if?: string }) => step.if !== undefined)
+    expect(lineageUpdate.if).toBe('${{ outputs.' + owner + '.hasLineage }}')
+    const parse = steps.find((step: { as?: string }) => step.as === owner)
+    expect(parse.config.outputs).toContainEqual({
+      name: 'hasLineage',
+      fromExpression: "any(spec.template.spec.containers[0].env, .name == 'BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE')",
+    })
+    expect(lineageUpdate.config.updates).toHaveLength(1)
+    const imageUpdate = updates.find((step: { if?: string }) => step.if === undefined)
+    expect(imageUpdate.config.updates.some((change: { key: string }) => change.key.includes('.sourceIndex'))).toBe(true)
+    expect(imageUpdate.config.updates.some((change: { key: string }) => change.key.includes('.digestIndex'))).toBe(true)
+    expect(imageUpdate.config.updates.some((change: { key: string }) => change.key.includes('.lineageIndex'))).toBe(
+      false,
+    )
+  }
+})
+
 test.each([
   '231623095676dfd33097df91c6ca8406ebabeedd',
   `012345678901${'a'.repeat(28)}`,
   `1234567890e2${'b'.repeat(28)}`,
 ])('keeps activation version labels as YAML strings for revision %s', (revision) => {
   const activation = steps.find(
-    (step: { uses: string; config: { path: string } }) =>
-      step.uses === 'yaml-update' && step.config.path === './out/argocd/applications/bayn/execution-activation.yaml',
+    (step: { uses: string; if?: string; config: { path: string } }) =>
+      step.uses === 'yaml-update' &&
+      step.if === undefined &&
+      step.config.path === './out/argocd/applications/bayn/execution-activation.yaml',
   )
   const labels = activation.config.updates.filter((update: { key: string }) =>
     update.key.endsWith('labels.app\\.kubernetes\\.io/version'),
