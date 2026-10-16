@@ -2,9 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: ofz
 commonAnnotations:
-  delivery.proompteng.ai/source-revision: 01e6d1e3ef69d7513809698fb5e1f123a5203d99
-  delivery.proompteng.ai/image-digest: sha256:d3b4293be2f4fa9019e9149b5f465dab694af9ad07b1c15c5defaf96fcfc24a7
-  delivery.proompteng.ai/github-run-id: "38858954979"
+  delivery.proompteng.ai/source-revision: cd56abcbbb3f0d778f897364aafbffefb447e414
+  delivery.proompteng.ai/image-digest: sha256:7d694728ad19ab06a7fa7bfb5bf43ba379b002e359ab4f8d6fa6ecbd99b09fec
+  delivery.proompteng.ai/github-run-id: "38861095592"
 resources:
 - control-plane
 - postgres-backups.yaml
@@ -20,4 +20,4 @@ configMapGenerator:
   - nginx.conf=playground-nginx.conf
 images:
 - name: registry.ide-newton.ts.net/lab/ofz
-  digest: sha256:d3b4293be2f4fa9019e9149b5f465dab694af9ad07b1c15c5defaf96fcfc24a7
+  digest: sha256:7d694728ad19ab06a7fa7bfb5bf43ba379b002e359ab4f8d6fa6ecbd99b09fec
