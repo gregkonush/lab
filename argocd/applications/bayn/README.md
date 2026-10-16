@@ -236,9 +236,15 @@ account-keyed native controller through its shared `activateDeployment` handler.
 out after that verified native binding. The worker advertises exactly `BaynExecutionController` and
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
+The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
+validates the target against the latest worker before reading durable controller state. A pinned stale coordinator
+cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
+activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
+source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
+
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
-`activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+`activate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
 result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
 `BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
 and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
@@ -426,7 +432,8 @@ controller binding before the status service rolls out.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
-existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
+runtime idempotency key binds that generation, the activation Job UID, source revision, account controller key and
+target plan. The predecessor comes from durable controller state and is not part of the request or retry identity.
 
 For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
 together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
@@ -446,7 +453,7 @@ broker-ledger advance before and after the handoff.
 
 This is a hard route migration from `BaynExecutionBootstrap/start` to
 `BaynExecutionController/<account-key>/activateDeployment`, with the single
-`bayn.execution-deployment-activation.v1` request contract. Worker and activation Job must use the same promoted
+`bayn.execution-deployment-activation.v2` request contract. Worker and activation Job must use the same promoted
 image. Native controller state, tick and mutation contracts, account keys and credentials are unchanged. No legacy
 handler is served by the replacement endpoint.
 
