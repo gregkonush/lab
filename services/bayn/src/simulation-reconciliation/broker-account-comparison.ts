@@ -8,7 +8,6 @@ import {
   indexUnique,
   instant,
   integer,
-  roundMicrosProduct,
   type DiscrepancyInput,
   type ProjectedPosition,
   type ReconciliationAccountSource,
@@ -37,15 +36,22 @@ const comparePosition = (
       expectedQuantity: integer('projected-position-quantity', symbol, expectedQuantityText),
       observedQuantity: integer('position-quantity', symbol, observedQuantityText),
       expectedCost: integer('projected-position-cost', symbol, expectedCostText),
+      averagePrice: integer('position-average-price', symbol, observedPosition?.averageEntryPriceMicros ?? '0'),
       observedCost:
         observedPosition === undefined
           ? Result.succeed(0n)
-          : observedPosition.schemaVersion === 'bayn.position.v2'
-            ? integer('position-cost-basis', symbol, observedPosition.costBasisMicros)
-            : roundMicrosProduct(symbol, observedPosition.quantityAtoms, observedPosition.averageEntryPriceMicros),
+          : integer('position-cost-basis', symbol, observedPosition.costBasisMicros),
     }),
-    Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity }) =>
-      pipe(
+    Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity, averagePrice }) => {
+      // A reported basis formed from the rounded average must reproduce both provider fields.
+      // The ledger and cash retain the exact fill cost; no monetary tolerance is applied.
+      const reportedAverageMatches =
+        expectedQuantity === observedQuantity &&
+        observedQuantity > 0n &&
+        expectedCost > 0n &&
+        (expectedCost * 1_000_000_000n * 2n + observedQuantity) / (observedQuantity * 2n) === averagePrice &&
+        (averagePrice * observedQuantity + 500_000_000n) / 1_000_000_000n === observedCost
+      return pipe(
         Result.all({
           quantity: compareValue(
             snapshot.accountId,
@@ -59,15 +65,15 @@ const comparePosition = (
             DiscrepancyKind.Position,
             `${symbol}:cost`,
             expectedCost.toString(),
-            observedCost.toString(),
+            (reportedAverageMatches ? expectedCost : observedCost).toString(),
           ),
         }),
         Result.map(({ cost, quantity }) => ({
           difference: absolute(expectedQuantity - observedQuantity),
           discrepancies: [...quantity, ...cost],
         })),
-      ),
-    ),
+      )
+    }),
   )
 }
 

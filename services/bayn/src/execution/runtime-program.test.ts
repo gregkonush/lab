@@ -174,6 +174,7 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
   side: PositionSide.Long,
   quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
+  costBasisMicros: '100000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
   unrealizedPnlMicros: '0',

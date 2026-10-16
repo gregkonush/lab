@@ -207,7 +207,8 @@ const brokerState = (
       ? []
       : [
           {
-            schemaVersion: 'bayn.paper-position.v1',
+            schemaVersion: 'bayn.position.v2',
+            costBasisMicros: '100000000',
             accountId: selectedAccountId,
             symbol: heldSymbol,
             quantityAtoms: '1000000000',

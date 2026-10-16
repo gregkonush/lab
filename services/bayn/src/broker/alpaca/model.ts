@@ -278,8 +278,7 @@ export interface Position {
   readonly side: PositionSide
   readonly quantityAtoms: string
   readonly averageEntryPriceMicros: string
-  /** Present on current broker responses; omitted only by legacy observations. */
-  readonly costBasisMicros?: string
+  readonly costBasisMicros: string
   readonly marketPriceMicros: string
   readonly marketValueMicros: string
   readonly unrealizedPnlMicros: string
