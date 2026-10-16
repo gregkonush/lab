@@ -62,7 +62,8 @@ const account = {
 }
 
 const position = {
-  schemaVersion: 'bayn.paper-position.v1' as const,
+  schemaVersion: 'bayn.position.v2' as const,
+  costBasisMicros: '100000000',
   accountId: account.accountId,
   symbol: 'NVDA',
   quantityAtoms: '1000000000',
@@ -155,6 +156,15 @@ const intent = {
 }
 
 describe('execution contracts', () => {
+  test('requires explicit position cost basis and rejects the retired position contract', async () => {
+    expect(
+      Exit.isFailure(
+        await Effect.runPromiseExit(decodePosition({ ...position, schemaVersion: 'bayn.paper-position.v1' })),
+      ),
+    ).toBe(true)
+    const { costBasisMicros: _cost, ...withoutCost } = position
+    expect(Exit.isFailure(await Effect.runPromiseExit(decodePosition(withoutCost)))).toBe(true)
+  })
   test('strictly decodes every broker payload and tagged event', async () => {
     const contracts: ReadonlyArray<{
       decode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>

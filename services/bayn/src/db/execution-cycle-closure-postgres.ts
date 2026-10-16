@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Option, Schema } from 'effect'
 
-import { continuousExecutionPolicy } from '../market-hours'
+import { executionCloseRecoveryExpiry } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result } from '../hash'
 import { JevExitReason } from '../jev/exit'
@@ -149,12 +149,17 @@ const makeStore = Effect.gen(function* () {
         const [recovery] = yield* Schema.decodeUnknownEffect(
           Schema.Tuple([Schema.Struct({ allowed: Schema.Boolean })]),
         )(
-          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_calendar_schema_version='bayn.continuous-market-hours.v1' AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
+          yield* sql`SELECT EXISTS(SELECT 1 FROM autonomous_cycles WHERE cycle_id=${closure.cycleId} AND execution_close_at<=${closure.createdAt}::timestamptz) AS allowed`,
         )
+        const recoveryDeadline =
+          closure.document.executionSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(closure.document.executionSession.calendar, closure.createdAt)
         const boundedRecoveryLease =
           recovery.allowed &&
           closure.expiresAt > closure.createdAt &&
-          Date.parse(closure.expiresAt) <= Date.parse(closure.createdAt) + continuousExecutionPolicy.closeRecoveryMs
+          recoveryDeadline !== null &&
+          closure.expiresAt <= recoveryDeadline
         if (
           first !== next ||
           closure.entryDecisionHash !== original.entryDecisionHash ||

@@ -1,5 +1,5 @@
 import { Result } from 'effect'
-import { MarketSchedule, continuousExecutionPolicy } from '../market-hours'
+import { continuousExecutionPolicy } from '../market-hours'
 
 import { utcInstantFromEpochMillis, utcInstantFromEpochMillisResult } from '../time'
 
@@ -13,9 +13,9 @@ export interface ExecutionCycleCloseWindow {
 }
 
 export interface ExecutionCycleCloseWindowFacts {
-  readonly marketSchedule: MarketSchedule
   readonly observedAt: string
   readonly executionCloseAt: string
+  readonly recoveryExpiresAt: string | null
   /** Strategy-bound lead from the session close to the start of forced flattening. */
   readonly sessionCloseStartLeadMs?: number
   /** Strategy-bound lead from the session close to the final close submission. */
@@ -88,18 +88,24 @@ export const resolveExecutionCycleCloseWindow = (
         reason: 'execution close instant is invalid',
       }),
     )
-    const recovery = facts.marketSchedule === MarketSchedule.Continuous && observedAt >= executionCloseAt
+    const recovery = facts.recoveryExpiresAt !== null && observedAt >= executionCloseAt
     if (recovery && submitLeadMs >= continuousExecutionPolicy.closeRecoveryMs)
       return yield* Result.fail({
         _tag: 'ExecutionCycleCloseWindowInvalid' as const,
-        reason: 'continuous close recovery must retain a bounded submission window',
+        reason: 'close recovery must retain a bounded submission window',
       })
     const expiresAt = recovery
-      ? yield* decodeInstant(
-          new Date(Date.parse(observedAt) + continuousExecutionPolicy.closeRecoveryMs).toISOString(),
-          'recovery close expiry',
-        )
+      ? yield* decodeInstant(facts.recoveryExpiresAt ?? executionCloseAt, 'recovery close expiry')
       : executionCloseAt
+    if (
+      recovery &&
+      (expiresAt <= observedAt ||
+        Date.parse(expiresAt) > Date.parse(observedAt) + continuousExecutionPolicy.closeRecoveryMs)
+    )
+      return yield* Result.fail({
+        _tag: 'ExecutionCycleCloseWindowInvalid' as const,
+        reason: 'close recovery lease exceeds its bounded lifetime',
+      })
     return {
       startAt: sessionStartAt,
       submitCutoffAt: recovery ? new Date(Date.parse(expiresAt) - submitLeadMs).toISOString() : sessionSubmitCutoffAt,
