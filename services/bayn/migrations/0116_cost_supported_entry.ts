@@ -37,7 +37,7 @@ export default Effect.gen(function* () {
           ORDER BY reconciled_at DESC, reconciliation_id DESC LIMIT 1
         ) latest ON true
         WHERE a.maximum = 'PAPER' AND (
-          (a.effective = 'PAPER' AND latest.status IS DISTINCT FROM 'EXACT')
+          latest.status IS DISTINCT FROM 'EXACT'
           OR latest.reconciled_at IS NULL
           OR latest.reconciled_at > clock_timestamp()
           OR latest.reconciled_at < clock_timestamp() - interval '60 seconds'

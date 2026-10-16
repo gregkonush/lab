@@ -165,7 +165,25 @@ for (const { label, id, protocol, migration } of [
           'operator hold',
           'unrecognized safety restriction',
           'reconciliation discrepancy malformed',
-        ].map((reason) => ({ effective: 'OBSERVE', status: 'DISCREPANCY', reason, succeeds: true, changes: false })),
+        ].map((reason) => ({
+          effective: 'OBSERVE',
+          status: 'DISCREPANCY',
+          reason,
+          succeeds: id !== 116,
+          changes: false,
+        })),
+        ...(id === 116
+          ? [
+              {
+                effective: 'OBSERVE',
+                status: 'DISCREPANCY',
+                reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+                succeeds: false,
+                changes: false,
+              },
+              { effective: 'OBSERVE', status: 'EXACT', reason: 'operator hold', succeeds: true, changes: false },
+            ]
+          : []),
       ])(
         'protocol cutover retains non-cutover restrictions: %j',
         async ({ effective, status, reason, succeeds, changes }) => {
