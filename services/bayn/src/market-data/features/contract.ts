@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect'
+import { equityClockSession } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
@@ -9,10 +10,10 @@ export enum MarketFeatureContract {
   V1 = 'dorvud.market-feature.v1',
 }
 export enum MarketFeatureDefinition {
-  ObservedPriceWindow = 'dorvud.observed-price-window.v1',
+  ObservedPriceWindow = 'dorvud.observed-price-window.v2',
 }
 export enum MarketFeatureSessionPolicy {
-  RegularNewYork = 'alpaca.regular.new-york-date.v1',
+  IexClockSegments = 'alpaca.iex-clock-segments.new-york.v2',
 }
 
 import { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewAllowanceMs } from './feature-core'
@@ -20,7 +21,7 @@ export { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewA
 
 export const rollingFeatureDefinitionMaterial = [
   MarketFeatureDefinition.ObservedPriceWindow,
-  MarketFeatureSessionPolicy.RegularNewYork,
+  MarketFeatureSessionPolicy.IexClockSegments,
   'PT30M-maximum-context;observed-completed-minutes;gaps-unfilled',
   'binary64-times-1000000-round-half-positive-infinity',
   'bar-winner:ingestion-nanos,partition,offset',
@@ -230,7 +231,7 @@ export const featureMatchesBars = (
         bar.universeId !== material.universeId ||
         bar.universeSymbolHash !== material.universeSymbolHash ||
         bar.symbol !== material.symbol ||
-        bar.marketSession !== 'regular' ||
+        bar.marketSession !== equityClockSession(bar.eventAt) ||
         !bar.final ||
         input.eventTimeNanos !== String(intradayInstantNanos(bar.eventAt)) ||
         input.ingestionTimeNanos !== String(intradayInstantNanos(bar.ingestedAt)) ||

@@ -92,7 +92,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
   const dates = ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'] as const
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(
-      dates.map((date) => ({ date, open: '09:30', close: '16:00' })),
+      dates.map((date) => ({ session_open: '0930', session_close: '1600', date, open: '09:30', close: '16:00' })),
       { start: dates[0] ?? '', end: dates[4] ?? '' },
     ),
   )

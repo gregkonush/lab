@@ -74,7 +74,7 @@ export const prepareObserveStartup = (
   const decodedExecutionModel = decodeStrategyExecutionModel(input.strategy)
   if (Result.isFailure(decodedExecutionModel)) return Result.fail(decodedExecutionModel.failure)
   const executionModel = decodedExecutionModel.success
-  if (executionModel.schemaVersion !== 'bayn.execution-model.v5') {
+  if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
     return Result.fail(
       operationalError({
         component: 'strategy',

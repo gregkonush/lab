@@ -1,3 +1,5 @@
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { instrumentMarket } from '../instruments'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -157,7 +159,9 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
             feeMultiplierPpm: 1_000_000,
           },
           fractionalTrading: scenario === 'fractional' || continuous,
-          calendar: continuous ? [] : [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+          calendar: continuous
+            ? []
+            : [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
           assets: [
             Result.getOrThrow(
               normalizeAssetResult(
@@ -242,7 +246,7 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
           symbol,
           side,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
+          timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
           quantityAtoms: '3000000000',
           notionalLimitMicros: '300000000',
           state: IntentState.IoStarted,

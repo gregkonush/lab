@@ -153,10 +153,13 @@ export const sixBarFixture = (
     },
   } satisfies NonNullable<HistoricalMarketCursor['source']>
   const calendar = Result.getOrThrow(
-    normalizeMarketCalendarResult([{ date: '2026-09-04', open: '09:30', close }], {
-      start: '2026-09-04',
-      end: '2026-09-04',
-    }),
+    normalizeMarketCalendarResult(
+      [{ date: '2026-09-04', open: '09:30', close, session_open: '0930', session_close: close.replace(':', '') }],
+      {
+        start: '2026-09-04',
+        end: '2026-09-04',
+      },
+    ),
   )
   const query: IntradaySnapshotQuery = {
     sessionDate: '2026-09-04',

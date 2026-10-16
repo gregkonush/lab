@@ -1,3 +1,4 @@
+import { quantityScale } from './quantity'
 import { canonicalHashV1Result } from './hash'
 import { instrumentMarket, MarketKind } from './instruments'
 
@@ -420,7 +421,14 @@ const validateBindings = (
     const narrowCloseTerms =
       plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
       plannerInput.executionTerms.executionPurpose === 'forced-close' &&
-      plannerInput.executionTerms.orderType === OrderType.Market &&
+      plannerInput.executionTerms.orderType ===
+        (positions.every(
+          (position) =>
+            instrumentMarket(position.symbol) === MarketKind.Equity &&
+            BigInt(position.quantityAtoms) % quantityScale === 0n,
+        )
+          ? OrderType.Limit
+          : OrderType.Market) &&
       executionMarketData.symbols.every(
         (symbol) =>
           plannerInput.executionTerms.timeInForce ===
