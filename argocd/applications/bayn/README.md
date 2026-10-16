@@ -429,6 +429,8 @@ The automatic Stage checks out that image revision, updates the status, worker, 
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact
 controller binding before the status service rolls out.
+Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
+that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
