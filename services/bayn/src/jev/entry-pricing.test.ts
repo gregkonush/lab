@@ -83,8 +83,22 @@ describe('Jev entry execution quote eligibility', () => {
   })
 
   test('the existing exact spread boundary remains eligible', () => {
-    const { fixture, decision, pricing } = pricingFixture(199.95, 200.05)
+    const { fixture, decision, pricing } = pricingFixture(99.975, 100.025)
     expect(Result.isSuccess(compileJevEntry(decision, fixture.snapshot, pricing))).toBe(true)
+  })
+
+  test('a narrow refreshed quote above the inference-bound cost ceiling cannot enter', () => {
+    const original = nativeJevFixture().snapshot.latestQuotes['AAPL']
+    if (original === undefined) throw new Error('Missing fixture quote')
+    const ask = original.askPrice * 1.001 + 0.02
+    const { fixture, decision, pricing } = pricingFixture(ask - 0.01, ask)
+    const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+    expect(Result.isFailure(compiled)).toBe(true)
+    if (Result.isFailure(compiled)) {
+      expect(compiled.failure).toBeInstanceOf(JevAwaitingEvidence)
+      if (compiled.failure instanceof JevAwaitingEvidence)
+        expect(compiled.failure.message).toContain('entry cost price ceiling')
+    }
   })
 
   test('a rejected execution quote cannot reopen its consumed signal window', async () => {

@@ -1,7 +1,8 @@
 import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { readFile, writeFile, rm, readdir } from 'node:fs/promises'
 
-test.use({ actionTimeout: 15_000 })
+test.use({ actionTimeout: 15_000, trace: 'retain-on-failure' })
+test.describe.configure({ retries: 0 })
 const diagnostics: string[] = []
 test.afterEach(async ({ page }, testInfo) => {
   await testInfo.attach('upstream-console', { body: diagnostics.join('\n'), contentType: 'text/plain' })
@@ -49,6 +50,16 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   let editorOrigin = ''
   const signOutActions: string[] = []
   const editorSockets: PlaywrightWebSocket[] = []
+  let documentGeneration = 0
+  const eventSourceConnections = new Map<string, number>()
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) documentGeneration++
+  })
+  page.on('request', (request) => {
+    if (request.resourceType() !== 'eventsource') return
+    const stream = `${documentGeneration}:${new URL(request.url()).pathname}`
+    eventSourceConnections.set(stream, (eventSourceConnections.get(stream) ?? 0) + 1)
+  })
   page.on('websocket', (socket) => {
     if (new URL(socket.url()).hostname.startsWith('tengri-')) editorSockets.push(socket)
   })
@@ -106,13 +117,10 @@ test('runs the upstream VS Code workbench against real guest files and terminals
       expect(response.ok()).toBeTruthy()
       result = await response.json()
     } else if (action.action === 'codex-account') result = { authenticated: false, email: '', plan: '' }
-    else if (action.action === 'codex-login-status') result = { active: false }
+    else if (action.action === 'codex-login-status') result = null
     else if (action.action === 'list-terminals') result = { sessions: [] }
     await route.fulfill({ json: { result } })
   })
-  await page.route('**/api/tengri/**/events**', (route) =>
-    route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' }),
-  )
   const errors: string[] = []
   diagnostics.length = 0
   page.on('pageerror', (error) => errors.push(error.message))
@@ -240,5 +248,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   expect(signOutActions).toEqual(['revoke-editor-sessions', 'revoke-editor-sessions', 'sign-out'])
   expect(authenticated).toBe(false)
   expect((await probeEditor()).status()).toBe(401)
+  expect(eventSourceConnections.size).toBeGreaterThan(0)
+  for (const [stream, connections] of eventSourceConnections) expect(connections, stream).toBe(1)
   expect(errors).toEqual([])
 })
