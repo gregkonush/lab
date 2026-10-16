@@ -13,7 +13,7 @@ import {
   TradeActivityType,
 } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
-import { orderRequestBody, limitIocOrderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { orderRequestBody, limitOrderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   OrderSide as DomainSide,
   OrderType as DomainOrderType,
@@ -53,7 +53,7 @@ const OrderFields = {
   filledAveragePriceMicros: Schema.optionalKey(PositiveMicrosSchema),
   orderClass: Schema.Literal(OrderClass.Simple),
   status: Schema.Literals([OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Rejected]),
-  extendedHours: Schema.Literal(false),
+  extendedHours: Schema.Boolean,
   observedAt: UtcInstantSchema,
 }
 const OrderSchema = Schema.Union([
@@ -61,7 +61,7 @@ const OrderSchema = Schema.Union([
     ...OrderFields,
     side: Schema.Enum(OrderSide),
     orderType: Schema.Literal(OrderType.Limit),
-    timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
+    timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
     limitPriceMicros: PositiveMicrosSchema,
   }),
   Schema.Struct({
@@ -208,10 +208,13 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
                 : DomainTimeInForce.Day,
             notionalLimitMicros: '1',
           })
-        : limitIocOrderRequestBody({
+        : limitOrderRequestBody({
             ...common,
             orderType: DomainOrderType.Limit,
-            timeInForce: DomainTimeInForce.ImmediateOrCancel,
+            timeInForce:
+              instrumentMarket(order.symbol) === MarketKind.Crypto
+                ? DomainTimeInForce.ImmediateOrCancel
+                : DomainTimeInForce.Day,
             notionalLimitMicros: (
               (BigInt(order.limitPriceMicros) * BigInt(order.quantityAtoms)) /
               1000000000n

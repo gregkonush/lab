@@ -1,7 +1,13 @@
-import { continuousMarketHours, isContinuousMarket, snapshotMarketCloseAt } from '../../market-hours'
+import {
+  continuousMarketHours,
+  isContinuousMarket,
+  snapshotMarketCloseAt,
+  marketHoursAreCanonical,
+} from '../../market-hours'
 import { InstrumentSymbolSchema } from '../../instruments'
 import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
+import { equityClockSession } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import { marketCalendarSchemaVersion, marketCalendarSource } from '../../broker/alpaca/model'
@@ -160,6 +166,7 @@ const calendarMaterial = (
   requestedRange: calendar.requestedRange,
   timeZone: calendar.timeZone,
   sessions: calendar.sessions,
+  providerSessions: calendar.providerSessions,
 })
 
 const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, IntradaySnapshotFailure> => {
@@ -191,7 +198,7 @@ const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, I
       failure('request', 'intraday calendar observation is not canonically hashable', undefined, expectedHash.failure),
     )
   }
-  if (expectedHash.success !== calendar.normalizedResponseHash) {
+  if (expectedHash.success !== calendar.normalizedResponseHash || !marketHoursAreCanonical(calendar)) {
     return Result.fail(failure('request', 'intraday calendar observation hash does not match its normalized content'))
   }
   let previousDate: string | undefined
@@ -591,7 +598,12 @@ export const validateIdentity = (
       record.universeId !== request.universeId ||
       record.universeSymbolHash !== request.universeSymbolHash ||
       record.feed !== request.feed ||
-      record.marketSession !== (request.feed === 'us' ? 'continuous' : 'regular') ||
+      record.marketSession !==
+        (request.feed === 'us'
+          ? 'continuous'
+          : request.feed === 'iex'
+            ? equityClockSession(record.eventAt)
+            : 'regular') ||
       record.delayClass !== request.delayClass ||
       !symbols.has(record.symbol)
     ) {

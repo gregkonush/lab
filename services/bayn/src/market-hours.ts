@@ -2,6 +2,7 @@ import { Data, Result, Schema } from 'effect'
 
 import type { MarketCalendarObservation, MarketCalendarSession } from './broker/alpaca/model'
 import { canonicalHashV1Result } from './hash'
+import { equityDataSession } from './equity-hours'
 
 export enum MarketSchedule {
   Sessions = 'SESSIONS',
@@ -112,7 +113,22 @@ export const marketHoursAreCanonical = (hours: MarketHours): boolean => {
   if (isContinuousMarket(hours)) return sameMarketHours(hours, continuousMarketHours)
   const { normalizedResponseHash, ...material } = hours
   const hash = canonicalHashV1Result(material)
-  return Result.isSuccess(hash) && hash.success === normalizedResponseHash
+  return (
+    Result.isSuccess(hash) &&
+    hash.success === normalizedResponseHash &&
+    hours.sessions.length === hours.providerSessions.length &&
+    hours.providerSessions.every((provider, index) => {
+      const session = equityDataSession(provider)
+      const selected = hours.sessions[index]
+      return (
+        Result.isSuccess(session) &&
+        selected !== undefined &&
+        session.success.date === selected.date &&
+        session.success.openAt === selected.openAt &&
+        session.success.closeAt === selected.closeAt
+      )
+    })
+  )
 }
 
 export const exchangeSessions = (hours: MarketHours): readonly MarketCalendarSession[] =>

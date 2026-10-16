@@ -87,7 +87,7 @@ const makeFixture = (openSession = false) => {
   const executionSessionDate = session.toISOString().slice(0, 10)
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date: executionSessionDate,
       openAt: `${executionSessionDate}T${openSession ? '00:00:00.000' : '13:30:00.000'}Z`,
@@ -137,7 +137,7 @@ const makeExpiredNativeFixture = () => {
   const date = instant(Date.now() - 24 * 60 * 60_000).slice(0, 10)
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date,
       openAt: `${date}T00:00:00.000Z`,

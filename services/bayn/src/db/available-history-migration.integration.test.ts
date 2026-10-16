@@ -1,3 +1,4 @@
+import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
 import capitalSizingMigration from '../../migrations/0109_capital_sizing_protocol'
 import modelActionMigration from '../../migrations/0111_model_action_protocol'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -24,6 +25,7 @@ for (const { label, id, protocol, migration } of [
   { label: 'available-history', id: 108, protocol: 'bayn.jev.protocol.v4', migration: availableHistoryMigration },
   { label: 'capital-sizing', id: 109, protocol: 'bayn.jev.protocol.v5', migration: capitalSizingMigration },
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },
+  { label: 'equity-hours', id: 113, protocol: 'bayn.jev.protocol.v7', migration: equityHoursMigration },
 ]) {
   describePostgres(`${label} database cutover`, () => {
     let runtime: ReturnType<typeof makeRuntime>
@@ -103,14 +105,14 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
-    if (id === 111) {
+    if (id >= 111) {
       test.each([
         { effective: 'PAPER', status: 'DISCREPANCY', reason: null, succeeds: false, changes: false },
         { effective: 'PAPER', status: 'EXACT', reason: null, succeeds: true, changes: true },
         {
           effective: 'OBSERVE',
           status: 'EXACT',
-          reason: 'BLOCKED_CAPITAL_SIZING_CUTOVER',
+          reason: id === 111 ? 'BLOCKED_CAPITAL_SIZING_CUTOVER' : 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
           succeeds: true,
           changes: true,
         },

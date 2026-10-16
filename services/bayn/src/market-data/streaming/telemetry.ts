@@ -85,6 +85,24 @@ export const snapshotFailureMeasurement = (
     : null
   return {
     schemaVersion: 'bayn.market-snapshot-failure.v2',
+    purpose: query.purpose ?? 'DECISION',
+    ...(query.purpose === undefined
+      ? {}
+      : {
+          pricingQuoteCut: (query.symbols ?? query.universe).map((symbol) => {
+            const quote = projection.quoteHistory
+              .get(symbol)
+              ?.findLast((entry) => entry.availableAtMs <= Date.parse(query.observedAt))
+            return {
+              symbol,
+              eventAt: quote?.value.eventAt ?? null,
+              availableAtMs: quote?.availableAtMs ?? null,
+              ageMs: quote === undefined ? null : Date.parse(query.observedAt) - Date.parse(quote.value.eventAt),
+              postRange:
+                quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= BigInt(windowEndMs) * 1_000_000n,
+            }
+          }),
+        }),
     candidateCoverage,
     inputFailure: Result.isFailure(diagnosed) ? diagnosed.failure.reason : null,
     projectionCoverage: projectionCoverageMeasurements(
