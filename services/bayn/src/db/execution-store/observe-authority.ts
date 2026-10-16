@@ -11,6 +11,7 @@ import {
 } from '../../broker/identity'
 import { Authority, type AuthorityState } from '../../execution/contracts'
 import {
+  capitalSizingCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
@@ -232,6 +233,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason = ${capitalSizingCutoverRestrictionReason}
               OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
@@ -363,6 +365,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason = ${capitalSizingCutoverRestrictionReason}
                   OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (

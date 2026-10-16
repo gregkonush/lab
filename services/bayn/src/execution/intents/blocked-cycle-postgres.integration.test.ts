@@ -29,6 +29,7 @@ import {
 import { CycleStore, CycleStoreLive } from '../../cycle/store'
 import { Authority, KillState, OrderSide, OrderType, TimeInForce } from '../../execution/contracts'
 import {
+  capitalSizingCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -420,11 +421,13 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
   })
 
   test.each(
-    [executionActivationExpiredRestrictionReason, legacyExecutionActivationExpiredRestrictionReason].flatMap((reason) =>
-      ['no-cycle', 'unused-preopen-cycle'].map((scenario) => ({ reason, scenario })),
-    ),
+    [
+      executionActivationExpiredRestrictionReason,
+      legacyExecutionActivationExpiredRestrictionReason,
+      capitalSizingCutoverRestrictionReason,
+    ].flatMap((reason) => ['no-cycle', 'unused-preopen-cycle'].map((scenario) => ({ reason, scenario }))),
   )(
-    'recovers zero-execution expiry through the production coordinator: $scenario / $reason',
+    'recovers a flat restricted generation through the production coordinator: $scenario / $reason',
     async ({ reason, scenario }) => {
       const fixture = makeFixture()
       const generationHash = canonicalHashV1({ generation: 'execution' })
@@ -510,39 +513,42 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     },
   )
 
-  test('settles a zero-execution expiry without clearing authority when fresh reconciliation fails', async () => {
-    const fixture = makeFixture()
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const blocked = yield* BlockedCycleIntentStore
-        const fence = yield* WriterFence
-        yield* seedExecutionAuthority(sql, fixture)
-        yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
-  reason = ${executionActivationExpiredRestrictionReason}, version = version + 1,
+  test.each([executionActivationExpiredRestrictionReason, capitalSizingCutoverRestrictionReason])(
+    'retains the restriction when fresh recovery reconciliation fails: %s',
+    async (reason) => {
+      const fixture = makeFixture()
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const blocked = yield* BlockedCycleIntentStore
+          const fence = yield* WriterFence
+          yield* seedExecutionAuthority(sql, fixture)
+          yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
+  reason = ${reason}, version = version + 1,
   updated_at = ${fixture.restrictedAt} WHERE singleton`
-        const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
-        const before = yield* authority.readAuthorityState
-        const error = operationalError({
-          component: 'database',
-          operation: 'reconcile-test-fixture',
-          message: 'injected unavailable reconciliation',
-        })
-        const result = yield* recoverTerminalGenerationToObserve({
-          accountId,
-          blockedIntents: blocked,
-          authorityStore: authority,
-          writerFence: fence,
-          reconcileAfterSettlement: Effect.fail(error),
-        }).pipe(Effect.result)
-        expect(result).toEqual(Result.fail(error))
-        expect(yield* authority.readAuthorityState).toEqual(before)
-        expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`).toEqual([
-          { count: 0 },
-        ])
-      }).pipe(Effect.provide(WriterFenceLive)),
-    )
-  })
+          const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+          const before = yield* authority.readAuthorityState
+          const error = operationalError({
+            component: 'database',
+            operation: 'reconcile-test-fixture',
+            message: 'injected unavailable reconciliation',
+          })
+          const result = yield* recoverTerminalGenerationToObserve({
+            accountId,
+            blockedIntents: blocked,
+            authorityStore: authority,
+            writerFence: fence,
+            reconcileAfterSettlement: Effect.fail(error),
+          }).pipe(Effect.result)
+          expect(result).toEqual(Result.fail(error))
+          expect(yield* authority.readAuthorityState).toEqual(before)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`).toEqual([
+            { count: 0 },
+          ])
+        }).pipe(Effect.provide(WriterFenceLive)),
+      )
+    },
+  )
   test('generation settlement avoids decoding unrelated historical decision evidence', async () => {
     const fixture = makeFixture(true)
     await runtime.runPromise(
