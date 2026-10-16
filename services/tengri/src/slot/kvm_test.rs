@@ -643,7 +643,10 @@ impl TerminalProbe {
         if let Some(proto::terminal_output::Event::Output(data)) =
             message.as_ref().and_then(|message| message.event.as_ref())
         {
-            self.output.append(&data.data)?;
+            let replies = self.output.append(&data.data)?;
+            if !replies.is_empty() {
+                self.input(&replies).await?;
+            }
         }
         Ok(message)
     }

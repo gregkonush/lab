@@ -46,6 +46,7 @@ export const nativeJevFixture = (
   protocolDocument: unknown = defaultJevProtocolDocument,
   cycleBindingId = 'a'.repeat(64),
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
+  calendar?: ReturnType<typeof streamingFixture>['query']['calendar'],
 ) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -54,6 +55,7 @@ export const nativeJevFixture = (
     60_000
   const timedQuery = {
     ...base.query,
+    ...(calendar === undefined ? {} : { calendar }),
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),

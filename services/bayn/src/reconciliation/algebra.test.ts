@@ -117,7 +117,8 @@ const account: AccountSnapshot = {
 const fillPriceMicros = (BigInt(fill.priceAtoms) / 1000n).toString()
 
 const position: Position = {
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: ((BigInt(fill.quantityAtoms) * BigInt(fillPriceMicros)) / 1_000_000_000n).toString(),
   accountId,
   symbol: fill.symbol,
   quantityAtoms: fill.quantityAtoms,

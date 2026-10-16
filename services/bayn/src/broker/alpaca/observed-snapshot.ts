@@ -68,7 +68,7 @@ const position = Schema.Struct({
   side: Schema.Enum(PositionSide),
   quantityAtoms: micros,
   averageEntryPriceMicros: micros,
-  costBasisMicros: Schema.optionalKey(micros),
+  costBasisMicros: micros,
   marketPriceMicros: micros,
   marketValueMicros: micros,
   unrealizedPnlMicros: micros,
