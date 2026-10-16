@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/node'
-import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
+import { context, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { W3CTraceContextPropagator } from '@opentelemetry/core'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
@@ -15,6 +15,7 @@ export function initializeObservability() {
   const release = process.env.APP_SOURCE_REVISION || 'development'
   const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
   if (endpoint) {
+    const batch = new BatchSpanProcessor(new OTLPTraceExporter({ url: endpoint, timeoutMillis: 3_000 }))
     provider = new NodeTracerProvider({
       resource: resourceFromAttributes({
         'service.name': 'tengri-bff',
@@ -22,7 +23,16 @@ export function initializeObservability() {
         'service.version': release,
         'deployment.environment.name': 'production',
       }),
-      spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({ url: endpoint, timeoutMillis: 3_000 }))],
+      spanProcessors: [
+        {
+          onStart: (span, parent) => batch.onStart(span, parent),
+          onEnd: (span) => {
+            if (span.instrumentationScope.name === 'tengri-bff') batch.onEnd(span)
+          },
+          forceFlush: () => batch.forceFlush(),
+          shutdown: () => batch.shutdown(),
+        },
+      ],
     })
     provider.register({
       contextManager: new AsyncLocalStorageContextManager(),
@@ -57,7 +67,7 @@ export function reportServerError(error: unknown, operation: string, status?: nu
 }
 
 export async function observeRequest(request: Request, operation: string, run: () => Promise<Response>) {
-  const parent = propagation.extract(context.active(), request.headers, {
+  const parent = propagation.extract(ROOT_CONTEXT, request.headers, {
     keys: () => ['traceparent', 'tracestate'],
     get: (headers, key) => headers.get(key) ?? undefined,
   })

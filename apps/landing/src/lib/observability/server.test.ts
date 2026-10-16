@@ -19,6 +19,10 @@ test('BFF exports a joined OTLP request without credentials, query strings, or b
   process.env.APP_SOURCE_REVISION = 'a'.repeat(40)
   try {
     initializeObservability()
+    trace.getTracer('next.js').startActiveSpan('framework.request', (span) => {
+      span.setAttribute('http.target', '/api/auth/callback?code=PRIVATE_SENTINEL')
+      span.end()
+    })
     let forwarded = ''
     const response = await observeRequest(
       new Request('https://proompteng.ai/api/tengri?secret=PRIVATE_SENTINEL', {
