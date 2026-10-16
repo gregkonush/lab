@@ -158,6 +158,8 @@ Only the audit transaction receives a five-second SQL statement timeout; ordinar
 statement and one-second lock limits after it commits.
 Receipt renewals keep their two-second request budget and recheck current authority. A compound guest operation
 authorizes its child, refreshes the parent through its original receipt, then intersects both decision deadlines.
+Redeemed terminal and preview capabilities regenerate that same request budget. Preview redemption starts the budget
+after its transaction commits; capability expiry and session/runtime bindings remain unchanged.
 
 `test-control.sh` exercises real TLS PostgreSQL and SpiceDB, database role boundaries, native/SQL/response crash points,
 operation collisions, concurrent reservations, independent emergency approval, grant expiry and parent revocation,
