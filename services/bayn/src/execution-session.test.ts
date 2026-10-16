@@ -1,3 +1,4 @@
+import { withProviderSessions } from './testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
@@ -31,8 +32,8 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const calendar = (closeAt = '2026-02-02T21:00:00.000Z'): MarketCalendarObservation => {
-  const material = {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  const material = withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
     requestedRange: { start: '2026-02-02', end: '2026-02-02' },
     timeZone: 'UTC' as const,
@@ -43,7 +44,7 @@ const calendar = (closeAt = '2026-02-02T21:00:00.000Z'): MarketCalendarObservati
         closeAt,
       },
     ],
-  }
+  })
   return { ...material, normalizedResponseHash: canonicalHashV1(material) }
 }
 
@@ -52,7 +53,7 @@ const activeCycle = (): IntradayAutonomousCycle => {
   if (session === undefined) throw new Error('test calendar requires one execution session')
   const observedCalendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       ...session,
     }),

@@ -1,3 +1,4 @@
+import { withProviderSessions } from './testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
@@ -45,8 +46,8 @@ import {
 } from './risk'
 import { strictParseOptions } from './schemas'
 
-const evaluatedAt = '2026-07-21T21:00:00.000Z'
-const observedAt = '2026-07-21T20:59:30.000Z'
+const evaluatedAt = '2026-07-21T19:30:00.000Z'
+const observedAt = '2026-07-21T19:29:30.000Z'
 const hash = (character: string): string => character.repeat(64)
 
 const decodePolicy = Schema.decodeUnknownSync(PolicySchema, strictParseOptions)
@@ -174,26 +175,26 @@ const baseState = (): State => {
       accountingHash,
     }),
   )
-  const calendar = {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  const calendar = withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
     requestedRange: { start: '2026-07-21' as const, end: '2026-07-31' as const },
     timeZone: 'UTC' as const,
     sessions: [
       {
         date: '2026-07-21' as const,
-        openAt: '2026-07-21T20:30:00.000Z',
-        closeAt: '2026-07-21T22:00:00.000Z',
+        openAt: '2026-07-21T19:00:00.000Z',
+        closeAt: '2026-07-21T20:30:00.000Z',
       },
     ],
-  }
+  })
   const executionSession = rehashExecutionSession({
     schemaVersion: 'bayn.execution-session-binding.v3',
     planningBrokerState: { observedAt, contentHash: reconciledStateHashValue },
     calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
     executionSession: calendar.sessions[0],
     submissionOpenAt: observedAt,
-    submissionCutoffAt: '2026-07-21T21:30:00.000Z',
+    submissionCutoffAt: '2026-07-21T20:00:00.000Z',
     decisionAfterOpenMs: 0,
     submissionCutoffAfterOpenMs: 60 * 60_000,
   })
@@ -296,7 +297,7 @@ const makeIntent = (overrides: Partial<Intent> = {}): Intent =>
     quantityAtoms: '1000000000',
     notionalLimitMicros: '100000000',
     state: IntentState.Planned,
-    createdAt: '2026-07-21T20:59:45.000Z',
+    createdAt: '2026-07-21T19:29:45.000Z',
     ...overrides,
   })
 
@@ -442,12 +443,12 @@ const openOrder = (brokerOrderId: string) => ({
 describe('bounded execution risk', () => {
   test('retains exact authority identity while preserving millisecond observation ordering', () => {
     const state = makeState()
-    const updatedAt = '2026-07-21T20:59:30.000402Z'
+    const updatedAt = '2026-07-21T19:29:30.000402Z'
     const accepted = decodeState({ ...state, authority: { ...state.authority, updatedAt } })
     expect(accepted.authority.updatedAt).toBe(updatedAt)
     expect(accepted.authorityObservedAt).toBe(observedAt)
     expect(() =>
-      decodeState({ ...state, authority: { ...state.authority, updatedAt: '2026-07-21T20:59:30.001001Z' } }),
+      decodeState({ ...state, authority: { ...state.authority, updatedAt: '2026-07-21T19:29:30.001001Z' } }),
     ).toThrow()
   })
 
@@ -508,7 +509,7 @@ describe('bounded execution risk', () => {
         positions: [{ ...state.positions[0], marketValueMicros: '-100000000' }, state.positions[1]],
       }),
     ).toThrow()
-    expect(() => decodeState({ ...state, marketDataObservedAt: '2026-07-21T21:00:00.001Z' })).toThrow()
+    expect(() => decodeState({ ...state, marketDataObservedAt: '2026-07-21T19:30:00.001Z' })).toThrow()
     expect(() =>
       decodeState({
         ...state,
@@ -516,7 +517,7 @@ describe('bounded execution risk', () => {
       }),
     ).toThrow()
 
-    const earlierOrderObservation = '2026-07-21T20:59:29.000Z'
+    const earlierOrderObservation = '2026-07-21T19:29:29.000Z'
     const paginated = makeState({
       orders: [{ ...openOrder('broker-1'), observedAt: earlierOrderObservation }, openOrder('broker-2')],
       ordersObservedAt: observedAt,
@@ -587,10 +588,10 @@ describe('bounded execution risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: '294bf6e5dca274782f00ceadfd07b8817164f476244a2b25ef81d734ef582603',
-      decisionId: '9d6dd03c3f0d072b088b315ff321e115b4c108d2b840ad3b03822a1234402301',
+      inputHash: 'a37841aed4b20944aed6dcd52ea482ea28595883e538bac12d75b81915e025d7',
+      decisionId: 'fccc9857be0f125144ec3759bf3793342f0cb10767a6276f007b6daf07980032',
     })
-    expect(first.input.freshUntil).toBe('2026-07-21T21:00:30.000Z')
+    expect(first.input.freshUntil).toBe('2026-07-21T19:30:30.000Z')
     expect(first.metrics).toEqual({
       orderNotionalMicros: '100000000',
       postTradeSymbolExposureMicros: '200000000',
@@ -641,7 +642,7 @@ describe('bounded execution risk', () => {
     const state = makeState({
       positions,
       closeOnly: true,
-      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
       policyHash: canonicalHashV1(policy),
@@ -676,7 +677,7 @@ describe('bounded execution risk', () => {
     const state = makeState({
       positions,
       closeOnly: true,
-      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
       policyHash: canonicalHashV1(policy),
@@ -715,7 +716,7 @@ describe('bounded execution risk', () => {
         positions,
         marketDataSymbol: symbol,
         closeOnly: true,
-        closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+        closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
       })
       const close = makeIntent({
         policyHash: canonicalHashV1(policy),
@@ -750,7 +751,7 @@ describe('bounded execution risk', () => {
       positions,
       marketDataSymbol: 'TSLA',
       closeOnly: true,
-      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const exactClose = makeIntent({
       symbol: 'TSLA',
@@ -792,7 +793,7 @@ describe('bounded execution risk', () => {
       positions,
       reservedBuyingPowerMicros: '100000000',
       closeOnly: true,
-      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const cover = makeIntent({
       side: OrderSide.Buy,
@@ -817,7 +818,7 @@ describe('bounded execution risk', () => {
   test('permits only the bounded sell close through an active kill', () => {
     const closeOnlyState = makeState({
       closeOnly: true,
-      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
       authority: {
         ...baseState().authority,
         effective: Authority.Observe,
@@ -863,7 +864,7 @@ describe('bounded execution risk', () => {
     const closeOnlyState = makeState({
       ...sharedState,
       closeOnly: true,
-      closeOnlyExpiresAt: '2026-07-21T21:01:00.000Z',
+      closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const close = evaluateSuccess(intent, closeOnlyState, makePolicy())
 
@@ -897,13 +898,13 @@ describe('bounded execution risk', () => {
     })
     const beforeOpen = makeState({
       executionSession: changeExecutionWindow(state.executionSession, {
-        submissionOpenAt: '2026-07-21T21:00:00.001Z',
+        submissionOpenAt: '2026-07-21T19:30:00.001Z',
       }),
     })
     const atCutoff = makeState({
       executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: evaluatedAt }),
     })
-    const nearCutoffAt = '2026-07-21T21:00:00.500Z'
+    const nearCutoffAt = '2026-07-21T19:30:00.500Z'
     const observeNearCutoff = makeState({
       authority: { ...state.authority, effective: Authority.Observe },
       executionSession: changeExecutionWindow(state.executionSession, { submissionCutoffAt: nearCutoffAt }),
@@ -1122,11 +1123,11 @@ describe('bounded execution risk', () => {
         terminalOutcome: TerminalOutcome.Blocked,
       }),
     )
-    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T21:00:00.001Z' }))
-    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T20:59:29.999Z' }))
+    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T19:30:00.001Z' }))
+    expectBlocked(Reason.IntentTimeInvalid, makeIntent({ createdAt: '2026-07-21T19:29:29.999Z' }))
     expectBlocked(
       Reason.IntentStale,
-      makeIntent({ createdAt: '2026-07-21T20:59:00.000Z' }),
+      makeIntent({ createdAt: '2026-07-21T19:29:00.000Z' }),
       makeState(),
       makePolicy({ maxIntentAgeMs: 60_000 }),
     )
@@ -1234,7 +1235,7 @@ describe('bounded execution risk', () => {
       makeIntent(),
       makeState({
         executionSession: changeExecutionWindow(makeState().executionSession, {
-          submissionCutoffAt: '2026-07-21T21:00:00.001Z',
+          submissionCutoffAt: '2026-07-21T19:30:00.001Z',
         }),
       }),
       makePolicy({ decisionTtlMs: 60_000 }),
@@ -1244,10 +1245,10 @@ describe('bounded execution risk', () => {
       makeState(),
       makePolicy({ decisionTtlMs: 60_000, maxIntentAgeMs: 15_001 }),
     )
-    expect(ttlCapped.input.freshUntil).toBe('2026-07-21T21:00:01.000Z')
-    expect(freshnessCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
-    expect(cutoffCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
-    expect(intentCapped.input.freshUntil).toBe('2026-07-21T21:00:00.001Z')
+    expect(ttlCapped.input.freshUntil).toBe('2026-07-21T19:30:01.000Z')
+    expect(freshnessCapped.input.freshUntil).toBe('2026-07-21T19:30:00.001Z')
+    expect(cutoffCapped.input.freshUntil).toBe('2026-07-21T19:30:00.001Z')
+    expect(intentCapped.input.freshUntil).toBe('2026-07-21T19:30:00.001Z')
   })
 
   test('requires the exact authority generation for execution evaluation and hashes that binding', () => {
@@ -1345,7 +1346,7 @@ describe('bounded execution risk', () => {
       [second, first],
       [first, { ...second, symbol: first.symbol }],
       [{ ...first, accountId: 'another-account' }, second],
-      [{ ...first, observedAt: '2026-07-21T20:59:29.999Z' }, second],
+      [{ ...first, observedAt: '2026-07-21T19:29:29.999Z' }, second],
       [{ ...first, marketValueMicros: '0' }, second],
     ]
 
@@ -1410,12 +1411,12 @@ describe('bounded execution risk', () => {
 
 test('caps entry approval at the pricing quote event deadline rather than snapshot observation time', () => {
   const state = makeState({
-    marketDataObservedAt: '2026-07-21T20:59:59.000Z',
-    entryQuote: { eventAt: '2026-07-21T20:59:55.500123456Z', maximumAgeMs: 10_000 },
+    marketDataObservedAt: '2026-07-21T19:29:59.000Z',
+    entryQuote: { eventAt: '2026-07-21T19:29:55.500123456Z', maximumAgeMs: 10_000 },
   })
   const result = evaluateSuccess(makeIntent(), state, makePolicy())
   expect(result.decision.outcome).toBe(RiskOutcome.Approved)
-  expect(result.decision.expiresAt).toBe('2026-07-21T21:00:05.500Z')
+  expect(result.decision.expiresAt).toBe('2026-07-21T19:30:05.500Z')
   expect(result.input.freshUntil).toBe(result.decision.expiresAt)
   const expired = evaluateSuccess(
     makeIntent(),
@@ -1428,7 +1429,7 @@ test('caps entry approval at the pricing quote event deadline rather than snapsh
 
 test('rejects entry quotes from after the bound pricing observation and invalid age limits', () => {
   const state = makeState()
-  expect(() => makeState({ entryQuote: { eventAt: '2026-07-21T20:59:30.000000001Z', maximumAgeMs: 10_000 } })).toThrow()
+  expect(() => makeState({ entryQuote: { eventAt: '2026-07-21T19:29:30.000000001Z', maximumAgeMs: 10_000 } })).toThrow()
   expect(() => makeState({ entryQuote: { eventAt: state.marketDataObservedAt, maximumAgeMs: 0 } })).toThrow()
 })
 

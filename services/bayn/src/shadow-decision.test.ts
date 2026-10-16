@@ -1,3 +1,4 @@
+import { withProviderSessions } from './testing/market-calendar-fixture'
 import { constructSimulatedSnapshot } from './market-data/streaming/snapshot'
 import { reproduceRecordedStreamingDecision } from './market-data/streaming/recorded-decision'
 import { streamingFixtureFromRaw } from './testing/streaming-market-fixture'
@@ -107,8 +108,8 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
   return result.success
 }
 
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: sessionDate, end: sessionDate },
   timeZone: 'UTC' as const,
@@ -119,7 +120,7 @@ const calendarMaterial = {
       closeAt: '2026-08-18T20:00:00.000Z',
     },
   ],
-}
+})
 const calendar = Object.freeze({ ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) })
 
 const protocol = value(decodeDefaultIntradayMomentumProtocol())
@@ -267,7 +268,7 @@ const policy = (account = accountId): Policy =>
     brokerMode: BrokerMode.Execution,
     allowedSymbols: protocol.candidateSymbols,
     allowedOrderTypes: [OrderType.Limit],
-    allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    allowedTimeInForce: [TimeInForce.Day],
     maxOrderNotionalMicros: '1000000000',
     maxSymbolExposureMicros: '1000000000',
     maxGrossExposureMicros: '1000000000',
@@ -424,7 +425,7 @@ const fixture = (
     allocationCapitalMicros: '2000000000',
     executionTerms: {
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: TimeInForce.Day,
       priceReference: 'verified-adverse-quote-boundary',
       snapshotId: marketData.snapshotId,
       snapshotContentHash: marketData.contentHash,
