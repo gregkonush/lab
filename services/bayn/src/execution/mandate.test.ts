@@ -18,6 +18,7 @@ import {
   legacyV1CompletedRestrictionReason,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
+  capitalSizingCutoverRestrictionReason,
 } from './mandate'
 
 describe('executionMandateAllocationCapitalMicros', () => {
@@ -401,6 +402,48 @@ describe('execution mandate decisions', () => {
         kill: 'CLEAR',
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+  })
+
+  test.each([false, true])(
+    'rearms the capital-sizing cutover through OBSERVE even when the request matches: %s',
+    (currentGenerationMatchesRequest) => {
+      expect(
+        decideExecutionMandateAuthority({
+          generationHash: 'b'.repeat(64),
+          sourceGenerationHash: 'a'.repeat(64),
+          maximum: 'PAPER',
+          effective: 'OBSERVE',
+          kill: 'ACTIVE',
+          reason: capitalSizingCutoverRestrictionReason,
+          currentGenerationMatchesRequest,
+        }),
+      ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    },
+  )
+
+  test('keeps capital-sizing recovery behind the exact restriction and durable authority guards', () => {
+    const facts = {
+      generationHash: 'b'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'PAPER' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+      reason: capitalSizingCutoverRestrictionReason,
+      currentGenerationMatchesRequest: false,
+    }
+    for (const change of [
+      { maximum: 'OBSERVE' as const },
+      { effective: 'PAPER' as const },
+      { kill: 'CLEAR' as const },
+      { sourceGenerationHash: facts.generationHash },
+      { reason: `${capitalSizingCutoverRestrictionReason}: operator hold` },
+      { reason: `operator hold: ${capitalSizingCutoverRestrictionReason}` },
+      { reason: 'operator kill' },
+    ]) {
+      expect(decideExecutionMandateAuthority({ ...facts, ...change })).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    }
+    const { reason: _reason, ...unrestricted } = facts
+    expect(decideExecutionMandateAuthority(unrestricted)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
   })
 
   test('does not rearm an operator kill, an unchanged source generation, or unknown authority state', () => {

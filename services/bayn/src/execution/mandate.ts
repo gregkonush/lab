@@ -308,6 +308,9 @@ export const decideExecutionMandateAuthority = (
   if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
     return Result.succeed({ _tag: 'Rearm' })
   }
+  if (isRestrictedPaperAuthority && facts.reason === capitalSizingCutoverRestrictionReason) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
   if (isRestrictedPaperAuthority && isExecutionCyclePreflightStoreRestriction(facts.reason)) {
     return Result.succeed({ _tag: 'Rearm' })
   }
