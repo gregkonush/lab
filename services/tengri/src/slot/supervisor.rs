@@ -216,6 +216,7 @@ pub async fn run() -> anyhow::Result<()> {
             "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
         )?))?,
     )?;
+    admission.wait_ready().await;
     let health = Router::new()
         .route(
             "/metrics",
