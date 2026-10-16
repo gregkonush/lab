@@ -1,3 +1,5 @@
+import { maximumAllocatedBuyQuantities } from './entry-sizing'
+import { jevMarketForSymbol } from './markets'
 import { jevMarketForCycle, jevCycleCandidates } from './markets'
 import { isContinuousMarket, type MarketHours } from '../market-hours'
 import { makeJevEntryQuery } from './observation-query'
@@ -20,7 +22,6 @@ import { CandidateObservationStore, recordJevObservation } from '../observe-comp
 import {
   adverseQuotePrices,
   executionMarketDataBinding,
-  maximumBuyQuantities,
   loadIntradaySnapshot,
 } from '../observe-composition/intraday-market-data'
 import type { EntryQuoteFreshness } from '../risk'
@@ -262,13 +263,18 @@ export const compileJevEntry = (
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
     const quotePrices = yield* adverseQuotePrices(pricingSnapshot, symbols)
-    const maximumBuyQuantityAtoms = yield* maximumBuyQuantities(pricingSnapshot, planningTargetWeights)
+    const maximumBuyQuantityAtoms = yield* maximumAllocatedBuyQuantities({
+      askPriceMicros: quotePrices.askPriceMicros,
+      targetWeights: planningTargetWeights,
+      capitalMicros: decision.evidence.observation.portfolio.brokerState.account.equityMicros,
+      precision: decision.evidence.observation.protocol.executionModel.precision,
+    })
     const entryQuotes: Record<string, EntryQuoteFreshness> = {}
     for (const symbol of symbols) {
       const quote = pricingSnapshot.latestQuotes[symbol]
       if (quote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
-      const exclusion = yield* jevEntryQuoteExclusion(quote, decision.evidence.observation.protocol.maximumSpreadBps)
+      const exclusion = yield* jevEntryQuoteExclusion(quote)
       if (exclusion !== null)
         return yield* Result.fail(
           new JevAwaitingEvidence({
@@ -398,7 +404,7 @@ export const evaluateJevPositionManagement = (input: {
           )
           yield* Effect.logWarning('Jev protective exit price reference').pipe(
             Effect.annotateLogs({
-              ...jevProtectiveQuoteDiagnostics(quote, input.protocol.maximumSpreadBps),
+              ...jevProtectiveQuoteDiagnostics(quote, jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps),
               cycleId: input.cycle.identity.cycleId,
               observedAt,
             }),

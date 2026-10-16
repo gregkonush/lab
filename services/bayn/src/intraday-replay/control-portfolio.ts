@@ -127,7 +127,7 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
       })
       return decision.selectedSymbols[0] ?? null
     }
-    return (yield* jevMomentumEntryCandidates(snapshot, protocol))[0]?.symbol ?? null
+    return (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null
   }).pipe(Result.mapError((cause) => new ControlStudyFailure({ message: 'Cannot select control signal', cause })))
 
 export const controlEntryQuantity = (input: {

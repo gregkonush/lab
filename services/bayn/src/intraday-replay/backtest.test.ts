@@ -25,7 +25,7 @@ const fixture = () => {
     inference: {
       mode: 'measured-provider',
       model: jevModel,
-      inputDefinition: 'bayn.jev-trading-signal-state.v4',
+      inputDefinition: 'bayn.jev-trading-signal-state.v5',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     },
     allocatedDataCostPerSessionMicros: '0',
@@ -82,8 +82,9 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v4')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v5')
   expect(prepared.protocol.model).toBe(jevModel)
+  expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
   const strategy = prepared.strategy.provenance.strategy
   const proof = {
@@ -145,6 +146,7 @@ test('native backtest rejects retired momentum inputs, missing inference provena
     { ...input, inference: undefined },
     { ...input, inference: { ...input.inference, mode: 'constant-response' } },
     { ...input, inference: { ...input.inference, model: 'unverified' } },
+    { ...input, inference: { ...input.inference, inputDefinition: 'bayn.jev-trading-signal-state.v4' } },
     {
       ...input,
       inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '0' } },
