@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-execution-activate-35d5d5e203a3
+  name: bayn-execution-activate-fe320b9651f2
   labels:
     app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: sha-35d5d5e203a3
+    app.kubernetes.io/version: sha-fe320b9651f2
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -19,7 +19,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: sha-35d5d5e203a3
+        app.kubernetes.io/version: sha-fe320b9651f2
     spec:
       nodeSelector:
         network.proompteng.ai/100g: "true"
@@ -35,16 +35,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: activate
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:e4636c8d065384d311546d90bcc2e5cd8e9f9dc6c480f381a292786c2a174105
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:663dcb6ca52c345d64d58763c39db4c25d62bfb1db2ae3232497d4ac7e00e88f
           imagePullPolicy: IfNotPresent
           command:
             - node
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: e4636c8d065384d311546d90bcc2e5cd8e9f9dc6c480f381a292786c2a174105
+              value: 663dcb6ca52c345d64d58763c39db4c25d62bfb1db2ae3232497d4ac7e00e88f
             - name: BAYN_CODE_REVISION
-              value: 35d5d5e203a3fd172ab388e1348fdf49079e9d39
+              value: fe320b9651f2eb23963a970ce2c6f1342ed334dc
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -53,11 +53,11 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:e4636c8d065384d311546d90bcc2e5cd8e9f9dc6c480f381a292786c2a174105
+              value: sha256:663dcb6ca52c345d64d58763c39db4c25d62bfb1db2ae3232497d4ac7e00e88f
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "508d8bdd912eded9bec5559677bcf23be3d0ebd5224932fbbbbed9a8e3e795d0"
+              value: "c9148b8aa29b17c0f940700df39e497d1f9415ec8756e86a561b098a11490f33"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "0121b343836d2b1376c4f4ef2d4d499061d09d37f6b509c365c5d6eb44ac0d00"
+              value: "3415063fdf85aa4dc66af288042d52a41a180a33b1f812d3963e8b8e7244ce6d"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
@@ -129,15 +129,6 @@ spec:
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:e4636c8d065384d311546d90bcc2e5cd8e9f9dc6c480f381a292786c2a174105\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"35d5d5e203a3fd172ab388e1348fdf49079e9d39\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:1ae29907cb0c8328a5e93ba3a78a95cebcd95e1a6fb68c40de722895c71fed65\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"79d3b431e7c4ddedb5717849df493e4f2600efcd\"\n  },\n  \"requestHash\": \"6433a5f55eea4d725a7ca801f60cbfda80336295086d7659237194b3e44422d3\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID
               valueFrom:
                 fieldRef:
