@@ -317,7 +317,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       JevPurpose.Entry,
       undefined,
       replayAccountId,
-      { ...defaultJevProtocolDocument, maximumSpreadBps: 4 },
+      { ...defaultJevProtocolDocument, maximumSymbolWeight: 0.19 },
       '4'.repeat(64),
     )
     const sql = yield* PgClient.PgClient
@@ -855,7 +855,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       JevPurpose.Entry,
       undefined,
       replayAccountId,
-      { ...defaultJevProtocolDocument, maximumSpreadBps: 4 },
+      { ...defaultJevProtocolDocument, maximumSymbolWeight: 0.19 },
       '4'.repeat(64),
     )
     const { protocol } = candidate
