@@ -62,6 +62,17 @@ export async function observeRequest(request: Request, operation: string, run: (
     get: (headers, key) => headers.get(key) ?? undefined,
   })
   return trace.getTracer('tengri-bff').startActiveSpan(operation, { kind: SpanKind.SERVER }, parent, async (span) => {
+    const active = context.active()
+    let ended = false
+    const finish = (error?: unknown) => {
+      if (ended) return
+      ended = true
+      if (error !== undefined) {
+        span.setStatus({ code: SpanStatusCode.ERROR })
+        context.with(active, () => reportServerError(error, operation))
+      }
+      span.end()
+    }
     try {
       const response = await run()
       span.setAttribute('http.response.status_code', response.status)
@@ -69,13 +80,34 @@ export async function observeRequest(request: Request, operation: string, run: (
       const headers = new Headers(response.headers)
       const id = span.spanContext().traceId
       if (!/^0+$/.test(id)) headers.set('x-trace-id', id)
-      return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+      let body: ReadableStream<Uint8Array> | null = null
+      if (response.body) {
+        const reader = response.body.getReader()
+        body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            try {
+              const next = await reader.read()
+              if (ended) return
+              if (next.done) {
+                finish()
+                controller.close()
+              } else controller.enqueue(next.value)
+            } catch (error) {
+              if (ended) return
+              finish(error)
+              controller.error(error)
+            }
+          },
+          async cancel(reason) {
+            finish()
+            await reader.cancel(reason)
+          },
+        })
+      } else finish()
+      return new Response(body, { status: response.status, statusText: response.statusText, headers })
     } catch (error) {
-      span.setStatus({ code: SpanStatusCode.ERROR })
-      reportServerError(error, operation)
+      finish(error)
       throw error
-    } finally {
-      span.end()
     }
   })
 }

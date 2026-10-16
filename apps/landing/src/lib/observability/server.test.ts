@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { context, trace, propagation } from '@opentelemetry/api'
+import { InMemorySpanExporter, NodeTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-node'
 import { flushObservability, initializeObservability, injectTrace, observeRequest } from './server'
 
 test('BFF exports a joined OTLP request without credentials, query strings, or bodies', async () => {
@@ -54,5 +55,74 @@ test('BFF exports a joined OTLP request without credentials, query strings, or b
     trace.disable()
     propagation.disable()
     await collector.stop()
+  }
+})
+
+test('stream spans stay open through delivery and end on close, failure, or cancellation', async () => {
+  const exporter = new InMemorySpanExporter()
+  const provider = new NodeTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
+  provider.register()
+  const request = new Request('https://proompteng.ai/api/tengri/events')
+  try {
+    let source!: ReadableStreamDefaultController<Uint8Array>
+    const response = await observeRequest(
+      request,
+      'tengri.events',
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              source = controller
+            },
+          }),
+        ),
+    )
+    expect(exporter.getFinishedSpans()).toHaveLength(0)
+    const reader = response.body!.getReader()
+    source.enqueue(new TextEncoder().encode('event: ready\n\n'))
+    expect((await reader.read()).done).toBe(false)
+    expect(exporter.getFinishedSpans()).toHaveLength(0)
+    source.close()
+    expect((await reader.read()).done).toBe(true)
+    expect(exporter.getFinishedSpans()).toHaveLength(1)
+
+    const failed = await observeRequest(
+      request,
+      'tengri.events',
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              source = controller
+            },
+          }),
+        ),
+    )
+    source.error(new Error('Stream failed'))
+    await expect(failed.body!.getReader().read()).rejects.toThrow('Stream failed')
+    expect(exporter.getFinishedSpans()).toHaveLength(2)
+    expect(exporter.getFinishedSpans()[1]!.status.code).toBe(2)
+
+    let cancelled = false
+    const closed = await observeRequest(
+      request,
+      'tengri.events',
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true
+            },
+          }),
+        ),
+    )
+    await closed.body!.cancel()
+    expect(cancelled).toBe(true)
+    expect(exporter.getFinishedSpans()).toHaveLength(3)
+  } finally {
+    await provider.shutdown()
+    context.disable()
+    trace.disable()
+    propagation.disable()
   }
 })

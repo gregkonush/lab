@@ -1,4 +1,3 @@
-import { reportServerError } from '@/lib/observability/server'
 import 'server-only'
 
 import { MAX_EVENT_STREAMS_PER_SUBJECT } from './limits'
@@ -99,7 +98,6 @@ export function createTengriEventStream<Value>(
       }
       const onError = () => {
         if (!disposeSource(false)) return
-        reportServerError(new Error('Event stream failed'), 'tengri.events')
         controller.error(new Error('Tengri event stream ended unexpectedly'))
       }
       const onCancelledSourceError = () => {
