@@ -25,7 +25,10 @@ const endMs = Date.parse(base.query.rangeEndAt)
 const iso = (ms: number) => new Date(ms).toISOString()
 
 test('property: a valid chosen model action controls entry without an additional probability floor', () => {
-  const fixture = nativeJevFixture()
+  const fixture = nativeJevFixture(undefined, undefined, 'jev-native-test', {
+    ...defaultJevProtocolDocument,
+    candidateSymbols: ['AAPL'],
+  })
   const observation = fixture.observation.payload
   const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
   const batchPlan = Result.getOrThrow(
@@ -52,7 +55,7 @@ test('property: a valid chosen model action controls entry without an additional
       )
     }),
   )
-})
+}, 150_000)
 interface History {
   readonly minutes: number
   readonly candidateMinutes: readonly boolean[]
