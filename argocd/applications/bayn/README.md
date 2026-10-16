@@ -167,10 +167,10 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v4`, `bayn.jev.available-history.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v5`, `bayn.jev.capital-sized-cash-spot.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
 account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev.
-The current strategy protocol hash is `f75c866aeb69a9346dd26f7b42921a989df4740d66eade062db056770f7a6c1b`.
+The current strategy protocol hash is `364d512a2d3921961eb89570eaabbae75cbe876161c6163cdc4134947a73e89f`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -384,10 +384,10 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
-108, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+109, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v4 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 108, the source-bound controller plan v3
+containing this migration and the current Jev v5 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 109, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -525,3 +525,13 @@ reconciliation and complete fill accounting. It restricts the old mandate to OBS
 Dorvud contracts with explicit read-only configuration, then rotate the existing sandbox mandate against the exact
 published new strategy/image before enabling PAPER through the normal Kargo activation path. Retired feature and
 strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.
+
+The capital-sizing cutover uses migration 109 and one LIMIT/IOC execution path for equities and crypto. Market
+profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. A canceled partial IOC entry can
+complete after an exact flat reconciliation consumes the same timestamped broker cut. Its trusted flat observation
+must remain strictly newer than the entry terminalization, and complete fills and settled orders remain required.
+Entry quantities follow the approved
+capital weight and instrument precision instead of one displayed ask size. The sealed PAPER mandate must bind the
+published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
+Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
+limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.

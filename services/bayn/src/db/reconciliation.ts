@@ -5,7 +5,7 @@ import { Data, Effect, Option, Result, Schema } from 'effect'
 import type { AccountingTransaction } from '../accounting/schema'
 import { MutationOperation } from '../broker/alpaca-mutations'
 import type { RuntimeConfig } from '../config'
-import type { WriterFenceService } from '../execution/writer-fence'
+import { WriterFenceError, type WriterFenceService } from '../execution/writer-fence'
 import type { JournalService } from '../ledger'
 import {
   Authority,
@@ -107,6 +107,11 @@ export interface ReconciliationReport {
 export interface ReconciliationWriteResult extends ReconciliationReport {
   readonly accountingHash: string
   readonly riskContext: ReconciliationRiskContext
+}
+
+export interface ReconciledBrokerSnapshot {
+  readonly snapshot: BrokerSnapshot
+  readonly persisted: ReconciliationWriteResult
 }
 
 interface AccountingReadPhase {
@@ -772,33 +777,46 @@ export const makeReconciliation = (
         'Broker fee plans must commit independently before ledger posting',
       )
   })
-  const recoverFees = (accountId: string) =>
-    runStore(
-      'reconcile',
-      Effect.gen(function* () {
-        yield* requireAutocommit
-        yield* writerFence.transaction(postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle))
-      }),
-    )
-  const reconcile = (snapshot: BrokerSnapshot): Effect.Effect<ReconciliationWriteResult, ReconciliationStoreError> =>
-    runStore(
-      'reconcile',
-      Effect.gen(function* () {
-        yield* requireAutocommit
-        yield* writerFence.transaction(
+  const reconcile = <E, R>(
+    accountId: string,
+    ingestSnapshot: Effect.Effect<BrokerSnapshot, E, R>,
+  ): Effect.Effect<ReconciledBrokerSnapshot, E | ReconciliationStoreError, R> =>
+    Effect.gen(function* () {
+      yield* requireAutocommit
+      const snapshot = yield* writerFence
+        .transaction(
           Effect.gen(function* () {
-            yield* retainAccountCashReporting(sql, snapshot)
-            yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
-            yield* prepareFeeActivities(sql, snapshot.account.accountId, snapshot.fees, config.tigerBeetle)
-            yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
+            // Only previously committed plans exist here. Recover them before accounting any new fill.
+            // Ingestion and preparation then share one commit; newly prepared fees are posted below it.
+            yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
+            const snapshot = yield* ingestSnapshot
+            if (snapshot.account.accountId !== accountId)
+              return yield* storeError('reconcile', 'invariant', 'Reconciliation snapshot account binding changed')
+            yield* runStore(
+              'reconcile',
+              Effect.gen(function* () {
+                yield* retainAccountCashReporting(sql, snapshot)
+                yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
+                yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
+                yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)
+              }),
+            )
+            return snapshot
           }),
         )
-        return yield* writerFence.transaction(reconcileTransaction(snapshot))
-      }),
-    )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause instanceof WriterFenceError
+              ? storeError('reconcile', 'query', 'Reconciliation preparation transaction failed', cause)
+              : cause,
+          ),
+        )
+      const persisted = yield* runStore('reconcile', writerFence.transaction(reconcileTransaction(snapshot)))
+      return { snapshot, persisted }
+    })
 
   const retainCashReporting = (snapshot: Parameters<typeof retainAccountCashReporting>[1]) =>
     runStore('reconcile', writerFence.transaction(retainAccountCashReporting(sql, snapshot)))
 
-  return { bindings, reconcile, recoverFees, retainCashReporting }
+  return { bindings, reconcile, retainCashReporting }
 }

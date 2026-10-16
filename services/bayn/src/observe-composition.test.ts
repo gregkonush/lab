@@ -1044,10 +1044,9 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
         asOf: reconciledAt,
       }),
     hasAccountBaseline: () => Effect.succeed(true),
-    recoverFees: () => Effect.void,
     retainCashReporting: () => Effect.void,
     bindings: () => Effect.succeed([]),
-    reconcile: () => Effect.succeed(persisted),
+    reconcile: (_, snapshot) => snapshot.pipe(Effect.map((snapshot) => ({ snapshot, persisted }))),
     ensureAuthorityGeneration: () => Effect.succeed(authority),
     readAuthorityState: Effect.succeed(authority),
     restrictAuthority: () => Effect.die(new Error('exact reconciliation unexpectedly restricted authority')),
@@ -5151,7 +5150,6 @@ describe('OBSERVE runtime composition', () => {
       verifyCompleted: () => unused,
       value: () => unused,
       hasAccountBaseline: () => unused,
-      recoverFees: () => Effect.void,
       retainCashReporting: () => Effect.void,
       bindings: () => unused,
       reconcile: () => unused,
@@ -5374,6 +5372,10 @@ describe('OBSERVE runtime composition', () => {
             yield* Deferred.make<
               Parameters<Parameters<ReturnType<typeof makeObserveAutonomousCycleStartup>>[0]['recordPass']>[0]
             >()
+          const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.sync(() => {
+              fencedTransactions += 1
+            }).pipe(Effect.andThen(effect))
           const executionStore = {
             completeHistory: () => Effect.succeed(new Set()),
             ingest: () => Effect.succeed({ eventId: '1'.repeat(64), sourceSequence: '1', deduplicated: false }),
@@ -5393,13 +5395,15 @@ describe('OBSERVE runtime composition', () => {
                 asOf: reconciledAt,
               }),
             hasAccountBaseline: () => Effect.succeed(true),
-            recoverFees: () => Effect.void,
             retainCashReporting: () => Effect.void,
             bindings: () => Effect.succeed([]),
-            reconcile: () =>
-              Deferred.succeed(persistenceStarted, undefined).pipe(
-                Effect.andThen(Effect.never),
-                Effect.onInterrupt(() => Deferred.succeed(persistenceInterrupted, undefined).pipe(Effect.asVoid)),
+            reconcile: (_, snapshot) =>
+              transaction(
+                snapshot.pipe(
+                  Effect.andThen(Deferred.succeed(persistenceStarted, undefined)),
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => Deferred.succeed(persistenceInterrupted, undefined).pipe(Effect.asVoid)),
+                ),
               ),
             ensureAuthorityGeneration: () => Effect.succeed(authority),
             readAuthorityState: Effect.succeed(authority),
@@ -5418,10 +5422,7 @@ describe('OBSERVE runtime composition', () => {
             AuthorityRestrictionStoreShape
           const writerFence: WriterFenceService = {
             check: Effect.void,
-            transaction: (effect) =>
-              Effect.sync(() => {
-                fencedTransactions += 1
-              }).pipe(Effect.andThen(effect)),
+            transaction,
           }
           const startup = makeObserveAutonomousCycleStartup({
             accountId,
@@ -6272,11 +6273,11 @@ test.each([
     let reconciliationWrites = 0
     const executionStore = {
       ...services.executionStore,
-      reconcile: () =>
+      reconcile: (accountId, snapshot) =>
         Effect.sync(() => {
           reconciliationWrites += 1
-        }).pipe(Effect.andThen(services.executionStore.reconcile())),
-    }
+        }).pipe(Effect.andThen(services.executionStore.reconcile(accountId, snapshot))),
+    } satisfies ReconciliationStoreShape
     const forbidden = () => Effect.die(new Error('waiting entry must not mutate or bind a cycle'))
     const store: CycleStoreShape = {
       readOldestUnfinished: () => Effect.succeed(Option.some(bound ? fixture.boundCycle : cycle)),
