@@ -58,6 +58,7 @@ aws-lc-rs = { version = "1.18.0", default-features = false, features = ["alloc",
 zeroize = "1.9.0"
 
 [build-dependencies]
+prost-build = "0.14.4"
 tonic-prost-build = "0.14.6"
 
 [dev-dependencies]

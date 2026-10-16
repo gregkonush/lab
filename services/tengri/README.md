@@ -425,7 +425,6 @@ conversation references remain valid.
 If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
 Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.
 
-
 ## Error reporting and request traces
 
 Production sends sanitized errors to the existing GlitchTip `proompteng` organization and OTLP traces to Tempo.
@@ -433,6 +432,11 @@ The browser, BFF, Tengri host, Ofz, and Nanoagent have separate GlitchTip projec
 Ofz, controller, supervisor and guest request boundaries; HTTP failures return `x-trace-id`. Request spans and SQL
 pool, leadership, replay, policy-read and audit spans contain operation names and timings. Trace resource
 `service.version` and GlitchTip release identify the source revision baked into the image.
+
+RPC span names come from the compiled protobuf descriptors. Unknown request paths and dynamic Rust tracing fields
+are excluded from export. Trace attributes retain only operation names, database system, standard HTTP methods,
+response status and SQLSTATE; event messages and error descriptions are withheld. GlitchTip captures errors, while
+routine warnings such as graceful shutdown remain in logs.
 
 Telemetry excludes request bodies, cookies, tokens, actor identifiers, prompts, terminal output and file contents.
 GlitchTip messages are withheld; source locations, error classes, SQLSTATE and trace IDs remain. Browser ingestion

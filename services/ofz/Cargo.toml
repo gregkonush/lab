@@ -42,4 +42,5 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 
 [build-dependencies]
+prost-build = "0.14.4"
 tonic-prost-build = "0.14.6"

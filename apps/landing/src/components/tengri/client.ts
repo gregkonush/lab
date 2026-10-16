@@ -125,6 +125,7 @@ async function postTengriAction<Result>(
       requestFailure(
         record,
         typeof record.status === 'number' && record.status >= 400 && record.status <= 599 ? record.status : 503,
+        response.headers.get('x-trace-id'),
       ),
     )) as Result
   }
@@ -258,15 +259,14 @@ function deleteUnusedGuestOperationScope(agentId: string, scope: GuestOperationS
 async function decodeResponse<Result>(response: Response): Promise<Result> {
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    if (response.status >= 500)
-      reportBrowserFailure('tengri.request', response.status, response.headers.get('x-trace-id'))
-    throw requestFailure(payload, response.status)
+    throw requestFailure(payload, response.status, response.headers.get('x-trace-id'))
   }
   if (!payload) throw new Error('Tengri returned an empty response')
   return payload as Result
 }
 
-function requestFailure(payload: unknown, status: number) {
+function requestFailure(payload: unknown, status: number, traceId?: string | null) {
+  if (status >= 500) reportBrowserFailure('tengri.request', status, traceId)
   const record = typeof payload === 'object' && payload !== null ? payload : {}
   const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
   const code =

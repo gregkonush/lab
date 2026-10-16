@@ -7,10 +7,71 @@ use opentelemetry::{
     trace::{TraceContextExt, TracerProvider},
 };
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{Resource, propagation::TraceContextPropagator, trace::SdkTracerProvider};
+use opentelemetry_sdk::{
+    Resource,
+    propagation::TraceContextPropagator,
+    trace::{SdkTracerProvider, SpanData, SpanExporter},
+};
 use tracing::{Span, field};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
+
+include!(concat!(env!("OUT_DIR"), "/rpc-paths.rs"));
+
+fn technical_attribute(attribute: &KeyValue) -> bool {
+    if attribute.key.as_str() == "http.request.method" {
+        return matches!(&attribute.value, opentelemetry::Value::String(value) if matches!(value.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" | "CONNECT" | "TRACE"));
+    }
+    matches!(
+        attribute.key.as_str(),
+        "operation"
+            | "db.system.name"
+            | "http.response.status_code"
+            | "rpc.grpc.status_code"
+            | "sqlstate"
+    )
+}
+
+fn error_events(metadata: &tracing::Metadata<'_>) -> sentry_tracing::EventFilter {
+    match *metadata.level() {
+        tracing::Level::ERROR => sentry_tracing::EventFilter::Event,
+        _ => sentry_tracing::EventFilter::Ignore,
+    }
+}
+
+#[derive(Debug)]
+struct SanitizedExporter<E>(E);
+
+impl<E: SpanExporter> SpanExporter for SanitizedExporter<E> {
+    async fn export(&self, mut batch: Vec<SpanData>) -> opentelemetry_sdk::error::OTelSdkResult {
+        for span in &mut batch {
+            span.attributes.retain(technical_attribute);
+            for event in &mut span.events.events {
+                event.name = "application.event".into();
+                event.attributes.retain(technical_attribute);
+            }
+            span.events
+                .events
+                .retain(|event| !event.attributes.is_empty());
+            for link in &mut span.links.links {
+                link.attributes.clear();
+            }
+            if matches!(span.status, opentelemetry::trace::Status::Error { .. }) {
+                span.status = opentelemetry::trace::Status::error("Operation failed");
+            }
+        }
+        self.0.export(batch).await
+    }
+    fn shutdown_with_timeout(&self, timeout: Duration) -> opentelemetry_sdk::error::OTelSdkResult {
+        self.0.shutdown_with_timeout(timeout)
+    }
+    fn force_flush(&self) -> opentelemetry_sdk::error::OTelSdkResult {
+        self.0.force_flush()
+    }
+    fn set_resource(&mut self, resource: &Resource) {
+        self.0.set_resource(resource);
+    }
+}
 
 pub struct Telemetry {
     _errors: sentry::ClientInitGuard,
@@ -30,7 +91,7 @@ pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
                 .build()?;
             Ok::<_, anyhow::Error>(
                 SdkTracerProvider::builder()
-                    .with_batch_exporter(exporter)
+                    .with_batch_exporter(SanitizedExporter(exporter))
                     .with_resource(
                         Resource::builder_empty()
                             .with_attributes([
@@ -129,12 +190,7 @@ pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
                 .with_tracer(tracer)
                 .with_filter(tracing_subscriber::filter::LevelFilter::INFO)
         }))
-        .with(
-            sentry_tracing::layer().event_filter(|metadata| match *metadata.level() {
-                tracing::Level::ERROR | tracing::Level::WARN => sentry_tracing::EventFilter::Event,
-                _ => sentry_tracing::EventFilter::Ignore,
-            }),
-        )
+        .with(sentry_tracing::layer().event_filter(error_events))
         .try_init()?;
     Ok(Telemetry {
         _errors: errors,
@@ -162,15 +218,17 @@ impl<B> tower_http::trace::MakeSpan<B> for RequestSpan {
         if matches!(path, "/livez" | "/readyz" | "/healthz" | "/metrics") {
             return Span::none();
         }
-        let operation = if path.starts_with("/proompteng.") {
-            path
-        } else {
-            request
-                .extensions()
-                .get::<axum::extract::MatchedPath>()
-                .map(|path| path.as_str())
-                .unwrap_or("preview")
-        };
+        let operation = RPC_PATHS
+            .iter()
+            .copied()
+            .find(|candidate| *candidate == path)
+            .or_else(|| {
+                request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .map(|path| path.as_str())
+            })
+            .unwrap_or("unmatched.request");
         let span = tracing::info_span!("request", otel.name = %operation, otel.kind = "server", operation = %operation,
             http.request.method = %request.method(), otel.status_code = field::Empty, http.response.status_code = field::Empty);
         let parent = global::get_text_map_propagator(|propagator| {
@@ -307,6 +365,89 @@ impl Telemetry {
 mod tests {
     use super::*;
     use tower_http::trace::MakeSpan;
+
+    #[test]
+    fn trace_exports_remove_dynamic_fields_and_unknown_rpc_paths() {
+        #[derive(Clone, Debug)]
+        struct Spans(Arc<std::sync::Mutex<Vec<SpanData>>>);
+        impl SpanExporter for Spans {
+            async fn export(
+                &self,
+                spans: Vec<SpanData>,
+            ) -> opentelemetry_sdk::error::OTelSdkResult {
+                self.0.lock().unwrap().extend(spans);
+                Ok(())
+            }
+        }
+        let exported = Spans(Arc::default());
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(SanitizedExporter(exported.clone()))
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
+        tracing::subscriber::with_default(subscriber, || {
+            let request = Request::builder()
+                .uri("/proompteng.authz.v1.AuthorizationService/PRIVATE_SENTINEL")
+                .method("PRIVATE_SENTINEL")
+                .header("content-type", "application/grpc")
+                .body(())
+                .unwrap();
+            let span = RequestSpan.make_span(&request);
+            span.in_scope(|| {
+                let nested = tracing::info_span!("db.policy.read", db.system.name = "postgresql", object.ref = "PRIVATE_SENTINEL");
+                nested.in_scope(|| tracing::warn!(error = "PRIVATE_SENTINEL", sqlstate = "55P03", "database operation failed: PRIVATE_SENTINEL"));
+                Span::current().set_status(opentelemetry::trace::Status::error("PRIVATE_SENTINEL"));
+            });
+        });
+        provider.force_flush().unwrap();
+        let spans = exported.0.lock().unwrap();
+        assert_eq!(spans.len(), 2);
+        let data = format!("{spans:?}");
+        assert!(
+            !data.contains("PRIVATE_SENTINEL"),
+            "dynamic data leaked into trace export"
+        );
+        assert!(data.contains("55P03"));
+        assert!(data.contains("db.policy.read"));
+        assert!(data.contains("postgresql"));
+        assert!(RPC_PATHS.contains(&"/proompteng.authz.v1.AuthorizationService/Check"));
+    }
+
+    #[test]
+    fn routine_warnings_do_not_emit_glitchtip_events() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Events(AtomicUsize);
+        impl sentry::Transport for Events {
+            fn send_envelope(&self, envelope: sentry::Envelope) {
+                for item in envelope.items() {
+                    if matches!(item, sentry::protocol::EnvelopeItem::Event(_)) {
+                        self.0.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        }
+        let events = Arc::new(Events(AtomicUsize::new(0)));
+        let mut options = sentry::ClientOptions::default();
+        options.dsn = Some(
+            "https://0123456789abcdef0123456789abcdef@example.invalid/1"
+                .parse()
+                .unwrap(),
+        );
+        options.transport = Some(Arc::new(events.clone()));
+        let client = Arc::new(sentry::Client::from_config(options));
+        let hub = Arc::new(sentry::Hub::new(Some(client.clone()), Arc::default()));
+        let subscriber =
+            tracing_subscriber::registry().with(sentry_tracing::layer().event_filter(error_events));
+        sentry::Hub::run(hub, || {
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::warn!("shutdown signal received");
+                tracing::info!("startup complete");
+                tracing::error!("application operation failed");
+            });
+        });
+        assert!(client.flush(Some(Duration::from_secs(3))));
+        assert_eq!(events.0.load(Ordering::SeqCst), 1);
+    }
 
     #[tokio::test]
     async fn http_failure_emits_one_error_event() {

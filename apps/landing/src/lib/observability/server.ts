@@ -56,11 +56,13 @@ export function initializeObservability() {
 }
 
 export function reportServerError(error: unknown, operation: string, status?: number) {
+  const span = trace.getActiveSpan()
+  span?.setStatus({ code: SpanStatusCode.ERROR })
   Sentry.withScope((scope) => {
     scope.setTag('service', 'tengri-bff')
     scope.setTag('operation', operation)
     if (status !== undefined) scope.setTag('status', status)
-    const traceId = trace.getActiveSpan()?.spanContext().traceId
+    const traceId = span?.spanContext().traceId
     if (traceId) scope.setTag('trace_id', traceId)
     Sentry.captureException(error)
   })

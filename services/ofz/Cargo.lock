@@ -1616,6 +1616,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "prost",
+ "prost-build",
  "rand 0.9.5",
  "reqwest",
  "rustls",
