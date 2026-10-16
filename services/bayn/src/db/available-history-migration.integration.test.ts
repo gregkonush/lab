@@ -3,11 +3,12 @@ import capitalSizingMigration from '../../migrations/0109_capital_sizing_protoco
 import modelActionMigration from '../../migrations/0111_model_action_protocol'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import availableHistoryMigration from '../../migrations/0108_available_history_protocol'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 
@@ -41,7 +42,14 @@ for (const { label, id, protocol, migration } of [
           const sql = yield* PgClient.PgClient
           yield* sql`DROP SCHEMA public CASCADE`
           yield* sql`CREATE SCHEMA public`
-          yield* postgresMigrations
+          if (id === 113)
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(
+                Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId < id)),
+              ),
+              table: 'schema_migrations',
+            })
+          else yield* postgresMigrations
         }),
       ),
     )
@@ -51,6 +59,7 @@ for (const { label, id, protocol, migration } of [
       await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
+          yield* postgresMigrations
           const rows = yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id=${id}`
           expect(rows).toHaveLength(1)
           const constraints = yield* sql`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
@@ -59,6 +68,34 @@ for (const { label, id, protocol, migration } of [
         }),
       )
     })
+
+    if (id === 113) {
+      test('upgrades an already-recorded equity-hours migration to native limit completion', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(
+                Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId <= id)),
+              ),
+              table: 'schema_migrations',
+            })
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id >= 113`).toEqual([
+              { migration_id: 113 },
+            ])
+            yield* postgresMigrations
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id = 114`).toEqual([
+              { migration_id: 114 },
+            ])
+            const [completion] = yield* sql`SELECT
+              to_regprocedure('paper_partial_ioc_entry_is_reconciled_flat(text,text,numeric,timestamptz)') IS NULL AS retired_absent,
+              to_regprocedure('paper_partial_limit_entry_is_reconciled_flat(text,text,numeric,timestamptz)') IS NOT NULL AS current_present,
+              paper_cycle_completion_evidence_matches(${'f'.repeat(64)}, ${'e'.repeat(64)}, clock_timestamp()) AS unbound_completed`
+            expect(completion).toEqual({ retired_absent: true, current_present: true, unbound_completed: false })
+          }),
+        )
+      })
+    }
 
     test('refuses a held broker position without changing authority or protocol constraints', async () => {
       await runtime.runPromise(
@@ -136,12 +173,16 @@ for (const { label, id, protocol, migration } of [
                 CONSTRAINT authority_generations_strategy_contract_check CHECK(true)) ON COMMIT DROP`
                   yield* sql`CREATE TEMP TABLE authority_state (
                 generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz) ON COMMIT DROP`
-                  yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+                  yield* sql`CREATE TEMP TABLE reconciliations (
+                account_id text,status text,reconciled_at timestamptz,reconciliation_id text,
+                expected_hash text,observed_hash text,discrepancies jsonb) ON COMMIT DROP`
                   yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover','jev','bayn.jev.protocol.v5')`
                   yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${effective},
                 ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},${reason},1,clock_timestamp())`
-                  yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
+                  yield* sql`INSERT INTO reconciliations (account_id,status,reconciled_at,reconciliation_id)
+                VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
                   const result = yield* sql.withTransaction(migration).pipe(Effect.result)
+                  if (succeeds) yield* Effect.fromResult(result)
                   expect(Result.isSuccess(result)).toBe(succeeds)
                   const [state] =
                     yield* sql`SELECT maximum,effective,kill_state,reason,version::text AS version FROM authority_state`

@@ -25,6 +25,7 @@ export PATH="$work/bin:$PATH"
 for _ in 1 2; do
   /opt/tengri/editor/bin/nvim --headless \
     '+lua assert(vim.fn.has("nvim-0.12") == 1); assert(require("astronvim").version() == "v6.1.0"); assert(vim.o.number and vim.o.undofile)' \
+    '+lua local plugin = require("lazy.core.config").plugins.AstroNvim; assert(plugin.commit and vim.fn.readfile(plugin.dir .. "/.git/HEAD")[1] == plugin.commit, "AstroNvim revision differs from the pinned commit")' \
     '+lua assert(require("lazy.core.config").options.install.missing == false)' \
     '+lua require("lazy").load({plugins={"blink.cmp"}}); assert(vim.wait(1000, function() return require("blink.cmp.fuzzy").implementation_type == "rust" end, 10), "bundled native completion is unavailable"); assert(require("blink.cmp.config").fuzzy.prebuilt_binaries.download == false)' \
     '+lua assert(vim.tbl_contains(require("blink.cmp.fuzzy").get_words("tengri completion"), "tengri"))' \

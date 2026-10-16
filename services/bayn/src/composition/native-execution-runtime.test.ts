@@ -1317,7 +1317,7 @@ describe('native execution runtime', () => {
     expect(failure.message).toBe('execution controller status projection did not complete')
   })
 
-  test('binds the reserved legacy plan on the first not-ahead post-migration advance', async () => {
+  test('rejects a retired unbound plan without advancing execution or rebinding its projection', async () => {
     let advanceCount = 0
     let projected: ExecutionControllerStatus | undefined
     const legacyStatus: ExecutionControllerStatus = {
@@ -1333,7 +1333,7 @@ describe('native execution runtime', () => {
       completedAt: '2026-08-13T17:59:30.000Z',
       nextDueAt: completedAt,
     }
-    const result = await Effect.runPromise(
+    const failure = await Effect.runPromise(
       executeNativeExecutionAdvance(
         command,
         {
@@ -1358,17 +1358,12 @@ describe('native execution runtime', () => {
             }),
         },
         controllerPlanHash,
-      ),
+      ).pipe(Effect.flip),
     )
 
-    expect(advanceCount).toBe(1)
-    expect(result.outcome._tag).toBe(ExecutionControllerOutcome.Waiting)
-    expect(projected).toMatchObject({
-      planHash: controllerPlanHash,
-      epoch: command.epoch,
-      nextSequence: command.sequence + 1,
-      lastSequence: command.sequence,
-    })
+    expect(failure).toBeInstanceOf(TransientExecutionFailure)
+    expect(advanceCount).toBe(0)
+    expect(projected).toBeUndefined()
   })
 
   test('does not attribute an ahead reserved-legacy completion to the current plan', async () => {

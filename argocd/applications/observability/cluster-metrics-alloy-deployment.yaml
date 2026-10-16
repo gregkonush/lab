@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       annotations:
-        observability.proompteng.ai/config-sha256: 77258f5a96fb980b527acd1afded3273c0b62a04f2665c0fca3d3e61ca19fcbe
+        observability.proompteng.ai/config-sha256: e04a24916d9289d14d315533e13d4b7ec89d96c3643d0828c9fef73aa15d7ff5
       labels:
         app.kubernetes.io/name: observability-cluster-metrics-alloy
         app.kubernetes.io/component: cluster-metrics
