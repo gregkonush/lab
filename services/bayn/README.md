@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v4` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v6` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -51,6 +51,12 @@ accrual evidence and ledger identities remain unchanged.
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
+Entry selection follows the model's chosen `enter` action. There is no additional action-probability floor;
+the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
+`wait` and `avoid` keep zero targets. Protocol v6 rejects v5 and the retired `minimumEntryProbability` field.
+Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions and
+clamps the prior PAPER authority before native OBSERVE recovery. Activate a newly sealed v6 PAPER mandate
+against its published image. Existing position, turnover, loss, management and submission risk limits remain.
 
 ## Profitability goal
 
@@ -189,10 +195,13 @@ Observed cash-fee preparation uses that same indexed baseline reader before addi
 deltas. Its regression checks the executed PostgreSQL plans against a populated account history, including foreign
 accounts and account events without retained snapshots; this does not change fee bounds or ledger posting order.
 
-The reconciliation ingestion transaction also retains the account report's cash precision. Fee preparation rechecks
-the exact account, amount, time and precision binding without rewriting it, so an ordinary observation does not need
-a separate durable write for reporting metadata. Fee plans still commit before ledger posting. A failed ingestion
-rolls back the report and its precision together; replay cannot change the retained precision or its account binding.
+Reconciliation owns two writer-fenced transactions. The first recovers previously committed fee plans before
+accounting new fills, then ingests the broker cut, retains its cash precision and prepares new fee plans together.
+The second posts those newly committed plans, verifies accounting and records reconciliation. Preparation must
+commit before its ledger posting; the operation rejects an ambient transaction that would erase this boundary.
+Fee preparation rechecks the exact account, amount, time and precision binding without rewriting it. Failed
+preparation rolls back the new cut and its precision together; previously committed plans remain recoverable.
+Replay cannot change the retained precision or account binding, duplicate inventory debits or bypass writer fencing.
 
 Close preparation waits for exact accounting and resolved broker evidence before constructing a liquidation plan,
 including after a fallback obtains a newer cut. Missing settlement evidence keeps the existing position recoverable
@@ -353,8 +362,8 @@ evidence deadline after persistence. Synchronous commit and standby durability a
 
 The submission window opens with the regular session. Bayn can evaluate after the first completed minute and
 the two-second decision delay, at 09:31:02 New York time on a normal session. It uses up to 30 minutes of actual
-completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The default development protocol requires an entry probability of at least 0.65 and a spread no
-wider than five basis points. It selects at most one long position, capped at 20% of account equity and reduced when
+completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The development protocol requires an entry probability of at least 0.65. Entry spreads may not exceed five basis
+points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
 bounding the target; the target weight is applied once. Exposure-reducing closes retain their existing risk exception.
@@ -379,6 +388,12 @@ version-four batch must finish within its ten-second evidence lifetime. After th
 the fresh execution quote's event time and ten-second maximum age; the earlier batch deadline does not shorten that
 quote deadline for version-three or version-four decisions. These parameters have not established an economic advantage under the
 frozen qualification protocol.
+
+Entries use capital-weighted quantities at the verified ask, with whole-share equity and native fractional crypto
+precision. A single displayed ask size does not cap an order. The existing allocation, buying power, order, exposure
+and turnover limits still bound the quantity. LIMIT/IOC prices bound execution cost; a partial fill or cancellation
+retains its native recovery and accounting path. The model input states the market spread limit and estimated fees.
+The crypto estimate is 25 bps per side, based on observed sandbox fees, and is not an invoice or a guaranteed fee tier.
 
 After selecting a candidate, entry planning reapplies the same spread and positive displayed-size rules to its
 refreshed execution quote. A quote that widened or lost either side's displayed liquidity leaves the entry waiting
@@ -804,7 +819,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
+The forward-performance command emits `bayn.forward-performance-report.v3`. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
@@ -1140,7 +1155,7 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
+The command emits `bayn.forward-performance-report.v3`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
@@ -1650,7 +1665,23 @@ has been removed; cumulative accounting and ledger verification still accompany 
 
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
 later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
-fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
+fee adjustment. Complete fee-cohort settlement retires it.
+
+Alpaca posts each fill's cash movement at the precision retained with its account snapshot. Migration 112 adds
+append-only `broker_cash_settlements`: each record binds the original fill transaction and accounting receipt to
+that observed precision. Reconciliation prepares the deterministic rounding difference, commits its evidence,
+and posts it through the existing journal before verifying the complete account. Original fills, fees and inventory
+cost remain precise and immutable. Failed posts or acknowledgements resume with the same transfer identities.
+An unexplained cash difference still blocks trading; the settlement calculation accepts no target balance.
+Accounting-state hashes use v4 and bind both the fee reporting residual and every cash settlement. Financial
+receipts use v4 and report `cashSettlementRoundingMicros` separately from gross trade P&L, fees and cash yield;
+net income includes it only for the source transaction's authority generation.
+
+The model-action cutover may migrate an already restricted, flat OBSERVE account while reconciliation is inexact,
+so native recovery can repair its ledger. It preserves that restriction's reason and active kill switch. Only an
+effective PAPER account or recognized predecessor cutover receives `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`; operator
+kills and unknown restrictions never become automatically recoverable. PAPER execution still requires exact
+reconciliation and a fresh protocol-bound capital activation.
 An inexact close reconciliation returns `CLOSE_RECONCILIATION_PENDING` at the regular reconciliation cadence before
 reading archive data or binding a liquidation document; exact evidence resumes the same close path.
 

@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test'
+import * as Sentry from '@sentry/node'
 
 void mock.module('server-only', () => ({}))
 const { getTengriIdentity, handleTengriAuth } = await import('./auth')
@@ -30,6 +31,25 @@ afterAll(() => {
 })
 
 describe('Ofz-backed browser authentication boundary', () => {
+  test('reports a caught authentication outage while preserving its 503 response', async () => {
+    const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
+    process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = path.join(directory, 'missing-secret')
+    try {
+      const response = await handleTengriAuth(
+        new Request('https://proompteng.ai/api/auth/login', {
+          method: 'POST',
+          headers: { host: 'proompteng.ai', origin: 'https://proompteng.ai', 'sec-fetch-site': 'same-origin' },
+        }),
+      )
+      expect(response.status).toBe(503)
+      expect(capture).toHaveBeenCalledTimes(1)
+      expect(capture.mock.calls[0]?.[0]).toMatchObject({ code: 'ENOENT' })
+      expect(await response.text()).not.toContain('missing-secret')
+    } finally {
+      process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = settings.TENGRI_OIDC_CLIENT_SECRET_FILE
+      capture.mockRestore()
+    }
+  })
   test('absent, malformed, duplicate and legacy cookies never authenticate', async () => {
     for (const value of [
       '',

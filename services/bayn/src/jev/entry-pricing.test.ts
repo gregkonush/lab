@@ -59,7 +59,12 @@ describe('Jev entry execution quote eligibility', () => {
     expect(decision.selectedSymbols).toEqual(['AAPL'])
     const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
     expect(compiled.priceMicros['AAPL']).toBe('100020000')
-    expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe('100000000000')
+    expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe(
+      (
+        (BigInt(decision.evidence.observation.portfolio.brokerState.account.equityMicros) / 5n / 100020000n) *
+        1_000_000_000n
+      ).toString(),
+    )
   })
 
   test.each([

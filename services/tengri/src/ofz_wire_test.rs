@@ -25,7 +25,7 @@ async fn human_command(
                 command: Some(command),
                 ..Default::default()
             },
-            COMMAND_TIMEOUT,
+            DURABLE_TIMEOUT,
         ))
         .await
         .unwrap()
@@ -551,7 +551,7 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
                 operation_id: started.operation_id.clone(),
                 ..Default::default()
             },
-            COMMAND_TIMEOUT,
+            DURABLE_TIMEOUT,
         ))
         .await
         .unwrap()

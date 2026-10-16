@@ -4,6 +4,7 @@ import { isContinuousMarket, sameMarketHours, marketHoursAreCanonical } from './
 import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
+import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import { JevExitReason } from './jev/exit'
 import {
@@ -25,7 +26,7 @@ import { Data, Result, Schema } from 'effect'
 import { instrumentMarket, MarketKind } from './instruments'
 import { quantizeInstrumentPriceMicros } from './broker/alpaca-price'
 import { makeExecutionCalendarObservation } from './cycle'
-import { priceNumberToMicros } from './execution-model'
+import { priceNumberToMicros, notionalMicros } from './execution-model'
 import {
   executionIntentIdForDecodedPlan,
   intentIdForPlan,
@@ -982,7 +983,7 @@ const streamingPricingEvidenceIssues = (
       prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||
       prices.askPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, ask, 'UP').toString() ||
       prices.priceMicros[symbol] !== prices.askPriceMicros[symbol] ||
-      BigInt(terms.maximumBuyQuantityAtoms[symbol] ?? '0') > (askSize / increment) * increment ||
+      (BigInt(terms.maximumBuyQuantityAtoms[symbol] ?? '0') > 0n && (askSize === 0n || bidSize === 0n)) ||
       BigInt(terms.maximumSellQuantityAtoms[symbol] ?? '0') > (bidSize / increment) * increment
     )
       return [
@@ -1176,6 +1177,25 @@ const jevEntryEvidenceIssues = (
     ]
   const issues: Schema.FilterIssue[] = []
   const { observation, batchPlan } = target.evidence
+  if (
+    document.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
+    document.plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
+  ) {
+    const expected = maximumAllocatedBuyQuantities({
+      askPriceMicros: document.plannerInput.referencePrices.askPriceMicros,
+      targetWeights: jevPlanningTargetWeights(target),
+      capitalMicros: observation.portfolio.brokerState.account.equityMicros,
+      precision: observation.protocol.executionModel.precision,
+    })
+    const actualHash = canonicalHashV1Result(document.plannerInput.executionTerms.maximumBuyQuantityAtoms)
+    const expectedHash = Result.flatMap(expected, canonicalHashV1Result)
+    if (Result.isFailure(actualHash) || Result.isFailure(expectedHash) || actualHash.success !== expectedHash.success)
+      issues.push({
+        path: ['plannerInput', 'executionTerms', 'maximumBuyQuantityAtoms'],
+        issue:
+          'Jev entry quantity limits must reproduce the recorded capital, selected weights and instrument precision',
+      })
+  }
   const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
   const pricing = document.bindings.executionMarketData
   // JevEntryTargetSchema has already reproduced the observation. Exact manifest and row equality binds that
@@ -1835,7 +1855,18 @@ const executionMaterialIssues = (
         }
       }
     }
-    const notional = BigInt(risk.notionalLimitMicros)
+    const expectedNotional =
+      facts === undefined
+        ? Result.succeed(BigInt(risk.notionalLimitMicros))
+        : notionalMicros(BigInt(target.quantityAtoms), BigInt(facts.state.expectedExecutionPriceMicros))
+    if (Result.isFailure(expectedNotional)) {
+      issues.push({
+        path: ['deltaRisk', index],
+        issue: 'execution risk notional must be representable at the broker price boundary',
+      })
+      continue
+    }
+    const notional = expectedNotional.success
     const previousRisk = document.deltaRisk[index - 1]
     const expectedAggregateBuyingPower =
       (previousRisk === undefined ? 0n : BigInt(previousRisk.evaluation.metrics.aggregateBuyingPowerMicros)) +
@@ -1847,7 +1878,7 @@ const executionMaterialIssues = (
       risk.evaluation.decision.outcome !== expectedOutcome ||
       risk.evaluation.decision.decidedAt !== document.createdAt ||
       risk.evaluation.decision.expiresAt > document.expiresAt ||
-      risk.evaluation.metrics.orderNotionalMicros !== risk.notionalLimitMicros ||
+      risk.evaluation.metrics.orderNotionalMicros !== notional.toString() ||
       BigInt(risk.evaluation.metrics.aggregateBuyingPowerMicros) !== expectedAggregateBuyingPower ||
       (previousRisk !== undefined &&
         BigInt(risk.evaluation.metrics.dailyTradedNotionalMicros) !==
