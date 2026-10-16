@@ -108,10 +108,12 @@ import cashFeeOverrelease from '../../migrations/0106_cash_fee_overrelease'
 import feePostingAcknowledgements from '../../migrations/0107_fee_posting_acknowledgements'
 import availableHistoryProtocol from '../../migrations/0108_available_history_protocol'
 import capitalSizingProtocol from '../../migrations/0109_capital_sizing_protocol'
+import capitalSizingRecovery from '../../migrations/0110_capital_sizing_recovery'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '109_capital_sizing_protocol': capitalSizingProtocol,
+  '110_capital_sizing_recovery': capitalSizingRecovery,
   '107_fee_posting_acknowledgements': feePostingAcknowledgements,
   '108_available_history_protocol': availableHistoryProtocol,
   '106_cash_fee_overrelease': cashFeeOverrelease,
