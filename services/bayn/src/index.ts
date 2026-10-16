@@ -9,9 +9,9 @@ initializeErrorTracking('bayn')
 NodeRuntime.runMain(
   pipe(
     program,
-    reportTerminalFailure('bayn'),
     Effect.annotateLogs({ service: 'bayn' }),
     // @effect-diagnostics-next-line strictEffectProvide:off -- process entry point owns the telemetry layer
     Effect.provide(makeConfiguredTelemetryRuntimeLayer('bayn')),
+    reportTerminalFailure('bayn'),
   ),
 )
