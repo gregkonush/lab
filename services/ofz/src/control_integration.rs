@@ -107,7 +107,10 @@ async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
     admin.migrate().await.unwrap();
     admin.migrate().await.unwrap();
     let mut api_config = config;
-    api_config.user("ofz_api").password("ofz-test-only");
+    api_config
+        .user("ofz_api")
+        .password("ofz-test-only")
+        .options(store::CONNECTION_OPTIONS);
     let api = Database::new(api_config, tls).unwrap();
     let native = Native::new(
         &env::var("OFZ_TEST_NATIVE_ENDPOINT").unwrap(),
@@ -738,6 +741,15 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
         Runtime,
     }
     let client = fixture.admin.pool.get().await.unwrap();
+    let api = fixture.database.pool.get().await.unwrap();
+    assert_eq!(
+        api.query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "2s"
+    );
+    drop(api);
     client.batch_execute("CREATE FUNCTION ofz.fixture_delay_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$;").await.unwrap();
     for read in [Read::Decision, Read::Runtime] {
         for request_budget in [5000, 2000] {
@@ -833,6 +845,14 @@ async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &
         .batch_execute("DROP FUNCTION ofz.fixture_delay_audit();")
         .await
         .unwrap();
+    let api = fixture.database.pool.get().await.unwrap();
+    assert_eq!(
+        api.query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "2s"
+    );
     acknowledge_fixture_archive(&fixture.admin).await;
 }
 

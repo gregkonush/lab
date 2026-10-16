@@ -152,6 +152,8 @@ version; an in-flight read must abort if that workspace authority changes, even 
 Initial audited calls may wait up to five seconds for durable commit. Ofz rechecks authority after that commit before
 issuing a decision valid for at most two seconds on both the API and database clocks, still capped by the request
 deadline and session or grant expiry. A clock difference that leaves no valid window fails closed.
+Only the audit transaction receives a five-second SQL statement timeout; ordinary connections retain their two-second
+statement and one-second lock limits after it commits.
 Receipt renewals keep their two-second request budget and recheck current authority. A compound guest operation
 authorizes its child, refreshes the parent through its original receipt, then intersects both decision deadlines.
 
