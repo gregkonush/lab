@@ -384,12 +384,12 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
-97, exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+108, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v3 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 97 and flat, exact reconciliation are
-verified. Restore the request, its identity annotation, all three build lineages
-and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
+containing this migration and the current Jev v4 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 108, the source-bound controller plan v3
+handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
+build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
 
 Acceptance requires actual BTC, ETH and SOL orders and fills through the account controller while equities are
