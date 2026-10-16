@@ -167,10 +167,13 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v5`, `bayn.jev.capital-sized-cash-spot.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v6`, `bayn.jev.model-action-cash-spot.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
-account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev.
-The current strategy protocol hash is `364d512a2d3921961eb89570eaabbae75cbe876161c6163cdc4134947a73e89f`.
+account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev. A valid chosen `enter`
+action selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
+Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
+rotates the previous PAPER generation through native OBSERVE recovery before a new v6 mandate can activate.
+The current strategy protocol hash is `62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -429,6 +432,8 @@ The automatic Stage checks out that image revision, updates the status, worker, 
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact
 controller binding before the status service rolls out.
+Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
+that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
