@@ -327,6 +327,16 @@ impl Native {
         .await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn write_fixture_relationships(
+        &self,
+        updates: &[Update],
+    ) -> Result<(), Status> {
+        self.post("/v1/relationships/write", json!({"updates": updates}))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn apply(
         &self,
         operation: &str,

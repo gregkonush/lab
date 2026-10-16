@@ -259,6 +259,54 @@ async fn runtime_shared_state_one_use_redemption_is_atomic_across_replicas() {
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_redeemed_capabilities_survive_a_slow_initial_audit() {
+    let (_database, a, b) = fixture().await;
+    let mut terminal_owner = principal(Action::TerminalControl);
+    terminal_owner.context.deadline_unix_ms = crate::ofz::now_ms().unwrap() + 100;
+    let mut editor_owner = terminal_owner.clone();
+    editor_owner.action = Action::EditorOpen;
+    let terminal = a
+        .issue_terminal(&terminal_owner, "agent", "terminal-1")
+        .await
+        .unwrap();
+    let preview = a
+        .issue_editor(&editor_owner, "agent", "window-1")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(terminal_owner.context.deadline_unix_ms < crate::ofz::now_ms().unwrap());
+    let terminal = b.consume(&terminal.token).await.unwrap();
+    let preview = b.consume_preview(&preview.token).await.unwrap();
+    let restored = a
+        .preview_session(&preview.id, &preview.token)
+        .await
+        .unwrap();
+    assert_eq!(restored.expires_at, preview.expires_at);
+    for (actual, original) in [
+        (&terminal.principal, &terminal_owner),
+        (&preview.principal, &editor_owner),
+        (&restored.principal, &editor_owner),
+    ] {
+        let mut context = actual.context.clone();
+        context.deadline_unix_ms = original.context.deadline_unix_ms;
+        assert_eq!(context, original.context);
+        assert_eq!(actual.action, original.action);
+    }
+    tokio::time::sleep(Duration::from_millis(3100)).await;
+    for context in [
+        &terminal.principal.context,
+        &preview.principal.context,
+        &restored.principal.context,
+    ] {
+        assert!(
+            context.deadline_unix_ms > crate::ofz::now_ms().unwrap(),
+            "a redeemed capability must allow its initial durable audit to finish"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_preview_rotation_revocation_and_identity_isolation() {
     let (database, a, b) = fixture().await;
     let owner = principal(Action::EditorOpen);
