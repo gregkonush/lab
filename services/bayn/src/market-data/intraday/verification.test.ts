@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { isContinuousMarket } from '../../market-hours'
 import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { exchangeSessions } from '../../market-hours'
@@ -20,13 +21,13 @@ const symbols = ['AMD', 'NVDA'] as const
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-08-18', end: '2026-08-18' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
-}
+})
 const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
 
 const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
@@ -524,6 +525,7 @@ describe('immutable intraday market snapshot', () => {
       source: verified.manifest.calendar.source,
       requestedRange: { ...verified.manifest.calendar.requestedRange },
       timeZone: verified.manifest.calendar.timeZone,
+      providerSessions: verified.manifest.calendar.providerSessions,
       sessions: exchangeSessions(verified.manifest.calendar).map((session) => ({
         ...session,
         openAt: '2026-08-18T14:30:00.000Z',
@@ -794,7 +796,7 @@ describe('immutable intraday market snapshot', () => {
       ),
     ).toMatchObject({ reason: 'request' })
 
-    const earlyCloseMaterial = {
+    const earlyCloseMaterial = withProviderSessions({
       ...calendarMaterial,
       sessions: [
         {
@@ -803,7 +805,7 @@ describe('immutable intraday market snapshot', () => {
           closeAt: '2026-08-18T18:00:00.000Z',
         },
       ],
-    }
+    })
     expect(
       verifyIntradaySnapshotRequest({
         ...request,

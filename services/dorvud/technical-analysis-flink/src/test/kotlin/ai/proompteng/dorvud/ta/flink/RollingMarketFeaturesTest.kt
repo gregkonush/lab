@@ -9,6 +9,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 class RollingMarketFeaturesTest {
   private val start = Instant.parse("2026-09-11T13:30:00Z")
   private val computed = Instant.parse("2026-09-11T14:00:02Z").toEpochMilli()
@@ -59,6 +60,7 @@ class RollingMarketFeaturesTest {
         Json {
           encodeDefaults = true
           prettyPrint = true
+          prettyPrintIndent = "  "
         }.encodeToString(RollingMarketFeature.serializer(), feature) + "\n",
       )
     }
@@ -229,5 +231,56 @@ class RollingMarketFeaturesTest {
     assertEquals(100000000, featureMicros(100.00000049))
     assertFailsWith<IllegalArgumentException> { featureMicros(Double.NaN) }
     assertFailsWith<IllegalArgumentException> { featureMicros(Double.MAX_VALUE) }
+  }
+
+  @Test fun `extended segments publish their first minute and isolate regular history`() {
+    val pre =
+      bar(
+        0,
+      ).copy(
+        eventTime = Instant.parse("2026-09-11T12:00:00Z"),
+        ingestionTime = Instant.parse("2026-09-11T12:01:01Z"),
+        marketSession = "pre",
+      )
+    val first = advanceRollingFeature(RollingFeatureState(), pre, computed, "test-revision")
+    assertEquals(1, assertNotNull(first.feature).material.inputs.size)
+    assertEquals(pre.eventTime.toEpochMilli(), first.feature?.material?.windowStartMs)
+    val regular = advanceRollingFeature(first.state, bar(0), computed, "test-revision")
+    assertEquals(1, assertNotNull(regular.feature).material.inputs.size)
+    assertEquals(start.toEpochMilli(), regular.feature?.material?.windowStartMs)
+    val correction = advanceRollingFeature(regular.state, pre.copy(sourceOffset = 100), computed, "test-revision")
+    assertEquals(regular.state, correction.state)
+    assertNull(correction.feature)
+    val post =
+      bar(
+        0,
+      ).copy(
+        eventTime = Instant.parse("2026-09-11T20:00:00Z"),
+        ingestionTime = Instant.parse("2026-09-11T20:01:01Z"),
+        marketSession = "post",
+        sourceOffset = 101,
+      )
+    val after = advanceRollingFeature(regular.state, post, post.ingestionTime.toEpochMilli(), "test-revision")
+    assertEquals(1, assertNotNull(after.feature).material.inputs.size)
+    assertEquals(post.eventTime.toEpochMilli(), after.feature?.material?.windowStartMs)
+  }
+
+  @Test fun `IEX bars outside entitled hours and forged phases fail`() {
+    val cases =
+      listOf(
+        "2026-09-11T11:59:00Z" to "pre",
+        "2026-09-11T21:00:00Z" to "post",
+        "2026-09-11T12:00:00Z" to "regular",
+      )
+    for ((at, phase) in cases) {
+      assertFailsWith<IllegalArgumentException> {
+        advanceRollingFeature(
+          RollingFeatureState(),
+          bar(0).copy(eventTime = Instant.parse(at), marketSession = phase),
+          computed,
+          "test-revision",
+        )
+      }
+    }
   }
 }

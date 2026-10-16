@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
@@ -28,13 +29,13 @@ const symbols = [
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-08-18', end: '2026-08-18' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
-}
+})
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
@@ -65,7 +66,7 @@ interface FixtureOptions {
 }
 
 const marketContextAt = (options: FixtureOptions) => {
-  const boundCalendarMaterial = {
+  const boundCalendarMaterial = withProviderSessions({
     ...calendarMaterial,
     sessions: [
       {
@@ -73,7 +74,7 @@ const marketContextAt = (options: FixtureOptions) => {
         closeAt: options.sessionCloseAt ?? calendarMaterial.sessions[0]!.closeAt,
       },
     ],
-  }
+  })
   const boundCalendar = {
     ...boundCalendarMaterial,
     normalizedResponseHash: canonicalHashV1(boundCalendarMaterial),

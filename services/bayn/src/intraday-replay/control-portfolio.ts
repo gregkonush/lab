@@ -1,3 +1,5 @@
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { jevMomentumEntryCandidates } from '../jev/trading-signals'
 import { replayInstrument, type ReplayInstrumentsSchema } from './execution-core'
 import { quantityFromNumber } from '../quantity'
@@ -6,7 +8,7 @@ import { equityRollingValues } from '../market-data/features/native-feature'
 
 import { Data, Result } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { assessEntryTurnoverReserve, EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import {
@@ -204,7 +206,7 @@ export const controlEntryQuantity = (input: {
       symbol: symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       // Price derivation needs a nonzero micro-dollar notional; a crypto increment can be one nano-coin.
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros,
