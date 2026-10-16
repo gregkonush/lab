@@ -27,6 +27,7 @@ then consumes the nonce in a bounded process-wide replay guard before opening vs
 and Kubernetes runs one supervisor container/listener for that Pod. Before listening after process start, the supervisor
 waits eight seconds on a monotonic clock: the maximum five-second signed admission lifetime, the existing one-second
 clock-lead bound and two seconds of restart margin.
+The health listener remains live during this wait; readiness returns 503 until the fence clears.
 Every proof that could have executed before a crash therefore expires before the replacement can admit requests.
 The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
 unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.

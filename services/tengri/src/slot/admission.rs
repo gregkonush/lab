@@ -148,6 +148,10 @@ impl GuestAdmission {
         tokio::time::sleep_until(self.replay.ready_at).await;
     }
 
+    pub(super) fn is_ready(&self) -> bool {
+        tokio::time::Instant::now() >= self.replay.ready_at
+    }
+
     pub(super) fn reserve_request(
         &self,
     ) -> Result<tokio::sync::OwnedSemaphorePermit, tonic::Status> {
@@ -1085,6 +1089,7 @@ mod tests {
             .unwrap();
         let mut admission = GuestAdmission::fixture();
         admission.replay = ReplayGuard::process();
+        assert!(!admission.is_ready());
         assert_eq!(
             admission
                 .replay
@@ -1095,6 +1100,7 @@ mod tests {
             tonic::Code::Unavailable
         );
         admission.wait_ready().await;
+        assert!(admission.is_ready());
         assert_eq!(
             admission
                 .replay
