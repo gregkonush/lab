@@ -58,6 +58,14 @@ archive credentials and fenced bootstrap. The [independent NUC recovery store](.
 holds both the audit archive and separate database buckets. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
 and `tengri_control` databases. Application roles have distinct schema/table permissions.
 
+Separated Tengri pools require two connections per process for schema/readiness and leadership operations,
+in addition to request writes. The managed controller role permits 36 connections, covering two replicas with twelve
+request and two coordination connections each. The supervisor role permits 24 connections for six slots with two
+request and two coordination connections each. Apply this role limit through the Ofz promotion before deploying
+the separated Tengri pools. CNPG updates the role online; database privileges, credentials, the 200-connection server
+limit and runtime migration checksums stay unchanged. Reverting the pool separation precedes any reduction of the
+supervisor role's connection limit.
+
 ## Validate before deployment
 
 ```bash

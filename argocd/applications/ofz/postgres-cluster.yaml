@@ -98,7 +98,7 @@ spec:
       createrole: false
       replication: false
       bypassrls: false
-      connectionLimit: 12
+      connectionLimit: 24
       passwordSecret:
         name: tengri-supervisor-db-auth
   primaryUpdateStrategy: unsupervised
