@@ -26,10 +26,11 @@ const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 export const momentumFirstEntryPolicy = 'bayn.positive-relative-observed-momentum-entry.v1' as const
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v4'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v5'),
+  entrySizingPolicy: Schema.Literal('capital-weighted-limit-ioc'),
   entrySignalPolicy: Schema.Literal(momentumFirstEntryPolicy),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v4'),
+  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v5'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -46,7 +47,6 @@ const ProtocolBase = Schema.Struct({
   maximumPositions: Schema.Literal(1),
   maximumGrossWeight: Weight,
   maximumSymbolWeight: Weight,
-  maximumSpreadBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(100)),
   inferenceValidityMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
   horizonMinutes: Minutes,
   maximumHoldingMinutes: Minutes,
@@ -93,10 +93,11 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v4',
+  schemaVersion: 'bayn.jev.protocol.v5',
+  entrySizingPolicy: 'capital-weighted-limit-ioc',
   entrySignalPolicy: momentumFirstEntryPolicy,
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v4',
+  inputDefinition: 'bayn.jev-trading-signal-state.v5',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
@@ -113,7 +114,6 @@ export const defaultJevProtocolDocument = Object.freeze({
   maximumPositions: 1,
   maximumGrossWeight: 0.2,
   maximumSymbolWeight: 0.2,
-  maximumSpreadBps: 5,
   inferenceValidityMs: 10_000,
   horizonMinutes: 15,
   maximumHoldingMinutes: 15,
@@ -132,6 +132,6 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.available-history.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.capital-sized-cash-spot.behavior.v1')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort()

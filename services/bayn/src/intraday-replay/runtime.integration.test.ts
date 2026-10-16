@@ -1341,6 +1341,17 @@ durableTest.each(
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
           expect(reconciliation.brokerState.account.cashMicros).toBe(state.ledger.cashMicros)
+          expect(
+            yield* sql`SELECT
+              paper_partial_ioc_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+                o.filled_quantity_atoms,${yield* currentUtcInstant}::timestamptz) AS complete,
+              paper_partial_ioc_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+                o.filled_quantity_atoms,i.updated_at) AS entry_cut_complete
+              FROM intents i JOIN LATERAL (
+                SELECT o.* FROM orders o JOIN broker_events e USING(event_id)
+                WHERE o.intent_id=i.intent_id ORDER BY e.source_sequence DESC LIMIT 1
+              ) o ON true WHERE i.account_id=${accountId} AND i.side='BUY'`,
+          ).toEqual([{ complete: true, entry_cut_complete: false }])
           expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
             { state: 'COMPLETED' },
           ])
