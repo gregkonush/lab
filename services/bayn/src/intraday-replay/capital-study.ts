@@ -2,6 +2,7 @@ import { Effect, FileSystem, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevPurpose } from '../jev/portfolio'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 import { observedQuoteAt } from '../market-data/streaming/projection'
 import { Sha256Schema, SourceRevisionSchema, StrictNonEmptyStringSchema, strictParseOptions } from '../schemas'
 import {
@@ -90,8 +91,8 @@ export const runCapitalStudy = (raw: unknown) =>
       definition: capitalAblationDefinition,
       definitionHash: yield* Effect.fromResult(canonicalHashV1Result(capitalAblationDefinition)),
       protocolHash,
-      protocolVersion: 'bayn.jev.protocol.v5',
-      inputDefinition: 'bayn.jev-trading-signal-state.v5',
+      protocolVersion: defaultJevProtocolDocument.schemaVersion,
+      inputDefinition: defaultJevProtocolDocument.inputDefinition,
       registeredSourceRevisions: datasets.map((context) => context.dataset.registration.sourceRevision),
       evaluatorSourceRevision: input.evaluatorSourceRevision,
       inputHash: yield* Effect.fromResult(canonicalHashV1Result(input)),

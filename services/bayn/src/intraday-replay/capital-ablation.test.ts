@@ -75,9 +75,9 @@ const terms: CapitalTerms = Schema.decodeUnknownSync(CapitalTermsSchema)({
   costHurdleMarginBps: 0,
   scenarios: [scenario],
 })
-const opportunity = (offsetMs = 0, action = 'enter'): CapitalOpportunity => {
+const opportunity = (offsetMs = 0, action = 'enter', probability = 0.8): CapitalOpportunity => {
   const native = nativeJevFixture(undefined, new Date(baseAt - 100 + offsetMs).toISOString())
-  const { decidedAt, ...evidence } = nativeJevDecisionEvidence(native, action)
+  const { decidedAt, ...evidence } = nativeJevDecisionEvidence(native, action, probability)
   return {
     batch: Result.getOrThrow(prepareSignalStudyBatch(evidence)),
     committedAtMs: Date.parse(decidedAt),
@@ -164,7 +164,7 @@ const evaluate = (
   return states.map(finishCapitalState)
 }
 
-test('both arms retain every identical native v5 opportunity, abstention and capital overlap', () => {
+test('both arms retain every identical current native opportunity, abstention and capital overlap', () => {
   const opps = [opportunity(60_000), opportunity(), opportunity(120_000, 'wait')]
   const reports = evaluate(opps)
   expect(reports[0]?.eligibleOpportunityIds).toEqual(reports[1]?.eligibleOpportunityIds)
@@ -315,10 +315,11 @@ test('turnover reserve and loss gates bind both arms without dropping opportunit
   expect(loss?.metrics.maximumDrawdownAfterAllCostsMicros).not.toBe('0')
 })
 
-test('v4, changed v5 protocols, duplicate ids and foreign accounts cannot compare', () => {
+test('retired or changed protocols, duplicate ids and foreign accounts cannot compare', () => {
   const opp = opportunity()
   for (const protocol of [
     { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v4' },
+    { ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v5' },
     { ...defaultJevProtocolDocument, maximumGrossWeight: 0.4 },
   ]) {
     expect(
@@ -342,6 +343,16 @@ test('v4, changed v5 protocols, duplicate ids and foreign accounts cannot compar
   expect(
     Result.isFailure(validateCapitalPopulation([opp], { ...terms, policy: { ...terms.policy, accountId: 'other' } })),
   ).toBe(true)
+})
+
+test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
+  const opp = opportunity(0, 'enter', 0.6)
+  const [baseline, candidate] = evaluate([opp])
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v6')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('chosen-model-action')
+  expect(baseline?.metrics.filledEntries).toBe(1)
+  expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
+  expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)
 })
 
 test('post-coverage commitment stays in both populations and cost totals', () => {

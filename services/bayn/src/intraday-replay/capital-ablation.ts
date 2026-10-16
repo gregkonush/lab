@@ -127,7 +127,7 @@ const hurdleRecord = (proxy: bigint, cost: bigint, principal: bigint) => ({
 
 export const capitalAblationDefinition = {
   schemaVersion: 'bayn.capital-ablation-definition.v1',
-  baseline: 'Frozen native v5 algorithm + Jev entry choices; one cash portfolio per arm and scenario.',
+  baseline: `Frozen native ${defaultJevProtocolDocument.schemaVersion} algorithm + Jev entry choices; one cash portfolio per arm and scenario.`,
   candidate:
     'After the same Jev decision, require native lookback price return times projected entry notional to exceed an immediate quote-based round-trip loss, allocated inference and operating expense, and the frozen margin. Momentum is an uncalibrated proxy, never expected payoff or a win probability.',
   management: 'Common five-second mechanical stop/maximum-hold exits with persistent reducing IOC retries.',
@@ -160,7 +160,9 @@ export const validateCapitalPopulation = (opportunities: readonly CapitalOpportu
       if (ids.has(batch.plan.batchId)) return yield* fail('Duplicate capital opportunity')
       ids.add(batch.plan.batchId)
       if ((yield* canonicalHashV1Result(batch.observation.protocol)) !== expectedProtocolHash)
-        return yield* fail('Capital ablation requires the current unmodified Jev v5 protocol')
+        return yield* fail(
+          `Capital ablation requires the current unmodified ${defaultJevProtocolDocument.schemaVersion}`,
+        )
       if (batch.observation.portfolio.brokerState.account.accountId !== terms.policy.accountId)
         return yield* fail('Capital policy account differs from retained opportunities')
       if (committedAtMs !== null && committedAtMs < Date.parse(batch.decidedAt))

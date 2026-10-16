@@ -1,6 +1,6 @@
 # Shared-capital Jev entry cost ablation
 
-`services/bayn/tools/capital-study.ts` compares frozen native **v5 algorithm + Jev entry decisions** against the same
+`services/bayn/tools/capital-study.ts` compares frozen native **v6 algorithm + Jev entry decisions** against the same
 entries with an offline cost hurdle. Each arm owns one cash balance and one position slot across the supplied equity
 and crypto sources. It reuses the existing execution simulator, capital allocation constraints, instrument precision,
 fee ledger, and persistent reducing IOC exit lifecycle. It never calls inference or broker APIs and cannot select a
@@ -14,7 +14,8 @@ cost rejections, and unfilled orders. The two ordered opportunity lists must has
 ## Question and scope
 
 The baseline reproduces the retained native entry choice, including the native algorithm candidate screen and Jev's
-semantic choice threshold. Both arms use the same five-second mechanical protective-stop and maximum-hold exits,
+chosen model action without the retired entry-probability floor. Both arms use the same five-second mechanical
+protective-stop and maximum-hold exits,
 quote arrivals, instrument increments and IOC rules. Equity closes retain the native session cutoff. Crypto holds
 retain elapsed deadlines across UTC dates. Exit attempts continue after entry risk limits bind.
 
@@ -49,9 +50,11 @@ calibrated edge, held-out performance, or profitability.
 - Each scenario pins `id`, `latencyMs`, `slippageBps`, `availableLiquidityPpm`, and `feeMultiplierPpm`.
 
 Each market group passes the existing matched-study inventory, source reproduction, original witness byte hashes,
-committed native decision, cost allocation and timing checks before comparison. The current unmodified Jev v5
-protocol hash and account must match every opportunity; old v4 evidence and changed v5 parameters fail. The native crypto source profile binds its shared raw channel topic and separate feature topic to three partitions
-each; generic topic aliasing and spoofed crypto identities remain invalid. Distinct
+committed native decision, cost allocation and timing checks before comparison. The current unmodified Jev v6
+protocol hash and account must match every opportunity; old v4/v5 evidence and changed current parameters fail.
+Protocol and input-definition report metadata derive from that same native definition. The native crypto source
+profile binds its shared raw channel topic and separate feature topic to three partitions each; generic topic
+aliasing and spoofed crypto identities remain invalid. Distinct
 market calendars and archives feed one combined event clock and one shared portfolio per arm/scenario. Source
 universes must be disjoint. A commitment beyond source coverage still has an accounting/opportunity row and no
 fabricated execution. Every cursor is consumed and verified in full, including records after the last order.
