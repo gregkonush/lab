@@ -101,6 +101,12 @@ internal fun decodeArchivedMarketFeature(
   ) {
     "feature window spans sessions"
   }
+  val windowStart = Instant.ofEpochMilli(material.windowStartMs)
+  val windowLast = Instant.ofEpochMilli(material.windowEndMs - 1)
+  require(
+    executableIexSession(windowStart) != null && executableIexSession(windowLast) != null &&
+      equityFeatureSegmentStart(windowStart) == equityFeatureSegmentStart(windowLast),
+  ) { "feature window crosses executable IEX clock segments" }
   val coordinates = mutableSetOf<String>()
   var previousEvent = material.windowStartMs.toBigInteger() * 1_000_000L.toBigInteger() - 1.toBigInteger()
   for (input in material.inputs) {

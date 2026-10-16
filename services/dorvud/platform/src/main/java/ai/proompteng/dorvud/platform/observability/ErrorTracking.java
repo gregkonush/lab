@@ -6,10 +6,15 @@ import io.sentry.SentryLevel;
 import io.sentry.SentryOptions;
 import io.sentry.protocol.Message;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 public final class ErrorTracking {
+  private static final Set<String> COMPONENT_LOGGERS = Set.of(
+      "market-data-archive", "market-feature-archive", "technical-market-features", "rolling-market-features",
+      "crypto-market-features", "crypto-market-feature-archive", "crypto-market-data-archive",
+      "options-ta-clickhouse", "ta-clickhouse", "parse-envelope", "parse-bars1m", "microbars", "ta-signals", "torghut-ta");
   private static boolean initialized;
 
   private ErrorTracking() {}
@@ -74,6 +79,13 @@ public final class ErrorTracking {
   }
 
   static SentryEvent sanitize(SentryEvent event, String service) {
+    String logger = event.getLogger();
+    if (logger == null
+        || (!COMPONENT_LOGGERS.contains(logger)
+            && !logger.matches("(?:ai\\.proompteng\\.dorvud|org\\.apache|com\\.clickhouse|io\\.netty)\\.[A-Za-z_$][A-Za-z0-9_$.]{0,180}"))) {
+      logger = "unknown";
+    }
+    event.setLogger(logger);
     Message message = new Message();
     message.setFormatted("Dorvud application error");
     event.setMessage(message);
@@ -86,7 +98,8 @@ public final class ErrorTracking {
     event.setTransaction(null);
     event.setUnknown(null);
     event.getContexts().clear();
-    event.setTags(Map.of("service", service, "namespace", "torghut"));
+    event.setTags(Map.of("service", service, "namespace", "torghut", "logger", logger));
+    event.setFingerprints(List.of("{{ default }}", service, logger));
     if (event.getExceptions() != null) {
       for (var exception : event.getExceptions()) {
         exception.setValue("Message withheld: potentially sensitive runtime data");
