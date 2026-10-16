@@ -4,6 +4,7 @@ use axum::{
     http::{Method, Request},
 };
 use http_body_util::{BodyExt, StreamBody};
+use hyper::body::Body as _;
 use prost::Message;
 use sha2::{Digest, Sha256};
 use tengri::guest_authorization::{
@@ -20,6 +21,7 @@ use crate::{
 const MAX_OPENING_BYTES: usize = 10 << 20;
 const MAX_PREVIEW_BYTES: usize = 32 << 20;
 const MAX_BUFFERED_OPENING_BYTES: usize = 2 * MAX_PREVIEW_BYTES;
+const MAX_ADMITTING_REQUESTS: usize = 32;
 
 #[derive(Clone)]
 pub(super) struct GuestAdmission {
@@ -27,6 +29,7 @@ pub(super) struct GuestAdmission {
     pod_uid: String,
     recovery_generation: u64,
     capacity: std::sync::Arc<tokio::sync::Semaphore>,
+    requests: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 pub(super) struct Opening {
@@ -51,6 +54,15 @@ impl GuestAdmission {
             pod_uid,
             recovery_generation,
             capacity: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_BUFFERED_OPENING_BYTES)),
+            requests: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_ADMITTING_REQUESTS)),
+        })
+    }
+
+    pub(super) fn reserve_request(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, tonic::Status> {
+        self.requests.clone().try_acquire_owned().map_err(|_| {
+            tonic::Status::resource_exhausted("guest admission request capacity exhausted")
         })
     }
 
@@ -108,21 +120,16 @@ impl GuestAdmission {
         let (parts, source) = request.into_parts();
         let (body, forwarded) =
             tokio::time::timeout(std::time::Duration::from_millis(remaining), async {
-                let permit = self
-                    .capacity
-                    .clone()
-                    .acquire_many_owned(if grpc {
-                        (MAX_OPENING_BYTES + 5) as u32
-                    } else {
-                        MAX_PREVIEW_BYTES as u32
-                    })
-                    .instrument(tracing::info_span!("guest.admission.capacity"))
-                    .await
-                    .context("guest admission closed")?;
                 let (body, forwarded) = if grpc {
-                    opening_body(source, permit).await?
+                    opening_body(source, self.capacity.clone()).await?
                 } else {
-                    let body = axum::body::to_bytes(source, MAX_PREVIEW_BYTES)
+                    let limit = source
+                        .size_hint()
+                        .upper()
+                        .unwrap_or(MAX_PREVIEW_BYTES as u64)
+                        .min(MAX_PREVIEW_BYTES as u64) as usize;
+                    let permit = reserve_bytes(&self.capacity, limit)?;
+                    let body = axum::body::to_bytes(source, limit)
                         .instrument(tracing::info_span!("guest.admission.body"))
                         .await
                         .context("preview request body exceeds its limit")?;
@@ -241,13 +248,25 @@ fn retained_opening(bytes: Bytes, mut reservation: tokio::sync::OwnedSemaphorePe
     })
 }
 
+#[tracing::instrument(name = "guest.admission.capacity", skip_all)]
+fn reserve_bytes(
+    capacity: &std::sync::Arc<tokio::sync::Semaphore>,
+    bytes: usize,
+) -> Result<tokio::sync::OwnedSemaphorePermit, tonic::Status> {
+    capacity
+        .clone()
+        .try_acquire_many_owned(bytes as u32)
+        .map_err(|_| tonic::Status::resource_exhausted("guest admission buffer capacity exhausted"))
+}
+
 #[tracing::instrument(name = "guest.admission.body", skip_all)]
 async fn opening_body(
     mut source: Body,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    capacity: std::sync::Arc<tokio::sync::Semaphore>,
 ) -> anyhow::Result<(Bytes, Body)> {
     let mut prefix = Vec::with_capacity(5);
     let mut expected = None;
+    let mut permit = None;
     let remainder;
     loop {
         let frame = source
@@ -266,6 +285,7 @@ async fn opening_body(
                     "guest RPC opening message exceeds its limit"
                 );
                 expected = Some(length + 5);
+                permit = Some(reserve_bytes(&capacity, length + 5)?);
             }
             if expected == Some(prefix.len()) || chunk.is_empty() {
                 break;
@@ -280,7 +300,10 @@ async fn opening_body(
             break;
         }
     }
-    let prefix = retained_opening(Bytes::from(prefix), permit);
+    let prefix = retained_opening(
+        Bytes::from(prefix),
+        permit.expect("complete opening is reserved"),
+    );
     let opening = prefix.slice(5..);
     let frames = async_stream::stream! {
         yield Ok::<_, axum::Error>(hyper::body::Frame::data(prefix));
@@ -666,6 +689,96 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn tiny_requests_remain_count_bounded_and_release_capacity() {
+        let admission = GuestAdmission::fixture();
+        let mut requests: Vec<_> = (0..MAX_ADMITTING_REQUESTS)
+            .map(|_| admission.reserve_request().unwrap())
+            .collect();
+        assert_eq!(
+            admission.reserve_request().unwrap_err().code(),
+            tonic::Code::ResourceExhausted
+        );
+        requests.pop();
+        let next = admission.reserve_request().unwrap();
+        drop(requests);
+        drop(next);
+        assert_eq!(
+            admission.requests.available_permits(),
+            MAX_ADMITTING_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_reserves_its_actual_opening_size() {
+        let admission = GuestAdmission::fixture();
+        let retained = admission
+            .capacity
+            .clone()
+            .acquire_many_owned((MAX_BUFFERED_OPENING_BYTES - 64) as u32)
+            .await
+            .unwrap();
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let (opening, forwarded) = admission
+            .opening(signed(READ, "/workspace/a", &body))
+            .await
+            .unwrap();
+        assert_eq!(admission.capacity.available_permits(), 64 - body.len() - 5);
+        drop(opening);
+        drop(forwarded);
+        assert_eq!(admission.capacity.available_permits(), 64);
+        drop(retained);
+    }
+
+    #[tokio::test]
+    async fn oversized_reservations_do_not_block_smaller_requests_that_fit() {
+        let admission = GuestAdmission::fixture();
+        let retained = admission
+            .capacity
+            .clone()
+            .acquire_many_owned(50 << 20)
+            .await
+            .unwrap();
+        let upload = tokio::spawn({
+            let admission = admission.clone();
+            async move {
+                admission
+                    .opening(signed(
+                        "HTTP POST",
+                        "/v1/preview/43210/submit",
+                        &vec![b'x'; MAX_PREVIEW_BYTES],
+                    ))
+                    .await
+            }
+        });
+        tokio::task::yield_now().await;
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let smaller = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await;
+        drop(retained);
+        let error = upload
+            .await
+            .unwrap()
+            .err()
+            .expect("oversized reservation should fail promptly");
+        assert_eq!(
+            error.downcast_ref::<tonic::Status>().unwrap().code(),
+            tonic::Code::ResourceExhausted
+        );
+        smaller
+            .expect("a queued preview blocked an RPC despite sufficient free bytes")
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn buffered_preview_uploads_remain_bounded_until_storage_is_released() {
         let admission = GuestAdmission::fixture();
@@ -695,14 +808,17 @@ mod tests {
             path: "/workspace/a".into(),
         }
         .encode_to_vec();
-        assert!(
-            tokio::time::timeout(
-                std::time::Duration::from_millis(20),
-                admission.opening(signed(READ, "/workspace/a", &body)),
-            )
-            .await
-            .is_err(),
-            "retained uploads exceeded the total buffered byte limit"
+        let error = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await
+        .expect("exhausted capacity must fail promptly")
+        .err()
+        .expect("retained uploads must enforce the total buffered byte limit");
+        assert_eq!(
+            error.downcast_ref::<tonic::Status>().unwrap().code(),
+            tonic::Code::ResourceExhausted
         );
         buffered.pop();
         tokio::time::timeout(
@@ -729,12 +845,7 @@ mod tests {
             .collect();
         let (opening, forwarded) = opening_body(
             Body::new(StreamBody::new(futures::stream::iter(frames))),
-            admission
-                .capacity
-                .clone()
-                .acquire_many_owned((MAX_OPENING_BYTES + 5) as u32)
-                .await
-                .unwrap(),
+            admission.capacity.clone(),
         )
         .await
         .unwrap();
@@ -746,31 +857,15 @@ mod tests {
             vec![0, 0, 0, 0, 1],
         ] {
             assert!(
-                opening_body(
-                    Body::from(invalid),
-                    admission
-                        .capacity
-                        .clone()
-                        .acquire_many_owned((MAX_OPENING_BYTES + 5) as u32)
-                        .await
-                        .unwrap(),
-                )
-                .await
-                .is_err()
+                opening_body(Body::from(invalid), admission.capacity.clone(),)
+                    .await
+                    .is_err()
             );
         }
         assert!(
-            opening_body(
-                Body::empty(),
-                admission
-                    .capacity
-                    .clone()
-                    .acquire_many_owned((MAX_OPENING_BYTES + 5) as u32)
-                    .await
-                    .unwrap(),
-            )
-            .await
-            .is_err()
+            opening_body(Body::empty(), admission.capacity.clone(),)
+                .await
+                .is_err()
         );
     }
 
