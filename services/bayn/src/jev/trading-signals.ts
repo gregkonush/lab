@@ -290,7 +290,7 @@ export const jevManagementQuestions = {
   action: {
     type: 'choice',
     instructions:
-      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
+      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Use netLiquidationPnlUsd, actual entryFeesUsd and estimatedExitFeesUsd when assessing the economics. Entry fees are sunk costs, so a loss or an unmet break-even price is not a reason to postpone an otherwise justified exit. Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
     criteria: {
       hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
       exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
@@ -324,15 +324,21 @@ const requestFromSnapshot = (
         (entry) => entry.symbol === symbol && BigInt(entry.quantityAtoms) > 0n,
       )
       const firstFill = native.portfolio.entryFills[0]
-      if (
-        held === undefined ||
-        held.schemaVersion !== 'bayn.position.v2' ||
-        firstFill === undefined ||
-        BigInt(held.costBasisMicros) <= 0n
-      )
+      if (held === undefined || firstFill === undefined || BigInt(held.costBasisMicros) <= 0n)
         return yield* unavailable('Jev management requires the actual long, cost basis and entry fills')
       const cost = BigInt(held.costBasisMicros)
-      const pnl = (candidate.prices.bid * BigInt(held.quantityAtoms)) / 1_000_000_000n - cost
+      const quantity = BigInt(held.quantityAtoms)
+      const proceeds = (candidate.prices.bid * quantity) / 1_000_000_000n
+      const pnl = proceeds - cost
+      const entryFees =
+        native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n) +
+        BigInt(native.portfolio.entryInventoryDebit.costBasisMicros)
+      const feeBps = BigInt(jevMarketForSymbol(symbol).estimatedTakerFeeBps)
+      const exitFees = (proceeds * feeBps + 9999n) / 10000n
+      const netPnl = pnl - entryFees - exitFees
+      const acquisitionCost = cost + entryFees
+      const breakEvenProceeds = (acquisitionCost * 10000n + 9999n - feeBps) / (10000n - feeBps)
+      const breakEvenBid = (breakEvenProceeds * 1_000_000_000n + quantity - 1n) / quantity
       const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
       position = {
         symbol,
@@ -345,8 +351,11 @@ const requestFromSnapshot = (
         remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
         unrealizedPnlAtBidUsd: Number(pnl) / 1_000_000,
         unrealizedPnlAtBidBps: Number((pnl * 10_000n) / cost),
-        entryFeesUsd:
-          Number(native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n)) / 1_000_000,
+        entryFeesUsd: Number(entryFees) / 1_000_000,
+        estimatedExitFeesUsd: Number(exitFees) / 1_000_000,
+        netLiquidationPnlUsd: Number(netPnl) / 1_000_000,
+        netLiquidationPnlBps: Number((netPnl * 10_000n) / acquisitionCost),
+        breakEvenExitBidUsd: Number(breakEvenBid) / 1_000_000,
       }
     }
     return yield* prepareJevRequest({

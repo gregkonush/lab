@@ -1631,6 +1631,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       })
     }
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
+    if (evaluatedAt >= closeExpiresAt)
+      return yield* new ExecutionCloseAwaitingMarketData({
+        message: 'execution close lease expired before construction',
+        observedAt: evaluatedAt,
+      })
     if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
@@ -1681,8 +1686,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       if (
         closingPass.kind === 'broker-position' ||
         source === 'reconciled-position' ||
-        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' &&
-          evaluatedAt >= cycle.window.executionCloseAt)
+        evaluatedAt >= cycle.window.executionCloseAt
       ) {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),

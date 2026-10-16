@@ -6296,3 +6296,72 @@ test('restores the existing conversation when paginated history exceeds the unar
   expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
   expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('existing-large-thread')
 })
+
+test('reopens terminally closed chat and Finder streams without reloading the desktop', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Open Finder', exact: true }).click()
+  const finder = page.getByRole('region', { name: 'Finder window' })
+  await expect(finder).toBeVisible()
+  await expect(finder.getByText('README.md', { exact: true })).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 73,
+    kind: 'thread-state',
+    method: 'turn/completed',
+    threadId: 'fixture-thread',
+    turnId: 'fixture-turn',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
+  const previousLoads = mock.actions.filter((action) => action.action === 'list-files').length
+  await page.clock.install()
+  const closed = await page.evaluate(() => {
+    const values: unknown = Reflect.get(window, '__tengriEventSources')
+    if (!Array.isArray(values)) throw new Error('Fixture event streams are unavailable')
+    let closed = 0
+    for (const value of values) {
+      const source: unknown = value
+      if (
+        typeof source !== 'object' ||
+        source === null ||
+        !('closed' in source) ||
+        source.closed ||
+        !('onerror' in source) ||
+        typeof source.onerror !== 'function'
+      )
+        continue
+      Object.defineProperty(source, 'readyState', { value: EventSource.CLOSED })
+      Reflect.apply(source.onerror, source, [new Event('error')])
+      closed++
+    }
+    return closed
+  })
+  expect(closed).toBe(2)
+  await expect(chat.getByText('Agent event stream is reconnecting', { exact: true })).toBeVisible()
+  await page.clock.runFor(1_200)
+  await expect(chat.getByText('Agent event stream is reconnecting', { exact: true })).toHaveCount(0)
+  await expect(finder.getByText(/Reconnecting/)).toHaveCount(0)
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'list-files').length)
+    .toBeGreaterThan(previousLoads)
+  const activeUrls = await page.evaluate(() => {
+    const values: unknown = Reflect.get(window, '__tengriEventSources')
+    if (!Array.isArray(values)) throw new Error('Fixture event streams are unavailable')
+    return values.flatMap((value: unknown) =>
+      typeof value === 'object' &&
+      value !== null &&
+      'closed' in value &&
+      !value.closed &&
+      'url' in value &&
+      typeof value.url === 'string'
+        ? [value.url]
+        : [],
+    )
+  })
+  expect(activeUrls).toHaveLength(2)
+  expect(activeUrls.some((url) => url.includes('/api/tengri/events?') && url.endsWith('&after=73'))).toBe(true)
+})
