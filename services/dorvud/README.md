@@ -14,6 +14,51 @@ Dorvud ingests market data, calculates technical signals, and archives source re
 Bayn consumes raw Kafka records and the feature topic. It owns strategy selection, risk, broker orders, accounting,
 and reconciliation. Dorvud does not grant trading authority or establish strategy profitability.
 
+## Exception tracking
+
+The forwarder, Flink TA and market-data archive report ERROR/FATAL logs and uncaught JVM exceptions to the
+`proompteng/dorvud` GlitchTip project using pinned Sentry Java 8.61.0. The shared platform module owns ingestion
+configuration and redaction. The forwarder uses its existing Logback logger. Flink uses its existing Log4j2 logger
+in both JobManager and TaskManager processes. The image installs the small `dorvud-glitchtip.jar` in Flink's
+global `lib/` directory, separate from the user-job jar, so framework failures reach the same reporting boundary.
+
+`DORVUD_GLITCHTIP_DSN` must name the cluster-local GlitchTip web service on port 80 with a hexadecimal public
+ingestion key. `DORVUD_ERROR_SERVICE` binds the forwarder, TA or archive role; release tags use the existing
+Kargo-written commit variables. Requests, user data, extra values, breadcrumbs, contexts, thread dumps, source
+snippets and exception messages are removed before transmission. Exception classes and stack frames remain.
+Known component logger names survive as a bounded `logger` tag and part of issue grouping, including logs with no
+throwable. Other logger names become `unknown`. Use the component, server and event timestamp to correlate the
+redacted event with operational logs; provider messages and identifiers remain withheld.
+Tracing, profiles, Sentry logs and automatic session tracking are disabled. Grafana, Loki and Mimir continue to
+own operational telemetry. Missing ingestion configuration disables local exception reporting; invalid configured
+destinations or roles are rejected.
+
+Build and check the shared integration with:
+
+```bash
+./gradlew :platform:ktlintCheck :platform:test :platform:glitchtipJar :websockets:installDist :technical-analysis-flink:uberJar
+```
+
+After normal reviewed image publication and Kargo promotion, verify the actual revision and DSN on the forwarder
+and both Flink process types. Run the explicit synthetic smoke once in each role and verify its GlitchTip event's
+service, release, logger tag and exception stack frames. The smoke also sends a log-only event to verify that errors
+without a throwable retain their component. It is never run automatically at service startup. In the forwarder, invoke:
+
+```bash
+java -cp '/app/lib/*' ai.proompteng.dorvud.platform.observability.GlitchTipSmoke
+```
+
+In each Flink process, invoke:
+
+```bash
+java -Dlog4j.configurationFile=/opt/flink/conf/log4j-console.properties \
+  -Dlog.file=/tmp/glitchtip-smoke.log -cp '/opt/flink/lib/*' \
+  ai.proompteng.dorvud.platform.observability.GlitchTipSmoke
+```
+
+Preserve existing checkpoint and savepoint identities, then verify restored jobs, completed checkpoints and fresh BTC/ETH/SOL features.
+An SDK flush, healthy Pod or synthetic issue alone does not establish market-data or trading acceptance.
+
 With `ENABLE_BARS_BACKFILL=true`, the WebSocket forwarder also reconciles provider bars every minute. This task remains
 active after the market closes and while the WebSocket reconnects, refreshing requested symbols on each pass.
 It first checks `BARS_BACKFILL_LOOKBACK_HOURS`,

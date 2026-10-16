@@ -14,6 +14,13 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
+Replay and ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
+verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
+Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
+in total. Promote the Ofz managed-role limits and 220-connection server budget before rolling out the separated pools;
+reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
 then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
@@ -417,3 +424,37 @@ fails the request before Codex starts or steers a turn. Attachments remain with 
 conversation references remain valid.
 If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
 Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.
+
+## Error reporting and request traces
+
+Production sends sanitized errors to the existing GlitchTip `proompteng` organization and OTLP traces to Tempo.
+The browser, BFF, Tengri host, Ofz, and Nanoagent have separate GlitchTip projects. W3C trace context crosses the BFF,
+Ofz, controller, supervisor and guest request boundaries; HTTP failures return `x-trace-id`. Request spans and SQL
+pool, leadership, replay, policy-read and audit spans contain operation names and timings. Trace resource
+`service.version` and GlitchTip release identify the source revision baked into the image.
+Private lifecycle commands propagate W3C `traceparent` to the root guest helper. Host spans separate vsock connection,
+command send and reply wait; joined guest spans separate clock synchronization, filesystem thaw, API and terminal
+readiness. The existing clock-transfer and readiness limits remain enforced.
+
+RPC span names come from the compiled protobuf descriptors. Unknown request paths and dynamic Rust tracing fields
+are excluded from export. Trace attributes retain only operation names, database system, standard HTTP methods,
+response status and SQLSTATE; event messages and error descriptions are withheld. GlitchTip captures errors, while
+routine warnings such as graceful shutdown remain in logs.
+
+Telemetry excludes request bodies, cookies, tokens, actor identifiers, prompts, terminal output and file contents.
+GlitchTip messages are withheld; source locations, error classes, SQLSTATE and trace IDs remain. Browser ingestion
+accepts only bounded same-origin error envelopes for the configured project. It rebuilds the event and authoritative
+release before forwarding to the fixed private collector. Attachments, replay, sessions and arbitrary destinations
+are rejected. Repeated browser transport failures are limited to one event per operation/status per minute.
+
+The reviewed ConfigMaps supply the public ingest DSNs and private OTLP endpoint. Network policies allow only
+GlitchTip web TCP 8000 and Tempo distributor TCP 4318. The guest firewall additionally allows only the two resolved
+collector service addresses and ports; other private networks remain denied. Newly prepared slots receive the
+configuration through the private guest boot file, without database credentials or a Kubernetes identity.
+Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
+a supervisor image restart alone does not update the guest root or runner environment.
+
+After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
+Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.
+Verify those exact IDs in GlitchTip and Tempo. Exporter flush alone is not proof of ingestion. Then exercise real
+browser, chat, terminal, editor and Chrome requests and verify joined traces and stable streams.

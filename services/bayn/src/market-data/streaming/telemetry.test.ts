@@ -9,7 +9,7 @@ import { AuthenticationError, MultipleErrors, ProtocolError, TimeoutError } from
 import { emptyStreamingProjection } from './projection'
 import { canonicalJsonV1Result } from '../../hash'
 import { Result, Schema } from 'effect'
-import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from '../intraday/model'
+import { IntradayIngestionDelayDirection, IntradaySnapshotFailure, IntradaySnapshotPurpose } from '../intraday/model'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
 import { validateBarCoverage, validateBarStructure } from '../intraday/verification'
 import { selectStreamingInputs } from './inputs'
@@ -233,3 +233,32 @@ test('an absent symbol reports missing coverage without fabricating zero event a
   ])
   expect(Result.isSuccess(canonicalJsonV1Result(measurements))).toBe(true)
 })
+
+test.each(['absent', 'before-boundary', 'after-boundary'] as const)(
+  'pricing diagnostics preserve the actual quote cut: %s',
+  (scenario) => {
+    const { cut, query } = streamingFixture()
+    const source = cut.projection.quoteHistory.get('AAPL')?.at(-1)
+    if (source === undefined) throw new Error('Missing actual quote fixture')
+    const end = Date.parse(query.rangeEndAt)
+    const quoteAt = new Date(end + (scenario === 'before-boundary' ? -1000 : 1000)).toISOString()
+    const quotes = new Map(cut.projection.quoteHistory)
+    quotes.set(
+      'AAPL',
+      scenario === 'absent'
+        ? []
+        : [{ ...source, value: { ...source.value, eventAt: quoteAt }, availableAtMs: end + 1000 }],
+    )
+    const measurement = snapshotFailureMeasurement(
+      new IntradaySnapshotFailure({ reason: 'not-ready', message: 'pricing is awaiting its bound quote' }),
+      { ...query, purpose: IntradaySnapshotPurpose.Liquidation, symbols: ['AAPL'] },
+      { ...cut.projection, quoteHistory: quotes },
+    )
+    expect(measurement).toMatchObject({
+      purpose: IntradaySnapshotPurpose.Liquidation,
+      pricingQuoteCut: [
+        { symbol: 'AAPL', eventAt: scenario === 'absent' ? null : quoteAt, postRange: scenario === 'after-boundary' },
+      ],
+    })
+  },
+)

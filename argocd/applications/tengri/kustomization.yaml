@@ -2,6 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: tengri
 resources:
+- observability.yaml
 - mesh-security.yaml
 - crd.yaml
 - service-account.yaml
@@ -17,9 +18,9 @@ resources:
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:7c101731c2fd62f50192472984bc8ca8c910229a9fe13b8e21155d8f851a590e
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:c643c7fdaecfaccfeee8acfbf67860b3e5eda7d40d05a5f58163370f2f953853
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:ac0aaa81b76776870dd61204d83860694860c6a97268f67fe3404d6213118bbe
+  digest: sha256:572a2eb3a8772d3f6d96960c90cf2f07fb39616335eb25ef2c3334fc3549e31b

@@ -45,16 +45,16 @@ export const intradaySourceTopics = Object.freeze({
   trades: 'torghut.trades.v1',
 } as const)
 
-export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v5' }> =
+export const intradayExecutionModel: Extract<ExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }> =
   Object.freeze({
     ...defaultExecutionModel,
-    schemaVersion: 'bayn.execution-model.v5',
+    schemaVersion: 'bayn.execution-model.v6',
     assetClass: 'cash-spot',
     venue: 'alpaca-cash-spot',
     order: Object.freeze({
       type: 'limit',
-      timeInForce: 'ioc',
-      extendedHours: false,
+      timeInForce: 'asset-session',
+      extendedHours: 'equity-data-session',
       planAfter: 'verified-intraday-window',
       submitAfter: 'plan-committed',
       submitBefore: 'intraday-entry-cutoff',

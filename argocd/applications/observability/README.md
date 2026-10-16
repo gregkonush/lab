@@ -30,6 +30,10 @@ See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) f
 
 ## Sources of truth
 
+The cluster Alloy collector retains Bayn API, execution, activation, research, PostgreSQL, broker egress-proxy and
+TigerBeetle logs by an explicit container allowlist. Valkey logs use their existing failover-pod discovery. Current
+Loki readback must verify the actual container and pod labels; an `up` scrape establishes metric delivery only.
+
 Loki, Mimir and Tempo Deployments and StatefulSets require `network.proompteng.ai/100g=true` on Turin or Altra.
 Their stateless Kafka and RGW clients also require this label; the Ryzen Ceph-volume exclusion alone cannot keep
 these network workloads off its slower link. Tempo keeps three block builders and three live stores with a two-plus-one

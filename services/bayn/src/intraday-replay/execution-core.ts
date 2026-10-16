@@ -140,12 +140,12 @@ export const simulateIntradayReplayExecution = (
   }
   const modelIncrement = modelQuantityIncrement(model.precision.quantityIncrementAtoms)
   if (
-    model.schemaVersion !== 'bayn.execution-model.v5' ||
+    model.schemaVersion !== 'bayn.execution-model.v6' ||
     model.venue !== 'alpaca-cash-spot' ||
     model.assetClass !== 'cash-spot' ||
     model.order.type !== 'limit' ||
-    model.order.timeInForce !== 'ioc' ||
-    model.order.extendedHours !== false ||
+    model.order.timeInForce !== 'asset-session' ||
+    model.order.extendedHours !== 'equity-data-session' ||
     modelIncrement !== 1n ||
     quantityIncrement === undefined ||
     model.precision.priceIncrementMicros !== '100'

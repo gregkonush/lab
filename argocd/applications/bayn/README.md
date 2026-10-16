@@ -10,11 +10,17 @@ hyphens**, even though GlitchTip displays it as a UUID in its database.
 
 - Official `@sentry/node` captures uncaught exceptions and terminal Effect
   causes; successful/expected Effect operations do not emit issues and normal
-  shutdown interruption is ignored.
+  shutdown interruption is ignored. Terminal Effect failures await a bounded SDK
+  flush before process exit, preserving the original failure if delivery fails.
+- Committed reconciliation discrepancies emit one error per unchanged discrepancy
+  set in each process, including an already blocked account after restart. Exact
+  reconciliation resets that suppression. Events include discrepancy kinds and
+  the reconciliation hash, without account identities, balances or broker payloads.
 - Scrubbing removes request, user, breadcrumbs, contexts, runtime variables,
   source snippets and exception messages. Stack frames retain grouping fidelity.
 - No Sentry tracing, profiles or request-body collection. Continue to use
-  Effect/OTel to Grafana Tempo for spans, Loki for logs, Mimir for metrics.
+  Effect/OTel to Grafana Tempo for spans, Loki for logs, Mimir for metrics. Runtime
+  diagnostics-channel injection and Sentry's OpenTelemetry setup are disabled.
 - Network policies permit only TCP 8000 to GlitchTip's in-cluster web pods;
   there is no requirement for Tailscale or external public egress from Bayn.
 - The release is the reviewed source SHA, with service role and an optional
@@ -167,10 +173,13 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v5`, `bayn.jev.capital-sized-cash-spot.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v6`, `bayn.jev.model-action-cash-spot.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
-account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev.
-The current strategy protocol hash is `364d512a2d3921961eb89570eaabbae75cbe876161c6163cdc4134947a73e89f`.
+account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev. A valid chosen `enter`
+action selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
+Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
+rotates the previous PAPER generation through native OBSERVE recovery before a new v6 mandate can activate.
+The current strategy protocol hash is `62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -429,6 +438,8 @@ The automatic Stage checks out that image revision, updates the status, worker, 
 image, and pushes `kargo/bayn`. Argo tracks that branch. The Stage also updates the activation endpoint of the existing
 research build lineage while preserving its authored request and build. The native hook still verifies the exact
 controller binding before the status service rolls out.
+Image and source bindings always update. Mandate lookup and lineage updates run only when the reviewed source contains
+that lineage, so an OBSERVE-only deactivation can use the same Stage without fabricating a mandate.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
@@ -535,3 +546,9 @@ capital weight and instrument precision instead of one displayed ask size. The s
 published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
 Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
 limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.
+
+Migration 110 recognizes the capital-sizing cutover restriction in the native terminal-generation recovery path.
+The same path retires bound, unused cycles left by the previous worker even after their admission window expires;
+cycles with snapshot, decision or intent evidence still block cutover recovery.
+The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
+Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.

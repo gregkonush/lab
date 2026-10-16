@@ -1,5 +1,5 @@
 import { Data, Result, Schema } from 'effect'
-import { ExecutionModelV5Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
+import { ExecutionModelV6Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
 import {
   maximumIntradayObservationLagMs,
@@ -72,7 +72,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   minimumRangeLocationPpm: PartsPerMillionSchema,
   maximumSpreadBps: BasisPointsSchema,
   allocation: Schema.Literal('equal-weight'),
-  executionModel: ExecutionModelV5Schema,
+  executionModel: ExecutionModelV6Schema,
 })
 
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {

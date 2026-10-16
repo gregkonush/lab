@@ -125,6 +125,11 @@ pub fn build_slot_pod(
         .as_ref()
         .and_then(|a| a.get(PERSISTENT_BLOCK_INITIALIZATION_ANNOTATION))
         .is_some_and(|value| value == "complete");
+    let telemetry = json!([
+        {"name": "SENTRY_DSN", "valueFrom": {"configMapKeyRef": {"name": "tengri-observability", "key": "SENTRY_DSN"}}},
+        {"name": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "valueFrom": {"configMapKeyRef": {"name": "tengri-observability", "key": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"}}},
+        {"name": "NANOAGENT_SENTRY_DSN", "valueFrom": {"configMapKeyRef": {"name": "tengri-observability", "key": "NANOAGENT_SENTRY_DSN"}}}
+    ]);
     let env = json!([
         {"name": "TENGRI_NAMESPACE", "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}}},
         {"name": "TENGRI_POD_UID", "valueFrom": {"fieldRef": {"fieldPath": "metadata.uid"}}},
@@ -132,7 +137,8 @@ pub fn build_slot_pod(
         {"name": "TENGRI_GUEST_IMAGE", "value": guest_image},
         {"name": "TENGRI_GUEST_VERIFICATION_KEY_FILE", "value": "/var/run/tengri/guest-verification/key"},
         {"name": "TENGRI_GUEST_RECOVERY_GENERATION_FILE", "value": "/var/run/tengri/guest-verification/recovery-generation"},
-        {"name": "TENGRI_INITIALIZE_HOME", "value": if initialized {"false"} else {"true"}}
+        {"name": "TENGRI_INITIALIZE_HOME", "value": if initialized {"false"} else {"true"}},
+        telemetry[0], telemetry[1], telemetry[2]
     ]);
     let restricted = json!({"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true,
         "privileged": false, "runAsNonRoot": true, "runAsUser": 65532, "runAsGroup": 65532,
@@ -155,11 +161,12 @@ pub fn build_slot_pod(
                 "securityContext": restricted, "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}, "limits": {"cpu": "1", "memory": "3Gi"}},
                 "volumeMounts": [{"name": "artifacts", "mountPath": "/artifacts"}]},
             {"name": "tap", "image": runtime_image, "command": ["/usr/local/bin/tengri-network"],
+                "env": [telemetry[1]],
                 "securityContext": network, "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "64Mi", "runtime.proompteng.ai/kvm-tun": "1"}}}
         ],
         "containers": [
             {"name": "supervisor", "image": runtime_image, "args": ["slot-supervisor"],
-                "env": [env[0], env[1], env[4], env[5], {"name": "SPIFFE_ENDPOINT_SOCKET", "value": "unix:///spiffe-workload-api/spire-agent.sock"},
+                "env": [env[0], env[1], env[4], env[5], telemetry[0], telemetry[1], {"name": "SPIFFE_ENDPOINT_SOCKET", "value": "unix:///spiffe-workload-api/spire-agent.sock"},
                     {"name": "SPIFFE_TRUST_DOMAIN", "value": "proompteng.ai"},
                     {"name": "TENGRI_DATABASE_DSN", "value": "host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=tengri_control user=tengri_supervisor sslmode=require"},
                     {"name": "TENGRI_DATABASE_PASSWORD_FILE", "value": "/var/run/tengri/database/password"},

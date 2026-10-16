@@ -73,7 +73,7 @@ def validate(targets):
         ]["max_connections"]
     )
     require(
-        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 12 + 8) + 6 * 2
+        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 14 + 8) + 6 * 4
         <= maximum_connections - 30,
         "ofz: simultaneous rolling surges exhaust the SQL connection budget",
     )
@@ -88,9 +88,9 @@ def validate(targets):
         "ofz_api": 42,
         "ofz_archiver": 4,
         "tengri_migrator": 2,
-        "tengri_controller": 36,
+        "tengri_controller": 42,
         "tengri_bff": 24,
-        "tengri_supervisor": 12,
+        "tengri_supervisor": 24,
     }
     require(
         roles.keys() == limits.keys(),
@@ -771,6 +771,23 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"]["postgresql"][
+            "parameters"
+        ].update(max_connections="200"),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_controller"
+        ).update(connectionLimit=36),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_supervisor"
+        ).update(connectionLimit=12),
         lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
             "spec"
         ].update(method="volumeSnapshot"),

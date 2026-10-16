@@ -152,10 +152,14 @@ and Neovim configuration are preserved. The profile exports the fixed Homebrew p
 a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured.
 
 The managed editor lives on the fast guest root at `/opt/tengri/editor`: SHA-256-pinned Neovim 0.12.5,
-Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, Blink's native completion library, and nine baseline parsers.
+Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0 at commit `aa0545fc8357009fc8a67e6cd93e7f8544e3aba9`, every baseline plugin,
+Blink's native completion library, and nine baseline parsers. AstroNvim uses its exact commit because the upstream
+moving minor tag `v6.1` also matches Lazy's `v6.1.0` version range. Build and offline runtime checks verify the installed commit.
 The image build installs and verifies these dependencies; opening a fresh editor downloads nothing.
 The build verifies Blink's release checksum and packages its library without downloader state, following
 Blink's [manual-install contract](https://cmp.saghen.dev/configuration/fuzzy).
+The bundled loader resolves this verified library before Git discovery. The offline image test denies Blink's Git
+version queries and still requires native completion within one second.
 The generated manifest points Lazy directly to these local plugin directories. Automatic plugin updates,
 missing-plugin installation, completion-library downloads, and parser downloads are disabled for the managed baseline. The offline
 image test loads completion and requires its bundled Rust implementation. Explicit `:TSInstall`
@@ -286,3 +290,15 @@ the retained home and require free space there.
 Desktop replay replaces tool-result image payloads with `[Image output]` before enforcing its byte limit. The tool's
 identity, completion status, text, and structured result remain available; Codex receives the full original image.
 See [browser architecture and research](../../docs/tengri/browser.md).
+
+Nanoagent exports OTLP request spans and sanitized GlitchTip errors when the host supplies telemetry configuration
+through the private boot file. It preserves W3C trace parents and reports gRPC failures as well as HTTP 5xx responses.
+The HTTP wrapper preserves flushing and WebSocket upgrades. Errors retain their class, stack and trace ID; request
+content, credentials, user context and variable values are removed. See
+[Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the collector allowlist and deployment
+verification. A new guest root is required to install this SDK; an existing snapshot retains its original process.
+The root lifecycle helper and unprivileged API export separate `tengri.component` values. Lifecycle spans join the
+host control trace and time clock synchronization, claim updates, filesystem freeze/thaw, API readiness, workspace
+access and the terminal round trip. Slow or failed lifecycle phases also record their duration in structured logs.
+Readiness failures remain failed spans without creating routine GlitchTip incidents. Platform collector settings are
+excluded from user subprocess environments.

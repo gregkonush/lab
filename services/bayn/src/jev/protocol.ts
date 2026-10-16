@@ -8,7 +8,7 @@ import {
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result, Schema } from 'effect'
 
-import { ExecutionModelV5Schema } from '../execution-model-contract'
+import { ExecutionModelV6Schema } from '../execution-model-contract'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { maximumIntradayObservationLagMs } from '../market-data/intraday/verification'
 import { PositiveIntegerSchema, SymbolSchema, UnitIntervalSchema, strictParseOptions } from '../schemas'
@@ -26,11 +26,12 @@ const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 export const momentumFirstEntryPolicy = 'bayn.positive-relative-observed-momentum-entry.v1' as const
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v5'),
-  entrySizingPolicy: Schema.Literal('capital-weighted-limit-ioc'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v7'),
+  entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
+  entrySelectionPolicy: Schema.Literal('chosen-model-action'),
   entrySignalPolicy: Schema.Literal(momentumFirstEntryPolicy),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v5'),
+  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v6'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -51,10 +52,9 @@ const ProtocolBase = Schema.Struct({
   horizonMinutes: Minutes,
   maximumHoldingMinutes: Minutes,
   protectiveStopBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(500)),
-  minimumEntryProbability: Probability,
   minimumExitProbability: Probability,
   allocation: Schema.Literal('equal-weight'),
-  executionModel: ExecutionModelV5Schema,
+  executionModel: ExecutionModelV6Schema,
 })
 
 export const JevProtocolSchema = ProtocolBase.check(
@@ -85,7 +85,7 @@ export const JevProtocolSchema = ProtocolBase.check(
       Result.isFailure(actualModel) ||
       expectedModel.success !== actualModel.success
     )
-      issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed LIMIT/IOC execution contract' })
+      issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed session-limit execution contract' })
     return issues
   }),
 )
@@ -93,11 +93,12 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v5',
-  entrySizingPolicy: 'capital-weighted-limit-ioc',
+  schemaVersion: 'bayn.jev.protocol.v7',
+  entrySizingPolicy: 'capital-weighted-session-limit',
+  entrySelectionPolicy: 'chosen-model-action',
   entrySignalPolicy: momentumFirstEntryPolicy,
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v5',
+  inputDefinition: 'bayn.jev-trading-signal-state.v6',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
@@ -118,7 +119,6 @@ export const defaultJevProtocolDocument = Object.freeze({
   horizonMinutes: 15,
   maximumHoldingMinutes: 15,
   protectiveStopBps: 50,
-  minimumEntryProbability: 0.65,
   minimumExitProbability: 0.65,
   allocation: 'equal-weight',
   executionModel: intradayExecutionModel,
@@ -132,6 +132,6 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.capital-sized-cash-spot.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.extended-equity-cash-spot.behavior.v1')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort()

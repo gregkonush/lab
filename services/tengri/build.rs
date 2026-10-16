@@ -22,6 +22,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true)
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
         .compile_protos(&[&authz_proto], &[&authz_root])?;
+    let descriptors = prost_build::Config::new().load_fds(
+        &[
+            std::path::Path::new(proto),
+            std::path::Path::new(guest_proto),
+            authz_proto.as_path(),
+        ],
+        &[std::path::Path::new("proto"), authz_root.as_path()],
+    )?;
+    let mut rpc_paths = Vec::new();
+    for file in &descriptors.file {
+        for service in &file.service {
+            for method in &service.method {
+                rpc_paths.push(format!(
+                    "/{}.{}/{}",
+                    file.package(),
+                    service.name(),
+                    method.name()
+                ));
+            }
+        }
+    }
+    std::fs::write(
+        std::path::Path::new(&std::env::var("OUT_DIR")?).join("rpc-paths.rs"),
+        format!("const RPC_PATHS: &[&str] = &{rpc_paths:?};"),
+    )?;
     let catalog =
         std::env::var("OFZ_CATALOG_PATH").unwrap_or_else(|_| "../ofz/operations.json".into());
     std::fs::copy(

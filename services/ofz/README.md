@@ -106,7 +106,9 @@ verified MFA without requiring a fresh control step-up or renewing idle activity
 into the durable workspace roster with its expiry; offboarding deletes that native relationship and quarantines any
 workspace exposed to emergency root access. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
 activity advances the session's idle deadline at thirty-second resolution without exceeding its absolute expiry.
-Concurrent activity validates the current SQL session without rewriting a freshly extended deadline. The idle limit
+Concurrent activity validates the current SQL session without rewriting a freshly extended deadline. When another
+transaction holds the session row, the optional idle refresh skips that row and current session validation still runs.
+Activity cannot queue an entire browser asset burst behind one durable refresh. The idle limit
 can therefore expire up to thirty seconds before thirty minutes from the final control request. Observations, denied
 requests and stream rechecks do not renew it. Logout binds its operation ID and original receipt to the opaque session credential and origin,
 so a lost response can be retried without producing another effect or revoking another session.
@@ -261,3 +263,9 @@ image does not admit users or activate runtime clients.
 Ofz image-packaging and documentation changes do not rebuild native Tengri guests. Ofz implementation, Cargo dependencies,
 build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
 shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
+
+
+Production error reporting and trace propagation use the existing GlitchTip and Tempo services. See
+[Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
+contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
+database connection or changing authorization state. Confirm the returned IDs in both collectors.
