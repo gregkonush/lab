@@ -13,6 +13,8 @@ import {
   validateBacktestSourceReceipt,
 } from './source'
 import { Result } from 'effect'
+import { cryptoMarketProfile } from '../jev/markets'
+import { backtestSourcePartitions } from './source'
 
 const archiveTopology = (positions: ReturnType<typeof fixture>['manifest']['positions']) => ({
   positions: positions.filter((position) => position.startOffset !== position.endOffsetExclusive),
@@ -417,4 +419,31 @@ test('capture receipt replacement fails against the separately pinned hash', () 
   const result = validateBacktestSourceReceipt(changed, pinnedHash)
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result)) expect(String(result.failure)).toContain('independently pinned capture hash')
+})
+
+test('native crypto source shares three raw channels with one three-partition topic and separate features', () => {
+  const data = fixture()
+  const native = {
+    ...data.manifest,
+    universe: {
+      universeId: cryptoMarketProfile.universeId,
+      universeSymbolHash: cryptoMarketProfile.universeSymbolHash,
+      symbols: cryptoMarketProfile.universe,
+      topics: { ...cryptoMarketProfile.sourceTopics, features: cryptoMarketProfile.streamingInput.featureTopic },
+    },
+  }
+  const topology = backtestSourcePartitions(native)
+  expect(topology).toHaveLength(6)
+  expect(new Set(topology.map((p) => `${p.topic}:${p.partition}`)).size).toBe(6)
+  expect(topology.filter((p) => p.topic === cryptoMarketProfile.sourceTopics.quotes).map((p) => p.partition)).toEqual([
+    0, 1, 2,
+  ])
+  const manifest = { ...native, positions: topology.map((p) => ({ ...p, startOffset: '0', endOffsetExclusive: '0' })) }
+  expect(Result.isSuccess(validateBacktestSourceManifest(manifest))).toBe(true)
+  for (const universe of [
+    { ...manifest.universe, universeSymbolHash: 'f'.repeat(64) },
+    { ...manifest.universe, topics: { ...manifest.universe.topics, features: manifest.universe.topics.bars } },
+    { ...manifest.universe, topics: { ...manifest.universe.topics, bars: 'unreviewed.raw' } },
+  ])
+    expect(Result.isFailure(validateBacktestSourceManifest({ ...manifest, universe }))).toBe(true)
 })
