@@ -6,6 +6,7 @@ local plugins = building and {} or dofile(editor .. "/plugins.lua")
 table.insert(plugins, {
   "AstroNvim/AstroNvim",
   version = "v6.1.0",
+  commit = "aa0545fc8357009fc8a67e6cd93e7f8544e3aba9",
   import = "astronvim.plugins",
   opts = {
     mapleader = " ",
