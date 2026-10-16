@@ -12,4 +12,4 @@ resources:
 - pod-disruption-budget.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/proompteng
-  digest: sha256:8bbaf215c9a86976fd8cdfdbc48be765ea776868766d35cd1d975572d387df64
+  digest: sha256:2a5a5aac62bd6c29dc3b241a78014190bf1762268124709e50c613b4644a3604

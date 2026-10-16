@@ -195,6 +195,27 @@ impl Database {
         Ok(())
     }
 
+    #[tracing::instrument(name = "db.guest_admission.deadline", skip_all, fields(db.system.name = "postgresql"))]
+    pub async fn verify_guest_deadline(&self, expires_at_ms: u64) -> Result<(), Status> {
+        let expires_at_ms = i64::try_from(expires_at_ms)
+            .map_err(|_| Status::unauthenticated("invalid guest request deadline"))?;
+        let client = self.coordination_connection().await?;
+        let valid: bool = client
+            .query_one(
+                "SELECT $1>tengri.now_ms() AND $1<=tengri.now_ms()+6000",
+                &[&expires_at_ms],
+            )
+            .await
+            .map_err(sql_error)?
+            .get(0);
+        if !valid {
+            return Err(Status::unauthenticated(
+                "guest request deadline expired or invalid",
+            ));
+        }
+        Ok(())
+    }
+
     #[tracing::instrument(name = "db.consume_nonce", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn consume_nonce(&self, key: &[u8], expires_at_ms: i64) -> Result<(), Status> {
         let client = self.connection().await?;
