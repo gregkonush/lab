@@ -262,7 +262,7 @@ impl TicketStore {
         bindings(&record.principal)?;
         // The SQL capability lifetime is independent of the original BFF submission deadline.
         // Redemption still requires a new Ofz check of this exact session and runtime binding.
-        record.principal.context.deadline_unix_ms = ofz::now_ms()? + 2000;
+        record.principal.context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
         Ok(record)
     }
 
@@ -273,9 +273,8 @@ impl TicketStore {
         lock_and_expire(&tx).await?;
         let row = tx.query_opt("DELETE FROM tengri.tickets WHERE token_hash=$1 AND expires_at_ms>tengri.now_ms() RETURNING payload", &[&hash])
             .await.map_err(sql_error)?.ok_or_else(invalid_capability)?;
-        let mut ticket: TicketRecord = decode(row.get(0))?;
+        let ticket: TicketRecord = decode(row.get(0))?;
         let (uid, session_id) = bindings(&ticket.principal)?;
-        ticket.principal.context.deadline_unix_ms = ofz::now_ms()? + 2000;
         let TicketScope::Preview {
             incarnation,
             session_id: id,
@@ -300,7 +299,7 @@ impl TicketStore {
             .await
             .map_err(sql_error)?
             .get(0);
-        let session = PreviewSessionRecord {
+        let mut session = PreviewSessionRecord {
             incarnation,
             id,
             token: random_token(),
@@ -316,6 +315,8 @@ impl TicketStore {
         tx.execute("INSERT INTO tengri.previews(id,token_hash,revocation_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,revocation_hash=excluded.revocation_hash,agent_id=excluded.agent_id,workspace_uid=excluded.workspace_uid,session_id=excluded.session_id,payload=excluded.payload,expires_at_ms=excluded.expires_at_ms",
             &[&session.id,&token_hash(&session.token)?,&hash,&session.agent_id,&uid,&session_id,&payload,&expiry]).await.map_err(sql_error)?;
         tx.commit().await.map_err(sql_error)?;
+        session.principal.context.deadline_unix_ms =
+            ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
         Ok(session)
     }
 
@@ -329,7 +330,8 @@ impl TicketStore {
             .await.map_err(sql_error)?.ok_or_else(invalid_capability)?;
         let mut session: PreviewSessionRecord = decode(row.get(0))?;
         bindings(&session.principal)?;
-        session.principal.context.deadline_unix_ms = ofz::now_ms()? + 2000;
+        session.principal.context.deadline_unix_ms =
+            ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
         session.token = token.into();
         Ok(session)
     }

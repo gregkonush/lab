@@ -19,6 +19,8 @@ use crate::{
     proto::{Action, AuditReceipt, RequestContext, actor::Identity},
 };
 
+pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog";
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
@@ -65,7 +67,7 @@ impl Database {
         config
             .application_name("ofz-api")
             .connect_timeout(Duration::from_secs(2));
-        config.options("-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog");
+        config.options(CONNECTION_OPTIONS);
         let mut roots = RootCertStore::empty();
         let bytes = tokio::fs::read(env::var("OFZ_DATABASE_CA_FILE")?).await?;
         for cert in rustls_pemfile::certs(&mut bytes.as_slice()) {
@@ -328,6 +330,9 @@ impl Database {
             .await
             .map_err(|_| Status::unavailable("control database pool unavailable"))?;
         let tx = client.transaction().await.map_err(sql_error)?;
+        tx.batch_execute("SET LOCAL statement_timeout = 5000")
+            .await
+            .map_err(sql_error)?;
         record_audit(&*tx, receipt, target).await?;
         if !record_activity(&*tx, receipt).await? {
             return Err(Status::unauthenticated("session expired or revoked"));

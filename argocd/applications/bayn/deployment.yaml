@@ -164,6 +164,15 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"6433a5f55eea4d725a7ca801f60cbfda80336295086d7659237194b3e44422d3","authoredActivation":{"sourceRevision":"79d3b431e7c4ddedb5717849df493e4f2600efcd","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:1ae29907cb0c8328a5e93ba3a78a95cebcd95e1a6fb68c40de722895c71fed65"},"activation":{"sourceRevision":"79d3b431e7c4ddedb5717849df493e4f2600efcd","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:1ae29907cb0c8328a5e93ba3a78a95cebcd95e1a6fb68c40de722895c71fed65"}}'
           startupProbe:
             httpGet:
               path: /livez
