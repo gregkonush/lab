@@ -165,7 +165,7 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
 )
 
 const ForwardPerformanceReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),
+  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v4'),
   bindings: Schema.Struct({
     runtime: ForwardPerformanceBuildBindingSchema,
     source: Schema.NullOr(ForwardPerformanceBuildBindingSchema),
@@ -189,6 +189,7 @@ const ForwardPerformanceReceiptSchema = Schema.Struct({
     brokerExecutionFeesMicros: Schema.NullOr(SignedMicrosSchema),
     otherChargedCostsMicros: Schema.NullOr(SignedMicrosSchema),
     cashYieldMicros: Schema.NullOr(SignedMicrosSchema),
+    cashSettlementRoundingMicros: Schema.NullOr(SignedMicrosSchema),
     grossRealizedPnlMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedPnlAfterCostsMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedReturn: Schema.NullOr(

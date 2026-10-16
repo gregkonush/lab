@@ -71,6 +71,7 @@ export const makePersistenceReceipt = (overrides: Partial<ForwardPerformanceEvid
       ],
       ledgerTotals: {
         realizedGainMicros: '100',
+        cashSettlementRoundingMicros: '0',
         realizedLossMicros: '0',
         brokerExecutionFeesMicros: '20',
         otherChargedCostsMicros: '0',

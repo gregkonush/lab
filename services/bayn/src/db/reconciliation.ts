@@ -65,6 +65,7 @@ import {
 } from '../reconciliation/algebra'
 import { Pipeable } from '../pipeable'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
+import { postCashSettlements, prepareCashSettlements, type CashSettlementAccounting } from './cash-settlements'
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } from './broker-fees'
 import {
@@ -125,6 +126,7 @@ interface AccountingReadPhase {
   readonly accruals: readonly FeeAccrual[]
   readonly brokerFeeCashDeltaMicros: string
   readonly cashReportingOffsetMicros: string
+  readonly cashSettlements: CashSettlementAccounting
 }
 
 interface ComparisonReadPhase {
@@ -401,6 +403,8 @@ export const verifyBrokerStateVersion = (
       )
       AND NOT EXISTS (SELECT 1 FROM broker_fee_accruals WHERE account_id = ${accountId} AND posted_at IS NULL)
       AND NOT EXISTS (SELECT 1 FROM broker_fee_accounting WHERE account_id = ${accountId} AND posted_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM broker_cash_settlements WHERE account_id = ${accountId}
+        AND (posted_at IS NULL OR posted_at > ${version.reconciledAt}::timestamptz))
       AND NOT EXISTS (SELECT 1 FROM broker_fee_match_corrections WHERE account_id = ${accountId}
         AND (posted_at IS NULL OR posted_at > ${version.reconciledAt}::timestamptz
           OR (data->'readEvidence'->>'observedAt')::timestamptz > ${version.reconciledAt}::timestamptz))
@@ -449,6 +453,7 @@ export const makeReconciliation = (
     accountId: string,
     feeAccounting: BrokerFeeAccounting,
     accruals: FeeAccrualRecords,
+    cashSettlements: CashSettlementAccounting,
   ): Effect.Effect<AccountingReadPhase, ReconciliationStoreError> =>
     runStore(
       'reconcile',
@@ -550,7 +555,12 @@ export const makeReconciliation = (
           verifyAccountingReceipts(transactions, receipts, config),
         )
         const ledgerExact = yield* journal
-          .verifyAccount(accountId, [...plans, ...feeAccounting.plans, ...accruals.map((accrual) => accrual.plan)])
+          .verifyAccount(accountId, [
+            ...plans,
+            ...cashSettlements.plans,
+            ...feeAccounting.plans,
+            ...accruals.map((accrual) => accrual.plan),
+          ])
           .pipe(
             Effect.mapError((cause) =>
               storeError('reconcile', 'ledger', 'TigerBeetle account verification failed during reconciliation', cause),
@@ -567,6 +577,7 @@ export const makeReconciliation = (
           fees: feeAccounting.fees,
           accruals: accruals.map((accrual) => accrual.data),
           cashReportingOffsetMicros: cashAccrualReportingOffsetMicros(accruals),
+          cashSettlements,
           brokerFeeCashDeltaMicros: (
             BigInt(feeAccounting.cashDeltaMicros) -
             accruals.reduce((sum, accrual) => sum + BigInt(accrual.cashDebitMicros ?? '0'), 0n)
@@ -633,6 +644,8 @@ export const makeReconciliation = (
             brokerFeeAccruals: accounting.accruals,
             brokerFeeCashDeltaMicros: accounting.brokerFeeCashDeltaMicros,
             cashReportingOffsetMicros: accounting.cashReportingOffsetMicros,
+            cashSettlementDeltaMicros: accounting.cashSettlements.cashDeltaMicros,
+            brokerCashSettlements: accounting.cashSettlements.settlements,
             receipts: accounting.receipts,
             ledgerExact: accounting.ledgerExact,
             snapshot,
@@ -755,9 +768,10 @@ export const makeReconciliation = (
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
+        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
         const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
         const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
-        const accounting = yield* readAccountingPhase(accountId, feeAccounting, accruals)
+        const accounting = yield* readAccountingPhase(accountId, feeAccounting, accruals, cashSettlements)
         const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting)
         const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt)
         const riskContext = yield* readRiskContextPhase(
@@ -788,6 +802,7 @@ export const makeReconciliation = (
           Effect.gen(function* () {
             // Only previously committed plans exist here. Recover them before accounting any new fill.
             // Ingestion and preparation then share one commit; newly prepared fees are posted below it.
+            yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
             yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
             const snapshot = yield* ingestSnapshot
             if (snapshot.account.accountId !== accountId)
@@ -796,6 +811,7 @@ export const makeReconciliation = (
               'reconcile',
               Effect.gen(function* () {
                 yield* retainAccountCashReporting(sql, snapshot)
+                yield* prepareCashSettlements(sql, snapshot, config.tigerBeetle)
                 yield* prepareObservedCoinFees(sql, snapshot, config.tigerBeetle)
                 yield* prepareFeeActivities(sql, accountId, snapshot.fees, config.tigerBeetle)
                 yield* prepareObservedCashFees(sql, snapshot, config.tigerBeetle)

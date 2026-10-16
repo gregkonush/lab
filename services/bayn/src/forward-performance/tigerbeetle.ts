@@ -52,6 +52,10 @@ const planAmount = (plan: LedgerPlan, code: number, side: 'debit' | 'credit'): b
 }
 
 const generationLedgerTotals = (plan: LedgerPlan): ForwardPerformanceLedgerTotals => ({
+  cashSettlementRoundingMicros: (
+    planAmount(plan, AccountCode.cashRoundingIncome, 'credit') -
+    planAmount(plan, AccountCode.cashRoundingExpense, 'debit')
+  ).toString(),
   realizedGainMicros: planAmount(plan, AccountCode.realizedGain, 'credit').toString(),
   realizedLossMicros: planAmount(plan, AccountCode.realizedLoss, 'debit').toString(),
   brokerExecutionFeesMicros: (
