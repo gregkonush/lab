@@ -153,7 +153,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
             precision: protocol.executionModel.precision,
           }),
         ),
-        maximumSellQuantityAtoms: { [symbol]: '31234567' },
+        maximumSellQuantityAtoms: { [symbol]: '0' },
       },
       maximumInputAgeMs: 10_000,
       submissionCutoffAt: cycle.window.submissionCutoffAt,
@@ -163,7 +163,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     expect(targetPlan).toMatchObject({ status: TargetPlanStatus.Planned })
     expect(targetPlan.intentTargets).toHaveLength(1)
     // A native coin fee can leave a quantity that is not a multiple of a micro-unit.
-    const heldQuantity = '31234566'
+    const entryQuantity = BigInt(targetPlan.intentTargets[0]?.quantityAtoms ?? '0')
+    const heldQuantity = (entryQuantity - (entryQuantity * 25n + 9999n) / 10000n).toString()
     expect(protocol.executionModel.precision.quantityIncrementAtoms).toBe('1')
     const closeMaterial = {
       ...broker,
@@ -173,11 +174,11 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
           accountId: broker.account.accountId,
           symbol,
           quantityAtoms: heldQuantity,
-          averageEntryPriceMicros: '100000000',
-          costBasisMicros: '3123457',
+          averageEntryPriceMicros: '103123457',
+          costBasisMicros: ((BigInt(heldQuantity) * 103123457n) / 1_000_000_000n).toString(),
           marketPriceMicros: '103123457',
-          marketValueMicros: '3221044',
-          unrealizedPnlMicros: '97587',
+          marketValueMicros: ((BigInt(heldQuantity) * 103123457n) / 1_000_000_000n).toString(),
+          unrealizedPnlMicros: '0',
           observedAt,
         },
       ],
@@ -189,6 +190,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         ...plannerInput,
         allocationCapitalMicros: '0',
         targetWeights: { [symbol]: 0 },
+        executionTerms: { ...plannerInput.executionTerms, maximumSellQuantityAtoms: { [symbol]: heldQuantity } },
         brokerState: {
           ...closeMaterial,
           reconciliation: { ...broker.reconciliation, expectedHash: closeHash, observedHash: closeHash },
