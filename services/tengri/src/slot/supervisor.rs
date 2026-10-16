@@ -1245,7 +1245,7 @@ mod tests {
             readiness(&readiness_database, &supervisor.runner_socket).await,
             StatusCode::OK
         );
-        readiness_database.pool.close();
+        readiness_database.close_fixture();
         let started = tokio::time::Instant::now();
         assert_eq!(
             readiness(&readiness_database, &supervisor.runner_socket).await,

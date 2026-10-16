@@ -363,11 +363,16 @@ pub async fn record_activity<C: GenericClient + Sync>(
     let touched = client
         .execute(
             r#"
+        WITH refresh AS (
+          SELECT id FROM ofz.sessions
+          WHERE id=$1 AND human_id=$2 AND NOT revoked
+            AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms()
+            AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)
+            AND idle_deadline_ms<LEAST(expires_at_ms,ofz.now_ms()+1770000)
+          FOR UPDATE SKIP LOCKED
+        )
         UPDATE ofz.sessions SET idle_deadline_ms=LEAST(expires_at_ms,ofz.now_ms()+1800000)
-        WHERE id=$1 AND human_id=$2 AND NOT revoked
-          AND expires_at_ms>ofz.now_ms() AND idle_deadline_ms>ofz.now_ms()
-          AND recovery_generation=(SELECT recovery_generation FROM ofz.platform_state)
-          AND idle_deadline_ms<LEAST(expires_at_ms,ofz.now_ms()+1770000)
+        WHERE id IN (SELECT id FROM refresh)
     "#,
             &[&id, human],
         )

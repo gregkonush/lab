@@ -21,6 +21,7 @@ const MIGRATIONS: &[(i32, &[u8])] = &[
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
+    coordination: Pool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -92,21 +93,25 @@ impl Database {
                 .with_root_certificates(roots)
                 .with_no_client_auth(),
         );
-        let manager = Manager::from_config(
-            config,
-            tls,
-            ManagerConfig {
-                recycling_method: RecyclingMethod::Fast,
-            },
-        );
-        let pool = Pool::builder(manager)
-            .max_size(if role == "tengri_controller" { 12 } else { 2 })
+        let pool = |capacity| {
+            Pool::builder(Manager::from_config(
+                config.clone(),
+                tls.clone(),
+                ManagerConfig {
+                    recycling_method: RecyclingMethod::Fast,
+                },
+            ))
+            .max_size(capacity)
             .wait_timeout(Some(Duration::from_millis(500)))
             .create_timeout(Some(Duration::from_secs(2)))
             .recycle_timeout(Some(Duration::from_secs(2)))
             .runtime(deadpool_postgres::Runtime::Tokio1)
-            .build()?;
-        Ok(Self { pool })
+            .build()
+        };
+        Ok(Self {
+            pool: pool(if role == "tengri_controller" { 12 } else { 2 })?,
+            coordination: pool(2)?,
+        })
     }
 
     #[cfg(test)]
@@ -118,13 +123,23 @@ impl Database {
                 .with_root_certificates(RootCertStore::empty())
                 .with_no_client_auth(),
         );
-        Self {
-            pool: Pool::builder(Manager::new(config, tls))
+        let pool = || {
+            Pool::builder(Manager::new(config.clone(), tls.clone()))
                 .max_size(1)
                 .runtime(deadpool_postgres::Runtime::Tokio1)
                 .build()
-                .unwrap(),
+                .unwrap()
+        };
+        Self {
+            pool: pool(),
+            coordination: pool(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_fixture(&self) {
+        self.pool.close();
+        self.coordination.close();
     }
 
     #[cfg(test)]
@@ -146,8 +161,15 @@ impl Database {
         })
     }
 
+    async fn coordination_connection(&self) -> Result<deadpool_postgres::Object, Status> {
+        self.coordination.get().await.map_err(|error| {
+            tracing::warn!(error = %error, "shared runtime coordination database connection unavailable");
+            Status::unavailable("shared runtime state unavailable")
+        })
+    }
+
     pub async fn verify_schema(&self) -> Result<(), Status> {
-        let client = self.connection().await?;
+        let client = self.coordination_connection().await?;
         let rows = client
             .query(
                 "SELECT version,checksum FROM tengri.schema_version ORDER BY version",
@@ -188,7 +210,7 @@ impl Database {
     }
 
     pub async fn acquire(&self, owner: Uuid) -> Result<Option<Fence>, Status> {
-        let client = self.connection().await?;
+        let client = self.coordination_connection().await?;
         let generation: Option<i64> = client
             .query_one("SELECT tengri.acquire_leadership($1)", &[&owner])
             .await
@@ -198,7 +220,7 @@ impl Database {
     }
 
     pub async fn renew(&self, fence: Fence) -> Result<bool, Status> {
-        let client = self.connection().await?;
+        let client = self.coordination_connection().await?;
         Ok(client
             .query_one(
                 "SELECT tengri.renew_leadership($1,$2)",
@@ -210,7 +232,7 @@ impl Database {
     }
 
     pub async fn release(&self, fence: Fence) -> Result<(), Status> {
-        let client = self.connection().await?;
+        let client = self.coordination_connection().await?;
         client
             .execute(
                 "SELECT tengri.release_leadership($1,$2)",
@@ -225,7 +247,7 @@ impl Database {
         fence
             .validate()
             .map_err(|_| Status::permission_denied("invalid controller fence"))?;
-        let client = self.connection().await?;
+        let client = self.coordination_connection().await?;
         let valid: bool = client.query_one("SELECT EXISTS(SELECT 1 FROM tengri.runtime_leader WHERE singleton AND owner=$1 AND generation=$2 AND expires_at_ms>tengri.now_ms())", &[&fence.owner,&fence.generation]).await.map_err(sql_error)?.get(0);
         if !valid {
             return Err(Status::permission_denied(
@@ -236,7 +258,7 @@ impl Database {
     }
 
     pub async fn current_fence(&self) -> Result<Fence, Status> {
-        let client = self.connection().await?;
+        let client = self.coordination_connection().await?;
         let row = client.query_opt("SELECT owner,generation FROM tengri.runtime_leader WHERE singleton AND owner IS NOT NULL AND generation>0 AND expires_at_ms>tengri.now_ms()", &[]).await.map_err(sql_error)?
             .ok_or_else(|| Status::unavailable("controller leadership is unavailable"))?;
         Ok(Fence {
