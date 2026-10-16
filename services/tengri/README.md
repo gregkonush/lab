@@ -14,6 +14,13 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
+Replay and ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
+verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
+Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
+in total. Promote the Ofz managed-role limits and 220-connection server budget before rolling out the separated pools;
+reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
 then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
@@ -105,6 +112,10 @@ of installing another leader. Cancellation retains an in-progress journal writer
 fsync cannot overwrite the fencing record. This does not provide the independent host execution deadline required for
 the authorization cutover.
 
+Guest openings share the lifecycle barrier so independent admissions can proceed concurrently. Sleep, stop, status
+publication and leader-fence installation take it exclusively. The existing opening byte limits and two-buffer
+admission capacity remain in force.
+
 Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
 and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
 or finalizer removal for an owned slot. A replacement slot always gets a fresh Pod, home, token, and snapshot. Image updates recycle
@@ -151,8 +162,10 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 
 ## Transport and workload identity
 
-Controller renewal timeouts retry only within the last confirmed lease deadline. Ownership loss or a returned error
-closes authority immediately; late renewal replies cannot revive expired authority.
+Controller renewal keeps one in-flight attempt after its two-second warning threshold. Authority still ends at the
+last confirmed lease deadline while that attempt finishes. A successful reply extends authority from the attempt's
+start, so a slow response cannot overstate the database lease. Ownership loss or a returned error closes authority
+immediately; late renewal replies cannot revive expired authority.
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
 SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent

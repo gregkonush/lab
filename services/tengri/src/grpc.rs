@@ -355,7 +355,8 @@ impl MicroVmControlPlane for ControlPlane {
         let mut metadata_principal = principal;
         metadata_principal.action = crate::ofz::proto::Action::WorkspaceMetadataRead;
         metadata_principal.context.workspace_uid = uid;
-        metadata_principal.context.deadline_unix_ms = crate::ofz::now_ms()? + 2000;
+        metadata_principal.context.deadline_unix_ms =
+            crate::ofz::now_ms()? + crate::ofz::AUDITED_REQUEST_BUDGET_MS;
         let current = self.authorized_agent(&metadata_principal, &id).await?;
         Ok(Response::new(agent_from_microvm(&current)))
     }

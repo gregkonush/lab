@@ -8,7 +8,7 @@ metadata:
   labels:
     app: torghut-ta
 spec:
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c000a14f6ebb7025e591266c40085b6c94090df11f31c13e5790d7406aeceb59
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:177beef40a88290bccbc8deff3c621b335b17a8ab776a2e1d876cefd54655c85
   imagePullPolicy: IfNotPresent
   restartNonce: 38
   flinkVersion: v2_2
@@ -37,6 +37,9 @@ spec:
       rootLogger.level = INFO
       rootLogger.appenderRef.console.ref = ConsoleAppender
       rootLogger.appenderRef.rolling.ref = RollingFileAppender
+      rootLogger.appenderRef.glitchtip.ref = GlitchTip
+      appender.glitchtip.type = DorvudGlitchTip
+      appender.glitchtip.name = GlitchTip
 
       # Uncomment this if you want to _only_ change Flink's logging
       #logger.flink.name = org.apache.flink
@@ -161,9 +164,16 @@ spec:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-3ff242603190d5e4f3803eb380238db3132f1024
+              value: kargo-sha-a1c89a55835fd4b40adb1737312bc9ea38d1d5c9
             - name: TORGHUT_TA_COMMIT
-              value: 3ff242603190d5e4f3803eb380238db3132f1024
+              value: a1c89a55835fd4b40adb1737312bc9ea38d1d5c9
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: torghut-ta
           ports:
             - containerPort: 9249
               name: metrics

@@ -22,6 +22,8 @@ export const cryptoMarketFixture = (
     readonly tradeLagMs?: number
     readonly quoteLagMs?: number
     readonly benchmarkQuoteLagMs?: number
+    readonly quoteSpreadBps?: number
+    readonly quoteAskSize?: number
     readonly missingTradeSymbols?: readonly string[]
   } = {},
 ) => {
@@ -58,7 +60,10 @@ export const cryptoMarketFixture = (
         ? (timing.benchmarkQuoteLagMs ?? timing.quoteLagMs ?? 0)
         : (timing.quoteLagMs ?? 0)
     const bid = symbol === candidate ? 103.123456789 : 100.123456789
-    const ask = bid + 0.00000001
+    const ask =
+      timing.quoteSpreadBps === undefined
+        ? bid + 0.00000001
+        : Number((bid * (1 + timing.quoteSpreadBps / 10_000)).toFixed(9))
     for (const [index, channel] of ['quotes', 'trades'].entries()) {
       if (channel === 'trades' && timing.missingTradeSymbols?.includes(symbol) === true) continue
       const at = new Date(end + 2000 - (channel === 'trades' ? (timing.tradeLagMs ?? 0) : quoteLagMs)).toISOString()
@@ -81,7 +86,15 @@ export const cryptoMarketFixture = (
             ingestTs: at,
             payload:
               channel === 'quotes'
-                ? { T: 'q', S: symbol, t: at, bp: bid, bs: 0.031234567, ap: ask, as: 0.031234567 }
+                ? {
+                    T: 'q',
+                    S: symbol,
+                    t: at,
+                    bp: bid,
+                    bs: 0.031234567,
+                    ap: ask,
+                    as: timing.quoteAskSize ?? 0.031234567,
+                  }
                 : { T: 't', S: symbol, t: at, p: bid, s: 0.000000001 },
           }),
         },

@@ -13,7 +13,7 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { MICROS, numberToMicros } from '../execution-model'
+import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
 import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'
@@ -127,7 +127,7 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
       })
       return decision.selectedSymbols[0] ?? null
     }
-    return (yield* jevMomentumEntryCandidates(snapshot, protocol))[0]?.symbol ?? null
+    return (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null
   }).pipe(Result.mapError((cause) => new ControlStudyFailure({ message: 'Cannot select control signal', cause })))
 
 export const controlEntryQuantity = (input: {
@@ -205,7 +205,8 @@ export const controlEntryQuantity = (input: {
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
-      quantityAtoms: increment,
+      // Price derivation needs a nonzero micro-dollar notional; a crypto increment can be one nano-coin.
+      quantityAtoms: 1_000_000_000n,
       referencePriceMicros,
       executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(policy.maxAdverseSlippageBps),
@@ -222,7 +223,7 @@ export const controlEntryQuantity = (input: {
           observedAt: new Date(input.atMs).toISOString(),
           quantityAtoms: String(shares * increment),
           priceMicros: String(pricing.expectedExecutionPriceMicros),
-          notionalMicros: String(notional),
+          notionalMicros: String(yield* notionalMicros(quantity, pricing.expectedExecutionPriceMicros)),
         },
         String(shares * increment),
         protocol.executionModel,

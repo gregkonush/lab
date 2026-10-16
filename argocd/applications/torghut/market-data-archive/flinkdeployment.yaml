@@ -9,13 +9,24 @@ metadata:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   # The TA release workflow pins the same immutable image used by the live and simulation TA jobs.
-  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:c000a14f6ebb7025e591266c40085b6c94090df11f31c13e5790d7406aeceb59
+  image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:177beef40a88290bccbc8deff3c621b335b17a8ab776a2e1d876cefd54655c85
   imagePullPolicy: IfNotPresent
   # Cut over from the skewed v2 quote consumer to the repartitioned v3 consumer.
   # Existing ClickHouse history stays intact; the new group begins at each topic's live head.
   restartNonce: 14
   flinkVersion: v2_2
   serviceAccount: torghut-runtime
+  logConfiguration:
+    log4j-console.properties: |-
+      rootLogger.level = INFO
+      rootLogger.appenderRef.console.ref = ConsoleAppender
+      rootLogger.appenderRef.glitchtip.ref = GlitchTip
+      appender.console.name = ConsoleAppender
+      appender.console.type = CONSOLE
+      appender.console.layout.type = PatternLayout
+      appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+      appender.glitchtip.type = DorvudGlitchTip
+      appender.glitchtip.name = GlitchTip
   flinkConfiguration:
     kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
     kubernetes.operator.job.restart.failed: "true"
@@ -59,9 +70,9 @@ spec:
                   name: signal-publisher-clickhouse-auth
                   key: password
             - name: TORGHUT_TA_VERSION
-              value: kargo-sha-3ff242603190d5e4f3803eb380238db3132f1024
+              value: kargo-sha-a1c89a55835fd4b40adb1737312bc9ea38d1d5c9
             - name: TORGHUT_TA_COMMIT
-              value: 3ff242603190d5e4f3803eb380238db3132f1024
+              value: a1c89a55835fd4b40adb1737312bc9ea38d1d5c9
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -72,6 +83,13 @@ spec:
                 secretKeyRef:
                   name: flink-checkpoints
                   key: AWS_SECRET_ACCESS_KEY
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: market-data-archive
           ports:
             - containerPort: 9249
               name: metrics

@@ -3,6 +3,7 @@ import { createGunzip } from 'node:zlib'
 import { NodeStream } from '@effect/platform-node'
 import { Cause, Data, Effect, FileSystem, Option, Pull, Result, Schema, Semaphore, Stream } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
+import { cryptoMarketProfile } from '../jev/markets'
 import {
   HistoricalMarketArrivalSchema,
   advanceHistoricalMarketCursor,
@@ -213,25 +214,37 @@ export const validateBacktestSourceCuts = (manifest: BacktestSourceManifest, cap
       return yield* Result.fail(fail('Source partition cuts differ from the independently pinned receipt'))
   })
 
+const nativeCryptoSource = (manifest: BacktestSourceManifest) =>
+  manifest.universe.universeId === cryptoMarketProfile.universeId &&
+  manifest.universe.universeSymbolHash === cryptoMarketProfile.universeSymbolHash &&
+  manifest.universe.symbols.join(',') === cryptoMarketProfile.universe.join(',') &&
+  manifest.universe.topics.bars === cryptoMarketProfile.sourceTopics.bars &&
+  manifest.universe.topics.quotes === cryptoMarketProfile.sourceTopics.quotes &&
+  manifest.universe.topics.trades === cryptoMarketProfile.sourceTopics.trades &&
+  manifest.universe.topics.features === cryptoMarketProfile.streamingInput.featureTopic &&
+  manifest.universe.topics.technicalFeatures === undefined
+
 /** The current Torghut capture profile matches the committed KafkaTopic topology, not observed records. */
 export const backtestSourcePartitions = (manifest: BacktestSourceManifest) =>
   manifest.transport === 'original-capture'
     ? (manifest.nativeVisiblePartitions ?? [])
-    : Object.values(manifest.universe.topics)
+    : [...new Set(Object.values(manifest.universe.topics))]
         .flatMap((topic) =>
           Array.from(
             {
               length:
                 manifest.transport === 'alpaca-rest'
                   ? 1
-                  : topic === manifest.universe.topics.quotes
-                    ? 13
-                    : (topic === manifest.universe.topics.features &&
-                          manifest.regeneratedFeaturesRecordedAtMs !== undefined) ||
-                        (topic === manifest.universe.topics.technicalFeatures &&
-                          manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined)
-                      ? 1
-                      : 3,
+                  : nativeCryptoSource(manifest)
+                    ? 3
+                    : topic === manifest.universe.topics.quotes
+                      ? 13
+                      : (topic === manifest.universe.topics.features &&
+                            manifest.regeneratedFeaturesRecordedAtMs !== undefined) ||
+                          (topic === manifest.universe.topics.technicalFeatures &&
+                            manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined)
+                        ? 1
+                        : 3,
             },
             (_, partition) => ({ topic, partition }),
           ),
@@ -251,7 +264,7 @@ export const validateBacktestSourceManifest = (input: unknown) =>
     )
       return yield* Result.fail(fail('Original capture provenance cannot mix with legacy or regenerated delivery'))
     const topics = Object.values(manifest.universe.topics)
-    if (new Set(topics).size !== topics.length)
+    if (new Set(topics).size !== topics.length && !nativeCryptoSource(manifest))
       return yield* Result.fail(fail('Raw and derived source topics must be distinct'))
     if (
       manifest.regeneratedTechnicalFeaturesRecordedAtMs !== undefined &&

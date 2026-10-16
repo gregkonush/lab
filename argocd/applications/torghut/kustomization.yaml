@@ -3,6 +3,7 @@ kind: Kustomization
 configurations:
 - kustomizeconfig.yaml
 resources:
+- glitchtip-dsn.yaml
 - codex-auth-externalsecret.yaml
 - postgres-upgrade-final-backup.yaml
 - cnpg-torghut-db-objectbucketclaim.yaml
@@ -23,10 +24,10 @@ resources:
 - notebooks
 images:
 - name: registry.ide-newton.ts.net/lab/signal-publisher
-  digest: sha256:7906db03a68e61bc5ef8fd74ba0be8566168908a96e46abcd564f85d743b4354
+  digest: sha256:49719fa7ca73db4ba13449551dde1355087272ae108dd5dd2abeaa92d2d809b2
 - name: registry.ide-newton.ts.net/lab/torghut
-  digest: sha256:dfddd547c6e09f41259aadcb7bdb7472bdb27523cb513b4ee5cc6f5fcd75944e
+  digest: sha256:94984f82d81e6a94788b4065bf626486f57017553107fd5a7a1c2fc80151a6c4
 - name: registry.ide-newton.ts.net/lab/torghut-ta
-  digest: sha256:c000a14f6ebb7025e591266c40085b6c94090df11f31c13e5790d7406aeceb59
+  digest: sha256:177beef40a88290bccbc8deff3c621b335b17a8ab776a2e1d876cefd54655c85
 - name: registry.ide-newton.ts.net/lab/torghut-ws
-  digest: sha256:9b982ebf21cb9261c47e0ba0b0a5c9a65f8a1e5fed55387094d539b0c4b0aeb0
+  digest: sha256:8d0269a79a06cd277bb8a4e1da4ec40427aa714d77a52eb18686cbf43240df36

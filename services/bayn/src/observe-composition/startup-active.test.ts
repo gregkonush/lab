@@ -20,12 +20,12 @@ const prepare = (strategy: StrategyRuntime) =>
   })
 
 test('autonomous startup admits the exact source-selected momentum-first identity', () => {
-  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v4')
+  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v6')
   const result = Result.getOrThrow(prepare(fixtureRuntime))
   expect(result.strategyProtocolHash).toBe(
     Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
   )
-  expect(result.strategyProtocolHash).toBe('f75c866aeb69a9346dd26f7b42921a989df4740d66eade062db056770f7a6c1b')
+  expect(result.strategyProtocolHash).toBe('62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b')
 })
 
 test('rejects retired Jev protocols at the only active protocol boundary', () => {
@@ -36,7 +36,7 @@ test('rejects retired Jev protocols at the only active protocol boundary', () =>
 
 test('a rehashed custom momentum protocol cannot substitute for the approved active document', () => {
   const protocol = Result.getOrThrow(
-    decodeJevProtocol({ ...fixtureRuntime.definition.parameters, minimumEntryProbability: 0.66 }),
+    decodeJevProtocol({ ...fixtureRuntime.definition.parameters, minimumExitProbability: 0.66 }),
   )
   const changed: StrategyRuntime = {
     definition: makeJevDefinition(protocol),
