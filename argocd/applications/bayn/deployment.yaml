@@ -86,14 +86,14 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "319d240bb07d47e8b71f53e37c4d28d62af998f95463ca53c4118fc3563f747b"
+              value: "841d4b920b53df1401daf0e5c91a318fcb80136797b6f86f1df19d80c1db098b"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "dfd468be43dda84ccbc3e74d5ca6cb454ed0619dec913785feadf7b952ab3e0a"
+              value: "e6824aa82ffc70a11428916b4bf114f66e7fed4186f1fc84da18f3b7bf1ed74c"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "6596666c7b54d462a630d8ffaf71577b303d8c0b5b0ffe11556c37a9eac7a226"
+              value: "04bf5314a5ab7886f1802f6aa5da64f4a080cb695b37c9adf042dbedf5fb3fba"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "3e3748bb0c9f614a82b03076a57cefd51711524639d400f6559d5a8ee954e75d"
             - name: BAYN_BROKER_ACCESS
@@ -164,15 +164,6 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"c35f6ef2a8b7764d9e02fafab5d2dc691386957f4a69442d170f444d9918e02b","authoredActivation":{"sourceRevision":"720d3d170f227802e7cc148a96b9d47a108d40ff","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:7b948e749e6e725ceb4c7ed79be2dca18fa0dbca45724a919fa17555903ee021"},"activation":{"sourceRevision":"720d3d170f227802e7cc148a96b9d47a108d40ff","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:7b948e749e6e725ceb4c7ed79be2dca18fa0dbca45724a919fa17555903ee021"}}'
           startupProbe:
             httpGet:
               path: /livez
