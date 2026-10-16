@@ -30,7 +30,8 @@ use tonic::{
 pub const CONTROLLER_ID: &str = "spiffe://proompteng.ai/ns/tengri/sa/tengri";
 pub const OFZ_ID: &str = "spiffe://proompteng.ai/ns/ofz/sa/ofz-api";
 const DECISION_TIMEOUT: Duration = Duration::from_secs(2);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 5000;
+const DURABLE_TIMEOUT: Duration = Duration::from_millis(AUDITED_REQUEST_BUDGET_MS);
 
 #[derive(Clone)]
 pub struct Client {
@@ -48,10 +49,9 @@ impl Client {
         let mut context = workload_context()?;
         context.workspace_uid = uid.into();
         context.runtime_epoch = epoch.into();
-        context.deadline_unix_ms = now_ms()? + 2000;
         let mut rpc = self.rpc.clone();
         let decision = bounded(
-            DECISION_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.authorize_guest_maintenance(request(
                 proto::AuthorizeGuestMaintenanceRequest {
                     context: Some(context),
@@ -59,7 +59,7 @@ impl Client {
                     purpose: purpose as i32,
                     terminal_id: terminal_id.into(),
                 },
-                DECISION_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await?
@@ -150,16 +150,15 @@ impl Client {
         }
         let mut context = workload_context()?;
         context.workspace_uid = uid.into();
-        context.deadline_unix_ms = now_ms()? + 2000;
         let mut rpc = self.rpc.clone();
         let state = bounded(
-            DECISION_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.get_workspace_state(request(
                 GetWorkspaceStateRequest {
                     context: Some(context),
                     workspace_uid: uid.into(),
                 },
-                DECISION_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await?;
@@ -193,17 +192,19 @@ impl Client {
             return Err(Status::invalid_argument("capacity reservation required"));
         }
         let mut context = principal.context.clone();
-        context.deadline_unix_ms = context.deadline_unix_ms.min(now_ms()? + 2000);
+        context.deadline_unix_ms = context
+            .deadline_unix_ms
+            .min(now_ms()? + AUDITED_REQUEST_BUDGET_MS);
         let mut rpc = self.rpc.clone();
         let reservation = bounded(
-            DECISION_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.get_workspace_reservation(request(
                 GetWorkspaceReservationRequest {
                     context: Some(context),
                     reservation_id: id.into(),
                     recovery_generation: principal.recovery_generation,
                 },
-                DECISION_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await?;
@@ -238,8 +239,13 @@ impl Client {
         recovery_generation: u64,
     ) -> Result<CheckResponse, Status> {
         let mut rpc = self.rpc.clone();
+        let duration = if receipt_id.is_empty() {
+            DURABLE_TIMEOUT
+        } else {
+            DECISION_TIMEOUT
+        };
         let decision = bounded(
-            DECISION_TIMEOUT,
+            duration,
             rpc.check(request(
                 CheckRequest {
                     context: Some(context),
@@ -248,7 +254,7 @@ impl Client {
                     target,
                     stream_receipt_id: receipt_id,
                 },
-                DECISION_TIMEOUT,
+                duration,
             )),
         )
         .await?;
@@ -287,14 +293,14 @@ impl Client {
         let client_request_hash = Sha256::digest(payload).to_vec();
         let mut rpc = self.rpc.clone();
         match bounded(
-            COMMAND_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.get_command(request(
                 GetCommandRequest {
                     context: Some(workload_context()?),
                     operation_id: operation_id.into(),
                     client_request_hash: client_request_hash.clone(),
                 },
-                COMMAND_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await
@@ -312,7 +318,7 @@ impl Client {
             let state = self.state().await?;
             let mut rpc = self.rpc.clone();
             match bounded(
-                COMMAND_TIMEOUT,
+                DURABLE_TIMEOUT,
                 rpc.execute_command(request(
                     ExecuteCommandRequest {
                         context: Some(workload_context()?),
@@ -322,7 +328,7 @@ impl Client {
                         client_request_hash: client_request_hash.clone(),
                         command: Some(command.clone()),
                     },
-                    COMMAND_TIMEOUT,
+                    DURABLE_TIMEOUT,
                 )),
             )
             .await
@@ -346,7 +352,7 @@ fn workload_context() -> Result<RequestContext, Status> {
             identity: Some(Identity::WorkloadId(CONTROLLER_ID.into())),
         }),
         trace_id: uuid::Uuid::new_v4().to_string(),
-        deadline_unix_ms: now_ms()? + 5000,
+        deadline_unix_ms: now_ms()? + AUDITED_REQUEST_BUDGET_MS,
         contract_version: 1,
         ..Default::default()
     })

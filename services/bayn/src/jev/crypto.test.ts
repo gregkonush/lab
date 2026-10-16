@@ -1,3 +1,4 @@
+import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { jevCycleCandidates } from './markets'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { expect, test } from 'bun:test'
@@ -8,7 +9,7 @@ import { jevObservationForSnapshot, nativeJevBatchResult } from './native.test-s
 import { makeJevTradingSignalBatch, reproduceJevRequestFromObservation } from './trading-signals'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { decideJevEntry } from './decision'
-import { maximumBuyQuantities, adverseQuotePrices } from '../observe-composition/intraday-market-data'
+import { adverseQuotePrices } from '../observe-composition/intraday-market-data'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test(`${symbol} uses the shared Jev decision path with native signals and fractional precision on Sunday`, () => {
@@ -38,7 +39,21 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       decideJevEntry({ observation, batchPlan: plan, batchResult: nativeJevBatchResult(plan, decidedAt), decidedAt }),
     )
     expect(decision.selectedSymbols).toEqual([symbol])
-    expect(Result.getOrThrow(maximumBuyQuantities(snapshot, { [symbol]: 0.2 }))[symbol]).toBe('31234567')
+    expect(
+      Result.getOrThrow(
+        maximumAllocatedBuyQuantities({
+          askPriceMicros: Result.getOrThrow(adverseQuotePrices(snapshot, [symbol])).askPriceMicros,
+          targetWeights: { [symbol]: 0.2 },
+          capitalMicros: observation.portfolio.brokerState.account.equityMicros,
+          precision: protocol.executionModel.precision,
+        }),
+      )[symbol],
+    ).toBe(
+      (
+        ((BigInt(observation.portfolio.brokerState.account.equityMicros) / 5n) * 1_000_000_000n) /
+        103123457n
+      ).toString(),
+    )
     expect(Result.getOrThrow(adverseQuotePrices(snapshot, [symbol]))).toEqual({
       bidPriceMicros: { [symbol]: '103123456' },
       askPriceMicros: { [symbol]: '103123457' },

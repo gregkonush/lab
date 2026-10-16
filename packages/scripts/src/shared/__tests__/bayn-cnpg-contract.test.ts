@@ -536,26 +536,14 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
+    '0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc',
   )
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   if (mandateIdentity !== undefined) expect(request).toBeString()
-  const previousBinding = {
-    planHash: 'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
-    sourceRevision: '7ed1ae9cd0179a244241c2e4e727de9afd3d0d99',
+  for (const environment of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+    expect(environment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
+    expect(environment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
   }
-  expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
-  expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
-    previousBinding.sourceRevision,
-  )
-  expect(activationEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toEqual(
-    controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH'),
-  )
-  expect(activationEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toEqual(
-    controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
-  )
-  expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
-  expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)

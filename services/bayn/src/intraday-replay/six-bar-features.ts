@@ -308,7 +308,7 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
     if (exclusion !== undefined)
       recordUnavailable(SixBarUnavailableReason.Freshness, exclusion.message, exclusion.symbol)
     for (const quote of quotes) {
-      const reason = yield* jevEntryQuoteExclusion(quote, sixBarResearchDefinition.maximumSpreadBps)
+      const reason = yield* jevEntryQuoteExclusion(quote)
       if (reason !== null) inputIssues.push({ status: SixBarResearchStatus.Excluded, symbol: quote.symbol, reason })
     }
     // A candidate-local gap must never hide invalid required benchmark evidence.

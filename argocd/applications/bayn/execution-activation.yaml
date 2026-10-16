@@ -42,7 +42,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: "6147e517664a294c04cb20dfe03f09c99d30db3f14d3ef4c525ab0ead81abfcf"
+              value: "52b4b37e727077d8140bcb0846871ba1b33e7aa3431e87598c3c45544b7d1a90"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_GLITCHTIP_DSN
@@ -54,14 +54,10 @@ spec:
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
-            - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
-            - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: 7ed1ae9cd0179a244241c2e4e727de9afd3d0d99
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "fce490405dee0d07d00b8be04c9085c4984eae574513d9b58166efb8c082667e"
+              value: "508d8bdd912eded9bec5559677bcf23be3d0ebd5224932fbbbbed9a8e3e795d0"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "6a00684f4fa61cbd29fc12fc436d27b83c5a0e67a2de740388592d7b4f1fb6d4"
+              value: "0121b343836d2b1376c4f4ef2d4d499061d09d37f6b509c365c5d6eb44ac0d00"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

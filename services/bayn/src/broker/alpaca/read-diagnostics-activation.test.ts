@@ -183,6 +183,7 @@ test('normal broker polling emits diagnostics while native deployment activation
           attemptCompletedSignal: new AbortController().signal,
         }),
         objectClient: () => ({
+          prepareActivation: async () => null,
           status: async () => (executionActivated ? waitingState : null),
           activate: async () => {
             executionActivated = true
@@ -203,7 +204,7 @@ test('normal broker polling emits diagnostics while native deployment activation
       const blocked = yield* Effect.promise(() =>
         execution
           .activateDeployment(context, {
-            schemaVersion: 'bayn.execution-deployment-activation.v1',
+            schemaVersion: 'bayn.execution-deployment-activation.v2',
             controllerKey,
             planHash,
             sourceRevision,

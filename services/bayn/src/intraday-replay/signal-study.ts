@@ -178,8 +178,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         [SignalScreenRule.Jev]:
           native !== null && Result.isSuccess(native) ? (native.success.selectedSymbols[0] ?? null) : null,
         [SignalScreenRule.Breakout]: signals.find((entry) => entry.breakout)?.symbol ?? null,
-        [SignalScreenRule.RelativeMomentum]:
-          (yield* jevMomentumEntryCandidates(snapshot, observation.protocol))[0]?.symbol ?? null,
+        [SignalScreenRule.RelativeMomentum]: (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null,
       },
       signals: signals.map(({ excessReturn: _exact, ...signal }) => signal),
     }

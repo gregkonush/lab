@@ -330,9 +330,7 @@ export const decideGapRecovery = (
     const spy = values.get(gapRecoveryDefinition.benchmarkSymbol)
     const benchmarkQuote = complete.get(gapRecoveryDefinition.benchmarkSymbol)?.[2]
     // Check required benchmark pricing independently: a candidate may be excluded before the six-bar reader reaches SPY.
-    const benchmarkExcluded =
-      benchmarkQuote !== undefined &&
-      (yield* jevEntryQuoteExclusion(benchmarkQuote, sixBarResearchDefinition.maximumSpreadBps)) !== null
+    const benchmarkExcluded = benchmarkQuote !== undefined && (yield* jevEntryQuoteExclusion(benchmarkQuote)) !== null
     const candidates = []
     const endMs = Math.floor((session.decisionAtMs - 2_000) / 60_000) * 60_000
     for (const symbol of gapRecoveryDefinition.candidates) {
