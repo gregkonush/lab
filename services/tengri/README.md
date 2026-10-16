@@ -24,7 +24,9 @@ reducing them while these pools are active can reject connections. No runtime sc
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
 then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
-message's storage, so ongoing terminal input does not reserve capacity for later requests.
+message's storage, with a 64 MiB total byte budget. Small request frames retain only their actual bytes rather than
+one of two request slots, so buffered terminal input cannot block unrelated requests. Admission capacity waits and
+body reads have separate trace spans. Per-message size, signed deadlines, replay and runtime fencing checks remain enforced.
 
 Nanoagent verifies the proof again against its root-owned runtime claim and recovery generation and consumes a local
 nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview

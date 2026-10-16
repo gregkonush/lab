@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use tengri::guest_authorization::{
     GuestAction, GuestBinding, GuestContext, GuestProof, GuestVerifier, request_action, rpc_action,
 };
+use tracing::Instrument;
 
 use super::Claim;
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
 
 const MAX_OPENING_BYTES: usize = 10 << 20;
 const MAX_PREVIEW_BYTES: usize = 32 << 20;
+const MAX_BUFFERED_OPENING_BYTES: usize = 2 * MAX_PREVIEW_BYTES;
 
 #[derive(Clone)]
 pub(super) struct GuestAdmission {
@@ -48,7 +50,7 @@ impl GuestAdmission {
             verifier,
             pod_uid,
             recovery_generation,
-            capacity: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
+            capacity: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_BUFFERED_OPENING_BYTES)),
         })
     }
 
@@ -109,13 +111,19 @@ impl GuestAdmission {
                 let permit = self
                     .capacity
                     .clone()
-                    .acquire_owned()
+                    .acquire_many_owned(if grpc {
+                        (MAX_OPENING_BYTES + 5) as u32
+                    } else {
+                        MAX_PREVIEW_BYTES as u32
+                    })
+                    .instrument(tracing::info_span!("guest.admission.capacity"))
                     .await
                     .context("guest admission closed")?;
                 let (body, forwarded) = if grpc {
                     opening_body(source, permit).await?
                 } else {
                     let body = axum::body::to_bytes(source, MAX_PREVIEW_BYTES)
+                        .instrument(tracing::info_span!("guest.admission.body"))
                         .await
                         .context("preview request body exceeds its limit")?;
                     let body = retained_opening(body, permit);
@@ -222,13 +230,18 @@ impl AsRef<[u8]> for BufferedOpening {
     }
 }
 
-fn retained_opening(bytes: Bytes, permit: tokio::sync::OwnedSemaphorePermit) -> Bytes {
+fn retained_opening(bytes: Bytes, mut reservation: tokio::sync::OwnedSemaphorePermit) -> Bytes {
+    let permit = reservation
+        .split(bytes.len())
+        .expect("opening fits its reserved byte limit");
+    drop(reservation);
     Bytes::from_owner(BufferedOpening {
         bytes,
         _permit: permit,
     })
 }
 
+#[tracing::instrument(name = "guest.admission.body", skip_all)]
 async fn opening_body(
     mut source: Body,
     permit: tokio::sync::OwnedSemaphorePermit,
@@ -617,6 +630,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn buffered_small_requests_do_not_exhaust_opening_admission() {
+        let admission = GuestAdmission::fixture();
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let mut buffered = Vec::new();
+        for _ in 0..2 {
+            let (opening, mut forwarded) = admission
+                .opening(signed(READ, "/workspace/a", &body))
+                .await
+                .unwrap();
+            admission
+                .require_binding(&opening, &claim(), fence())
+                .unwrap();
+            drop(opening);
+            buffered.push(
+                forwarded
+                    .body_mut()
+                    .frame()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_data()
+                    .unwrap(),
+            );
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await
+        .expect("small buffered frames blocked a new signed request")
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn buffered_preview_uploads_remain_bounded_until_storage_is_released() {
+        let admission = GuestAdmission::fixture();
+        let body = vec![b'x'; MAX_PREVIEW_BYTES];
+        let mut buffered = Vec::new();
+        for _ in 0..2 {
+            let (opening, mut forwarded) = admission
+                .opening(signed("HTTP POST", "/v1/preview/43210/submit", &body))
+                .await
+                .unwrap();
+            admission
+                .require_binding(&opening, &claim(), fence())
+                .unwrap();
+            drop(opening);
+            buffered.push(
+                forwarded
+                    .body_mut()
+                    .frame()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_data()
+                    .unwrap(),
+            );
+        }
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                admission.opening(signed(READ, "/workspace/a", &body)),
+            )
+            .await
+            .is_err(),
+            "retained uploads exceeded the total buffered byte limit"
+        );
+        buffered.pop();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await
+        .expect("released upload storage did not restore admission capacity")
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn supervisor_preserves_fragmented_opening_and_following_messages() {
         let admission = GuestAdmission::fixture();
         let body = proto::Path {
@@ -631,7 +729,12 @@ mod tests {
             .collect();
         let (opening, forwarded) = opening_body(
             Body::new(StreamBody::new(futures::stream::iter(frames))),
-            admission.capacity.clone().acquire_owned().await.unwrap(),
+            admission
+                .capacity
+                .clone()
+                .acquire_many_owned((MAX_OPENING_BYTES + 5) as u32)
+                .await
+                .unwrap(),
         )
         .await
         .unwrap();
@@ -645,7 +748,12 @@ mod tests {
             assert!(
                 opening_body(
                     Body::from(invalid),
-                    admission.capacity.clone().acquire_owned().await.unwrap(),
+                    admission
+                        .capacity
+                        .clone()
+                        .acquire_many_owned((MAX_OPENING_BYTES + 5) as u32)
+                        .await
+                        .unwrap(),
                 )
                 .await
                 .is_err()
@@ -654,7 +762,12 @@ mod tests {
         assert!(
             opening_body(
                 Body::empty(),
-                admission.capacity.clone().acquire_owned().await.unwrap(),
+                admission
+                    .capacity
+                    .clone()
+                    .acquire_many_owned((MAX_OPENING_BYTES + 5) as u32)
+                    .await
+                    .unwrap(),
             )
             .await
             .is_err()
