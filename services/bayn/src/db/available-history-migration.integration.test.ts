@@ -69,6 +69,34 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
+    if (id === 113) {
+      test('upgrades an already-recorded equity-hours migration to native limit completion', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(
+                Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId <= id)),
+              ),
+              table: 'schema_migrations',
+            })
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id >= 113`).toEqual([
+              { migration_id: 113 },
+            ])
+            yield* postgresMigrations
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id = 114`).toEqual([
+              { migration_id: 114 },
+            ])
+            const [completion] = yield* sql`SELECT
+              to_regprocedure('paper_partial_ioc_entry_is_reconciled_flat(text,text,numeric,timestamptz)') IS NULL AS retired_absent,
+              to_regprocedure('paper_partial_limit_entry_is_reconciled_flat(text,text,numeric,timestamptz)') IS NOT NULL AS current_present,
+              paper_cycle_completion_evidence_matches(${'f'.repeat(64)}, ${'e'.repeat(64)}, clock_timestamp()) AS unbound_completed`
+            expect(completion).toEqual({ retired_absent: true, current_present: true, unbound_completed: false })
+          }),
+        )
+      })
+    }
+
     test('refuses a held broker position without changing authority or protocol constraints', async () => {
       await runtime.runPromise(
         Effect.gen(function* () {
