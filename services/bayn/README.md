@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v5` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v6` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -51,6 +51,12 @@ accrual evidence and ledger identities remain unchanged.
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
+Entry selection follows the model's chosen `enter` action. There is no additional action-probability floor;
+the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
+`wait` and `avoid` keep zero targets. Protocol v6 rejects v5 and the retired `minimumEntryProbability` field.
+Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions and
+clamps the prior PAPER authority before native OBSERVE recovery. Activate a newly sealed v6 PAPER mandate
+against its published image. Existing position, turnover, loss, management and submission risk limits remain.
 
 ## Profitability goal
 
@@ -813,7 +819,7 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v2`. Its `inferenceExpenses` section joins
+The forward-performance command emits `bayn.forward-performance-report.v3`. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
@@ -1149,7 +1155,7 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v2`. Its `receipt` contains the unchanged v3 financial receipt;
+The command emits `bayn.forward-performance-report.v3`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
@@ -1659,7 +1665,23 @@ has been removed; cumulative accounting and ledger verification still accompany 
 
 Cash reconciliation retains the latest posted, unsettled cash-fee observation's reporting residual when projecting
 later fills. The residual changes only the comparison at the broker's declared precision; it never posts a cash or
-fee adjustment. Complete fee-cohort settlement retires it. Accounting-state hashes use v3 and bind this residual.
+fee adjustment. Complete fee-cohort settlement retires it.
+
+Alpaca posts each fill's cash movement at the precision retained with its account snapshot. Migration 112 adds
+append-only `broker_cash_settlements`: each record binds the original fill transaction and accounting receipt to
+that observed precision. Reconciliation prepares the deterministic rounding difference, commits its evidence,
+and posts it through the existing journal before verifying the complete account. Original fills, fees and inventory
+cost remain precise and immutable. Failed posts or acknowledgements resume with the same transfer identities.
+An unexplained cash difference still blocks trading; the settlement calculation accepts no target balance.
+Accounting-state hashes use v4 and bind both the fee reporting residual and every cash settlement. Financial
+receipts use v4 and report `cashSettlementRoundingMicros` separately from gross trade P&L, fees and cash yield;
+net income includes it only for the source transaction's authority generation.
+
+The model-action cutover may migrate an already restricted, flat OBSERVE account while reconciliation is inexact,
+so native recovery can repair its ledger. It preserves that restriction's reason and active kill switch. Only an
+effective PAPER account or recognized predecessor cutover receives `BLOCKED_STRATEGY_PROTOCOL_CUTOVER`; operator
+kills and unknown restrictions never become automatically recoverable. PAPER execution still requires exact
+reconciliation and a fresh protocol-bound capital activation.
 An inexact close reconciliation returns `CLOSE_RECONCILIATION_PENDING` at the regular reconciliation cadence before
 reading archive data or binding a liquidation document; exact evidence resumes the same close path.
 

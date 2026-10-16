@@ -39,6 +39,10 @@ import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot, nativeJevBatchResult } from './native.test-support'
 import { makeJevObservation } from './observation'
 import { jevBehaviorHash } from './protocol'
+import {
+  constrainExecutionTargetAllocationCapitalMicros,
+  executionMandateAllocationCapitalMicros,
+} from '../execution/mandate'
 import { makeJevTradingSignalBatch } from './trading-signals'
 import { JevBatchPlanVersion } from './batch'
 import { decideJevEntry, jevPlanningTargetWeights } from './decision'
@@ -101,7 +105,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     )
     const decidedAt = new Date(Date.parse(observedAt) + 100).toISOString()
     const compiledDecision = Result.getOrThrow(
-      decideJevEntry({ observation, batchPlan, batchResult: nativeJevBatchResult(batchPlan, decidedAt), decidedAt }),
+      decideJevEntry({
+        observation,
+        batchPlan,
+        batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => 'enter', 0.42),
+        decidedAt,
+      }),
     )
     const source = Result.getOrThrow(executionMarketDataBinding(snapshot))
     const { candidateSymbols: _candidates, candidateEvidencePolicy: _evidencePolicy, ...pricingQuery } = query
@@ -116,6 +125,30 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const market = Result.getOrThrow(executionMarketDataBinding(pricingSnapshot))
     const pricingRows = Result.getOrThrow(persistIntradayRecordRows(pricingSnapshot))
     const prices = Result.getOrThrow(adverseQuotePrices(pricingSnapshot, [symbol]))
+    const targetWeights = jevPlanningTargetWeights(compiledDecision)
+    const allocationCapitalMicros = Result.getOrThrow(
+      executionMandateAllocationCapitalMicros({
+        accountEquityMicros: BigInt(broker.account.equityMicros),
+        dailyTradedNotionalMicros: 0n,
+        maxGrossExposureMicros: BigInt(policy.maxGrossExposureMicros),
+        maxNetExposureMicros: BigInt(policy.maxNetExposureMicros),
+        maxDailyTradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros),
+        maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
+        targetWeights,
+        positions: broker.positions,
+        referencePriceMicros: prices.askPriceMicros,
+      }).pipe(
+        Result.flatMap((capitalMicros) =>
+          constrainExecutionTargetAllocationCapitalMicros({
+            allocationCapitalMicros: capitalMicros,
+            maxOrderNotionalMicros: BigInt(policy.maxOrderNotionalMicros),
+            maxSymbolExposureMicros: BigInt(policy.maxSymbolExposureMicros),
+            maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
+            targetWeights,
+          }),
+        ),
+      ),
+    )
     const reference = {
       schemaVersion: intradaySnapshotReferencePricesSchemaVersion,
       signalDate: snapshot.manifest.sessionDate,
@@ -138,7 +171,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       referencePrices: { ...reference, contentHash: canonicalHashV1(reference) },
       brokerState: broker,
       precision: protocol.executionModel.precision,
-      allocationCapitalMicros: '20000000000',
+      allocationCapitalMicros: allocationCapitalMicros.toString(),
       executionTerms: {
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
@@ -301,8 +334,9 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       (BigInt(document.targetPlan.intentTargets[0]?.quantityAtoms ?? '0') *
         BigInt(prices.askPriceMicros[symbol] ?? '0')) /
       1_000_000_000n
-    expect(entryNotional).toBeGreaterThanOrEqual(3_990_000_000n)
-    expect(entryNotional).toBeLessThanOrEqual(4_000_000_000n)
+    const targetNotional = BigInt(broker.account.equityMicros) / 5n
+    expect(entryNotional).toBeGreaterThanOrEqual((targetNotional * 999n) / 1000n)
+    expect(entryNotional).toBeLessThanOrEqual(targetNotional)
     expect(document.deltaRisk[0]?.evaluation.metrics.orderNotionalMicros).not.toBe(
       document.deltaRisk[0]?.notionalLimitMicros,
     )

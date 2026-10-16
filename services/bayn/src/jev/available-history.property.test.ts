@@ -5,11 +5,13 @@ import fc from 'fast-check'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { checkProperty } from '../testing/property-test-support'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
-import { jevObservationForSnapshot } from './native.test-support'
+import { jevObservationForSnapshot, nativeJevBatchResult, nativeJevFixture } from './native.test-support'
+import { decideJevEntry } from './decision'
+import { JevBatchPlanVersion } from './batch'
 import { makeJevObservation } from './observation'
 import { makeJevEntryQuery } from './observation-query'
 import { defaultJevProtocolDocument } from './protocol'
-import { jevSignalFor, makeJevTradingSignalRequest } from './trading-signals'
+import { jevSignalFor, makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 
@@ -21,6 +23,39 @@ const requestFor = (snapshot: VerifiedStrategyMarketSnapshot, symbol: string) =>
   )
 const endMs = Date.parse(base.query.rangeEndAt)
 const iso = (ms: number) => new Date(ms).toISOString()
+
+test('property: a valid chosen model action controls entry without an additional probability floor', () => {
+  const fixture = nativeJevFixture(undefined, undefined, 'jev-native-test', {
+    ...defaultJevProtocolDocument,
+    candidateSymbols: ['AAPL'],
+  })
+  const observation = fixture.observation.payload
+  const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
+  const batchPlan = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation,
+      expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.V4,
+    }),
+  )
+  checkProperty(
+    'jev-chosen-entry-action',
+    fc.property(fc.constantFrom('enter', 'wait', 'avoid'), fc.integer({ min: 334, max: 649 }), (action, score) => {
+      const target = Result.getOrThrow(
+        decideJevEntry({
+          observation,
+          batchPlan,
+          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => action, score / 1000),
+          decidedAt,
+        }),
+      )
+      expect(target.selectedSymbols).toEqual(action === 'enter' ? ['AAPL'] : [])
+      expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(
+        action === 'enter' ? 0.2 : 0,
+      )
+    }),
+  )
+}, 150_000)
 interface History {
   readonly minutes: number
   readonly candidateMinutes: readonly boolean[]

@@ -11,7 +11,7 @@ import {
 } from '../../broker/identity'
 import { Authority, type AuthorityState } from '../../execution/contracts'
 import {
-  capitalSizingCutoverRestrictionReason,
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
@@ -233,7 +233,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
-              OR state.reason = ${capitalSizingCutoverRestrictionReason}
+              OR state.reason = ${strategyProtocolCutoverRestrictionReason}
               OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
@@ -271,7 +271,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
         AND (
           ${activatedAt} < cycle.submission_open_at
           OR (
-            state.reason = ${capitalSizingCutoverRestrictionReason}
+            state.reason = ${strategyProtocolCutoverRestrictionReason}
             AND cycle.snapshot_id IS NULL
             AND NOT EXISTS (
               SELECT 1
@@ -376,7 +376,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
-                  OR state.reason = ${capitalSizingCutoverRestrictionReason}
+                  OR state.reason = ${strategyProtocolCutoverRestrictionReason}
                   OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (

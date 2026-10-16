@@ -26,8 +26,9 @@ const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 export const momentumFirstEntryPolicy = 'bayn.positive-relative-observed-momentum-entry.v1' as const
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v5'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v6'),
   entrySizingPolicy: Schema.Literal('capital-weighted-limit-ioc'),
+  entrySelectionPolicy: Schema.Literal('chosen-model-action'),
   entrySignalPolicy: Schema.Literal(momentumFirstEntryPolicy),
   model: Schema.Literal(jevModel),
   inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v5'),
@@ -51,7 +52,6 @@ const ProtocolBase = Schema.Struct({
   horizonMinutes: Minutes,
   maximumHoldingMinutes: Minutes,
   protectiveStopBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(500)),
-  minimumEntryProbability: Probability,
   minimumExitProbability: Probability,
   allocation: Schema.Literal('equal-weight'),
   executionModel: ExecutionModelV5Schema,
@@ -93,8 +93,9 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v5',
+  schemaVersion: 'bayn.jev.protocol.v6',
   entrySizingPolicy: 'capital-weighted-limit-ioc',
+  entrySelectionPolicy: 'chosen-model-action',
   entrySignalPolicy: momentumFirstEntryPolicy,
   model: jevModel,
   inputDefinition: 'bayn.jev-trading-signal-state.v5',
@@ -118,7 +119,6 @@ export const defaultJevProtocolDocument = Object.freeze({
   horizonMinutes: 15,
   maximumHoldingMinutes: 15,
   protectiveStopBps: 50,
-  minimumEntryProbability: 0.65,
   minimumExitProbability: 0.65,
   allocation: 'equal-weight',
   executionModel: intradayExecutionModel,
@@ -132,6 +132,6 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.capital-sized-cash-spot.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.model-action-cash-spot.behavior.v1')
 export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
   [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort()

@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/node'
 import { trace } from '@opentelemetry/api'
 import { Cause, Effect } from 'effect'
 import { embeddedBuildMetadata } from './build'
+import type { Reconciliation } from './execution/contracts'
 
 /**
  * Error-only GlitchTip reporting. Existing Effect/OpenTelemetry tracing remains
@@ -9,6 +10,8 @@ import { embeddedBuildMetadata } from './build'
  * Neither account data nor broker requests may leave the trading namespace.
  */
 let initialized = false
+let initializedService = 'bayn'
+let reportedReconciliationDiscrepancies: string | undefined
 
 export const sanitizeErrorEvent = (event: Sentry.ErrorEvent): Sentry.ErrorEvent => {
   delete event.user
@@ -52,6 +55,8 @@ export const initializeErrorTracking = (service: string, env: NodeJS.ProcessEnv 
     environment: env['NODE_ENV'] || 'production',
     // Disable SDK auto-instrumentation, request body collection and tracing.
     defaultIntegrations: false,
+    enableRuntimeChannelInjection: false,
+    enableOpenTelemetrySetup: false,
     tracesSampleRate: 0,
     maxBreadcrumbs: 0,
     beforeSend: sanitizeErrorEvent,
@@ -62,8 +67,31 @@ export const initializeErrorTracking = (service: string, env: NodeJS.ProcessEnv 
   }
   Sentry.setTag('service', service)
   Sentry.setTag('namespace', 'bayn')
+  initializedService = service
   initialized = true
   return true
+}
+
+export const reportReconciliationState = (reconciliation: Reconciliation): void => {
+  if (!initialized) return
+  if (reconciliation.discrepancies.length === 0) {
+    reportedReconciliationDiscrepancies = undefined
+    return
+  }
+  const signature = `${reconciliation.accountId}:${reconciliation.discrepancies
+    .map((d) => d.discrepancyId)
+    .toSorted()
+    .join(',')}`
+  if (signature === reportedReconciliationDiscrepancies) return
+  reportedReconciliationDiscrepancies = signature
+  const error = new Error('Reconciliation restricted trading authority')
+  error.name = 'ReconciliationDiscrepancyError'
+  Sentry.withScope((scope) => {
+    scope.setTag('stage', 'bayn.reconciliation')
+    scope.setTag('failure_kind', [...new Set(reconciliation.discrepancies.map((d) => d.kind))].toSorted().join(','))
+    scope.setTag('reconciliation_id', reconciliation.reconciliationId)
+    reportError(error, initializedService)
+  })
 }
 
 export const reportError = (error: unknown, service: string): void => {
@@ -82,10 +110,16 @@ export const reportTerminalFailure =
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
     effect.pipe(
       Effect.tapCause((cause) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           // Normal Kubernetes shutdown interrupts scoped fibers; it is not an
           // application error and must not create a new issue every rollout.
-          if (!Cause.hasInterruptsOnly(cause)) reportError(Cause.squash(cause), service)
+          if (Cause.hasInterruptsOnly(cause)) return
+          reportError(Cause.squash(cause), service)
+          const flushed = yield* Effect.promise(() => flushErrorTracking()).pipe(
+            Effect.timeout('4 seconds'),
+            Effect.catchCause(() => Effect.succeed(false)),
+          )
+          if (!flushed) yield* Effect.logWarning('GlitchTip terminal error did not flush')
         }),
       ),
     )

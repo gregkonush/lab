@@ -29,7 +29,7 @@ import {
 import { CycleStore, CycleStoreLive } from '../../cycle/store'
 import { Authority, KillState, OrderSide, OrderType, TimeInForce } from '../../execution/contracts'
 import {
-  capitalSizingCutoverRestrictionReason,
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
   legacyExecutionActivationExpiredRestrictionReason,
@@ -424,12 +424,12 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     [
       executionActivationExpiredRestrictionReason,
       legacyExecutionActivationExpiredRestrictionReason,
-      capitalSizingCutoverRestrictionReason,
+      strategyProtocolCutoverRestrictionReason,
     ].flatMap((reason) =>
       [
         'no-cycle',
         'unused-preopen-cycle',
-        ...(reason === capitalSizingCutoverRestrictionReason ? ['expired-unused-cycle'] : []),
+        ...(reason === strategyProtocolCutoverRestrictionReason ? ['expired-unused-cycle'] : []),
       ].map((scenario) => ({ reason, scenario })),
     ),
   )(
@@ -552,7 +552,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           }),
         )
         yield* sql`UPDATE authority_state SET effective='OBSERVE',kill_state='ACTIVE',
-  reason=${capitalSizingCutoverRestrictionReason},version=version+1,updated_at=${fixture.restrictedAt} WHERE singleton`
+  reason=${strategyProtocolCutoverRestrictionReason},version=version+1,updated_at=${fixture.restrictedAt} WHERE singleton`
         const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
         const before = yield* authority.readAuthorityState
         const result = yield* recoverTerminalGenerationToObserve({
@@ -572,7 +572,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
   })
 
-  test.each([executionActivationExpiredRestrictionReason, capitalSizingCutoverRestrictionReason])(
+  test.each([executionActivationExpiredRestrictionReason, strategyProtocolCutoverRestrictionReason])(
     'retains the restriction when fresh recovery reconciliation fails: %s',
     async (reason) => {
       const fixture = makeFixture()
