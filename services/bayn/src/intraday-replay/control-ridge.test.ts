@@ -48,10 +48,10 @@ const assumptions = {
   feeMultiplierPpm: 1_000_000,
 }
 const fullCalendar = [
-  { date: '2026-09-01', open: '09:30', close: '10:10' },
-  { date: '2026-09-04', open: '09:30', close: '10:10' },
-  { date: '2026-09-08', open: '09:30', close: '10:10' },
-  { date: '2026-09-09', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-01', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-04', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-08', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-09', open: '09:30', close: '10:10' },
 ] as const
 const calendar = Result.getOrThrow(
   normalizeMarketCalendarResult(fullCalendar, { start: '2026-09-01', end: '2026-09-09' }),
@@ -557,7 +557,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v5',
+              inputDefinition: 'bayn.jev-trading-signal-state.v6',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',

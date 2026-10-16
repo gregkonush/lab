@@ -12,6 +12,7 @@ import {
   OrderType,
   ReconciliationStatus,
   TerminalOutcome,
+  TimeInForce,
 } from '../execution/contracts'
 import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
 import { MutationStore, type MutationStoreShape } from '../execution/mutations'
@@ -1327,7 +1328,11 @@ describe('closing market-data fallback boundaries', () => {
     expect(result.document.bindings.executionMarketData?.schemaVersion).toBe(
       'bayn.reconciled-position-liquidation-binding.v1',
     )
-    expect(result.document.targetPlan.intentTargets.every((target) => target.orderType === OrderType.Market)).toBe(true)
+    expect(
+      result.document.targetPlan.intentTargets.every(
+        (target) => target.orderType === OrderType.Limit && target.timeInForce === TimeInForce.Day,
+      ),
+    ).toBe(true)
   })
 
   test('the second boundary check still refuses a fallback that expires during reconciliation', async () => {

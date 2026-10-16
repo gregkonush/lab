@@ -56,7 +56,7 @@ export enum CycleTerminalReason {
 
 const ExecutionCalendarObservationMaterialBase = Schema.Struct({
   executionCalendarSchemaVersion: Schema.Literals([
-    'bayn.alpaca-market-calendar-observation.v1',
+    'bayn.alpaca-market-calendar-observation.v2',
     'bayn.continuous-market-hours.v1',
   ]),
   executionCalendarSource: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
@@ -198,7 +198,7 @@ const CycleIdentityExecutionMaterial = {
   accountId: StrictNonEmptyStringSchema,
   executionSessionDate: IsoDateSchema,
   executionCalendarSchemaVersion: Schema.Literals([
-    'bayn.alpaca-market-calendar-observation.v1',
+    'bayn.alpaca-market-calendar-observation.v2',
     'bayn.continuous-market-hours.v1',
   ]),
   executionCalendarSource: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
@@ -738,7 +738,7 @@ export const SignalCycleSessionSchema = Schema.Struct({
 })
 
 export const SelectedExecutionCalendarSessionSchema = Schema.Struct({
-  schemaVersion: Schema.Literals(['bayn.alpaca-market-calendar-observation.v1', 'bayn.continuous-market-hours.v1']),
+  schemaVersion: Schema.Literals(['bayn.alpaca-market-calendar-observation.v2', 'bayn.continuous-market-hours.v1']),
   source: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
   date: IsoDateSchema,
   openAt: UtcInstantSchema,

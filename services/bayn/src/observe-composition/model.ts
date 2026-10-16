@@ -51,7 +51,7 @@ type ObserveRuntime = CycleStore | ObserveDecisionRuntime
 export type RecoveryFirstRuntime = ObserveRuntime | IntentStore | MutationStore
 
 export type ObserveStartupPreparation = {
-  readonly executionModel: Extract<CycleExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v5' }>
+  readonly executionModel: Extract<CycleExecutionModel, { readonly schemaVersion: 'bayn.execution-model.v6' }>
   readonly executionPolicy: Extract<
     CycleExecutionPolicy,
     { readonly schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3' }

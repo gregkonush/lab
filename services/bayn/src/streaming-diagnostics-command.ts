@@ -1,3 +1,4 @@
+import { jevMarketForFeed } from './jev/markets'
 import { nativeFeatureMatchesBars, rollingWindowStartMs } from './market-data/features/native-feature'
 import { observedBarsAt, type StreamingProjection } from './market-data/streaming/projection'
 import { compressionsAlgorithms } from '@platformatic/kafka'
@@ -15,7 +16,6 @@ import { technicalFeatureMatchesBars } from './market-data/features/technical-co
 import { technicalReceiptAvailableAt } from './market-data/streaming/technical-projection'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
-import { intradayMomentumFeatureTopic } from './strategy/intraday-momentum/protocol'
 
 class StreamingDiagnosticsFailure extends Data.TaggedError('StreamingDiagnosticsFailure')<{
   readonly message: string
@@ -194,8 +194,8 @@ const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
             symbols: query.universe,
             topics: {
               ...query.sourceTopics,
-              features: intradayMomentumFeatureTopic,
-              ...(config.technicalFeaturesTopic === undefined
+              features: jevMarketForFeed(query.feed).streamingInput.featureTopic,
+              ...(query.feed === 'us' || config.technicalFeaturesTopic === undefined
                 ? {}
                 : { technicalFeatures: config.technicalFeaturesTopic }),
             },

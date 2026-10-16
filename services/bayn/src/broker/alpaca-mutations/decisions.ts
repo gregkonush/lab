@@ -1,3 +1,4 @@
+import { cashSpotLimitTimeInForce } from '../../execution/order-terms'
 import { Data, Redacted, Result, Schema } from 'effect'
 import { SubmissionDenialReason } from '../../execution/submission-denial'
 
@@ -60,18 +61,18 @@ export interface QuantityMarketOrderRequestBody {
   readonly extended_hours: false
 }
 
-export interface LimitIocOrderRequestBody {
+export interface LimitOrderRequestBody {
   readonly symbol: string
   readonly qty: string
   readonly side: OrderSide
   readonly type: OrderType.Limit
-  readonly time_in_force: TimeInForce.ImmediateOrCancel
+  readonly time_in_force: TimeInForce.Day | TimeInForce.ImmediateOrCancel
   readonly limit_price: string
   readonly client_order_id: string
-  readonly extended_hours: false
+  readonly extended_hours: boolean
 }
 
-export type OrderRequestBody = QuantityMarketOrderRequestBody | LimitIocOrderRequestBody
+export type OrderRequestBody = QuantityMarketOrderRequestBody | LimitOrderRequestBody
 
 type MarketOrderRequestCommon = Omit<QuantityMarketOrderRequestBody, 'qty'>
 
@@ -277,14 +278,17 @@ const resolveMutationCapabilityDataFirst = (
 
 export const resolveMutationCapability = Pipeable.dual(2, resolveMutationCapabilityDataFirst)
 
-export const limitIocOrderRequestBody = (
+export const limitOrderRequestBody = (
   intent: OrderRequestIntent,
-): Result.Result<LimitIocOrderRequestBody, OrderRequestError> => {
-  if (intent.orderType !== DomainOrderType.Limit || intent.timeInForce !== DomainTimeInForce.ImmediateOrCancel) {
+): Result.Result<LimitOrderRequestBody, OrderRequestError> => {
+  if (
+    intent.orderType !== DomainOrderType.Limit ||
+    intent.timeInForce !== cashSpotLimitTimeInForce(instrumentMarket(intent.symbol))
+  ) {
     return Result.fail(
       new OrderRequestError({
         failure: 'invalid-order',
-        message: 'quote-bound Bayn orders require LIMIT with IOC time in force',
+        message: 'quote-bound Bayn orders require LIMIT with the instrument session duration',
         orderType: intent.orderType,
         timeInForce: intent.timeInForce,
       }),
@@ -296,7 +300,7 @@ export const limitIocOrderRequestBody = (
     return Result.fail(
       new OrderRequestError({
         failure: 'invalid-order',
-        message: 'quote-bound LIMIT/IOC orders require a whole-share quantity',
+        message: 'quote-bound LIMIT orders require a whole-share quantity',
         quantityAtoms: intent.quantityAtoms,
       }),
     )
@@ -313,7 +317,7 @@ export const limitIocOrderRequestBody = (
     return Result.fail(
       new OrderRequestError({
         failure: 'invalid-order',
-        message: 'verified LIMIT/IOC price does not match the equity price increment',
+        message: 'verified LIMIT price does not match the equity price increment',
         quantityAtoms: intent.quantityAtoms,
         notionalLimitMicros: intent.notionalLimitMicros,
       }),
@@ -324,10 +328,11 @@ export const limitIocOrderRequestBody = (
     qty: quantityToDecimal(quantity.success),
     side: side(intent.side),
     type: OrderType.Limit,
-    time_in_force: TimeInForce.ImmediateOrCancel,
+    time_in_force:
+      instrumentMarket(intent.symbol) === MarketKind.Equity ? TimeInForce.Day : TimeInForce.ImmediateOrCancel,
     limit_price: microsToDecimal(priceBoundary),
     client_order_id: intent.clientOrderId,
-    extended_hours: false,
+    extended_hours: instrumentMarket(intent.symbol) === MarketKind.Equity,
   })
 }
 
@@ -374,7 +379,7 @@ const validateMarketOrderRequest = (
 }
 
 export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
-  if (intent.orderType === DomainOrderType.Limit) return limitIocOrderRequestBody(intent)
+  if (intent.orderType === DomainOrderType.Limit) return limitOrderRequestBody(intent)
   return Result.map(validateMarketOrderRequest(intent), ({ common, quantity }) => ({
     ...common,
     qty: quantityToDecimal(quantity),
@@ -593,7 +598,7 @@ const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean
     order.orderType === facts.request.type &&
     order.timeInForce === facts.request.time_in_force &&
     order.limitPriceMicros === expectedLimitPriceMicros &&
-    !order.extendedHours
+    order.extendedHours === facts.request.extended_hours
   if (!commonMatches) return false
   return order.quantityAtoms === facts.intent.quantityAtoms && order.notionalMicros === undefined
 }

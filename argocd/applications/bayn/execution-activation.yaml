@@ -42,7 +42,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: "0f5690930fbfd06b6c316d5c5ddc3b9db652272fb423834f5a633b2e6d6fb03c"
+              value: "6433a5f55eea4d725a7ca801f60cbfda80336295086d7659237194b3e44422d3"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_GLITCHTIP_DSN
@@ -129,15 +129,6 @@ spec:
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"0f5690930fbfd06b6c316d5c5ddc3b9db652272fb423834f5a633b2e6d6fb03c","authoredActivation":{"sourceRevision":"794a4a2d25a64758114b325d87cfdf42ccd038c8","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:8f0b73a153838753a774c7b20832e8d6cb10449e26f2e2207531799098ebf447"},"activation":{"sourceRevision":"794a4a2d25a64758114b325d87cfdf42ccd038c8","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:8f0b73a153838753a774c7b20832e8d6cb10449e26f2e2207531799098ebf447"}}'
             - name: BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID
               valueFrom:
                 fieldRef:
