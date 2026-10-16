@@ -106,7 +106,9 @@ verified MFA without requiring a fresh control step-up or renewing idle activity
 into the durable workspace roster with its expiry; offboarding deletes that native relationship and quarantines any
 workspace exposed to emergency root access. Repeating an existing collaborator role never emits duplicate native updates. Initial authorized control
 activity advances the session's idle deadline at thirty-second resolution without exceeding its absolute expiry.
-Concurrent activity validates the current SQL session without rewriting a freshly extended deadline. The idle limit
+Concurrent activity validates the current SQL session without rewriting a freshly extended deadline. When another
+transaction holds the session row, the optional idle refresh skips that row and current session validation still runs.
+Activity cannot queue an entire browser asset burst behind one durable refresh. The idle limit
 can therefore expire up to thirty seconds before thirty minutes from the final control request. Observations, denied
 requests and stream rechecks do not renew it. Logout binds its operation ID and original receipt to the opaque session credential and origin,
 so a lost response can be retried without producing another effect or revoking another session.

@@ -598,6 +598,110 @@ async fn runtime_shared_state_signed_nonce_is_shared_and_payload_bound() {
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_replay_writes_cannot_starve_runtime_authority() {
+    let database = Database::shared_fixture().await;
+    let fence = database.acquire(Uuid::new_v4()).await.unwrap().unwrap();
+    let mut outcomes = Vec::new();
+    for role in ["tengri_controller", "tengri_supervisor"] {
+        let dsn = std::env::var("TENGRI_DATABASE_DSN")
+            .unwrap()
+            .replace("user=tengri_controller", &format!("user={role}"));
+        let peer = Arc::new(
+            Database::connect(
+                &dsn,
+                Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE").unwrap()),
+                Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE").unwrap()),
+                role,
+            )
+            .await
+            .unwrap(),
+        );
+        let capacity = peer.pool.status().max_size;
+        let warm = join_all((0..capacity).map(|_| peer.connection())).await;
+        let connections: Vec<_> = warm.into_iter().map(Result::unwrap).collect();
+        drop(connections);
+        let mut held = database.connection().await.unwrap();
+        let tx = held.transaction().await.unwrap();
+        let mut nonces = Vec::new();
+        for bucket in 0..capacity {
+            tx.query_one(
+                "SELECT pg_advisory_xact_lock($1)",
+                &[&(726635523000_i64 + bucket as i64)],
+            )
+            .await
+            .unwrap();
+            let mut nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+            nonce[0] = bucket as u8;
+            nonces.push(nonce);
+        }
+        let deadline = (crate::ofz::now_ms().unwrap() + 5000) as i64;
+        let writers: Vec<_> = nonces
+            .iter()
+            .map(|nonce| {
+                let peer = peer.clone();
+                let nonce = nonce.clone();
+                tokio::spawn(async move { peer.consume_nonce(&nonce, deadline).await })
+            })
+            .collect();
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while peer.pool.status().available != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let check = tokio::time::timeout(Duration::from_millis(750), async {
+            peer.verify_schema().await?;
+            peer.require_fence(fence).await
+        });
+        let renewal = async {
+            if role == "tengri_controller" {
+                Some(tokio::time::timeout(Duration::from_millis(750), peer.renew(fence)).await)
+            } else {
+                None
+            }
+        };
+        let (check, renewal) = tokio::join!(check, renewal);
+        let blocked = writers.iter().all(|writer| !writer.is_finished());
+        tx.rollback().await.unwrap();
+        for writer in writers {
+            writer.await.unwrap().unwrap();
+        }
+        assert_eq!(
+            peer.consume_nonce(&nonces[0], deadline)
+                .await
+                .unwrap_err()
+                .code(),
+            Code::Unauthenticated
+        );
+        let stale = crate::control::Fence {
+            generation: fence.generation + 1,
+            ..fence
+        };
+        assert_eq!(
+            peer.require_fence(stale).await.unwrap_err().code(),
+            Code::PermissionDenied
+        );
+        outcomes.push((role, blocked, check, renewal));
+    }
+    database.release(fence).await.unwrap();
+    for (role, blocked, check, renewal) in outcomes {
+        assert!(blocked, "{role} nonce writes did not remain blocked");
+        assert!(
+            matches!(check, Ok(Ok(()))),
+            "{role} lost valid runtime authority behind nonce writes: {check:?}"
+        );
+        if let Some(renewal) = renewal {
+            assert!(
+                matches!(renewal, Ok(Ok(true))),
+                "controller leadership renewal waited behind nonce writes: {renewal:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions() {
     let a = Database::shared_fixture().await;
     let b = Database::shared_fixture().await;
