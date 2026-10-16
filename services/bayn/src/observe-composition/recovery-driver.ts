@@ -141,9 +141,10 @@ export const reconciliationForPreparation = <R>(
             cached !== undefined &&
             reusableUntil !== undefined &&
             freshUntil !== undefined &&
-            now + minimumRemainingMs < Math.min(reusableUntil, freshUntil)
+            now < reusableUntil &&
+            now + minimumRemainingMs < freshUntil
           )
-            return { reconciliation: cached, freshUntil: Math.min(reusableUntil, freshUntil) }
+            return { reconciliation: cached, freshUntil }
           const reconciliation = yield* refreshAndRemember
           const refreshedAuthority = yield* readAuthority
           const refreshedAt = yield* Clock.currentTimeMillis

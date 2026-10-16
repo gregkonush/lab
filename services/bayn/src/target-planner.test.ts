@@ -82,7 +82,8 @@ const position = (
   positionObservedAt = brokerObservedAt,
   positionAccountId = accountId,
 ): Position => ({
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: ((BigInt(quantityAtoms) * BigInt('50000000')) / 1_000_000_000n).toString(),
   accountId: positionAccountId,
   symbol,
   quantityAtoms,
@@ -823,8 +824,8 @@ describe('causal target planner', () => {
 
     expect(replay).toEqual(first)
     expect(reordered).toEqual(first)
-    expect(first.inputHash).toBe('9d35680655cc89f9d102a30cfa86c03a5b081be1d13c9d7f644e82e8c62cc2ab')
-    expect(first.outputHash).toBe('b7058e2114508e1774aa0ab5ccfdd14ef206ea4a549b77f22caade391b49e3ab')
+    expect(first.inputHash).toBe('edc1cbc540f7d2b2d7a3e7fac81a94f665a39adfc2ea0506351272c98d9e5c0d')
+    expect(first.outputHash).toBe('8bd29a84d7cafa238e3ac4163eab729402c2bf6d74f58c602d5fd631baa17b81')
     expect(changedDecision.inputHash).not.toBe(first.inputHash)
     expect(changedDecision.outputHash).not.toBe(first.outputHash)
     expect(changedDecision.intentTargets.every((intent) => intent.decisionHash === hash('4'))).toBe(true)

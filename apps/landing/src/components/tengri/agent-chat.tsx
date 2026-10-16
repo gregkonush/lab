@@ -1,5 +1,7 @@
 'use client'
 
+import { watchTengriEvents } from './event-stream'
+
 import { reportBrowserFailure } from '@/lib/observability/client'
 
 import {
@@ -482,9 +484,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!accountChecked) return
     setEventStreamState('connecting')
-    const source = new EventSource(
-      `/api/tengri/events?agentId=${encodeURIComponent(agentId)}&after=${lastEventSequence.current}`,
-    )
     let pending: TengriCodexEvent[] = []
     let frame = 0
     const flush = () => {
@@ -514,7 +513,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ),
       )
     }
-    source.onmessage = (message) => {
+    const onMessage = (message: MessageEvent<string>) => {
       const parsed = parseCodexEvent(message.data)
       if (!parsed) {
         setError('Agent returned an invalid event')
@@ -567,13 +566,19 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         if (activeTurnIdRef.current === event.turnId) setCurrentActiveTurnId('')
       }
     }
-    source.onopen = () => setEventStreamState('connected')
-    source.onerror = () => {
-      reportBrowserFailure('codex.events.reconnect')
-      setEventStreamState('reconnecting')
-    }
+    const stop = watchTengriEvents(
+      () => `/api/tengri/events?agentId=${encodeURIComponent(agentId)}&after=${lastEventSequence.current}`,
+      {
+        onMessage,
+        onOpen: () => setEventStreamState('connected'),
+        onError: () => {
+          reportBrowserFailure('codex.events.reconnect')
+          setEventStreamState('reconnecting')
+        },
+      },
+    )
     return () => {
-      source.close()
+      stop()
       flush()
     }
   }, [accountChecked, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])

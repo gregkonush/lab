@@ -1,3 +1,4 @@
+import { executionCloseRecoveryExpiry } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { Effect, Option, Result } from 'effect'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
@@ -10,7 +11,6 @@ import {
   type CycleRunResult,
 } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
-import { MarketSchedule } from '../market-hours'
 import { hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
@@ -790,10 +790,10 @@ const executeBoundExecutionCycle = (
     }
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
-        marketSchedule:
-          cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-            ? MarketSchedule.Continuous
-            : MarketSchedule.Sessions,
+        recoveryExpiresAt:
+          document.executionSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(document.executionSession.calendar, observedAt),
         observedAt,
         executionCloseAt: cycle.window.executionCloseAt,
         ...sessionCloseLeads,
