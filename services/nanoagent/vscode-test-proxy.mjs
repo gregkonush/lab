@@ -22,6 +22,16 @@ const server = https.createServer({ cert: readFileSync(certificate), key: readFi
     response.writeHead(404).end()
     return
   }
+  const path = request.url?.split('?')[0]
+  if (
+    port === 3143 &&
+    request.method === 'GET' &&
+    (path === '/api/tengri/events' || path === '/api/tengri/files/events')
+  ) {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' })
+    response.write(': fixture\n\n')
+    return
+  }
   const upstream = http.request(options(request, port), (remote) => {
     response.writeHead(remote.statusCode, remote.headers)
     remote.pipe(response)

@@ -141,7 +141,8 @@ const baseState = (): State => {
   }
   const positions = [
     {
-      schemaVersion: 'bayn.paper-position.v1' as const,
+      schemaVersion: 'bayn.position.v2' as const,
+      costBasisMicros: '90000000',
       accountId: 'paper-account-1',
       symbol: 'AMD',
       quantityAtoms: '1000000000',
@@ -152,7 +153,8 @@ const baseState = (): State => {
       observedAt,
     },
     {
-      schemaVersion: 'bayn.paper-position.v1' as const,
+      schemaVersion: 'bayn.position.v2' as const,
+      costBasisMicros: '90000000',
       accountId: 'paper-account-1',
       symbol: 'NVDA',
       quantityAtoms: '1000000000',
@@ -588,8 +590,8 @@ describe('bounded execution risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: 'a37841aed4b20944aed6dcd52ea482ea28595883e538bac12d75b81915e025d7',
-      decisionId: 'fccc9857be0f125144ec3759bf3793342f0cb10767a6276f007b6daf07980032',
+      inputHash: '0a6bc0427f2310c85cbd7423509ee55f8a897b0ca5e8cf969c24fdba595ab9ea',
+      decisionId: '166eb82ca9798803dd7fa5d05d4481189162e457a16baa36f5a2df6380ed9443',
     })
     expect(first.input.freshUntil).toBe('2026-07-21T19:30:30.000Z')
     expect(first.metrics).toEqual({

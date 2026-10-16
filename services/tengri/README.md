@@ -23,8 +23,20 @@ in total. Promote the Ofz managed-role limits and 220-connection server budget b
 reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
-then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
-message's storage, with a 64 MiB total byte budget. RPCs reserve their declared opening size after reading the frame
+then consumes the nonce in a bounded process-wide replay guard before opening vsock. Each proof names one Pod UID,
+and Kubernetes runs one supervisor container/listener for that Pod. Before listening after process start, the supervisor
+waits eight seconds on a monotonic clock: the maximum five-second signed admission lifetime, the existing one-second
+clock-lead bound and two seconds of restart margin.
+The health listener remains live during this wait; readiness returns 503 until the fence clears.
+Every proof that could have executed before a crash therefore expires before the replacement can admit requests.
+The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
+unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.
+Signature, body, runtime, recovery generation and current SQL leadership checks still precede effects.
+Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Ofz policy
+checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
+PostgreSQL commit inside the short-lived Ofz decision window. This changes no signed fields or database schema;
+rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
+capacity follows the opening message's storage, with a 64 MiB total byte budget. RPCs reserve their declared opening size after reading the frame
 header; previews reserve their bounded body size. Capacity checks never queue large reservations ahead of smaller
 requests. A separate limit of 32 requests bounds work through response headers, without charging ongoing streams.
 Exhausted capacity returns 503 promptly. Capacity checks and body reads have separate trace spans. Per-message size,
@@ -385,6 +397,9 @@ when bounding clock-transfer delay, and repeats the same idempotent resume if th
 Missing or inconsistent clock timing rejects the resume; the controller and guest images must be promoted together.
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
+
+The native terminal probe answers foreground/background color queries and the device-status barrier used by the
+pinned Neovim startup. Query parsing retains split sequences; readiness markers and performance limits remain unchanged.
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime

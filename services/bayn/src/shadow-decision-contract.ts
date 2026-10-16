@@ -1,5 +1,10 @@
 import { exchangeSessions } from './market-hours'
-import { isContinuousMarket, sameMarketHours, marketHoursAreCanonical } from './market-hours'
+import {
+  isContinuousMarket,
+  sameMarketHours,
+  marketHoursAreCanonical,
+  executionCloseRecoveryExpiry,
+} from './market-hours'
 
 import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
@@ -52,7 +57,6 @@ import {
   legacyExecutionAuthorityToken,
   legacyIntentPlanSchemaVersion,
   legacyObserveAuthorityToken,
-  legacyPositionSchemaVersion,
 } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
@@ -1114,7 +1118,8 @@ const projectTargetPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: dividePositionMicrosAwayFromZero(quantity * averageEntryPrice).toString(),
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityAtoms: target.targetQuantityAtoms,
@@ -1384,6 +1389,18 @@ const executionMaterialIssues = (
   const usesExtendedCloseLease =
     document.executionSession !== undefined &&
     document.submissionCutoffAt > document.executionSession.submissionCutoffAt
+  if (
+    document.executionSession !== undefined &&
+    document.createdAt >= document.executionSession.executionSession.closeAt
+  ) {
+    const deadline = executionCloseRecoveryExpiry(document.executionSession.calendar, document.createdAt)
+    if (deadline === null || document.expiresAt > deadline || !usesReconciledPositionMark)
+      issues.push({
+        path: ['expiresAt'],
+        issue:
+          'post-session recovery requires a bounded close lease within verified broker hours and fresh reconciled positions',
+      })
+  }
   const isClosePlan = isFlatExecutionTarget(strategyDecision) || usesExtendedCloseLease
   if (
     document.entryLimitSlippageBps !== undefined &&
