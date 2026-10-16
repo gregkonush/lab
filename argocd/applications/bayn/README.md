@@ -167,10 +167,10 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v4`, `bayn.jev.available-history.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v5`, `bayn.jev.capital-sized-cash-spot.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
 account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev.
-The current strategy protocol hash is `f75c866aeb69a9346dd26f7b42921a989df4740d66eade062db056770f7a6c1b`.
+The current strategy protocol hash is `364d512a2d3921961eb89570eaabbae75cbe876161c6163cdc4134947a73e89f`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -236,9 +236,15 @@ account-keyed native controller through its shared `activateDeployment` handler.
 out after that verified native binding. The worker advertises exactly `BaynExecutionController` and
 `BaynBrokerObservations`; deployment activation does not have a separate service or object.
 
+The v2 request names only the target plan, source revision and account key. Its private `prepareActivation` RPC
+validates the target against the latest worker before reading durable controller state. A pinned stale coordinator
+cannot stop a newer owner. The authenticated handoff deactivates that exact recorded epoch, plan and source before
+activating the replacement. GitOps does not guess or carry a predecessor source, and ticks cannot adopt another
+source revision. Controller plan v3 makes this ownership transition explicit; retired activation requests are rejected.
+
 The activation handler is shared so its wait for native progress cannot block exclusive ticks on the same account.
 Only that handler accepts ingress calls, authenticated with the existing activation credential. Controller
-`activate`, `deactivate`, `tick` and `status`, and every broker-observation handler, remain private. The activation
+`activate`, `deactivate`, `prepareActivation`, `tick` and `status`, and every broker-observation handler, remain private. The activation
 result is retained for seven days; the journal is removed at completion to discard the bearer header. The Job reads
 `BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID` from its Kubernetes controller UID through the Downward API. Container restarts
 and replacement Pods in that Job reuse the same invocation, including after the client's bounded completion wait
@@ -378,12 +384,12 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
-97, exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+109, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v3 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 97 and flat, exact reconciliation are
-verified. Restore the request, its identity annotation, all three build lineages
-and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
+containing this migration and the current Jev v5 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 109, the source-bound controller plan v3
+handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
+build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
 
 Acceptance requires actual BTC, ETH and SOL orders and fills through the account controller while equities are
@@ -426,7 +432,8 @@ controller binding before the status service rolls out.
 
 The `bayn-release` workflow, manifest-promotion command, and source-eligibility script are removed. Kargo is the only
 writer of the generated deployment branch. Its activation generation uses the immutable image digest hash; the
-existing runtime idempotency key also binds source revision, account controller key, plan, and previous binding.
+runtime idempotency key binds that generation, the activation Job UID, source revision, account controller key and
+target plan. The predecessor comes from durable controller state and is not part of the request or retry identity.
 
 For the first cutover, merge the Warehouse, automatic Stage, immutable publisher, and ApplicationSet branch change
 together. Argo may briefly report a missing `kargo/bayn` branch until the first build creates Freight and Kargo pushes
@@ -446,7 +453,7 @@ broker-ledger advance before and after the handoff.
 
 This is a hard route migration from `BaynExecutionBootstrap/start` to
 `BaynExecutionController/<account-key>/activateDeployment`, with the single
-`bayn.execution-deployment-activation.v1` request contract. Worker and activation Job must use the same promoted
+`bayn.execution-deployment-activation.v2` request contract. Worker and activation Job must use the same promoted
 image. Native controller state, tick and mutation contracts, account keys and credentials are unchanged. No legacy
 handler is served by the replacement endpoint.
 
@@ -518,3 +525,13 @@ reconciliation and complete fill accounting. It restricts the old mandate to OBS
 Dorvud contracts with explicit read-only configuration, then rotate the existing sandbox mandate against the exact
 published new strategy/image before enabling PAPER through the normal Kargo activation path. Retired feature and
 strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.
+
+The capital-sizing cutover uses migration 109 and one LIMIT/IOC execution path for equities and crypto. Market
+profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. A canceled partial IOC entry can
+complete after an exact flat reconciliation consumes the same timestamped broker cut. Its trusted flat observation
+must remain strictly newer than the entry terminalization, and complete fills and settled orders remain required.
+Entry quantities follow the approved
+capital weight and instrument precision instead of one displayed ask size. The sealed PAPER mandate must bind the
+published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
+Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
+limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.

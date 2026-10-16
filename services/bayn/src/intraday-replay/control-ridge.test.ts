@@ -557,7 +557,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v4',
+              inputDefinition: 'bayn.jev-trading-signal-state.v5',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',
@@ -739,17 +739,18 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   },
 )
 
-test('canceled entries and cash retain opportunities and their allocated data charge', async () => {
-  for (const options of [{ canceled: true }, { mean: 0 }]) {
-    const { result } = await Effect.runPromise(simulate(options))
-    expect(result.ledger.fills).toHaveLength(0)
-    expect(result.completedEpisodes).toBe(0)
-    expect(result.netPnlAfterKnownCostsMicros).toBe('-1000000')
-    expect(result.modelCostMicros).toBe('0')
-    expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(80)
-    expect(result.issues).toContain('MISSING_DECISION_DATA')
-    if ('canceled' in options) expect(result.orders).toHaveLength(1)
-  }
+test.each([
+  ['canceled', { canceled: true }],
+  ['cash', { mean: 0 }],
+] as const)('%s outcomes retain opportunities and their allocated data charge', async (scenario, options) => {
+  const { result } = await Effect.runPromise(simulate(options))
+  expect(result.ledger.fills).toHaveLength(0)
+  expect(result.completedEpisodes).toBe(0)
+  expect(result.netPnlAfterKnownCostsMicros).toBe('-1000000')
+  expect(result.modelCostMicros).toBe('0')
+  expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(80)
+  expect(result.issues).toContain('MISSING_DECISION_DATA')
+  if (scenario === 'canceled') expect(result.orders).toHaveLength(1)
 })
 
 test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(

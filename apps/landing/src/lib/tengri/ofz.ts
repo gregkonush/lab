@@ -98,6 +98,11 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
   const metadata = new grpc.Metadata()
   metadata.set('x-ofz-contract-version', '1')
   const request = create(method.input, input)
+  const renewal =
+    method.localName === 'check' &&
+    'streamReceiptId' in request &&
+    typeof request.streamReceiptId === 'string' &&
+    request.streamReceiptId.length > 0
   return new Promise((resolve, reject) => {
     const call = connection.makeUnaryRequest(
       `/${method.parent.typeName}/${method.name}`,
@@ -105,7 +110,7 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
       (value) => fromBinary(method.output, value),
       request,
       metadata,
-      { deadline: Date.now() + (method.localName === 'check' ? 2000 : 5000) },
+      { deadline: Date.now() + (renewal ? 2000 : 5000) },
       (error, value) => {
         signal?.removeEventListener('abort', cancel)
         if (error) {

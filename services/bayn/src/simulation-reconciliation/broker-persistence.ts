@@ -2,7 +2,6 @@ import { Effect } from 'effect'
 
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationReport, ReconciliationWriteResult } from '../db/reconciliation'
-import type { WriterFenceService } from '../execution/writer-fence'
 import {
   compareText,
   type NormalizedBrokerSnapshot,
@@ -122,24 +121,31 @@ const logCompletedPass = (
 
 const writeReconciliation = (
   store: ReconciliationPersistence,
-  fence: WriterFenceService,
   normalized: NormalizedBrokerSnapshot,
   ordersObservedAt: string,
   now: Effect.Effect<string, ReconciliationError>,
 ) =>
   Effect.gen(function* () {
-    const { valuation, positionSnapshotId, accountEventId } = yield* fence.transaction(
-      ingestBrokerEvents(store, normalized),
+    const { snapshot, persisted } = yield* store.reconciliation.reconcile(
+      normalized.account.accountId,
+      Effect.gen(function* () {
+        const { valuation, positionSnapshotId, accountEventId } = yield* ingestBrokerEvents(store, normalized)
+        return makeReconciliationDecision(
+          normalized,
+          ordersObservedAt,
+          valuation,
+          yield* now,
+          positionSnapshotId,
+          accountEventId,
+        ).snapshot
+      }),
     )
-    const decision = makeReconciliationDecision(
-      normalized,
-      ordersObservedAt,
-      valuation,
-      yield* now,
-      positionSnapshotId,
-      accountEventId,
-    )
-    const persisted = yield* store.reconciliation.reconcile(decision.snapshot)
+    const decision: ReconciliationWriteDecision = {
+      snapshot,
+      unknownOrderCount: snapshot.orders.filter((order) => order.intentId === undefined).length,
+      orderCount: normalized.orderEvents.length,
+      fillCount: normalized.fillEvents.length,
+    }
     const result = makePassResult(decision, persisted)
     yield* logCompletedPass(result, decision)
     return result
@@ -147,14 +153,12 @@ const writeReconciliation = (
 
 const persistStableSnapshotDataFirst = (
   store: ReconciliationPersistence,
-  fence: WriterFenceService,
   snapshot: StableBrokerSnapshot,
   now: Effect.Effect<string, ReconciliationError>,
 ) =>
   Effect.gen(function* () {
     const normalized = yield* prepareNormalizedSnapshot(store, snapshot)
-    yield* store.reconciliation.recoverFees(normalized.account.accountId)
-    return yield* writeReconciliation(store, fence, normalized, snapshot.history.orders.observedAt, now)
+    return yield* writeReconciliation(store, normalized, snapshot.history.orders.observedAt, now)
   })
 
-export const persistStableSnapshot = Pipeable.dual(4, persistStableSnapshotDataFirst)
+export const persistStableSnapshot = Pipeable.dual(3, persistStableSnapshotDataFirst)

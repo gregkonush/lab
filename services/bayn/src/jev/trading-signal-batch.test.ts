@@ -196,13 +196,13 @@ describe('Jev trading batch source reproduction', () => {
   test('entry quote eligibility uses the same exact boundary for spread and displayed size', () => {
     const quote = nativeJevFixture().snapshot.latestQuotes['AAPL']
     if (quote === undefined) throw new Error('Native fixture quote is missing')
-    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004 }, 5))).toBeNull()
-    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0006 }, 5))).toBe(
+    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004 }))).toBeNull()
+    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0006 }))).toBe(
       JevEntryExclusion.Spread,
     )
-    expect(
-      Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004, askSize: 0 }, 5)),
-    ).toBe(JevEntryExclusion.DisplayedSize)
+    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004, askSize: 0 }))).toBe(
+      JevEntryExclusion.DisplayedSize,
+    )
   })
 
   test('rejects a retired batch version instead of reconstructing its old request path', () => {
