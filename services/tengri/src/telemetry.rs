@@ -206,7 +206,6 @@ pub async fn response_trace_id(
     Span::current().record("http.response.status_code", response.status().as_u16());
     if response.status().is_server_error() {
         Span::current().record("otel.status_code", "ERROR");
-        tracing::error!(status = response.status().as_u16(), "HTTP operation failed");
     }
     if context.span().span_context().is_valid() {
         response.headers_mut().insert(
@@ -246,6 +245,15 @@ pub fn grpc_failure(
 ) {
     span.record("otel.status_code", "ERROR");
     tracing::error!(parent: span, "RPC operation failed");
+}
+
+pub fn http_failure(
+    _failure: tower_http::classify::ServerErrorsFailureClass,
+    _latency: Duration,
+    span: &Span,
+) {
+    span.record("otel.status_code", "ERROR");
+    tracing::error!(parent: span, "HTTP operation failed");
 }
 
 impl Telemetry {
@@ -299,6 +307,52 @@ impl Telemetry {
 mod tests {
     use super::*;
     use tower_http::trace::MakeSpan;
+
+    #[tokio::test]
+    async fn http_failure_emits_one_error_event() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tower::ServiceExt;
+        use tracing::instrument::WithSubscriber;
+
+        struct ErrorCount(Arc<AtomicUsize>);
+        impl<S: tracing::Subscriber> Layer<S> for ErrorCount {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                if *event.metadata().level() == tracing::Level::ERROR {
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+
+        let errors = Arc::new(AtomicUsize::new(0));
+        let subscriber = tracing_subscriber::registry().with(ErrorCount(errors.clone()));
+        let router = axum::Router::new()
+            .route(
+                "/fixture",
+                axum::routing::get(|| async { http::StatusCode::SERVICE_UNAVAILABLE }),
+            )
+            .layer(axum::middleware::from_fn(response_trace_id))
+            .layer(
+                tower_http::trace::TraceLayer::new_for_http()
+                    .make_span_with(RequestSpan)
+                    .on_failure(http_failure),
+            );
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/fixture")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(errors.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn request_trace_parent_crosses_the_tonic_metadata_boundary() {

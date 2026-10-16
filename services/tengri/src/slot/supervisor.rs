@@ -301,7 +301,8 @@ pub(super) async fn serve(
         ))
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(crate::telemetry::RequestSpan),
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
         );
     let incoming = crate::identity::tls_incoming(listener, tls);
     tokio::pin!(incoming);

@@ -1,9 +1,11 @@
-import { afterAll, beforeEach, afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeEach, afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { createHash } from 'node:crypto'
+import * as Sentry from '@sentry/browser'
 
 import {
   beginTengriLifecycleTransition,
   getTengriGuestOperationSnapshot,
+  getDesktopSnapshot,
   runTengriAction,
   subscribeTengriGuestOperations,
   TengriRequestError,
@@ -59,6 +61,29 @@ afterAll(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+})
+
+test('reports rejected snapshot and action fetches without reporting caller cancellation', async () => {
+  const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
+  const failure = new TypeError('PRIVATE_SENTINEL transport failed')
+  globalThis.fetch = Object.assign(
+    async () => {
+      throw failure
+    },
+    { preconnect: originalFetch.preconnect },
+  )
+  try {
+    await expect(getDesktopSnapshot()).rejects.toBe(failure)
+    await expect(runTengriAction({ action: 'list-files', agentId: 'network-fixture', path: '/' })).rejects.toBe(failure)
+    expect(capture).toHaveBeenCalledTimes(2)
+    expect(String(capture.mock.calls)).not.toContain('PRIVATE_SENTINEL')
+    const controller = new AbortController()
+    controller.abort()
+    await expect(getDesktopSnapshot(controller.signal)).rejects.toBe(failure)
+    expect(capture).toHaveBeenCalledTimes(2)
+  } finally {
+    capture.mockRestore()
+  }
 })
 
 test('preserves HTTP status and recognized conversation errors without trusting other payload shapes', async () => {

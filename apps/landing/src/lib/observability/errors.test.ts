@@ -116,6 +116,26 @@ describe('bounded browser error ingestion', () => {
     expect((await POST(request('invalid'))).status).toBe(400)
     expect((await POST(request(envelope({ ...event, event_id: 'invalid' })))).status).toBe(400)
   })
+
+  test('collector transport failures return 502 while invalid UTF-8 remains a bad envelope', async () => {
+    configure()
+    globalThis.fetch = Object.assign(
+      async () => {
+        throw new TypeError('fetch failed')
+      },
+      {
+        preconnect: originalFetch.preconnect,
+      },
+    )
+    expect((await POST(request(envelope(event)))).status).toBe(502)
+    const invalid = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0xff]))
+        controller.close()
+      },
+    })
+    expect((await POST(request(invalid))).status).toBe(400)
+  })
 })
 
 test('SDK sanitization removes request content and dynamic frame URLs', () => {

@@ -17,7 +17,13 @@ export class TengriRequestError extends Error {
 }
 
 export async function getDesktopSnapshot(signal?: AbortSignal): Promise<TengriDesktopSnapshot> {
-  const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal })
+  const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal }).catch(
+    (error: unknown) => {
+      if (!signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError'))
+        reportBrowserFailure('tengri.snapshot')
+      throw error
+    },
+  )
   return decodeResponse<TengriDesktopSnapshot>(response)
 }
 
@@ -109,6 +115,10 @@ async function postTengriAction<Result>(
     headers: { 'Content-Type': 'application/json' },
     keepalive: options?.keepalive,
     signal: options?.signal,
+  }).catch((error: unknown) => {
+    if (!options?.signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError'))
+      reportBrowserFailure('tengri.request')
+    throw error
   })
   if (action.action === 'resume-thread' && response.ok) {
     return (await readCodexHistory(response, action.threadId, options?.signal, (record) =>

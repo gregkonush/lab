@@ -109,7 +109,8 @@ export async function POST(request: Request) {
       body,
       signal: AbortSignal.timeout(3_000),
       redirect: 'error',
-    })
+    }).catch(() => null)
+    if (!response) return new Response(null, { status: 502 })
     return new Response(null, { status: response.ok ? 202 : 502, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof TypeError) {

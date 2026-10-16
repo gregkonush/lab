@@ -322,7 +322,8 @@ pub fn control_router(state: GatewayState) -> Router {
         ))
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(crate::telemetry::RequestSpan),
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
         )
 }
 
@@ -340,7 +341,8 @@ pub fn preview_router(state: GatewayState) -> Router {
         ))
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(crate::telemetry::RequestSpan),
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
         )
 }
 
