@@ -43,7 +43,7 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
         accountId,
         signalSessionDate: '2026-10-01',
         executionSessionDate: '2026-10-01',
-        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
         phase: CycleState.Active,
         snapshotId: null,
         publicationDeadlineAt: null,

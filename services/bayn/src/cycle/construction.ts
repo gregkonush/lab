@@ -161,7 +161,7 @@ export const makeCycleExecutionPolicyFromModel = (
       failure('execution-policy', 'hash', 'strategy execution model is not canonicalizable', {}, cause),
     )
     return yield* makeCycleExecutionPolicy(
-      decodedModel.schemaVersion === 'bayn.execution-model.v5'
+      decodedModel.schemaVersion === 'bayn.execution-model.v6'
         ? {
             schemaVersion: 'bayn.autonomous-cycle-execution-policy.v3',
             strategyExecutionModelHash,

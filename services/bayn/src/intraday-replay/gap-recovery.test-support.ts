@@ -12,8 +12,8 @@ export const gapDecisionMs = gapOpenMs + 1_830_000
 
 export const gapSessionInput = (close = '16:00') => {
   const calendar = [
-    { date: '2026-09-03', open: '09:30', close: '16:00' },
-    { date: '2026-09-04', open: '09:30', close },
+    { session_open: '0930', session_close: '1600', date: '2026-09-03', open: '09:30', close: '16:00' },
+    { date: '2026-09-04', open: '09:30', close, session_open: '0930', session_close: close.replace(':', '') },
   ]
   return {
     schemaVersion: 'bayn.gap-recovery-session.v1',
