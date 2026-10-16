@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
+import { prepareCashSettlement } from '../accounting/cash-settlement'
+import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { MutationOperation, orderRequestBody } from '../broker/alpaca-mutations'
 import { MutationEventType } from '../execution/mutations'
 import { canonicalHashV1 } from '../hash'
@@ -207,6 +209,8 @@ const comparisonInput = (status: AccountStatus = AccountStatus.Active): Paramete
     ledgerExact: true,
     brokerFeeAccruals: [],
     cashReportingOffsetMicros: '0',
+    cashSettlementDeltaMicros: '0',
+    brokerCashSettlements: [],
     brokerFeeCashDeltaMicros: '0',
     snapshot: {
       cashReportingQuantumMicros: '1',
@@ -255,6 +259,107 @@ const emptyRiskRow = (): RiskContextRow => ({
 })
 
 describe('PostgreSQL reconciliation algebra', () => {
+  test('posted per-fill cash rounding restores exact cash while an unexplained cent still blocks', () => {
+    const input = comparisonInput()
+    const preciseFill = { ...fill, symbol: 'BTC/USD', priceAtoms: '100004900000' }
+    const precise = Result.getOrThrow(
+      prepareAccounting(
+        hash('precise-crypto-fill'),
+        preciseFill,
+        { quantityAtoms: '0', costMicros: '0' },
+        tigerBeetle.ledger,
+      ),
+    )
+    const preciseReceipt = {
+      ...Result.getOrThrow(planAccountingReceipt(precise, tigerBeetle.clusterId.toString(), tigerBeetle.ledger)),
+      recordedAt: observedAt,
+    }
+    const settlement = Result.getOrThrow(
+      prepareCashSettlement(
+        {
+          schemaVersion: 'bayn.broker-cash-settlement.v1',
+          accountId,
+          transactionId: precise.transaction.transactionId,
+          transactionContentHash: precise.transaction.contentHash,
+          brokerEventId: precise.transaction.brokerEventId,
+          cashDeltaMicros: precise.transaction.cashDeltaMicros,
+          cashReportingQuantumMicros: '10000',
+          precisionAccountEventId: hash('cash-precision'),
+          observedAt,
+          occurredAt: observedAt,
+        },
+        tigerBeetle.ledger,
+      ),
+    )
+    const cash = (
+      BigInt(input.openingCash.cash_micros) +
+      BigInt(precise.transaction.cashDeltaMicros) +
+      BigInt(settlement.roundingDeltaMicros)
+    ).toString()
+    const precisePosition = {
+      ...position,
+      symbol: preciseFill.symbol,
+      costBasisMicros: precise.transaction.costBasisMicros,
+      averageEntryPriceMicros: '100004900',
+      marketPriceMicros: '100004900',
+      marketValueMicros: '100004900',
+    }
+    const snapshot = {
+      ...input.snapshot,
+      positions: [precisePosition],
+      fills: [preciseFill],
+      orders: [],
+      account: {
+        ...input.snapshot.account,
+        cashMicros: cash,
+        equityMicros: (BigInt(cash) + BigInt(precisePosition.marketValueMicros)).toString(),
+      },
+      valuation: {
+        ...input.snapshot.valuation,
+        cashMicros: cash,
+        longMarketValueMicros: precisePosition.marketValueMicros,
+        equityMicros: (BigInt(cash) + BigInt(precisePosition.marketValueMicros)).toString(),
+      },
+    }
+    const preciseInput = {
+      ...input,
+      snapshot,
+      intents: [],
+      transactions: [precise.transaction],
+      receipts: [preciseReceipt],
+      projectedPositions: [
+        {
+          symbol: preciseFill.symbol,
+          quantityAtoms: preciseFill.quantityAtoms,
+          costBasisMicros: precise.transaction.costBasisMicros,
+        },
+      ],
+    }
+    const missing = successOf(compareOpeningCash(preciseInput))
+    expect(missing.comparison.metrics.cashDifferenceMicros).toBe(settlement.roundingDeltaMicros)
+    const fixedInput = {
+      ...preciseInput,
+      cashSettlementDeltaMicros: settlement.roundingDeltaMicros,
+      brokerCashSettlements: [settlement.data],
+    }
+    const fixed = successOf(compareOpeningCash(fixedInput))
+    expect(fixed.comparison.discrepancies).toEqual([])
+    expect(fixed.accountingHash).not.toBe(missing.accountingHash)
+    const extraCent = (BigInt(cash) + 10000n).toString()
+    const unexplained = successOf(
+      compareOpeningCash({
+        ...fixedInput,
+        snapshot: {
+          ...snapshot,
+          account: { ...snapshot.account, cashMicros: extraCent },
+          valuation: { ...snapshot.valuation, cashMicros: extraCent },
+        },
+      }),
+    )
+    expect(unexplained.comparison.metrics.cashDifferenceMicros).toBe('10000')
+    expect(unexplained.comparison.discrepancies.some((discrepancy) => discrepancy.kind === 'CASH')).toBe(true)
+  })
+
   test('includes separate broker fee activities in exact cash and the accounting identity', () => {
     const input = comparisonInput()
     const cash = (BigInt(input.snapshot.account.cashMicros) - 230000n).toString()
@@ -435,7 +540,7 @@ describe('PostgreSQL reconciliation algebra', () => {
 
     expect(result.accountingHash).toBe(
       canonicalHashV1({
-        schemaVersion: 'bayn.accounting-state.v3',
+        schemaVersion: 'bayn.accounting-state.v4',
         cashReportingQuantumMicros: '1',
         accountId,
         openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
@@ -444,6 +549,8 @@ describe('PostgreSQL reconciliation algebra', () => {
         ledgerExact: true,
         brokerFeeAccruals: [],
         cashReportingOffsetMicros: '0',
+        cashSettlementDeltaMicros: '0',
+        brokerCashSettlements: [],
         brokerFeeCashDeltaMicros: '0',
       }),
     )
@@ -470,6 +577,8 @@ describe('PostgreSQL reconciliation algebra', () => {
           durableFills: [],
           projectedPositions: [],
           cashReportingOffsetMicros: offset,
+          cashSettlementDeltaMicros: '0',
+          brokerCashSettlements: [],
           snapshot: {
             ...input.snapshot,
             cashReportingQuantumMicros: '10000',
@@ -551,6 +660,8 @@ describe('PostgreSQL reconciliation algebra', () => {
         ledgerExact: true,
         brokerFeeAccruals: [],
         cashReportingOffsetMicros: '0',
+        cashSettlementDeltaMicros: '0',
+        brokerCashSettlements: [],
         brokerFeeCashDeltaMicros: '0',
         snapshot: {
           cashReportingQuantumMicros: '1',
@@ -592,6 +703,8 @@ describe('PostgreSQL reconciliation algebra', () => {
         ledgerExact: true,
         brokerFeeAccruals: [],
         cashReportingOffsetMicros: '0',
+        cashSettlementDeltaMicros: '0',
+        brokerCashSettlements: [],
         brokerFeeCashDeltaMicros: '0',
         snapshot: {
           cashReportingQuantumMicros: '1',

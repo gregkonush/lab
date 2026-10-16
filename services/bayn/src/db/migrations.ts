@@ -110,9 +110,11 @@ import availableHistoryProtocol from '../../migrations/0108_available_history_pr
 import capitalSizingProtocol from '../../migrations/0109_capital_sizing_protocol'
 import capitalSizingRecovery from '../../migrations/0110_capital_sizing_recovery'
 import modelActionProtocol from '../../migrations/0111_model_action_protocol'
+import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '112_broker_cash_settlements': brokerCashSettlements,
   '111_model_action_protocol': modelActionProtocol,
   '109_capital_sizing_protocol': capitalSizingProtocol,
   '110_capital_sizing_recovery': capitalSizingRecovery,

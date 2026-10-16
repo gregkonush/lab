@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-execution-activate-45689281ac70
+  name: bayn-execution-activate-794a4a2d25a6
   labels:
     app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: sha-45689281ac70
+    app.kubernetes.io/version: sha-794a4a2d25a6
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -19,7 +19,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: sha-45689281ac70
+        app.kubernetes.io/version: sha-794a4a2d25a6
     spec:
       nodeSelector:
         network.proompteng.ai/100g: "true"
@@ -35,16 +35,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: activate
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:57efe950de64690b65753532c1fbfef5a87d8cade09522490da716247dc974f9
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:8f0b73a153838753a774c7b20832e8d6cb10449e26f2e2207531799098ebf447
           imagePullPolicy: IfNotPresent
           command:
             - node
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: 57efe950de64690b65753532c1fbfef5a87d8cade09522490da716247dc974f9
+              value: 8f0b73a153838753a774c7b20832e8d6cb10449e26f2e2207531799098ebf447
             - name: BAYN_CODE_REVISION
-              value: 45689281ac70fe4f089893779bc60518ed1bf12a
+              value: 794a4a2d25a64758114b325d87cfdf42ccd038c8
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -53,7 +53,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:57efe950de64690b65753532c1fbfef5a87d8cade09522490da716247dc974f9
+              value: sha256:8f0b73a153838753a774c7b20832e8d6cb10449e26f2e2207531799098ebf447
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "c9148b8aa29b17c0f940700df39e497d1f9415ec8756e86a561b098a11490f33"
             - name: BAYN_STRATEGY_PARAMETER_HASH
