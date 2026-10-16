@@ -13,7 +13,9 @@ class PostgresClusterResilienceManifestTests(TestCase):
         )
         self.cluster_spec = cast(Mapping[str, object], self.cluster["spec"])
 
-    def test_cluster_prefers_host_spread_without_requiring_another_amd64_storage_host(self) -> None:
+    def test_cluster_prefers_host_spread_without_requiring_another_amd64_storage_host(
+        self,
+    ) -> None:
         self.assertEqual(self.cluster_spec["instances"], 2)
         self.assertEqual(self.cluster_spec["primaryUpdateStrategy"], "unsupervised")
         self.assertEqual(self.cluster_spec["primaryUpdateMethod"], "switchover")
