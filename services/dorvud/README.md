@@ -26,6 +26,9 @@ global `lib/` directory, separate from the user-job jar, so framework failures r
 ingestion key. `DORVUD_ERROR_SERVICE` binds the forwarder, TA or archive role; release tags use the existing
 Kargo-written commit variables. Requests, user data, extra values, breadcrumbs, contexts, thread dumps, source
 snippets and exception messages are removed before transmission. Exception classes and stack frames remain.
+Known component logger names survive as a bounded `logger` tag and part of issue grouping, including logs with no
+throwable. Other logger names become `unknown`. Use the component, server and event timestamp to correlate the
+redacted event with operational logs; provider messages and identifiers remain withheld.
 Tracing, profiles, Sentry logs and automatic session tracking are disabled. Grafana, Loki and Mimir continue to
 own operational telemetry. Missing ingestion configuration disables local exception reporting; invalid configured
 destinations or roles are rejected.
@@ -38,7 +41,8 @@ Build and check the shared integration with:
 
 After normal reviewed image publication and Kargo promotion, verify the actual revision and DSN on the forwarder
 and both Flink process types. Run the explicit synthetic smoke once in each role and verify its GlitchTip event's
-service, release and stack frames. It is never run automatically at service startup. In the forwarder, invoke:
+service, release, logger tag and exception stack frames. The smoke also sends a log-only event to verify that errors
+without a throwable retain their component. It is never run automatically at service startup. In the forwarder, invoke:
 
 ```bash
 java -cp '/app/lib/*' ai.proompteng.dorvud.platform.observability.GlitchTipSmoke

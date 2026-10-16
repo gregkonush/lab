@@ -1,5 +1,5 @@
 import { Result, Schema } from 'effect'
-import { equityClockSession } from '../../equity-hours'
+import { equityClockSession, equityFeatureSegmentStartMs } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
@@ -129,6 +129,9 @@ export const decodeRollingMarketFeature = (value: unknown): Result.Result<Rollin
       material.windowEndMs % 60_000 !== 0 ||
       material.windowEndMs <= material.windowStartMs ||
       material.windowEndMs - material.windowStartMs > 30 * 60_000 ||
+      equityClockSession(new Date(material.windowStartMs).toISOString()) === null ||
+      equityClockSession(new Date(material.windowEndMs - 1).toISOString()) === null ||
+      equityFeatureSegmentStartMs(material.windowStartMs) !== equityFeatureSegmentStartMs(material.windowEndMs - 1) ||
       feature.computedAtMs + marketFeatureClockSkewAllowanceMs < material.windowEndMs ||
       newYorkDate.format(material.windowStartMs) !== material.sessionDate ||
       newYorkDate.format(material.windowEndMs - 1) !== material.sessionDate
