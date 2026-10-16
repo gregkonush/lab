@@ -1352,9 +1352,9 @@ durableTest.each(
           expect(reconciliation.brokerState.account.cashMicros).toBe(state.ledger.cashMicros)
           expect(
             yield* sql`SELECT
-              paper_partial_ioc_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+              paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
                 o.filled_quantity_atoms,${yield* currentUtcInstant}::timestamptz) AS complete,
-              paper_partial_ioc_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
+              paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
                 o.filled_quantity_atoms,i.updated_at) AS entry_cut_complete
               FROM intents i JOIN LATERAL (
                 SELECT o.* FROM orders o JOIN broker_events e USING(event_id)
@@ -1591,8 +1591,9 @@ durableTest.each(
         const reconciliation = yield* runtime.reconcile
         if (scenario === 'fallback') {
           expect(brokerState.orders.at(-1)?.order).toMatchObject({
-            orderType: BrokerOrderType.Market,
+            orderType: BrokerOrderType.Limit,
             timeInForce: BrokerTimeInForce.Day,
+            extendedHours: true,
           })
         }
         expect(brokerState.ledger.positions).toHaveLength(0)

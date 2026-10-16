@@ -65,6 +65,22 @@ export default Effect.gen(function* () {
         AND execution_calendar_source = 'alpaca-crypto-us'
         AND execution_close_at - execution_open_at = interval '19 minutes'
         AND submission_cutoff_at - submission_open_at = interval '1 minute'))`
+  yield* sql`ALTER FUNCTION paper_partial_ioc_entry_is_reconciled_flat(text,text,numeric,timestamptz)
+    RENAME TO paper_partial_limit_entry_is_reconciled_flat`
+  yield* sql`DO $completion$
+    DECLARE
+      definition text := pg_get_functiondef('paper_cycle_completion_evidence_matches(text,text,timestamptz)'::regprocedure);
+      old_terms constant text := $terms$intent.time_in_force = 'IOC'$terms$;
+      new_terms constant text := $terms$intent.time_in_force IN ('DAY', 'IOC')$terms$;
+      old_helper constant text := 'paper_partial_ioc_entry_is_reconciled_flat';
+      new_helper constant text := 'paper_partial_limit_entry_is_reconciled_flat';
+    BEGIN
+      IF (length(definition) - length(replace(definition, old_terms, ''))) <> length(old_terms)
+        OR (length(definition) - length(replace(definition, old_helper, ''))) <> length(old_helper) THEN
+        RAISE EXCEPTION 'expected one limit completion duration guard and one partial-fill helper' USING ERRCODE = '55000';
+      END IF;
+      EXECUTE replace(replace(definition, old_terms, new_terms), old_helper, new_helper);
+    END $completion$`
   yield* sql`ALTER TABLE authority_generations
     DROP CONSTRAINT authority_generations_strategy_parameter_schema_version_check,
     DROP CONSTRAINT authority_generations_strategy_contract_check`

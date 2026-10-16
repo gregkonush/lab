@@ -1532,6 +1532,12 @@ bun run --filter @proompteng/bayn lint:oxlint
 bun run --filter @proompteng/bayn build
 ```
 
+With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
+`BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
+`bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
+zero and partial fills, DAY cancellation and cycle completion, process death/restart, accounting and inference
+expenses. The seven durable-broker cases alone do not cover the native production lifecycle.
+
 PostgreSQL tests require an isolated database whose name ends in `_test`; never point them at a live Bayn database.
 
 The optional cumulative-ledger integration test requires an isolated TigerBeetle 0.17.9 server on loopback with cluster
