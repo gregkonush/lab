@@ -10,11 +10,17 @@ hyphens**, even though GlitchTip displays it as a UUID in its database.
 
 - Official `@sentry/node` captures uncaught exceptions and terminal Effect
   causes; successful/expected Effect operations do not emit issues and normal
-  shutdown interruption is ignored.
+  shutdown interruption is ignored. Terminal Effect failures await a bounded SDK
+  flush before process exit, preserving the original failure if delivery fails.
+- Committed reconciliation discrepancies emit one error per unchanged discrepancy
+  set in each process, including an already blocked account after restart. Exact
+  reconciliation resets that suppression. Events include discrepancy kinds and
+  the reconciliation hash, without account identities, balances or broker payloads.
 - Scrubbing removes request, user, breadcrumbs, contexts, runtime variables,
   source snippets and exception messages. Stack frames retain grouping fidelity.
 - No Sentry tracing, profiles or request-body collection. Continue to use
-  Effect/OTel to Grafana Tempo for spans, Loki for logs, Mimir for metrics.
+  Effect/OTel to Grafana Tempo for spans, Loki for logs, Mimir for metrics. Runtime
+  diagnostics-channel injection and Sentry's OpenTelemetry setup are disabled.
 - Network policies permit only TCP 8000 to GlitchTip's in-cluster web pods;
   there is no requirement for Tailscale or external public egress from Bayn.
 - The release is the reviewed source SHA, with service role and an optional
