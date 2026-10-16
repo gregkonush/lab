@@ -1,3 +1,9 @@
+import { cryptoMarketFixture } from './testing/crypto-market-fixture'
+import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { adverseQuotePrices } from './observe-composition/intraday-market-data'
+import { jevEntryQuoteExclusion } from './jev/trading-signals'
+import { jevMarketForSymbol } from './jev/markets'
+import { JevEntryExclusion } from './jev/batch'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
@@ -1272,4 +1278,79 @@ describe('causal target planner', () => {
       expect(String(result.failure.cause)).toContain('well-formed Unicode')
     }
   })
+})
+
+const allocatedEntryQuoteFixture = cryptoMarketFixture().snapshot.latestQuotes['BTC/USD']
+if (allocatedEntryQuoteFixture === undefined) throw new Error('Expected native quote fixture')
+const entrySizingSymbolArbitrary = fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD')
+
+test('property: capital sizing is invariant to displayed quote size and never exceeds its allocation', () => {
+  checkProperty(
+    'capital-entry-sizing',
+    fc.property(
+      entrySizingSymbolArbitrary,
+      fc.integer({ min: 1_000_000, max: 1_000_000_000_000 }),
+      fc.integer({ min: 1, max: 200_000 }),
+      fc.integer({ min: 1, max: 100_000 }),
+      fc.integer({ min: 1, max: 100_000_000 }),
+      (symbol, capital, weightPpm, price, sizeAtoms) => {
+        const quote = {
+          ...allocatedEntryQuoteFixture,
+          symbol,
+          bidPrice: price,
+          askPrice: price + 0.01,
+          askSize: sizeAtoms / 1_000_000_000,
+        }
+        const input = {
+          snapshot: { latestQuotes: { [symbol]: quote } },
+          targetWeights: { [symbol]: weightPpm / 1_000_000 },
+          capitalMicros: String(capital),
+          precision: { quantityIncrementAtoms: '1', priceIncrementMicros: '100', minimumBuyNotionalMicros: '1000000' },
+        }
+        const first = Result.getOrThrow(
+          maximumAllocatedBuyQuantities({
+            ...input,
+            askPriceMicros: Result.getOrThrow(adverseQuotePrices(input.snapshot, [symbol])).askPriceMicros,
+          }),
+        )
+        const changedQuote = { ...quote, askSize: quote.askSize * 1000 }
+        const other = Result.getOrThrow(
+          maximumAllocatedBuyQuantities({
+            ...input,
+            askPriceMicros: Result.getOrThrow(
+              adverseQuotePrices({ latestQuotes: { [symbol]: changedQuote } }, [symbol]),
+            ).askPriceMicros,
+          }),
+        )
+        expect(first).toEqual(other)
+        const quantity = BigInt(first[symbol] ?? '0')
+        const prices = Result.getOrThrow(adverseQuotePrices(input.snapshot, [symbol]))
+        expect((quantity * BigInt(prices.askPriceMicros[symbol] ?? '0')) / 1_000_000_000n).toBeLessThanOrEqual(
+          (BigInt(capital) * BigInt(weightPpm)) / 1_000_000n,
+        )
+        expect(quantity % (symbol === 'AAPL' ? 1_000_000_000n : 1n)).toBe(0n)
+      },
+    ),
+  )
+})
+
+test('property: one quote gate enforces the exact market spread boundary and positive liquidity', () => {
+  checkProperty(
+    'market-entry-spread',
+    fc.property(entrySizingSymbolArbitrary, fc.integer({ min: 0, max: 100 }), (symbol, spreadBps) => {
+      const quote = {
+        ...allocatedEntryQuoteFixture,
+        symbol,
+        bidPrice: 10000 - spreadBps / 2,
+        askPrice: 10000 + spreadBps / 2,
+        bidSize: 1,
+        askSize: 1,
+      }
+      const exclusion = Result.getOrThrow(jevEntryQuoteExclusion(quote))
+      expect(exclusion).toBe(
+        spreadBps > jevMarketForSymbol(symbol).maximumEntrySpreadBps ? JevEntryExclusion.Spread : null,
+      )
+      expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askSize: 0 }))).not.toBeNull()
+    }),
+  )
 })

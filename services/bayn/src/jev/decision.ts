@@ -68,7 +68,7 @@ export const decideJevEntry = (input: unknown) =>
         return yield* unavailable('Jev entry has no typed action or verified quote')
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
-      const quoteEligible = (yield* jevEntryQuoteExclusion(quote, observation.protocol.maximumSpreadBps)) === null
+      const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
       if (answer.choice === 'enter' && probability >= observation.protocol.minimumEntryProbability && quoteEligible)
         eligible.push({ symbol, probability })
     }

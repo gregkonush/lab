@@ -5,6 +5,8 @@ import fc from 'fast-check'
 import { checkProperty } from './testing/property-test-support'
 
 import { canonicalHashV1 } from './hash'
+import { deriveExecutionIntentPricing } from './execution/intent-pricing'
+import { intradayExecutionModel } from './strategy/intraday-market'
 import {
   AccountStatus,
   Authority,
@@ -1428,4 +1430,66 @@ test('rejects entry quotes from after the bound pricing observation and invalid 
   const state = makeState()
   expect(() => makeState({ entryQuote: { eventAt: '2026-07-21T20:59:30.000000001Z', maximumAgeMs: 10_000 } })).toThrow()
   expect(() => makeState({ entryQuote: { eventAt: state.marketDataObservedAt, maximumAgeMs: 0 } })).toThrow()
+})
+
+test('property: fractional LIMIT buys honor a spending ceiling and sells honor a proceeds floor', () => {
+  checkProperty(
+    'fractional-limit-notional',
+    fc.property(
+      fc.constantFrom('BTC/USD', 'ETH/USD', 'SOL/USD'),
+      fc.constantFrom(OrderSide.Buy, OrderSide.Sell),
+      fc.integer({ min: 1_000_000, max: 1_000_000_000_000 }),
+      fc.integer({ min: 1_000_000, max: 100_000_000_000 }),
+      fc.integer({ min: 0, max: 25 }),
+      (symbol, side, quantity, price, slippage) => {
+        const pricing = Result.getOrThrow(
+          deriveExecutionIntentPricing({
+            symbol,
+            side,
+            quantityAtoms: BigInt(quantity),
+            referencePriceMicros: BigInt(price),
+            limitSlippageBps: BigInt(slippage),
+            orderType: OrderType.Limit,
+            timeInForce: TimeInForce.ImmediateOrCancel,
+            executionModel: intradayExecutionModel,
+          }),
+        )
+        const policy = makePolicy({
+          schemaVersion: executionRiskPolicySchemaVersion,
+          allowedSymbols: [symbol],
+          allowedOrderTypes: [OrderType.Limit],
+          allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+        })
+        const intent = makeIntent({
+          orderType: OrderType.Limit,
+          timeInForce: TimeInForce.ImmediateOrCancel,
+          symbol,
+          side,
+          quantityAtoms: String(quantity),
+          notionalLimitMicros: String(pricing.notionalLimitMicros),
+          policyHash: canonicalHashV1(policy),
+        })
+        const state = makeState({
+          marketDataSymbol: symbol,
+          referencePriceMicros: String(price),
+          expectedExecutionPriceMicros: String(pricing.expectedExecutionPriceMicros),
+        })
+        const result = evaluateSuccess(intent, state, policy)
+        const gate = result.gates.find((gate) => gate.name === Gate.IntentNotional)
+        expect(gate?.passed).toBe(true)
+        const wrongPrice =
+          side === OrderSide.Buy
+            ? pricing.expectedExecutionPriceMicros + 1_000_000n
+            : pricing.expectedExecutionPriceMicros > 1_000_000n
+              ? pricing.expectedExecutionPriceMicros - 1_000_000n
+              : 1n
+        const rejected = evaluateSuccess(
+          intent,
+          makeState({ ...state, expectedExecutionPriceMicros: wrongPrice.toString() }),
+          policy,
+        )
+        expect(rejected.gates.find((gate) => gate.name === Gate.IntentNotional)?.passed).toBe(false)
+      },
+    ),
+  )
 })
