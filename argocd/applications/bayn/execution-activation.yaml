@@ -42,7 +42,7 @@ spec:
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: "6147e517664a294c04cb20dfe03f09c99d30db3f14d3ef4c525ab0ead81abfcf"
+              value: "7caada18849daefc276def94d001d85f2f5993fa7ba961d3e9b88001d96ce6bf"
             - name: BAYN_CODE_REVISION
               value: ee60493eb5a9b5f8572e868b6ff31c17675501a3
             - name: BAYN_GLITCHTIP_DSN
@@ -54,10 +54,6 @@ spec:
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
-            - name: BAYN_EXECUTION_PREVIOUS_PLAN_HASH
-              value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
-            - name: BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION
-              value: 7ed1ae9cd0179a244241c2e4e727de9afd3d0d99
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "fce490405dee0d07d00b8be04c9085c4984eae574513d9b58166efb8c082667e"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -133,6 +129,15 @@ spec:
               value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"7caada18849daefc276def94d001d85f2f5993fa7ba961d3e9b88001d96ce6bf","authoredActivation":{"sourceRevision":"4025e68a26460f2fe598d9a88624a7289dc4b564","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2"},"activation":{"sourceRevision":"4025e68a26460f2fe598d9a88624a7289dc4b564","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2"}}'
             - name: BAYN_EXECUTION_ACTIVATION_ATTEMPT_ID
               valueFrom:
                 fieldRef:

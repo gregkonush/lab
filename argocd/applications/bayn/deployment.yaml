@@ -80,7 +80,7 @@ spec:
             # Kargo copies the reviewed source into kargo/bayn and updates this service,
             # the execution worker, and the activation Job to the same immutable image.
             - name: BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH
-              value: "a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761"
+              value: "0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc"
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
@@ -164,6 +164,15 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"7caada18849daefc276def94d001d85f2f5993fa7ba961d3e9b88001d96ce6bf","authoredActivation":{"sourceRevision":"4025e68a26460f2fe598d9a88624a7289dc4b564","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2"},"activation":{"sourceRevision":"4025e68a26460f2fe598d9a88624a7289dc4b564","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:abdb94a9486eabb0bbbee9a6ed4d940e1b53acec7b53006bcfcd96560d6115c2"}}'
           startupProbe:
             httpGet:
               path: /livez
