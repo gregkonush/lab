@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -26,13 +27,13 @@ const candidate = {
   executionPolicy: policy,
 }
 const session = { date: '2026-10-14', openAt: '2026-10-14T13:30:00.000Z', closeAt: '2026-10-14T20:00:00.000Z' }
-const material = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const material = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: session.date, end: session.date },
   timeZone: 'UTC' as const,
   sessions: [session],
-}
+})
 const calendar = { ...material, normalizedResponseHash: canonicalHashV1(material) }
 const at = '2026-10-14T17:18:26.335Z'
 const expiresAt = '2026-10-14T17:19:26.335Z'

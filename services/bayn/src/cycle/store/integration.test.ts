@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
@@ -69,7 +70,7 @@ const draft = (
 ) => {
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date: sessionDate,
       openAt: '2026-08-28T13:30:00.000Z',
@@ -279,8 +280,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         feeActivities: forbidden,
         marketCalendar: () =>
           Effect.succeed({
-            value: {
-              schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+            value: withProviderSessions({
+              schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
               source: 'alpaca-v2-calendar',
               timeZone: 'UTC',
               requestedRange: { start: sessionDate, end: sessionDate },
@@ -288,7 +289,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               sessions: [
                 { date: sessionDate, openAt: '2026-08-28T13:30:00.000Z', closeAt: '2026-08-28T20:00:00.000Z' },
               ],
-            },
+            }),
             evidence: {
               requestId: 'recovery-calendar',
               status: 200,

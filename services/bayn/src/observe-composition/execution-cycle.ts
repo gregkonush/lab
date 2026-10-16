@@ -428,7 +428,7 @@ const entryExecutionCycleIntentEvidence = (
           ]
     })
     if (dispositions.some((disposition) => disposition === 'UNSUCCESSFUL')) return 'UNSUCCESSFUL'
-    return dispositions.length > 0 && dispositions.every((disposition) => disposition === 'BENIGN_ZERO_FILL_IOC')
+    return dispositions.length > 0 && dispositions.every((disposition) => disposition === 'BENIGN_ZERO_FILL_LIMIT')
       ? 'BENIGN_ZERO_FILL'
       : 'COMPLETE'
   })
@@ -769,7 +769,7 @@ const executeBoundExecutionCycle = (
     const reconcile = reconciliation.read
     const observedAt = yield* currentUtcInstant
     const runtimeMatchesCycle = runtimeStrategyMatchesCycle(input, cycle)
-    if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v5') {
+    if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v6') {
       return yield* mutationRunnerError({
         message: 'bound execution cycle does not match the active intraday runtime',
         failure: 'contract',

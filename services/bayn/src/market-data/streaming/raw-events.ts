@@ -1,3 +1,4 @@
+import { equityClockSession } from '../../equity-hours'
 import { Result, Schema } from 'effect'
 
 import { MarketFeatureFailure } from '../features/contract'
@@ -199,7 +200,7 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('bar payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+        if (envelope.marketSession !== (crypto ? 'continuous' : equityClockSession(eventAt)))
           return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayBarRows([
           {
@@ -226,7 +227,7 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('quote payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+        if (envelope.marketSession !== (crypto ? 'continuous' : equityClockSession(eventAt)))
           return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayQuoteRows([
           { ...identity, bid_price: payload.bp, bid_size: payload.bs, ask_price: payload.ap, ask_size: payload.as },
@@ -244,7 +245,7 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('trade payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+        if (envelope.marketSession !== (crypto ? 'continuous' : equityClockSession(eventAt)))
           return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayTradeRows([{ ...identity, price: payload.p, size: payload.s }]).pipe(
           Result.mapError((cause) => fail('invalid raw trade row', cause)),

@@ -20,12 +20,12 @@ const prepare = (strategy: StrategyRuntime) =>
   })
 
 test('autonomous startup admits the exact source-selected momentum-first identity', () => {
-  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v6')
+  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v7')
   const result = Result.getOrThrow(prepare(fixtureRuntime))
   expect(result.strategyProtocolHash).toBe(
     Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
   )
-  expect(result.strategyProtocolHash).toBe('62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b')
+  expect(result.strategyProtocolHash).toBe('6596666c7b54d462a630d8ffaf71577b303d8c0b5b0ffe11556c37a9eac7a226')
 })
 
 test('rejects retired Jev protocols at the only active protocol boundary', () => {

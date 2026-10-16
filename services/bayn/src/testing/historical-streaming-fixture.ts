@@ -56,7 +56,7 @@ export const historicalStreamingFixture = (returns?: Readonly<Record<string, num
     protocolHash: canonicalHashV1(protocol),
     behaviorHash: intradayMomentumBehaviorHash,
     sessionDate: '2026-09-04',
-    calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+    calendar: [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
     arrivals: {
       schemaVersion: 'bayn.historical-market-arrivals.v1',
       runId: 'a'.repeat(64),

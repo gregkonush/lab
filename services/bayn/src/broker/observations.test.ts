@@ -336,3 +336,28 @@ describe('paper broker observations', () => {
     })
   })
 })
+
+test.each([AlpacaTimeInForce.Day, AlpacaTimeInForce.GoodUntilCanceled])(
+  'reconciles legal extended stock LIMIT orders without discarding broker evidence: %s',
+  (timeInForce) => {
+    expect(
+      orderObservation(
+        { ...order, orderType: AlpacaOrderType.Limit, timeInForce, extendedHours: true, limitPriceMicros: '100000000' },
+        evidence,
+      )._tag,
+    ).toBe('Success')
+    expect(
+      orderObservation(
+        {
+          ...order,
+          symbol: 'BTC/USD',
+          assetClass: AssetClass.Crypto,
+          orderType: AlpacaOrderType.Limit,
+          timeInForce,
+          extendedHours: true,
+        },
+        evidence,
+      )._tag,
+    ).toBe('Failure')
+  },
+)

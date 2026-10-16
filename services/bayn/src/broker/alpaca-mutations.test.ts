@@ -305,7 +305,7 @@ describe('Alpaca broker mutations', () => {
         orderRequestBody({
           ...intent,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
+          timeInForce: TimeInForce.Day,
         }),
       ),
     ).toMatchObject({
@@ -355,7 +355,7 @@ describe('Alpaca broker mutations', () => {
       orderRequestBody({
         ...boundaryIntent,
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
       }),
     ).toMatchObject(Result.fail({ failure: 'invalid-order' }))
   })
@@ -367,10 +367,10 @@ describe('Alpaca broker mutations', () => {
         quantityAtoms: '1000000000',
         notionalLimitMicros: '101240000',
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
       }),
     ).toMatchObject(
-      Result.succeed({ type: 'limit', time_in_force: 'ioc', qty: '1', limit_price: '101.24', side: 'buy' }),
+      Result.succeed({ type: 'limit', time_in_force: 'day', qty: '1', limit_price: '101.24', side: 'buy' }),
     )
     expect(
       orderRequestBody({
@@ -378,7 +378,7 @@ describe('Alpaca broker mutations', () => {
         quantityAtoms: '1000000000',
         notionalLimitMicros: '101235000',
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
       }),
     ).toMatchObject(Result.fail({ failure: 'invalid-order' }))
   })
@@ -388,7 +388,7 @@ describe('Alpaca broker mutations', () => {
       ...intent,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: TimeInForce.Day,
       quantityAtoms: '3000000000',
       notionalLimitMicros: '300420000',
     }
@@ -730,7 +730,7 @@ describe('Alpaca broker mutations', () => {
     const limitIntent = {
       ...intent,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: TimeInForce.Day,
       quantityAtoms: '3000000000',
       notionalLimitMicros: '303690000',
     }
@@ -741,8 +741,9 @@ describe('Alpaca broker mutations', () => {
       qty: '3',
       order_type: 'limit',
       type: 'limit',
-      time_in_force: 'ioc',
+      time_in_force: 'day',
       limit_price: '101.23',
+      extended_hours: true,
     }
     const client = HttpClient.make((request) => {
       requests.push(requestBody(request))
@@ -757,17 +758,17 @@ describe('Alpaca broker mutations', () => {
         qty: '3',
         side: 'buy',
         type: 'limit',
-        time_in_force: 'ioc',
+        time_in_force: 'day',
         limit_price: '101.23',
         client_order_id: intent.clientOrderId,
-        extended_hours: false,
+        extended_hours: true,
       },
     ])
     expect(receipt).toMatchObject({
       requestHash: canonicalHashV1(requests[0]),
       order: {
         orderType: 'limit',
-        timeInForce: 'ioc',
+        timeInForce: 'day',
         quantityAtoms: '3000000000',
         limitPriceMicros: '101230000',
       },
@@ -778,7 +779,7 @@ describe('Alpaca broker mutations', () => {
     const limitIntent = {
       ...intent,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: TimeInForce.Day,
       quantityAtoms: '3000000000',
       notionalLimitMicros: '303690000',
     }
@@ -788,7 +789,7 @@ describe('Alpaca broker mutations', () => {
       qty: '3',
       order_type: 'limit',
       type: 'limit',
-      time_in_force: 'ioc',
+      time_in_force: 'day',
       limit_price: '101.24',
     }
     const client = HttpClient.make((request) => Effect.succeed(response(request, mismatched)))

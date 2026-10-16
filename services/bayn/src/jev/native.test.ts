@@ -217,7 +217,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v5',
+        schemaVersion: 'bayn.jev-trading-signal-state.v6',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })
@@ -290,7 +290,7 @@ describe('native Jev entry and position observations', () => {
     const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
     expect(protocol.candidateSymbols).toHaveLength(18)
     expect(protocol.maximumPositions).toBe(1)
-    expect(protocol.executionModel.order.timeInForce).toBe('ioc')
+    expect(protocol.executionModel.order.timeInForce).toBe('asset-session')
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, candidateSymbols: ['AAPL', 'AAPL'] }))).toBe(true)
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, maximumSymbolWeight: 1 }))).toBe(true)
   })

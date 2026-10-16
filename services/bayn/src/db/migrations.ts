@@ -1,3 +1,4 @@
+import extendedEquityHours from '../../migrations/0113_extended_equity_hours'
 import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
 import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
 import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
@@ -114,6 +115,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '113_extended_equity_hours': extendedEquityHours,
   '112_broker_cash_settlements': brokerCashSettlements,
   '111_model_action_protocol': modelActionProtocol,
   '109_capital_sizing_protocol': capitalSizingProtocol,

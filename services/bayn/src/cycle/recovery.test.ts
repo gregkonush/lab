@@ -30,7 +30,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 const pendingCycle = (): IntradayAutonomousCycle => {
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date: '2026-02-02',
       openAt: '2026-02-02T14:30:00.000Z',

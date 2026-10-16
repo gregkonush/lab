@@ -1,3 +1,4 @@
+import { cashSpotLimitTimeInForce } from './order-terms'
 import { Result } from 'effect'
 import { quantityScale } from '../quantity'
 
@@ -62,7 +63,10 @@ export const deriveExecutionIntentPricing = (
     )
   }
 
-  if (input.orderType !== OrderType.Limit || input.timeInForce !== TimeInForce.ImmediateOrCancel) {
+  if (
+    input.orderType !== OrderType.Limit ||
+    input.timeInForce !== cashSpotLimitTimeInForce(instrumentMarket(input.symbol))
+  ) {
     return Result.fail({
       _tag: 'UnsupportedExecutionTerms',
       orderType: input.orderType,
