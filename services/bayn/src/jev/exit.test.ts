@@ -1,3 +1,4 @@
+import { jevMarketForSymbol } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
@@ -78,14 +79,14 @@ describe('native Jev exit targets', () => {
     const target = Result.getOrThrow(decideJevExit(material))
     const quote = snapshot.latestQuotes['AAPL']
     if (quote === undefined) throw new Error('Missing synthetic protective quote')
-    const diagnostic = jevProtectiveQuoteDiagnostics(quote, held.protocol.maximumSpreadBps)
+    const diagnostic = jevProtectiveQuoteDiagnostics(quote, jevMarketForSymbol('AAPL').maximumEntrySpreadBps)
     expect(diagnostic).toMatchObject({
       referenceScope: JevQuoteReferenceScope.ExchangeOnly,
       pairedFeedComparisonAvailable: false,
       quoteEventAt: quote.eventAt,
-      entrySpreadLimitBps: held.protocol.maximumSpreadBps,
+      entrySpreadLimitBps: jevMarketForSymbol('AAPL').maximumEntrySpreadBps,
     })
-    expect(diagnostic.spreadBpsApprox).toBeGreaterThan(held.protocol.maximumSpreadBps)
+    expect(diagnostic.spreadBpsApprox).toBeGreaterThan(jevMarketForSymbol('AAPL').maximumEntrySpreadBps)
     expect(diagnostic).not.toHaveProperty('bidPrice')
     expect(diagnostic).not.toHaveProperty('askPrice')
     expect(target.targetWeights).toEqual({ AAPL: 0 })

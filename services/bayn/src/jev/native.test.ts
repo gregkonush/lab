@@ -125,9 +125,9 @@ describe('native Jev entry and position observations', () => {
     )
     expect(jevProtocolIdentityMatches(active, identity)).toBe(true)
     expect(jevProtocolIdentityMatches(active, '0'.repeat(64))).toBe(false)
-    expect(jevProtocolIdentityMatches({ ...active, maximumSpreadBps: active.maximumSpreadBps + 1 }, identity)).toBe(
-      false,
-    )
+    expect(
+      jevProtocolIdentityMatches({ ...active, maximumSymbolWeight: active.maximumSymbolWeight / 2 }, identity),
+    ).toBe(false)
   })
 
   test('the held position can request an exit, while weaker or hold evidence retains it', () => {
@@ -202,7 +202,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v4',
+        schemaVersion: 'bayn.jev-trading-signal-state.v5',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })

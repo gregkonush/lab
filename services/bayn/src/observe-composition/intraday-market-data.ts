@@ -1,5 +1,3 @@
-import { instrumentMarket, MarketKind } from '../instruments'
-import { quantityFromNumber, quantityScale } from '../quantity'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { Data, Effect, Result, Schema } from 'effect'
 
@@ -143,41 +141,4 @@ export const requireFreshIntradayPositionQuotes = (
     }
   }
   return Result.succeed(undefined)
-}
-
-export const maximumBuyQuantities = (
-  snapshot: { readonly latestQuotes: Readonly<Record<string, { readonly askSize: number }>> },
-  targetWeights: Readonly<Record<string, number>>,
-): Result.Result<Readonly<Record<string, string>>, IntradayMarketDataFailure> => {
-  const quantities: Record<string, string> = {}
-  for (const [symbol, targetWeight] of Object.entries(targetWeights).sort(([left], [right]) =>
-    left.localeCompare(right),
-  )) {
-    if (targetWeight === 0) {
-      quantities[symbol] = '0'
-      continue
-    }
-    const quote = snapshot.latestQuotes[symbol]
-    if (quote === undefined) {
-      return Result.fail(failure('entry-decision', `entry snapshot has no verified quote for ${symbol}`))
-    }
-    const quantity = quantityFromNumber(quote.askSize)
-    if (Result.isFailure(quantity)) {
-      return Result.fail(
-        failure(
-          'entry-decision',
-          `entry ask size for ${symbol} is outside the exact quantity domain`,
-          quantity.failure,
-        ),
-      )
-    }
-    const increment = instrumentMarket(symbol) === MarketKind.Crypto ? 1n : quantityScale
-    const displayedWholeShareQuantity = (quantity.success / increment) * increment
-    if (displayedWholeShareQuantity === 0n) {
-      quantities[symbol] = '0'
-      continue
-    }
-    quantities[symbol] = displayedWholeShareQuantity.toString()
-  }
-  return Result.succeed(Object.freeze(quantities))
 }
