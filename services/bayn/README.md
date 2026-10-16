@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v5` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v6` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -51,6 +51,12 @@ accrual evidence and ledger identities remain unchanged.
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
+Entry selection follows the model's chosen `enter` action. There is no additional action-probability floor;
+the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
+`wait` and `avoid` keep zero targets. Protocol v6 rejects v5 and the retired `minimumEntryProbability` field.
+Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions and
+clamps the prior PAPER authority before native OBSERVE recovery. Activate a newly sealed v6 PAPER mandate
+against its published image. Existing position, turnover, loss, management and submission risk limits remain.
 
 ## Profitability goal
 
