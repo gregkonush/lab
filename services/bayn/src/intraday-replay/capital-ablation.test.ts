@@ -21,6 +21,7 @@ import { ControlExit } from './control-portfolio'
 import { applyReplayFill, createReplayLedger } from './ledger'
 import {
   capitalEvents,
+  capitalNetDifference,
   CapitalArm,
   CapitalAdmission,
   CapitalEventKind,
@@ -125,7 +126,12 @@ const quoteAt = (symbol: string, atMs: number, overrides: Partial<IntradayQuote>
   }
   return { value, availableAtMs: atMs, sequence: 1, recordHash: canonicalHashV1(value) }
 }
-const evaluate = (opps: readonly CapitalOpportunity[], chosen = scenario, config = terms, quote = quoteAt) => {
+const evaluate = (
+  opps: readonly CapitalOpportunity[],
+  chosen = scenario,
+  config = terms,
+  quote: (symbol: string, atMs: number) => ReturnType<typeof quoteAt> | undefined = quoteAt,
+) => {
   Result.getOrThrow(validateCapitalPopulation(opps, config))
   const states = Object.values(CapitalArm).map((arm) =>
     Result.getOrThrow(createCapitalState(arm, config.openingCashMicros)),
@@ -143,6 +149,9 @@ const evaluate = (opps: readonly CapitalOpportunity[], chosen = scenario, config
         chosen,
         event,
         symbol == null ? undefined : quote(symbol, event.atMs),
+        state.portfolio.ledger.positions[0] === undefined
+          ? undefined
+          : quote(state.portfolio.ledger.positions[0].symbol, event.atMs),
       )
       if (Result.isFailure(result)) throw new Error(JSON.stringify(result.failure))
       const stepped = result.success
@@ -619,4 +628,18 @@ test('overnight crypto exit initializes the New York risk day from marked invent
   expect(closed.days.get('2026-10-12')?.opening).toBe(expectedOpening)
   expect(closed.portfolio.ledger.positions).toEqual([])
   expect(expectedOpening - BigInt(closed.portfolio.ledger.cashMicros)).toBeGreaterThan(0n)
+})
+
+test('an unrelated missing mark is counted once and withholds the net comparison after both portfolios close', () => {
+  const reports = evaluate([opportunity(), opportunity(2000, 'wait')], scenario, terms, (symbol, at) =>
+    at === baseAt + 2000 ? undefined : quoteAt(symbol, at),
+  )
+  expect(reports.every((report) => report.metrics.executionComplete)).toBe(true)
+  expect(reports.every((report) => report.metrics.netAfterAllCostsMicros !== null)).toBe(true)
+  expect(reports.map((report) => report.metrics.missingMarks)).toEqual([1, 1])
+  expect(reports.every((report) => report.metrics.maximumDrawdownAfterAllCostsMicros === null)).toBe(true)
+  expect(capitalNetDifference(true, reports)).toBeNull()
+  const complete = evaluate([opportunity()])
+  expect(capitalNetDifference(true, complete)).toBe('0')
+  expect(capitalNetDifference(false, complete)).toBeNull()
 })

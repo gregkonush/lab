@@ -101,7 +101,9 @@ upstream evidence is incomplete; those diagnostics are not an economic acceptanc
 
 Drawdown uses fresh marked bids at event/poll times and known allocated expenses. It excludes an additional
 hypothetical liquidation fee, cannot observe between polls, and is withheld as a complete metric when marks,
-execution or expenses are unresolved. Historical consumed data remains development evidence. Passing the tests or
+execution or expenses are unresolved. Missing marks count unique timestamps, so pre/post valuation of one event
+cannot duplicate the evidence gap. An incomplete valuation path also withholds the headline net-dollar comparison,
+even if both portfolios later close and their terminal cash P&L is known. Historical consumed data remains development evidence. Passing the tests or
 producing a positive scenario delta never authorizes trading or deployment.
 
 ## Deterministic accounting result

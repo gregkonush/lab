@@ -7,6 +7,7 @@ import { Sha256Schema, SourceRevisionSchema, StrictNonEmptyStringSchema, strictP
 import {
   capitalAblationDefinition,
   capitalEvents,
+  capitalNetDifference,
   CapitalArm,
   CapitalEventKind,
   CapitalTermsSchema,
@@ -105,9 +106,6 @@ export const runCapitalStudy = (raw: unknown) =>
       scenarios: yield* Effect.forEach(contexts, ({ scenario, states }) =>
         Effect.gen(function* () {
           const arms = [...states.values()].map(finishCapitalState)
-          const baseline = arms.find((a) => a.arm === CapitalArm.Baseline)
-          const candidate = arms.find((a) => a.arm === CapitalArm.CostHurdle)
-          const completeCosts = arms.every((a) => a.metrics.netAfterAllCostsMicros !== null)
           const opportunityHashes = yield* Effect.forEach(arms, (a) =>
             Effect.fromResult(canonicalHashV1Result(a.eligibleOpportunityIds)).pipe(
               Effect.map((hash) => ({ arm: a.arm, hash })),
@@ -128,15 +126,7 @@ export const runCapitalStudy = (raw: unknown) =>
               },
             })),
             eligibleOpportunityIdsHash: opportunityHashes,
-            candidateMinusBaselineNetMicros:
-              !evidenceComplete ||
-              !completeCosts ||
-              baseline?.metrics.netAfterAllCostsMicros == null ||
-              candidate?.metrics.netAfterAllCostsMicros == null
-                ? null
-                : String(
-                    BigInt(candidate.metrics.netAfterAllCostsMicros) - BigInt(baseline.metrics.netAfterAllCostsMicros),
-                  ),
+            candidateMinusBaselineNetMicros: capitalNetDifference(evidenceComplete, arms),
           }
         }),
       ),

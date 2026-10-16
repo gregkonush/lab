@@ -112,6 +112,7 @@ export interface CapitalState {
   readonly peakMicros: bigint
   readonly maximumDrawdownMicros: bigint
   readonly missingMarks: number
+  readonly lastMissingMarkAtMs: number | null
   readonly problems: readonly string[]
   readonly days: ReadonlyMap<string, { readonly opening: bigint; readonly peak: bigint; readonly turnover: bigint }>
 }
@@ -213,6 +214,7 @@ export const createCapitalState = (arm: CapitalArm, openingCashMicros: string) =
         peakMicros: BigInt(openingCashMicros),
         maximumDrawdownMicros: 0n,
         missingMarks: 0,
+        lastMissingMarkAtMs: null,
         problems: [],
         days: new Map(),
       }),
@@ -460,7 +462,11 @@ export const markCapitalState = (
         replayQuoteRejection(quote, position.symbol, atMs, { ...protocol, ...jevMarketForSymbol(position.symbol) }) !==
           null
       )
-        return { ...state, missingMarks: state.missingMarks + 1 }
+        return {
+          ...state,
+          missingMarks: state.missingMarks + Number(state.lastMissingMarkAtMs !== atMs),
+          lastMissingMarkAtMs: atMs,
+        }
       equity +=
         (BigInt(position.quantityAtoms) * (yield* priceNumberToMicros(quote.value.bidPrice, 'capital.mark', 'DOWN'))) /
         1_000_000_000n
@@ -545,4 +551,24 @@ export const finishCapitalState = (state: CapitalState) => {
     },
     problems: state.problems,
   }
+}
+
+/** A net-dollar headline requires the complete valuation/risk path, not only a flat final cash balance. */
+export const capitalNetDifference = (
+  evidenceComplete: boolean,
+  arms: readonly ReturnType<typeof finishCapitalState>[],
+): string | null => {
+  const baseline = arms.find((arm) => arm.arm === CapitalArm.Baseline)
+  const candidate = arms.find((arm) => arm.arm === CapitalArm.CostHurdle)
+  if (
+    !evidenceComplete ||
+    arms.length !== 2 ||
+    baseline === undefined ||
+    candidate === undefined ||
+    arms.some((arm) => arm.metrics.missingMarks !== 0 || arm.metrics.maximumDrawdownAfterAllCostsMicros === null) ||
+    baseline.metrics.netAfterAllCostsMicros === null ||
+    candidate.metrics.netAfterAllCostsMicros === null
+  )
+    return null
+  return String(BigInt(candidate.metrics.netAfterAllCostsMicros) - BigInt(baseline.metrics.netAfterAllCostsMicros))
 }
