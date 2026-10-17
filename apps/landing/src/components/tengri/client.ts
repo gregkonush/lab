@@ -92,7 +92,9 @@ export async function runTengriAction<Result>(
   const controller = new AbortController()
   const abortFromCaller = () => controller.abort(options?.signal?.reason)
   options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
-  scope.active.set(controller, { blocksLifecycle: action.action !== 'codex-models' })
+  scope.active.set(controller, {
+    blocksLifecycle: action.action !== 'codex-models' && action.action !== 'resume-thread',
+  })
   notifyGuestOperationListeners(scope)
   try {
     return await postTengriAction<Result>(action, { ...options, signal: controller.signal })
@@ -278,6 +280,7 @@ function requestFailure(payload: unknown, status: number, traceId?: string | nul
       (status === 409 && record.code === 'file_conflict') ||
       (status === 409 && record.code === 'lifecycle_superseded') ||
       (status === 502 && record.code === 'model_catalog_invalid') ||
+      (status === 502 && record.code === 'conversation_history_invalid') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined

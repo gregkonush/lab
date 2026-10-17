@@ -97,11 +97,12 @@ including events queued before a switch, and adopt the server thread ID when a d
 Chat and Finder recreate a permanently closed event stream with an exponential retry delay capped at thirty seconds.
 A replacement chat stream starts at the latest received event cursor. Native browser reconnection remains active for
 transient connection errors; closing the view cancels pending retries and ignores callbacks from retired streams.
-The model catalog also retries temporary HTTP and network failures, with a delay capped at thirty seconds.
+The model catalog and saved-conversation startup retry temporary HTTP and network failures, with a delay capped at thirty seconds.
 Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
-an explicit retry; model recovery never submits or retries a turn.
-Catalog reads keep lifecycle controls available and are cancelled when a transition starts. Browser cancellation
-propagates to the gRPC request. A rejected transition lets the catalog recover without closing chat.
+an explicit retry; recovery never submits or retries a turn. Closing chat or choosing another conversation cancels
+the pending startup retry. Manual conversation recovery cancels the automatic request before taking over.
+Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
+Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
 until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
 from this tab or another tab with a newer timestamp;
@@ -242,6 +243,10 @@ Finder's **Open in Code** sends a file-opening request through the owner-scoped 
 VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
 Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed
 extensions live in the persistent guest home; stable window origins preserve VS Code's workspace identity and native backups across reload.
+Editor launches retain the backend's cold-start budget. Completed transient failures retry twice after one and two
+seconds using the same window identity. Closing the window cancels its pending request through the editor RPC and
+clears its retry timer; authorization denials
+surface immediately, and exhausted retries expose the normal Retry control.
 Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
 Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
 the desktop keeps the user signed in and shows the error so they can retry.

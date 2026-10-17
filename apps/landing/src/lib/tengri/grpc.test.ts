@@ -87,6 +87,8 @@ let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
+let editorRequestStarted: (() => void) | null = null
+let editorRequestCancelled: (() => void) | null = null
 let catalogRequestStarted: (() => void) | null = null
 let catalogRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
@@ -214,6 +216,18 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
+      if (call.request.windowId === 'desktop-editor-cancel') {
+        editorRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'editor launch was not cancelled'), null),
+          5_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          editorRequestCancelled?.()
+        })
+        return
+      }
       callback(null, {
         id: 'a'.repeat(24),
         launchUrl: 'https://tengri.example/v1/preview/open#lease',
@@ -787,12 +801,47 @@ describe('Tengri gRPC BFF transport', () => {
 
   test('binds real editor sessions to the window and revokes only their issued lease', async () => {
     const { issueEditorSession, revokePreviewSession } = await import('./grpc')
-    const session = await issueEditorSession(identity, 'agent-test', 'desktop-stable-code-window')
+    const session = await issueEditorSession(
+      identity,
+      'agent-test',
+      'desktop-stable-code-window',
+      new AbortController().signal,
+    )
     expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window' })
     expect(session.id).toBe('a'.repeat(24))
     expect(metadataContext().sessionId).toBe(identity.session.id)
     await revokePreviewSession(identity, 'agent-test', session.id, 'lease')
     expect(receivedRequest).toEqual({ agentId: 'agent-test', sessionId: session.id, revocationToken: 'lease' })
+  })
+
+  test('cancels the editor launch RPC when its HTTP request aborts', async () => {
+    const { issueEditorSession } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      editorRequestStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      editorRequestCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = issueEditorSession(identity, 'agent-test', 'desktop-editor-cancel', controller.signal).catch(
+      (error: unknown) => error,
+    )
+    try {
+      await started
+      controller.abort()
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Editor cancellation timed out')), 300)),
+      ])
+      expect(result).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+      await Promise.race([
+        cancelled,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Editor RPC was not cancelled')), 1_000)),
+      ])
+    } finally {
+      editorRequestStarted = null
+      editorRequestCancelled = null
+    }
   })
 
   test('reserves capacity before creation and starts the enrolled UID with a durable Ofz command', async () => {
@@ -1368,7 +1417,8 @@ describe('Tengri gRPC BFF transport', () => {
 
     expect(await rejection(resumeCodexThread(identity, 'agent-test', 'invalid-sequence'))).toMatchObject({
       message: 'Tengri control plane returned an invalid Codex event cursor',
-      status: 503,
+      status: 502,
+      code: 'conversation_history_invalid',
     })
   })
 

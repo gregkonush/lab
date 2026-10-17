@@ -31,7 +31,7 @@ const MAX_ADMITTING_REQUESTS: usize = 32;
 const REPLAY_BUCKETS: usize = 64;
 const REPLAY_BUCKET_LIMIT: usize = 128;
 const MAX_DEADLINE_AHEAD_MS: u64 = MAX_ADMISSION_MS + 1000;
-const REPLAY_STARTUP_FENCE_MS: u64 = MAX_DEADLINE_AHEAD_MS + 2000;
+pub(crate) const REPLAY_STARTUP_FENCE_MS: u64 = MAX_DEADLINE_AHEAD_MS + 2000;
 
 struct ReplayGuard {
     ready_at: tokio::time::Instant,

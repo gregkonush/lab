@@ -1,4 +1,5 @@
 mod admission;
+pub(crate) use admission::REPLAY_STARTUP_FENCE_MS;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
